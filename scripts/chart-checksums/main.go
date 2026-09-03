@@ -128,7 +128,29 @@ func newHelmRunner(workdir string) (*helmRunner, error) {
 		"HELM_REPOSITORY_CONFIG="+filepath.Join(configHome, "repositories.yaml"),
 		"HELM_REPOSITORY_CACHE="+filepath.Join(cacheHome, "repository"),
 	)
+	// Reuse the caller's OCI registry auth (from `helm registry login`) instead of
+	// the temp-scoped, empty one — otherwise private charts fail with 401. We scope
+	// only the repo config to the temp dir; registry credentials stay shared.
+	if reg := defaultRegistryConfig(); reg != "" {
+		env = append(env, "HELM_REGISTRY_CONFIG="+reg)
+	}
 	return &helmRunner{workdir: workdir, env: env}, nil
+}
+
+// defaultRegistryConfig returns the caller's real Helm OCI registry credentials
+// file (where `helm registry login` writes), by asking helm with the unscoped
+// environment. Empty if it cannot be determined.
+func defaultRegistryConfig() string {
+	out, err := exec.Command("helm", "env").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "HELM_REGISTRY_CONFIG="); ok {
+			return strings.Trim(v, `"`)
+		}
+	}
+	return ""
 }
 
 func (h *helmRunner) command(args ...string) *exec.Cmd {
