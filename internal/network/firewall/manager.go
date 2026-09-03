@@ -366,7 +366,9 @@ func (m *Manager) Reapply(ctx context.Context) error {
 	//
 	// Unresolvable names are tolerated because this is also the recovery verb: a
 	// name that stopped resolving must not be what stands between an operator and
-	// re-asserting their firewall.
+	// re-asserting their firewall. Block-list names are the exception and are
+	// refused here as everywhere — re-asserting a firewall that has quietly
+	// stopped denying something is not a recovery (Rule.unresolvedFailsOpen).
 	return m.withLock(func() error {
 		t, err := m.load()
 		if err != nil {
@@ -376,14 +378,20 @@ func (m *Manager) Reapply(ctx context.Context) error {
 	})
 }
 
-// RefreshDNS re-resolves the management allowlist's domain names and re-applies
-// only if their addresses changed. It is what the refresh timer runs.
+// RefreshDNS re-resolves the table's domain names and re-applies only if their
+// addresses changed. It is what the refresh timer runs.
 //
 // Separate from Reapply because the two want opposite things from an unchanged
 // render: Reapply must reload the kernel regardless, since that is how a
 // third-party flush is repaired; this runs every few minutes and must not, or it
 // would reload the ruleset — and with it the shared oneshot's workload-policy
 // replay — 288 times a day to write bytes that were already there.
+//
+// It can fail, and a failed unit is the intended outcome rather than a bug: a
+// block-list name with no answer and no cached one refuses here as on every
+// other path. That is rare — one prior success caches a name indefinitely — so
+// a failure in `systemctl --failed` means the entry has genuinely stopped
+// denying anything, and the next tick clears it once the name resolves again.
 func (m *Manager) RefreshDNS(ctx context.Context) error {
 	return m.withLock(func() error {
 		t, err := m.load()
@@ -525,6 +533,12 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 	// Resolve first, then render a copy: the YAML below must record the names the
 	// operator wrote, while the nft document must carry only literals.
 	res := m.resolveFQDNs(ctx, t)
+	// Ahead of the tolerated-path branch below, and deliberately not subject to
+	// it: for a rule that fails open, an unresolved name grants access rather
+	// than withdrawing it, so there is no path on which warning is enough.
+	if err := checkFailOpenRules(t, res.missing); err != nil {
+		return err
+	}
 	if len(res.missing) > 0 && !opts.tolerateUnresolved {
 		return errx.Decorate(
 			errorx.IllegalArgument.New(
@@ -543,11 +557,9 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 	if err != nil {
 		return err
 	}
-	if err := checkResolvedRule(&t.Mgmt, &rt.Mgmt, res.missing); err != nil {
-		return err
-	}
-	for i := range t.Allow {
-		if err := checkResolvedRule(&t.Allow[i], &rt.Allow[i], res.missing); err != nil {
+	before, after := t.rules(), rt.rules()
+	for i := range before {
+		if err := checkResolvedRule(before[i], after[i], res.missing); err != nil {
 			return err
 		}
 	}

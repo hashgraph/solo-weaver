@@ -802,15 +802,17 @@ func IsFQDNEntry(s string) bool {
 	return s != "" && !strings.Contains(s, "/") && net.ParseIP(s) == nil
 }
 
-// ValidateMgmtEntry rejects any string that is not usable in the host
-// firewall's management allowlist: an IPv4 CIDR, or an FQDN that is resolved to
-// its A records before the nft ruleset is rendered.
+// ValidateIPv4CIDROrFQDN rejects any string that is not usable in a host
+// firewall address list that takes names: an IPv4 CIDR, or an FQDN that is
+// resolved to its A records before the nft ruleset is rendered. The management
+// allowlist and the block list both qualify; --pod-cidr and the in-cluster
+// ports do not.
 //
-// It is the flag-shaped boundary check — the CLI flag, models.HostConfig, and
-// the TUI prompt — and so is IPv4-only for the same reason ValidateIPv4CIDR is.
+// It is the flag-shaped boundary check — the CLI flags, models.HostConfig, and
+// the TUI prompts — and so is IPv4-only for the same reason ValidateIPv4CIDR is.
 // The firewall package's own rule layer is dual-stack and validates through
 // ValidateCIDR instead.
-func ValidateMgmtEntry(s string) error {
+func ValidateIPv4CIDROrFQDN(s string) error {
 	if IsFQDNEntry(s) {
 		return ValidateFQDN(s)
 	}
@@ -819,8 +821,8 @@ func ValidateMgmtEntry(s string) error {
 
 // ValidateFQDN rejects any string that is not a fully-qualified domain name.
 // It is the boundary check for hostnames supplied to the `inet weaver-host-firewall`
-// management allowlist, which are resolved to A records and rendered into the
-// mgmt_addrs nft set.
+// address lists that take them, which are resolved to A records and rendered
+// into the rule's nft set.
 //
 // A bare hostname is rejected: at least one dot is required. Without that,
 // resolution would depend on the host's search domains rather than on what the

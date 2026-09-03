@@ -210,7 +210,7 @@ allowlist, ICMP policy, operator block list, and in-cluster host-service ports.
 |---|---|---|
 | `--firewall-enabled` | Turn the host firewall on | `false` |
 | `--mgmt-cidrs` | SSH/management allowlist CIDRs. **Empty skips the firewall entirely** | none |
-| `--blocked-cidrs` | Operator block list. Dropped inbound, outbound and forwarded — including established connections | none |
+| `--blocked-cidrs` | Operator block list, CIDRs and/or domain names. Dropped inbound, outbound and forwarded — including established connections | none |
 | `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated | `22` |
 | `--pod-cidr` | Pod CIDR for the in-cluster host-service ports rule | auto-detected |
 | `--in-cluster-ports` | In-cluster host-service ports | `6443,4244,7472,10250` |
@@ -224,6 +224,10 @@ Worth knowing:
 - **`--blocked-cidrs` is not `bn-restricted`.** The block list is a plain deny list, dropped
   before every other rule, and is yours for its whole lifetime. `bn-restricted` lives on the
   workload plane and is managed automatically by the daemon.
+- **A domain name in the block list must resolve.** `--mgmt-cidrs` and `--blocked-cidrs` both
+  take names, but an unresolvable one is refused on every path in the block list rather than
+  warned about — losing an entry there stops denying a host instead of stopping admitting one.
+  See [Domain names in address lists](network/firewall.md#domain-names-in-address-lists).
 
 Full command surface: [Network commands](network/) — [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md).
 

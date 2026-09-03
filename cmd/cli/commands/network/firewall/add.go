@@ -26,7 +26,7 @@ var addCmd = &cobra.Command{
 func init() {
 	registerTargetFlags(addCmd, "add")
 	addCmd.Flags().StringVar(&flagMgmtCIDR, "mgmt-cidr", "", "A single management CIDR or FQDN to add (shorthand for --name mgmt --cidr)")
-	addCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR to add (shorthand for --name blocked --cidr)")
+	addCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR or FQDN to add (shorthand for --name blocked --cidr)")
 	addCmd.Flags().IntVar(&flagInClusterPort, "in-cluster-port", 0, "A single in-cluster host-service port to add (shorthand for --name in_cluster --port)")
 	addCmd.MarkFlagsMutuallyExclusive("mgmt-cidr", "blocked-cidr", "in-cluster-port")
 }

@@ -13,9 +13,19 @@ func TestValidateMgmtCIDRs(t *testing.T) {
 	require.NoError(t, validateMgmtCIDRs("10.0.0.0/8"))                 // single
 	require.NoError(t, validateMgmtCIDRs("10.0.0.0/8, 192.168.0.0/16")) // spaced list
 	require.NoError(t, validateMgmtCIDRs("10.0.0.0/8,"))                // trailing comma tolerated
-	require.Error(t, validateMgmtCIDRs("10.0.0.0"))                     // missing prefix
+	require.NoError(t, validateMgmtCIDRs("10.0.0.0/8,jump.corp.test.com"))
+	require.Error(t, validateMgmtCIDRs("10.0.0.0")) // missing prefix
 	require.Error(t, validateMgmtCIDRs("not-a-cidr"))
 	require.Error(t, validateMgmtCIDRs("2001:db8::/32")) // IPv6 not supported by the inet weaver-host-firewall table
+}
+
+func TestValidateBlockedCIDRs(t *testing.T) {
+	require.NoError(t, validateBlockedCIDRs(""))                                  // empty allowed (block nobody)
+	require.NoError(t, validateBlockedCIDRs("203.0.113.0/24"))                    // single
+	require.NoError(t, validateBlockedCIDRs("203.0.113.0/24, bad.corp.test.com")) // names mix with literals
+	require.Error(t, validateBlockedCIDRs("203.0.113.9"))                         // missing prefix
+	require.Error(t, validateBlockedCIDRs("localhost"))                           // a dotless name resolves per-host
+	require.Error(t, validateBlockedCIDRs("2001:db8::/32"))                       // IPv6 not supported by the flag-shaped config
 }
 
 func TestValidatePodCIDR(t *testing.T) {
@@ -23,7 +33,8 @@ func TestValidatePodCIDR(t *testing.T) {
 	require.NoError(t, validatePodCIDR("10.4.0.0/14"))
 	require.Error(t, validatePodCIDR("10.4.0.0"))
 	require.Error(t, validatePodCIDR("garbage"))
-	require.Error(t, validatePodCIDR("2001:db8::/32")) // IPv6 not supported by the inet weaver-host-firewall table
+	require.Error(t, validatePodCIDR("pods.corp.test.com")) // auto-detected, never named
+	require.Error(t, validatePodCIDR("2001:db8::/32"))      // IPv6 not supported by the inet weaver-host-firewall table
 }
 
 func TestValidateMgmtPorts(t *testing.T) {

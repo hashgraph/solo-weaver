@@ -53,7 +53,7 @@ All sanitizers return `ErrInvalidName` when filtering leaves nothing.
 | `ValidateDNSName` | `[A-Za-z0-9.-]` matching existing host pattern | Loose hostname check with **no length or structure rules** — a dotless name, a trailing hyphen, a 300-char label and a 4000-char name all pass. Cluster names derived from DNS (see #443). Not a real FQDN check; use `ValidateFQDN` for anything that will be resolved. |
 | `ValidateFQDN` | allowlist `[A-Za-z0-9-]`, ≥1 dot, label ≤63, total ≤253, optional trailing root dot | A name that will actually be **resolved**. Rejects IP literals so a maskless address keeps producing `ValidateCIDR`'s "explicit prefix length" error, and rejects a dotless name so resolution cannot depend on the host's search domains. |
 | `IsFQDNEntry` | *(classifier, returns `bool`)* | The parse rule for a flag taking addresses **and** names: `/` means address, a parseable IP means address, anything else is a name. |
-| `ValidateMgmtEntry` | `ValidateIPv4CIDR` or `ValidateFQDN` | The host firewall's `mgmt` allowlist at the flag-shaped layer (CLI flag, `models.HostConfig`, TUI prompt). IPv4-only, like `ValidateIPv4CIDR`. The firewall package's rule layer is dual-stack and dispatches to `ValidateCIDR` instead. |
+| `ValidateIPv4CIDROrFQDN` | `ValidateIPv4CIDR` or `ValidateFQDN` | The host firewall address lists that take names — `mgmt` and `blocked` — at the flag-shaped layer (CLI flags, `models.HostConfig`, TUI prompts). IPv4-only, like `ValidateIPv4CIDR`. The firewall package's rule layer is dual-stack and dispatches to `ValidateCIDR` instead. |
 | `ValidateHexToken` | `[0-9a-fA-F]`, length ≤ 4096 | Teleport join tokens and similar hex secrets. |
 | `ValidateHostPort` | hostname or hostname:port; no path components, no shell metachars | `host:port` style endpoints. Use `ValidateURL` for full URLs. |
 | `ValidateChartReference` | OCI URL / classic `repo/chart` / local path | Helm chart references. **Critical** for the block-node `Chart` field. |
@@ -72,7 +72,7 @@ Match by what the string represents in the real world, not by what it looks like
 - **Helm chart reference** → `ValidateChartReference`
 - **Cluster name derived from DNS** (loose, may be dotless) → `ValidateDNSName`
 - **Domain name that will be resolved** → `ValidateFQDN`
-- **Host-firewall management allowlist entry** (CIDR *or* name) → `ValidateMgmtEntry`
+- **Host-firewall allowlist or block-list entry** (CIDR *or* name) → `ValidateIPv4CIDROrFQDN`
 - **host:port endpoint** → `ValidateHostPort`
 - **Hex token / shared secret** → `ValidateHexToken`
 - **Filesystem path from a user** → `SanitizePath` (when you'll use the cleaned form) or `ValidateInputFile` (when you need the file to exist and be in an allowed root)

@@ -55,21 +55,16 @@ func ValidateHostFirewallFlags(cmd *cobra.Command) error {
 			}
 		}
 	}
-	if cmd.Flags().Changed(FlagNameMgmtCIDRs) {
-		cidrs, _ := cmd.Flags().GetStringSlice(FlagNameMgmtCIDRs)
-		for _, cidr := range normalizeCIDRs(cidrs) {
-			// The management allowlist is the one list that also takes domain
-			// names; every other CIDR flag here stays literal-only.
-			if err := sanity.ValidateMgmtEntry(cidr); err != nil {
-				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNameMgmtCIDRs, cidr)
-			}
+	// The allowlist and the block list are the two lists that also take domain
+	// names; --pod-cidr stays literal-only.
+	for _, name := range []string{FlagNameMgmtCIDRs, FlagNameBlockedCIDRs} {
+		if !cmd.Flags().Changed(name) {
+			continue
 		}
-	}
-	if cmd.Flags().Changed(FlagNameBlockedCIDRs) {
-		cidrs, _ := cmd.Flags().GetStringSlice(FlagNameBlockedCIDRs)
+		cidrs, _ := cmd.Flags().GetStringSlice(name)
 		for _, cidr := range normalizeCIDRs(cidrs) {
-			if err := sanity.ValidateIPv4CIDR(cidr); err != nil {
-				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", FlagNameBlockedCIDRs, cidr)
+			if err := sanity.ValidateIPv4CIDROrFQDN(cidr); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid --%s %q", name, cidr)
 			}
 		}
 	}
@@ -94,9 +89,11 @@ func RegisterHostFirewallFlags(cmd *cobra.Command) {
 		"SSH/management allowlist for the node host firewall: IPv4 CIDRs and/or FQDNs (comma-separated or repeated). "+
 			"An FQDN is resolved to its A records and re-resolved on a timer. Empty skips the host firewall.")
 	cmd.Flags().StringSlice(FlagNameBlockedCIDRs, nil,
-		"Operator-curated block list CIDRs for the node host firewall, dropped before any other rule including "+
-			"established connections (comma-separated or repeated). Distinct from the BN workload plane's "+
-			"bn-restricted set, which the traffic-shaper daemon manages automatically.")
+		"Operator-curated block list for the node host firewall: IPv4 CIDRs and/or FQDNs, dropped before any other "+
+			"rule including established connections (comma-separated or repeated). An FQDN is resolved to its A "+
+			"records and re-resolved on a timer; unlike the allowlist, one that resolves to nothing is refused "+
+			"rather than warned about. Distinct from the BN workload plane's bn-restricted set, which the "+
+			"traffic-shaper daemon manages automatically.")
 	cmd.Flags().IntSlice(FlagNameMgmtPorts, []int{firewall.DefaultSSHPort},
 		"SSH/management TCP port(s) allowed from --mgmt-cidrs by the node host firewall (comma-separated or repeated)")
 	cmd.Flags().String(FlagNamePodCIDR, models.DefaultClusterPodCIDR,
@@ -361,8 +358,8 @@ func mergeLiveHostFirewall(ctx context.Context, cfg models.HostConfig) models.Ho
 // (persisted state, then the built-in default) supplies that field.
 func hostConfigFromTable(t *firewall.Table) models.HostConfig {
 	cfg := models.HostConfig{
-		ManagementCIDRs: ipv4OrFQDN(t.Mgmt.CIDRs, ruleDescMgmt),
-		BlockedCIDRs:    ipv4Only(t.Blocked.CIDRs, ruleDescBlocked),
+		ManagementCIDRs: ipv4OrFQDN(t.Mgmt.CIDRs, ruleDescMgmt, firewall.RuleMgmt),
+		BlockedCIDRs:    ipv4OrFQDN(t.Blocked.CIDRs, ruleDescBlocked, firewall.RuleBlocked),
 		InClusterPorts:  plainPorts(t.InCluster.Ports, ruleDescInCluster),
 	}
 	if mgmtPorts := plainPorts(t.Mgmt.Ports, ruleDescMgmt); len(mgmtPorts) > 0 {
@@ -387,19 +384,21 @@ const (
 	ruleDescInCluster = "in-cluster"
 )
 
-// ipv4OrFQDN is ipv4Only for the management block, which additionally carries
-// domain names.
+// ipv4OrFQDN is ipv4Only for the two blocks that additionally carry domain
+// names, the management allowlist and the block list.
 //
 // It exists because ipv4Only would drop them, and dropping them here is not a
 // failure to seed — it is data loss. The seeded list flows into
 // ResolveHostFirewallConfig, then into NetworkFirewallCreate, which assigns it
-// over t.Mgmt.CIDRs and persists the result: one `block node reconfigure` would
-// rewrite the operator's names out of the source of truth. An all-FQDN list
-// fares worse still, seeding empty and making the firewall step skip entirely.
-func ipv4OrFQDN(cidrs []string, desc string) []string {
+// over the rule's CIDRs and persists the result: one `block node reconfigure`
+// would rewrite the operator's names out of the source of truth. For mgmt an
+// all-FQDN list fares worse still, seeding empty and making the firewall step
+// skip entirely; for the block list it would silently stop blocking every host
+// named there.
+func ipv4OrFQDN(cidrs []string, desc, rule string) []string {
 	var out, skipped []string
 	for _, c := range cidrs {
-		if err := sanity.ValidateMgmtEntry(strings.TrimSpace(c)); err != nil {
+		if err := sanity.ValidateIPv4CIDROrFQDN(strings.TrimSpace(c)); err != nil {
 			skipped = append(skipped, c)
 			continue
 		}
@@ -409,7 +408,7 @@ func ipv4OrFQDN(cidrs []string, desc string) []string {
 		logx.As().Warn().Strs("cidrs", skipped).Msg(
 			"the live host firewall's " + desc + " block holds entries the flag-shaped config cannot express " +
 				"(IPv6 addresses); they are not seeded and a re-render would drop them — re-apply them afterwards " +
-				"with `network firewall set --name mgmt --cidrs ...`")
+				"with `network firewall set --name " + rule + " --cidrs ...`")
 	}
 	return out
 }

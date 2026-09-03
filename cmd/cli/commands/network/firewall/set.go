@@ -153,13 +153,13 @@ func orEmpty(in []string) []string {
 func init() {
 	setCmd.Flags().StringVar(&flagName, "name", "",
 		"Rule to replace: a reserved block (mgmt, blocked, in_cluster) or a named allow rule")
-	setCmd.Flags().StringSliceVar(&flagCIDRs, "cidrs", nil, "Full CIDR (or, on mgmt and allow rules, domain name) list for --name (comma-separated; replaces the existing list)")
+	setCmd.Flags().StringSliceVar(&flagCIDRs, "cidrs", nil, "Full CIDR (or, on every rule but in_cluster, domain name) list for --name (comma-separated; replaces the existing list)")
 	setCmd.Flags().StringVar(&flagCIDRsFile, "cidrs-file", "", "Alternative to --cidrs: a file of CIDRs or domain names (one per line or comma-separated)")
 	setCmd.Flags().StringSliceVar(&flagPorts, "ports", nil, "Full port list for --name; single ports and inclusive ranges (2379-2380) (comma-separated; replaces the existing list)")
 	setCmd.Flags().StringVar(&flagProto, "proto", "", "L4 protocol the rule's ports match: tcp or udp (allow rules only; empty restores the tcp default)")
 	setCmd.Flags().BoolVar(&flagICMPEcho, "icmp-echo", false, "Grant or revoke unmetered ICMP echo-request for this rule's sources (allow rules only)")
 
 	setCmd.Flags().StringSliceVar(&flagMgmtCIDRs, "mgmt-cidrs", nil, "Full management allowlist: IPv4 CIDRs and/or FQDNs (comma-separated; replaces the existing list)")
-	setCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Full operator block list (comma-separated; replaces the existing list)")
+	setCmd.Flags().StringSliceVar(&flagBlockedCIDRs, "blocked-cidrs", nil, "Full operator block list: IPv4 CIDRs and/or FQDNs (comma-separated; replaces the existing list)")
 	setCmd.Flags().IntSliceVar(&flagInClusterPorts, "in-cluster-ports", nil, "Full in-cluster host-service port list (comma-separated; replaces the existing list)")
 }

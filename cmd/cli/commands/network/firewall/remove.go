@@ -33,7 +33,7 @@ var removeCmd = &cobra.Command{
 func init() {
 	registerTargetFlags(removeCmd, "remove")
 	removeCmd.Flags().StringVar(&flagMgmtCIDR, "mgmt-cidr", "", "A single management CIDR to remove (shorthand for --name mgmt --cidr)")
-	removeCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR to remove (shorthand for --name blocked --cidr)")
+	removeCmd.Flags().StringVar(&flagBlockedCIDR, "blocked-cidr", "", "A single operator block-list CIDR or FQDN to remove (shorthand for --name blocked --cidr)")
 	removeCmd.Flags().IntVar(&flagInClusterPort, "in-cluster-port", 0, "A single in-cluster host-service port to remove (shorthand for --name in_cluster --port)")
 	removeCmd.MarkFlagsMutuallyExclusive("mgmt-cidr", "blocked-cidr", "in-cluster-port")
 }

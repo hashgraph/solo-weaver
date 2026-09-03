@@ -24,8 +24,8 @@ func validateMgmtCIDRs(s string) error {
 		if c == "" {
 			continue
 		}
-		if err := sanity.ValidateMgmtEntry(c); err != nil {
-			return errorx.IllegalArgument.Wrap(err, "invalid management CIDR %q", c)
+		if err := sanity.ValidateIPv4CIDROrFQDN(c); err != nil {
+			return errorx.IllegalArgument.Wrap(err, "invalid management CIDR or domain name %q", c)
 		}
 	}
 	return nil
@@ -33,7 +33,7 @@ func validateMgmtCIDRs(s string) error {
 
 // validateBlockedCIDRs validates a comma-separated operator block list. An
 // empty value is allowed — it means no CIDRs are blocked. Each non-empty entry
-// must be a valid CIDR.
+// must be a valid CIDR or a domain name.
 func validateBlockedCIDRs(s string) error {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -44,7 +44,7 @@ func validateBlockedCIDRs(s string) error {
 		if c == "" {
 			continue
 		}
-		if err := sanity.ValidateIPv4CIDR(c); err != nil {
+		if err := sanity.ValidateIPv4CIDROrFQDN(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid blocked CIDR %q", c)
 		}
 	}
@@ -119,8 +119,8 @@ func MgmtCIDRsInputPrompt(eff string, target *string) InputPrompt {
 	return InputPrompt{
 		FlagName:       "mgmt-cidrs",
 		Title:          "Management CIDRs (host firewall)",
-		Description:    "SSH/management allowlist for the node firewall (comma-separated CIDRs). Leave empty to skip the host firewall.",
-		Placeholder:    "10.0.0.0/8,192.168.0.0/16",
+		Description:    "SSH/management allowlist for the node firewall (comma-separated CIDRs or domain names). Leave empty to skip the host firewall.",
+		Placeholder:    "10.0.0.0/8,jump.corp.example.com",
 		EffectiveValue: eff,
 		Target:         target,
 		Validate:       validateMgmtCIDRs,
@@ -137,8 +137,8 @@ func BlockedCIDRsInputPrompt(eff string, target *string) InputPrompt {
 	return InputPrompt{
 		FlagName:       "blocked-cidrs",
 		Title:          "Blocked CIDRs (host firewall)",
-		Description:    "CIDRs to drop before any other rule, including already-open connections (comma-separated). Leave empty to block nothing.",
-		Placeholder:    "203.0.113.0/24",
+		Description:    "CIDRs or domain names to drop before any other rule, including already-open connections (comma-separated). Leave empty to block nothing.",
+		Placeholder:    "203.0.113.0/24,bad.corp.example.com",
 		EffectiveValue: eff,
 		Target:         target,
 		Validate:       validateBlockedCIDRs,

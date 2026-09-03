@@ -217,17 +217,31 @@ func TestHostConfigFromTable_AllFQDNMgmtDoesNotSeedEmpty(t *testing.T) {
 	assert.NoError(t, got.Validate())
 }
 
-// TestHostConfigFromTable_OnlyMgmtTakesFQDNs confirms the other blocks stayed
-// literal-only: a resolver answer must never be able to change what the block
-// list drops or which pods reach host services.
-func TestHostConfigFromTable_OnlyMgmtTakesFQDNs(t *testing.T) {
+// TestHostConfigFromTable_BlockListKeepsFQDNs is the block-list half of the
+// same data-loss guard as the mgmt cases above. The projected list is assigned
+// back over Table.Blocked.CIDRs and persisted, so dropping a name here would
+// take one `block node reconfigure` to rewrite the operator's names out of the
+// source of truth — and quietly stop denying every host they named.
+func TestHostConfigFromTable_BlockListKeepsFQDNs(t *testing.T) {
 	tbl := firewall.NewTable()
-	tbl.Blocked.CIDRs = []string{"203.0.113.0/24", "bad.corp.example.com"}
+	tbl.Blocked.CIDRs = []string{"203.0.113.0/24", "bad.corp.example.com", "2001:db8::/32"}
+
+	got := hostConfigFromTable(tbl)
+
+	assert.Equal(t, []string{"203.0.113.0/24", "bad.corp.example.com"}, got.BlockedCIDRs,
+		"the name survives the projection; only the IPv6 member is dropped")
+	assert.NoError(t, got.Validate())
+}
+
+// TestHostConfigFromTable_PodCIDRStaysLiteralOnly confirms the one block that
+// did not widen: it is auto-detected from the node rather than typed, so there
+// is no name for it to carry.
+func TestHostConfigFromTable_PodCIDRStaysLiteralOnly(t *testing.T) {
+	tbl := firewall.NewTable()
 	tbl.InCluster.CIDRs = []string{"pods.corp.example.com"}
 
 	got := hostConfigFromTable(tbl)
 
-	assert.Equal(t, []string{"203.0.113.0/24"}, got.BlockedCIDRs, "a name in the block list is dropped")
 	assert.Empty(t, got.PodCIDR, "a name is not usable as the pod CIDR")
 	assert.NoError(t, got.Validate())
 }
