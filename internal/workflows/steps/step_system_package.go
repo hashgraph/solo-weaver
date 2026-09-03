@@ -180,6 +180,68 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 		})
 }
 
+// InstallOptionalSystemPackage installs a system package that is an operator
+// convenience rather than a cluster dependency. Unlike InstallSystemPackage,
+// nothing here can fail the workflow: failures are logged and reported as
+// skipped, which automa does not count as a failure. Its phase is hard-fail and
+// StepBuilder has no per-step opt-out, so this is how an optional package stays
+// optional.
+//
+// It has no rollback: a convenience package is left in place if a later step
+// fails.
+func InstallOptionalSystemPackage(name string, installer func() (software.Package, error)) *automa.StepBuilder {
+	stepId := fmt.Sprintf("install-%s", name)
+
+	return automa.NewStepBuilder().
+		WithId(stepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			pkg, err := validateInstaller(name, installer)
+			if err != nil {
+				logx.As().Warn().Err(err).Str("package", name).
+					Msg("Optional package installer is unavailable; continuing without it")
+				return automa.SkippedReport(stp,
+					automa.WithDetail(fmt.Sprintf("Optional package %q could not be resolved", name)))
+			}
+
+			if pkg.IsInstalled() {
+				logx.As().Info().Msgf("Optional package %q is already installed, skipping installation", name)
+				return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
+					AlreadyInstalled: "true",
+				}))
+			}
+
+			logx.As().Debug().Msgf("Installing optional package %s...", name)
+
+			info, err := pkg.Install()
+			if err != nil {
+				logx.As().Warn().Err(err).Str("package", name).
+					Msg("Optional package could not be installed; continuing without it")
+				return automa.SkippedReport(stp,
+					automa.WithDetail(fmt.Sprintf("Optional package %q could not be installed", name)))
+			}
+
+			logx.As().Info().
+				Str("name", info.Name).
+				Str("version", info.Version).
+				Str("status", string(info.Status)).
+				Msgf("Optional package %q is installed by this step successfully", name)
+
+			return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
+				"packageName":    info.Name,
+				"packageVersion": info.Version,
+				"packageStatus":  string(info.Status),
+			}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Installing optional package %q", name)
+			return ctx, nil
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, report *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, report,
+				"Optional package %q installation step completed", name)
+		})
+}
+
 // RemoveSystemPackage removes a system package using the provided installer function.
 // The installer function should return a software.Package instance that knows how to uninstall the package.
 // If the package is not installed, it will skip the removal.
