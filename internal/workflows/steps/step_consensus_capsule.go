@@ -390,6 +390,12 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
+									// The operator merges ImagePullSecrets from every container's
+									// SoftwareVersion onto the pod (and the node's ServiceAccount),
+									// so setting it here covers every container in the pod — the UC
+									// sidecar included — without giving UC its own SoftwareVersion
+									// (which would override the operator's default UC image).
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
 								},
 								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
 								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
@@ -529,6 +535,17 @@ func splitConsensusImage(full string) (repository, imageName string) {
 		return full[:i], full[i+1:]
 	}
 	return "", full
+}
+
+// consensusImagePullSecrets maps an optional image-pull secret name to the
+// operator's ImagePullSecrets slice. An empty name yields nil (no secret —
+// public images), otherwise a single LocalObjectReference the operator threads
+// onto the pod and the node's ServiceAccount.
+func consensusImagePullSecrets(name string) []corev1.LocalObjectReference {
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	return []corev1.LocalObjectReference{{Name: name}}
 }
 
 // valueOrDefault returns v when non-empty (after trimming), otherwise def.

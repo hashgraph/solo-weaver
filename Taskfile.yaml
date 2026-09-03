@@ -5,7 +5,7 @@ silent: false
 output: prefixed
 
 # Optional local secrets (not committed; see .env.example). Provides
-# GITHUB_USER / GITHUB_ACCESS_TOKEN to tasks like uat:consensus:ghcr-creds.
+# GITHUB_USER / GITHUB_ACCESS_TOKEN to tasks like uat:consensus:secrets.
 dotenv: ['.env']
 vars:
   OS: [ linux ]

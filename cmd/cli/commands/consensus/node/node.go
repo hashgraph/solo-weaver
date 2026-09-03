@@ -20,6 +20,7 @@ var (
 	flagDeploymentPkgDir string
 	flagGrpcTlsSecret    string
 	flagSigningSecret    string
+	flagImagePullSecret  string
 	flagProfile          string
 	flagContainerName    string
 	flagJavaHeapMin      string
@@ -50,6 +51,7 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
+	nodeCmd.PersistentFlags().StringVar(&flagImagePullSecret, "image-pull-secret", models.ConsensusDefaultImagePullSecret, "Name of a docker-registry Secret in the namespace used to pull private consensus/UC images; the operator threads it onto the pods. Empty to disable (public images)")
 
 	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
 	// the explicit Java heap is required or the node stalls on startup.

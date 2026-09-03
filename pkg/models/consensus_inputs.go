@@ -23,6 +23,13 @@ const (
 	ConsensusDefaultCPURequest    = "250m"
 	ConsensusDefaultMemoryLimit   = "2Gi"
 	ConsensusDefaultMemoryRequest = "1Gi"
+
+	// ConsensusDefaultImagePullSecret is the name of the image-pull secret the
+	// operator threads onto the consensus-node and UC containers so they can pull
+	// the private consensus/UC images (e.g. from ghcr.io). It must name a
+	// docker-registry secret that exists in the node's namespace; create it with
+	// `task uat:consensus:secrets`. Empty disables it (public images only).
+	ConsensusDefaultImagePullSecret = "ghcr-creds"
 )
 
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
@@ -39,6 +46,11 @@ type ConsensusNodeInputs struct {
 
 	ConsensusImageRepo string `json:"consensusImageRepo"`
 	ConsensusImageTag  string `json:"consensusImageTag"`
+
+	// ImagePullSecret names a docker-registry secret in the node's namespace that
+	// the operator threads onto the consensus-node and UC containers for pulling
+	// private images. Defaults to ConsensusDefaultImagePullSecret; empty disables it.
+	ImagePullSecret string `json:"imagePullSecret,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 
