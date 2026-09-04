@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
@@ -25,12 +26,23 @@ type fakeResolver struct {
 	mu      sync.Mutex
 	answers map[string][]string
 	calls   []string
+	// hang names block until their own context is cancelled, standing in for a
+	// resolver that never answers (a dropped query under the default
+	// resolv.conf spends longer than resolveTimeout on one name).
+	hang map[string]bool
 }
 
-func (f *fakeResolver) LookupIPv4(_ context.Context, host string) ([]netip.Addr, error) {
+func (f *fakeResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, host)
+	hang := f.hang[host]
 	f.mu.Unlock()
+
+	if hang {
+		<-ctx.Done()
+		return nil, errorx.ExternalError.New("timed out: %s", host)
+	}
+
 	raw, ok := f.answers[host]
 	if !ok || len(raw) == 0 {
 		return nil, errorx.ExternalError.New("no such host: %s", host)
@@ -248,4 +260,82 @@ func TestResolveRemotes_UnresolvableNameDoesNotFail(t *testing.T) {
 	// Returned, never logged: under --output json a log line lands on stdout and
 	// corrupts the digest document the daemon parses.
 	require.Equal(t, []string{"gone.example.com"}, unresolved)
+}
+
+// shrinkResolveTimeout keeps the hang cases from waiting out a real 2s deadline.
+func shrinkResolveTimeout(t *testing.T) {
+	t.Helper()
+	prev := resolveTimeout
+	resolveTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { resolveTimeout = prev })
+}
+
+func TestResolveHosts_OneHangingNameDoesNotFailTheOthers(t *testing.T) {
+	shrinkResolveTimeout(t)
+	r := &fakeResolver{
+		answers: map[string][]string{
+			"slow.example.com": {"10.9.9.9"},
+			"fast.example.com": {"10.1.0.1"},
+		},
+		hang: map[string]bool{"slow.example.com": true},
+	}
+
+	// A shared pass deadline cancels every in-flight lookup when it expires, so
+	// one unanswered name takes down the names beside it. Each lookup owns its
+	// own deadline instead.
+	res := resolveHosts(context.Background(), r,
+		[]string{"slow.example.com", "fast.example.com"})
+
+	require.Equal(t, []string{"10.1.0.1"}, res.byName["fast.example.com"],
+		"a name that answered must survive a sibling that never did")
+	require.Equal(t, []string{"slow.example.com"}, res.unresolved)
+}
+
+func TestResolveRemotes_UnresolvedPeerDoesNotDisturbOtherPolicies(t *testing.T) {
+	shrinkResolveTimeout(t)
+	r := &fakeResolver{
+		answers: map[string][]string{"ok.example.com": {"10.1.0.1"}},
+		hang:    map[string]bool{"dead.example.com": true},
+	}
+	rec := &Reconciler{resolver: r}
+
+	inbound, _, unresolved := rec.resolveRemotes(context.Background(),
+		nd(
+			conn("publisher", "dead.example.com", "*"),
+			conn("partner", "ok.example.com", "*"),
+			conn("restricted", "10.2.0.1", "*"),
+		),
+		nd())
+
+	require.Equal(t, []string{"dead.example.com"}, unresolved)
+	require.Equal(t, nd(
+		conn("partner", "10.1.0.1", "*"),
+		conn("restricted", "10.2.0.1", "*"),
+	), inbound, "only the unresolved peer is dropped")
+}
+
+func TestCheck_UnresolvedPeerKeepsItsPolicyListenerPort(t *testing.T) {
+	shrinkResolveTimeout(t)
+
+	// One inbound publisher endpoint whose remote is a name that will not
+	// resolve. local.port is the BLOCK NODE's listener, so it has nothing to do
+	// with whether the peer on the other end can be looked up.
+	rec := &Reconciler{
+		fetcher: &fakeFetcher{inbound: nd(NetworkConnection{
+			Local:    Endpoint{Address: "10.0.0.5", Port: "40840"},
+			Remote:   Endpoint{Address: "dead.example.com", Port: "*"},
+			Category: "publisher",
+		})},
+		resolver: &fakeResolver{hang: map[string]bool{"dead.example.com": true}},
+	}
+
+	res, err := rec.Check(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"dead.example.com"}, res.Unresolved)
+	require.Empty(t, res.Desired["bn-publisher"],
+		"the peer itself cannot be classified — that part is expected")
+	require.Equal(t, []string{"40840"}, res.DesiredPorts["bn-publisher"],
+		"the listener port must survive: deriving it from the resolved payload lets an "+
+			"unreachable peer empty <policy>_ports and stop the rule matching at all")
 }

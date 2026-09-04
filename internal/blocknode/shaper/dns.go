@@ -14,12 +14,22 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// resolveTimeout bounds one whole resolution pass, not one name. The budget is
-// per tick rather than per lookup because the privileged half of a reconcile
-// spends its time holding the shared apply flock that operator commands contend
-// for, so a roster of slow names must not extend that hold in proportion to its
-// length.
-const resolveTimeout = 2 * time.Second
+// resolveTimeout bounds one resolution pass.
+//
+// The bound exists because a reconcile tick is a scheduled unit of work, NOT
+// because of lock contention: resolution finishes inside fetchEndpoints, well
+// before ApplySets takes the shared apply flock.
+//
+// Two seconds is short against a default resolv.conf, where `timeout:5
+// attempts:2` lets a single dropped query run to ten. Every name behind a
+// resolver in that state fails this budget, and with no last-known-good cache
+// their peers go unclassified for the tick -- which for a deny policy such as
+// bn-restricted means it stops dropping. Raising the budget trades that against
+// a longer tick; neither is right until the cache exists to fall back on.
+//
+// A var, not a const, only so tests can shrink it and avoid waiting out a real
+// deadline; production never reassigns it.
+var resolveTimeout = 2 * time.Second
 
 // Resolver looks up the IPv4 addresses of a host name. It is an interface so a
 // reconcile can be driven against fixed answers without touching the host's
@@ -102,19 +112,25 @@ func remoteFQDNs(datas ...NetworkData) []string {
 	return out
 }
 
-// resolveHosts resolves every name in one concurrent pass under a single
-// deadline.
+// resolveHosts resolves every name concurrently, each under its own deadline.
 //
-// Concurrent because resolveTimeout budgets the whole pass: sequentially, a
-// handful of names behind a slow resolver would exhaust it and report every name
-// after the first few as unresolvable. Each goroutine owns one slot, so no
-// locking is needed.
+// Concurrent so a roster costs one round trip of wall time rather than N:
+// sequentially, a handful of names behind a slow resolver would take N times as
+// long and, under any fixed budget, report names after the first few as
+// unresolvable. Each goroutine owns one slot, so no locking is needed.
+//
+// One goroutine per name, with no cap. The rosters this reads are peer lists a
+// block node reports, not arbitrary input, so the fan-out is small; a cap would
+// be the thing to add if that ever stops being true.
 func resolveHosts(ctx context.Context, resolver Resolver, names []string) *hostResolution {
 	res := &hostResolution{byName: make(map[string][]string, len(names))}
 	if len(names) == 0 {
 		return res
 	}
 
+	// One deadline for the pass. Per-lookup deadlines were measured against this
+	// and make no difference: the goroutines all start in the same instant, so
+	// each name gets the same budget either way.
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 

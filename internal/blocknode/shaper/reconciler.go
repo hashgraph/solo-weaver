@@ -188,16 +188,23 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 }
 
 // fetchEndpoints reads both statusz endpoints, resolves any domain names in
-// them to addresses, buckets the result into the desired per-category membership
-// view, and returns the resolved inbound NetworkData too: listener-port
-// derivation reads local.port straight off the inbound endpoints (which the
-// membership bucketize discards), so the port pass needs the payload rather than
-// the bucketized view.
+// them to addresses, and buckets the result into the desired per-category
+// membership view. It also returns the inbound NetworkData, because listener-port
+// derivation reads local.port straight off the endpoints and the bucketized view
+// discards it.
+//
+// Resolution feeds the membership view only, and the port pass gets the payload
+// as it arrived. Listener ports are the block node's own, so they have nothing to
+// do with whether a peer's remote name resolved -- but expansion drops the
+// endpoint of a name that did not, and that endpoint carries the local.port. Handing
+// the resolved copy to desiredPorts therefore empties a policy's `<name>_ports`
+// set whenever the peer on the other side of the connection cannot be looked up,
+// which is a listener disappearing for a reason entirely unrelated to it.
 //
 // Resolution happens here, ahead of both bucketize and the port pass, so every
-// consumer downstream sees addresses only. That is what keeps it out of Check's
-// compound-element conversion and out of the apply's CIDR validation, neither of
-// which tolerates a name.
+// membership consumer downstream sees addresses only. That is what keeps it out
+// of Check's compound-element conversion and out of the apply's CIDR validation,
+// neither of which tolerates a name.
 func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, []string, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
@@ -207,8 +214,8 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, Net
 	if err != nil {
 		return nil, NetworkData{}, nil, err
 	}
-	inbound, outbound, unresolved := r.resolveRemotes(ctx, inbound, outbound)
-	return bucketizeEndpoints(inbound, outbound), inbound, unresolved, nil
+	resolvedIn, resolvedOut, unresolved := r.resolveRemotes(ctx, inbound, outbound)
+	return bucketizeEndpoints(resolvedIn, resolvedOut), inbound, unresolved, nil
 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,
