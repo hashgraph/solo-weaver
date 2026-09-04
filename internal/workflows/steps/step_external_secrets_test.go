@@ -7,7 +7,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
@@ -171,4 +173,28 @@ func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
 	uninstalled, err := uninstallESOChart(hm, spec)
 	require.ErrorIs(t, err, wantErr)
 	assert.False(t, uninstalled)
+}
+
+func Test_checkClusterReachable_Reachable(t *testing.T) {
+	require.NoError(t, checkClusterReachable(func() (bool, error) { return true, nil }))
+}
+
+func Test_checkClusterReachable_NotReachable(t *testing.T) {
+	err := checkClusterReachable(func() (bool, error) { return false, nil })
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalState),
+		"an absent cluster is an IllegalState, got %v", err)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok, "the failure must carry operator hints")
+	assert.Contains(t, hints, "  solo-provisioner kube cluster install")
+}
+
+// ClusterExists returns no error today; the branch is covered because the
+// signature allows one.
+func Test_checkClusterReachable_ProbeError(t *testing.T) {
+	wantErr := errors.New("probe boom")
+	err := checkClusterReachable(func() (bool, error) { return false, wantErr })
+	require.ErrorIs(t, err, wantErr)
+	assert.True(t, errorx.IsOfType(err, errorx.ExternalError),
+		"a failed probe is an ExternalError, got %v", err)
 }

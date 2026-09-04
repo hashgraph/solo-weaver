@@ -44,7 +44,7 @@ shows up in the `report_path=…` log field and in the JSON summary object.
 
 ## Error-handling flags
 
-Workflow commands (`block node …`, `kube cluster …`, `alloy cluster …`) accept one of these.
+Workflow commands (`block node …`, `kube cluster …`, `alloy cluster …`, `eso operator …`) accept one of these.
 They are mutually exclusive.
 
 | Flag | On failure | Default |
