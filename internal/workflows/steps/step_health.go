@@ -122,7 +122,11 @@ var soloOperatorCRDs = []string{
 	"envoyproxies.operator.solo.hedera.com",
 	"haproxycapsules.operator.solo.hedera.com",
 	"helmcapsules.operator.solo.hedera.com",
-	"networkoperations.operator.solo.hedera.com",
+	"networkgeneses.operator.solo.hedera.com",
+	"networkupgradeexecutes.operator.solo.hedera.com",
+	"networkupgradefreezeaborts.operator.solo.hedera.com",
+	"networkupgradefreezes.operator.solo.hedera.com",
+	"networkupgradeprepares.operator.solo.hedera.com",
 	"orbits.operator.solo.hedera.com",
 }
 
