@@ -440,26 +440,36 @@ func (m *Manager) DeleteDevice(ctx context.Context, dir string) error {
 	})
 }
 
-// TeardownEgress removes the entire egress tc shape configuration — every egress
-// class and the egress device root — then re-renders the boot script to its empty
-// default and applies it, dropping the live HTB hierarchy on the physical NIC.
+// TeardownEgress is the narrower half of egress teardown — it only drops the live
+// HTB hierarchy (every egress class + the egress device root) on the physical NIC.
+// Used by block node uninstall: the caller (TcEgressServiceTeardown) deletes the
+// bandwidth-shaper unit and boot script itself right after, so this skips
+// re-rendering a script and reconciling+restarting a unit that won't survive the
+// next step — no systemd/D-Bus dependency.
 //
 // Unlike DeleteClass/DeleteDevice (the operator-facing single-object verbs, which
 // deliberately refuse to delete a device's default class or a still-referenced
-// class), this is the wholesale teardown used when traffic shaping is disabled on
-// an existing block node: the caller has already removed the BN network policies
-// that reference these classes, so the per-object safety guards no longer apply.
-// It is idempotent — with no egress config present it re-renders the empty script
-// and returns nil.
-//
-// unitWillBeRemoved is true when the caller deletes the bandwidth-shaper unit and
-// boot script itself right after (block node uninstall, via TcEgressServiceTeardown):
-// re-rendering a script that's about to be removed, and reconciling+restarting a
-// unit that's about to be deleted, would be wasted work and an unnecessary D-Bus
-// dependency on the uninstall path. It is false for the `reconfigure
-// --traffic-shaping-enabled=false` caller, which keeps the unit installed with an
-// empty script so a reboot doesn't resurrect the old shape.
-func (m *Manager) TeardownEgress(ctx context.Context, unitWillBeRemoved bool) error {
+// class), this is the wholesale teardown used when traffic shaping is torn down:
+// the caller has already removed the BN network policies that reference these
+// classes, so the per-object safety guards no longer apply. It is idempotent —
+// with no egress config present it is a no-op.
+func (m *Manager) TeardownEgress(ctx context.Context) error {
+	return m.teardownEgress(ctx, applyUnshapeDiscard)
+}
+
+// DisableEgress is the fuller half: `block node reconfigure
+// --traffic-shaping-enabled=false` has no follow-up step, so unlike TeardownEgress
+// it also re-renders the boot script to its empty default and reconciles+restarts
+// the unit over D-Bus — otherwise a reboot (or the unit simply running again)
+// would resurrect the old shape. Idempotent.
+func (m *Manager) DisableEgress(ctx context.Context) error {
+	return m.teardownEgress(ctx, applyUnshape)
+}
+
+// teardownEgress is the shared implementation behind TeardownEgress and
+// DisableEgress: clear the class/device registry, then apply mode to reconcile
+// the boot script and/or live kernel state per their differing needs.
+func (m *Manager) teardownEgress(ctx context.Context, mode egressApplyMode) error {
 	return m.withLock(func() error {
 		classes, err := loadClassesForDir(DirEgress)
 		if err != nil {
@@ -473,8 +483,8 @@ func (m *Manager) TeardownEgress(ctx context.Context, unitWillBeRemoved bool) er
 		if err := removeDevice(DirEgress); err != nil {
 			return err
 		}
-		if unitWillBeRemoved {
-			if err := m.applyEgressScript(ctx, "", applyUnshapeDiscard); err != nil {
+		if mode == applyUnshapeDiscard {
+			if err := m.applyEgressScript(ctx, "", mode); err != nil {
 				return errorx.Decorate(err, "egress shape config removed but live qdisc teardown failed")
 			}
 			return nil
@@ -485,7 +495,7 @@ func (m *Manager) TeardownEgress(ctx context.Context, unitWillBeRemoved bool) er
 		// device/class registry now empty, the normal render falls through to the
 		// default shaping render and would re-apply the stock HTB hierarchy instead
 		// of removing it.
-		if err := m.applyEgressScript(ctx, "", applyUnshape); err != nil {
+		if err := m.applyEgressScript(ctx, "", mode); err != nil {
 			return errorx.Decorate(err,
 				"egress shape config removed but boot script re-render failed; restart bandwidth-shaper.service to sync")
 		}
