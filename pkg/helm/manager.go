@@ -430,7 +430,6 @@ func applyReuseValues(client *action.Upgrade, reuseValues bool, hasValueOpts boo
 
 // List lists Helm releases in the specified namespace
 // If allNamespaces is true, it lists releases in all namespaces
-// It only lists releases in deployed state
 func (h *helmManager) List(namespace string, allNamespaces bool) ([]*release.Release, error) {
 	h.log.Info().Str("namespace", namespace).Msg("Listing Helm releases")
 	l := h.log.With().Str("namespace", namespace).Logger()
@@ -443,8 +442,6 @@ func (h *helmManager) List(namespace string, allNamespaces bool) ([]*release.Rel
 
 	listClient := action.NewList(actionConfig)
 
-	// Only list deployed
-	listClient.Deployed = true
 	listClient.All = true
 	listClient.SetStateMask()
 
