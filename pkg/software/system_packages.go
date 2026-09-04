@@ -33,6 +33,14 @@ func NewNftables() (Package, error) {
 	return NewPackageInstaller(WithPackageName("nftables"), WithPackageOptions(manager.Options{AssumeYes: true}))
 }
 
+// NewBashCompletion creates an installer for the bash-completion package, which
+// provides the dynamic loader that sources the per-command completion files
+// weaver writes. It is an operator convenience, not a cluster dependency, so it
+// is wired up through steps.InstallOptionalSystemPackage.
+func NewBashCompletion() (Package, error) {
+	return NewPackageInstaller(WithPackageName("bash-completion"), WithPackageOptions(manager.Options{AssumeYes: true}))
+}
+
 func NewContainerd() (Package, error) {
 	return NewPackageInstaller(WithPackageName("containerd"), WithPackageOptions(manager.Options{AssumeYes: true}))
 }

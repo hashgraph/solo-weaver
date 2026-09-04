@@ -58,6 +58,7 @@ func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 		steps.SetupKubectl(mr),
 		steps.SetupHelm(mr), // required by MetalLB setup, so we install it earlier
 		steps.SetupK9s(mr),
+		steps.SetupShellCompletion(),
 
 		// CRI-O
 		steps.SetupCrio(mr),
@@ -127,6 +128,9 @@ func UninstallClusterWorkflow() *automa.WorkflowBuilder {
 
 		// Remove configuration directories
 		steps.RemoveConfigDirectories(),
+
+		// Remove the kubectl/helm bash completion loaders
+		steps.RemoveShellCompletionLoaders(),
 
 		// Cleanup weaver files (preserving downloads)
 		steps.CleanupWeaverFiles(),
