@@ -39,12 +39,14 @@ type setApplier interface {
 // digests it (no privilege, no nft), while Apply additionally reads the live nft
 // sets, diffs, and writes only the changed policies (root).
 //
-// The three collaborators are seams so the orchestration is testable off-host:
-// fetcher reads statusz, lister reads live nft membership, applier writes it.
+// The four collaborators are seams so the orchestration is testable off-host:
+// fetcher reads statusz, resolver turns the domain names statusz reports into
+// addresses, lister reads live nft membership, applier writes it.
 type Reconciler struct {
-	fetcher endpointFetcher
-	lister  elementLister
-	applier setApplier
+	fetcher  endpointFetcher
+	resolver Resolver
+	lister   elementLister
+	applier  setApplier
 }
 
 // NewReconciler wires the production Reconciler: statusz is read over HTTP from
@@ -52,9 +54,10 @@ type Reconciler struct {
 // written via the network policy Manager.
 func NewReconciler(statuszURL string) *Reconciler {
 	return &Reconciler{
-		fetcher: NewStatuszClient(statuszURL),
-		lister:  policy.NewExecRunner(),
-		applier: policy.NewManager(),
+		fetcher:  NewStatuszClient(statuszURL),
+		resolver: NewNetResolver(),
+		lister:   policy.NewExecRunner(),
+		applier:  policy.NewManager(),
 	}
 }
 
@@ -68,6 +71,10 @@ type Result struct {
 	Skipped   []string `json:"skipped"`
 	Unchanged []string `json:"unchanged"`
 	Digest    string   `json:"digest"`
+	// Unresolved names statusz reported that produced no address this tick.
+	// Their endpoints contributed nothing, so a policy whose only member was one
+	// of them is now empty.
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 // CheckResult is the unprivileged detect path's output: the sha256 digest of the
@@ -80,6 +87,10 @@ type CheckResult struct {
 	Digest       string              `json:"desired-digest"`
 	Desired      map[string][]string `json:"desired"`
 	DesiredPorts map[string][]string `json:"desired-ports"`
+	// Unresolved carries the same meaning as Result.Unresolved. It is a field on
+	// the one JSON document rather than a log line because --output json puts log
+	// lines on stdout, where they would corrupt the digest the daemon parses.
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 // Check fetches both statusz endpoints, buckets them into the desired
@@ -88,7 +99,7 @@ type CheckResult struct {
 // reads no nft state and requires no privilege — it is the unprivileged detect
 // path.
 func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
-	ce, inbound, err := r.fetchEndpoints(ctx)
+	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -101,6 +112,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 		Digest:       membershipDigest(combinedCanonical(canon, portsDesired)),
 		Desired:      canon,
 		DesiredPorts: portsDesired,
+		Unresolved:   unresolved,
 	}, nil
 }
 
@@ -115,7 +127,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 // by its policy name (`bn-publisher`), a listener-port set by its nft set name
 // (`bn-publisher_ports`) — alongside the digest, which covers both dimensions.
 func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
-	ce, inbound, err := r.fetchEndpoints(ctx)
+	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -152,7 +164,7 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	}
 	sort.Strings(changed)
 
-	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed)}
+	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed), Unresolved: unresolved}
 
 	// ApplySets is called even with no deltas. Besides writing the kernel it also
 	// re-persists the on-disk artifact, and a converged node produces no deltas
@@ -175,21 +187,35 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// fetchEndpoints reads both statusz endpoints, buckets them into the desired
-// per-category membership view, and returns the raw inbound NetworkData too:
-// listener-port derivation reads local.port straight off the inbound endpoints
-// (which the membership bucketize discards), so the port pass needs the raw
-// inbound payload rather than the bucketized view.
-func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, error) {
+// fetchEndpoints reads both statusz endpoints, resolves any domain names in
+// them to addresses, and buckets the result into the desired per-category
+// membership view. It also returns the inbound NetworkData, because listener-port
+// derivation reads local.port straight off the endpoints and the bucketized view
+// discards it.
+//
+// Resolution feeds the membership view only, and the port pass gets the payload
+// as it arrived. Listener ports are the block node's own, so they have nothing to
+// do with whether a peer's remote name resolved -- but expansion drops the
+// endpoint of a name that did not, and that endpoint carries the local.port. Handing
+// the resolved copy to desiredPorts therefore empties a policy's `<name>_ports`
+// set whenever the peer on the other side of the connection cannot be looked up,
+// which is a listener disappearing for a reason entirely unrelated to it.
+//
+// Resolution happens here, ahead of both bucketize and the port pass, so every
+// membership consumer downstream sees addresses only. That is what keeps it out
+// of Check's compound-element conversion and out of the apply's CIDR validation,
+// neither of which tolerates a name.
+func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, []string, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, err
+		return nil, NetworkData{}, nil, err
 	}
 	outbound, err := r.fetcher.OutboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, err
+		return nil, NetworkData{}, nil, err
 	}
-	return bucketizeEndpoints(inbound, outbound), inbound, nil
+	resolvedIn, resolvedOut, unresolved := r.resolveRemotes(ctx, inbound, outbound)
+	return bucketizeEndpoints(resolvedIn, resolvedOut), inbound, unresolved, nil
 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,

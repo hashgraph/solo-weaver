@@ -738,8 +738,96 @@ differ from what the operator sees. All of it is called out in
 `docs/commands/network/firewall.md`; prefer a literal or an `/etc/hosts` pin on
 high-value nodes.
 
-Out of scope for now: IPv6/AAAA, TTL-aware polling, and names anywhere on the
-workload policy plane.
+Out of scope for now: IPv6/AAAA and TTL-aware polling. Names on the workload policy
+plane are handled separately, and from the other direction — see below.
+
+### FQDNs in statusz peer rosters
+
+The workload policy plane also handles domain names, but from the opposite direction, and
+nothing about the mechanism above carries over.
+
+Every `network policy` flag stays literal-only, as noted above. Names arrive from the block
+node instead: it composes its statusz responses from the `application-state` roster files
+under `/mnt/fast-storage/application-state`, and `remote.address` is echoed through from
+whatever the operator wrote there. Operators author those rosters by hostname, so a name in
+`activeEndpoints[].remote.address` is the common case rather than the exception.
+
+Resolution therefore happens on the way *in*, in the `block node reconcile-shaper` worker
+(`internal/blocknode/shaper/dns.go`), not against anything weaver persists. The daemon is not
+involved: it discovers the statusz URL, execs the worker, and reads one digest string back —
+it never sees a payload.
+
+**Where the pass sits is the whole design.** `Reconciler.fetchEndpoints` resolves immediately
+after the fetch, ahead of both `bucketizeEndpoints` and the listener-port derivation, because
+that is the one point upstream of both places a name is fatal:
+
+- `Reconciler.Check` reaches `policy.CompoundElement` through `canonicalDesiredMembership`,
+  which rejects a name outright — so an unresolved name fails the *unprivileged* detect path,
+  and the daemon faults before the apply is ever reached.
+- `Manager.applySet` validates with `sanity.ValidateCIDR` before writing, and aborts the whole
+  batch — so policies sorted after the offending one are never applied either.
+
+Resolving any lower leaves one of the two intact. Every consumer downstream of
+`fetchEndpoints` sees addresses only.
+
+`isRemoteFQDN` decides what counts as a name, and is a *positive* test — it must look like a
+hostname — rather than the host firewall's "anything that is not a literal". Statusz's
+vocabulary carries `""` for fallthrough rows and `"*"` for any-address remotes, and a
+not-a-literal test would hand both to the resolver. Anything the predicate does not recognise
+flows through untouched. A single label is not resolved either: doing so would make the answer
+depend on the node's search domain, so two nodes reading one roster could classify a peer
+differently.
+
+Expansion replaces one endpoint with one endpoint per resolved address, preserving every other
+field. Three details are load-bearing:
+
+- Addresses are emitted **bare, not masked**. `hostCIDR` applies the mask for the plain sets,
+  and `net.JoinHostPort` needs an unmasked host for `bn-backfill`'s compound `ip . port`
+  elements; a mask here breaks the compound path.
+- Answers are **sorted** by `netip.Addr.Compare`. DNS rotates record order between queries, so
+  an unsorted expansion makes every poll look like a membership change and rewrites both the
+  live sets and the persisted artifact for nothing.
+- Identical connections are **collapsed**. Two endpoints behind one name, or a name resolving
+  to an address a second endpoint already reports literally, would otherwise put the same
+  element in a set twice inside one `nft` transaction.
+
+**The shaper package logs nothing, deliberately.** Under `--output json` the root command
+routes log lines to stdout as NDJSON, and stdout is where the digest document goes and where
+`privexec.ReconcileShaperCheck` parses it back — so one log line on the `Check` path makes the
+daemon's decode fail and faults the poll loop into a retry-forever backoff, while the worker
+still exits 0. Names that produced no answer are returned instead, surfacing as `Unresolved` on
+`CheckResult` and `Result`, and the command layer prints them on the human-readable path only.
+`TestPackageEmitsNoLogs` holds the line.
+
+Failure is the inverse of the host firewall's, and weaker. A name that does not resolve
+contributes nothing and its endpoint is dropped for that tick — the worker still exits 0,
+because a non-zero exit faults the daemon's statusz responsibility and retries the same
+unresolvable name on a backoff rather than getting on with the other policies. There is no
+never-shrink rule and no last-known-good cache yet, so the peer is unclassified until a later
+poll succeeds: for a `--stamp` policy that costs prioritisation, and for `bn-restricted` it
+means a quarantined peer is not dropped for that window. A cache is a tracked follow-up.
+
+**Listener ports are derived from the payload as it arrived, not the resolved copy.** A
+policy's `<name>_ports` set holds the block node's own listener, which has nothing to do with
+whether the peer at the other end of the connection could be looked up — but expansion drops
+the endpoint of a name that did not resolve, and that endpoint is where `local.port` was read
+from. Feeding the resolved copy to `desiredPorts` therefore empties the port set and stops the
+rule matching at all, for a reason unrelated to the port. `fetchEndpoints` hands the two passes
+different payloads on purpose.
+
+Resolution runs concurrently under a single two-second budget for the pass. A per-lookup
+deadline was measured against a shared one and makes no difference — the goroutines all start
+in the same instant, so each name gets the same budget either way. The bound is there because a
+reconcile tick is a scheduled unit of work; unlike the firewall's, it is **not** about holding
+the apply flock, since resolution finishes before `ApplySets` takes it.
+
+Two seconds is short against a default `resolv.conf`, where `timeout:5 attempts:2` lets one
+dropped query run to ten. A resolver in that state fails every name in the roster, not just the
+unlucky one, and with no cache to fall back on their peers go unclassified for the tick — for
+`bn-restricted` that means it stops dropping. Raising the budget trades that against a longer
+tick, and neither setting is right until there is a last-known-good answer to fall back on.
+
+A records only.
 
 ### Adjusting a live node with the `network` commands
 
