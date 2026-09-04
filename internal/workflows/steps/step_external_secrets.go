@@ -8,16 +8,19 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
+	PreCheckExternalSecretsStepId  = "precheck-external-secrets"
 	SetupExternalSecretsStepId     = "setup-external-secrets"
 	InstallExternalSecretsStepId   = "install-external-secrets"
 	IsExternalSecretsReadyStepId   = "is-external-secrets-ready"
@@ -35,6 +38,7 @@ func SetupExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
+		preCheckExternalSecrets(),
 		installExternalSecrets(spec),
 		isExternalSecretsReady(spec),
 	).
@@ -59,6 +63,7 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(TeardownExternalSecretsStepId).Steps(
+		preCheckExternalSecrets(),
 		uninstallExternalSecrets(spec),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -70,6 +75,58 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator torn down successfully")
+		})
+}
+
+// checkClusterReachable fails when the cluster is unreachable, so that surfaces
+// here instead of as a cryptic Helm error from the first IsInstalled call. probe
+// is kube.ClusterExists in production; it is a parameter so this can be
+// unit-tested without a cluster.
+func checkClusterReachable(probe func() (bool, error)) error {
+	// ClusterExists collapses every failure to (false, nil) today; this branch
+	// exists because the signature allows an error.
+	exists, err := probe()
+	if err != nil {
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to probe Kubernetes cluster reachability"),
+			reasons.PreconditionNotMet,
+			"Ensure the cluster is installed and its API server is reachable:",
+			"  solo-provisioner kube cluster install",
+			"  kubectl cluster-info",
+		)
+	}
+	if !exists {
+		return errx.Decorate(
+			errorx.IllegalState.New("Kubernetes cluster is not reachable"),
+			reasons.PreconditionNotMet,
+			"Install or verify the cluster first:",
+			"  solo-provisioner kube cluster install",
+			"Confirm the API server is reachable:",
+			"  kubectl cluster-info",
+		)
+	}
+	return nil
+}
+
+// preCheckExternalSecrets gates both ESO workflows, failing before any Helm call
+// rather than deep inside one.
+func preCheckExternalSecrets() automa.Builder {
+	return automa.NewStepBuilder().WithId(PreCheckExternalSecretsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := checkClusterReachable(kube.ClusterExists); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking prerequisites")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Prerequisite checks failed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Prerequisites satisfied")
 		})
 }
 
