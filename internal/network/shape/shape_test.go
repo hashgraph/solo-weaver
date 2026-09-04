@@ -161,6 +161,44 @@ func TestApplyEgressScript_Unshape_DeletesLiveRootAndPersists(t *testing.T) {
 	}
 }
 
+// TestApplyEgressScript_UnshapeDiscard_DropsLiveRootSkipsUnitReconcile is the
+// regression test for #1125: block node uninstall's TcEgressTeardown step must
+// not depend on a live systemd/D-Bus connection to drop shaping that was never
+// installed in the first place. applyUnshapeDiscard drops the live root qdisc
+// (the actual teardown) but must never write a boot script or invoke applyEgress
+// (which reconciles/restarts the bandwidth-shaper unit over D-Bus) — the caller
+// is about to delete that unit and script itself.
+func TestApplyEgressScript_UnshapeDiscard_DropsLiveRootSkipsUnitReconcile(t *testing.T) {
+	tc := &recordingTCRunner{}
+	scriptPath := filepath.Join(t.TempDir(), "bandwidth-shaper.sh")
+	applied := false
+
+	m := NewManagerWithConfig(Config{
+		ScriptPath:  scriptPath,
+		LockPath:    filepath.Join(t.TempDir(), ".tc-applying"),
+		NICDetect:   func() (string, error) { return "enp0s1", nil },
+		TCRunner:    tc,
+		ApplyEgress: func(_ context.Context) error { applied = true; return nil },
+	})
+
+	if err := m.applyEgressScript(context.Background(), "", applyUnshapeDiscard); err != nil {
+		t.Fatalf("applyEgressScript(applyUnshapeDiscard): %v", err)
+	}
+
+	// Live hierarchy still dropped directly on the detected NIC — teardown is real.
+	if len(tc.calls) != 1 || tc.calls[0] != "qdisc-del-root enp0s1" {
+		t.Errorf("expected a single qdisc-del-root enp0s1 call, got %v", tc.calls)
+	}
+	// No D-Bus round-trip: the unit is about to be deleted by the caller.
+	if applied {
+		t.Error("applyEgress must not be invoked in discard mode; the caller deletes the unit right after")
+	}
+	// No boot script either: RemoveTcEgressUnit deletes it unconditionally next.
+	if _, err := os.Stat(scriptPath); !os.IsNotExist(err) {
+		t.Errorf("expected no boot script to be written, stat error = %v", err)
+	}
+}
+
 func TestAtomicWriteFile_SecondWritePreservesContent(t *testing.T) {
 	dir := t.TempDir()
 	const testNIC = "ens3"

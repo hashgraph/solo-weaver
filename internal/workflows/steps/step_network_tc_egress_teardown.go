@@ -13,19 +13,37 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// TcEgressTeardownStepId is the step ID for TcEgressTeardown.
+// TcEgressTeardownStepId is the step ID for TcEgressTeardown and TcEgressDisable.
+// They present as the same step to the operator ("Removing bandwidth-shaper HTB
+// hierarchy"); only their manager-level implementation differs.
 const TcEgressTeardownStepId = "bandwidth-shaper-teardown"
 
-// TcEgressTeardown removes the egress tc HTB hierarchy (device root + all egress
-// classes) and re-renders the boot script to its empty default, dropping the live
-// shaping on the physical NIC. It is the disable counterpart to TcEgressPersist,
-// wired into `block node reconfigure` when traffic shaping is turned off.
+// TcEgressTeardown is the narrower of this pair — it only drops the live shaping
+// (device root + all egress classes) on the physical NIC. Wired into `block node
+// uninstall` (uninstall_handler.go), immediately followed by TcEgressServiceTeardown,
+// which deletes the bandwidth-shaper unit and boot script — so this step never
+// reconciles or restarts that unit; there would be nothing left to keep in sync.
 //
 // It must run after NetworkPolicyDeleteAll: the policy plane's --stamp rules
 // reference these classes, and the underlying shape teardown assumes those
 // references are already gone. The teardown is idempotent — with no egress config
-// present it re-renders the empty script and succeeds.
+// present it succeeds without shaping anything.
 func TcEgressTeardown() *automa.StepBuilder {
+	return newTcEgressTeardownStep(shape.NewManager().TeardownEgress)
+}
+
+// TcEgressDisable is the fuller counterpart: `block node reconfigure
+// --traffic-shaping-enabled=false` (network_setup.go) has no follow-up step, so
+// unlike TcEgressTeardown it also re-renders the boot script to its empty default
+// and reconciles+restarts the bandwidth-shaper unit over D-Bus, so a reboot
+// doesn't resurrect the old shape. It is the disable counterpart to TcEgressPersist.
+func TcEgressDisable() *automa.StepBuilder {
+	return newTcEgressTeardownStep(shape.NewManager().DisableEgress)
+}
+
+// newTcEgressTeardownStep builds the shared step scaffolding for TcEgressTeardown
+// and TcEgressDisable; exec is the manager call that differs between them.
+func newTcEgressTeardownStep(exec func(ctx context.Context) error) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(TcEgressTeardownStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Removing bandwidth-shaper HTB hierarchy")
@@ -38,7 +56,7 @@ func TcEgressTeardown() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "bandwidth-shaper hierarchy removed")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if err := shape.NewManager().TeardownEgress(ctx); err != nil {
+			if err := exec(ctx); err != nil {
 				return automa.FailureReport(stp, automa.WithError(
 					errorx.Decorate(err, "failed to tear down the bandwidth-shaper HTB hierarchy").
 						WithProperty(models.ErrPropertyResolution, []string{

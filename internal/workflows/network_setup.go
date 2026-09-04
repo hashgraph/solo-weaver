@@ -123,7 +123,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 		// RestartDaemonServiceStep self-skips when the daemon is not running.
 		out = append(out,
 			steps.NetworkPolicyDeleteAll(),
-			steps.TcEgressTeardown(),
+			steps.TcEgressDisable(),
 		)
 		if opts.WithDaemonReload {
 			out = append(out,
