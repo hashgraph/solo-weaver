@@ -31,6 +31,10 @@ type fakeResolver struct {
 	// delay, when set, is slept per lookup so a test can show that N names cost
 	// one round trip of wall time rather than N.
 	delay time.Duration
+	// inFlight/peakInFlight record concurrency directly, so a test can assert
+	// the pass is concurrent without timing it against a shared CI runner.
+	inFlight     int
+	peakInFlight int
 }
 
 // setAnswers replaces the table between applies, under the same lock the
@@ -50,6 +54,10 @@ func (f *fakeResolver) callCount() int {
 func (f *fakeResolver) LookupIPv4(_ context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
 	f.calls++
+	f.inFlight++
+	if f.inFlight > f.peakInFlight {
+		f.peakInFlight = f.inFlight
+	}
 	ips, ok := f.answers[host]
 	delay := f.delay
 	f.mu.Unlock()
@@ -57,6 +65,11 @@ func (f *fakeResolver) LookupIPv4(_ context.Context, host string) ([]netip.Addr,
 	if delay > 0 {
 		time.Sleep(delay)
 	}
+
+	f.mu.Lock()
+	f.inFlight--
+	f.mu.Unlock()
+
 	if !ok {
 		return nil, errors.New("no such host")
 	}
@@ -527,15 +540,14 @@ func TestFQDN_NamesAreResolvedConcurrently(t *testing.T) {
 		"a.corp.example.com", "b.corp.example.com", "c.corp.example.com", "d.corp.example.com",
 	}
 
-	start := time.Now()
 	require.NoError(t, m.Apply(context.Background(), tbl))
-	elapsed := time.Since(start)
 
-	// resolveTimeout budgets the whole pass, not each name. Sequentially these
-	// four would cost 600ms and a slower resolver would blow the budget, failing
-	// names that are perfectly reachable.
-	require.Less(t, elapsed, 3*perLookup,
-		"four names must cost roughly one round trip, not four")
+	// resolveTimeout budgets the whole pass, not each name. A sequential pass
+	// would fail names that are perfectly reachable, so assert the peak
+	// concurrency directly rather than inferring it from elapsed wall time
+	// (flaky on a loaded, shared CI runner).
+	require.Equal(t, len(tbl.Mgmt.CIDRs), res.peakInFlight,
+		"every name must be looked up at once")
 
 	nft := readNft(t, nftPath)
 	for _, want := range []string{"192.0.2.1/32", "192.0.2.2/32", "192.0.2.3/32", "192.0.2.4/32"} {
