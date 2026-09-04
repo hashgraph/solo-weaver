@@ -28,8 +28,8 @@ type fakeResolver struct {
 	// calls counts lookups, so a test can assert the resolver was consulted (or
 	// not) rather than inferring it from the rendered output.
 	calls int
-	// delay, when set, is slept per lookup so a test can show that N names cost
-	// one round trip of wall time rather than N.
+	// delay, when set, is slept per lookup to keep the lookups overlapping long enough
+	// for concurrency to be observable in tests.
 	delay time.Duration
 	// inFlight/peakInFlight record concurrency directly, so a test can assert
 	// the pass is concurrent without timing it against a shared CI runner.
