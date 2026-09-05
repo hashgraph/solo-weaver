@@ -17,6 +17,8 @@ var (
 	flagChainId          string
 	flagImageRepo        string
 	flagImageTag         string
+	flagUCImageRepo      string
+	flagUCImageTag       string
 	flagDeploymentPkgDir string
 	flagGrpcTlsSecret    string
 	flagSigningSecret    string
@@ -40,7 +42,7 @@ var (
 )
 
 func init() {
-	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "hiero-network-1", "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...)")
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", models.ConsensusDefaultNamespace, "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...)")
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
 	nodeCmd.PersistentFlags().StringVar(&flagAccountId, "account-id", "0.0.3", "Node account ID (e.g. 0.0.3)")
 	nodeCmd.PersistentFlags().IntVar(&flagWeight, "weight", 500, "Consensus weight for this node")
@@ -48,6 +50,8 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagChainId, "chain-id", "", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev) — extracted from deployment package if not set")
 	nodeCmd.PersistentFlags().StringVar(&flagImageRepo, "image-repo", "", "Consensus node container image repository — extracted from deployment package if not set")
 	nodeCmd.PersistentFlags().StringVar(&flagImageTag, "image-tag", "", "Consensus node container image tag — extracted from deployment package if not set")
+	nodeCmd.PersistentFlags().StringVar(&flagUCImageRepo, "uc-image-repo", models.ConsensusDefaultUCImageRepo, "UC (Update Coordinator) sidecar image repository (the operator's own image; no operator default)")
+	nodeCmd.PersistentFlags().StringVar(&flagUCImageTag, "uc-image-tag", models.ConsensusDefaultUCImageTag, "UC sidecar image tag (tracks the solo-operator version)")
 	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")

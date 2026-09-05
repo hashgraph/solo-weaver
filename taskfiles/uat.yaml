@@ -45,17 +45,18 @@ tasks:
       - task: uat:bootstrap
 
   uat:secrets:
-    desc: "Inside VM: create ALL secrets for a consensus deployment in one shot — the ghcr.io image-pull secret in BOTH the operator namespace (for 'kube operator install') and the consensus namespace (threaded onto the pods), plus the sample consensus-node gossip/gRPC secrets. Same private registry serves both, so one credential covers everything. Select the consensus namespace with NS= (default hiero-network-1), the operator namespace with OPERATOR_NS= (default solo-operator), a single node with NODE=node2, and the pull-secret name with SECRET_NAME= (default ghcr-creds). Run AFTER 'kube cluster install'. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
+    desc: "Inside VM: create ALL secrets for a consensus deployment in one shot — the private-registry image-pull secret in BOTH the operator namespace (for 'kube operator install') and the consensus namespace (threaded onto the pods), plus the sample consensus-node gossip/gRPC secrets. Same private registry serves both, so one credential covers everything. Select the registry host with REGISTRY= (default ghcr.io), the consensus namespace with NS= (default hiero-network-1), the operator namespace with OPERATOR_NS= (default solo-operator), a single node with NODE=node2, and the pull-secret name with SECRET_NAME= (default private-registry-creds). Run AFTER 'kube cluster install'. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
     vars:
       NS: '{{.NS | default "hiero-network-1"}}'
       OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
       NODE: '{{.NODE | default ""}}'
-      SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
+      SECRET_NAME: '{{.SECRET_NAME | default "private-registry-creds"}}'
+      REGISTRY: '{{.REGISTRY | default "ghcr.io"}}'
     cmds:
       - |
         set -e
         DIR=/mnt/solo-weaver/test/sample-secrets
-        NS='{{.NS}}'; OPERATOR_NS='{{.OPERATOR_NS}}'; NODE='{{.NODE}}'; SECRET_NAME='{{.SECRET_NAME}}'
+        NS='{{.NS}}'; OPERATOR_NS='{{.OPERATOR_NS}}'; NODE='{{.NODE}}'; SECRET_NAME='{{.SECRET_NAME}}'; REGISTRY='{{.REGISTRY}}'
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
 
@@ -70,17 +71,19 @@ tasks:
           exit 1
         fi
 
-        # The same private registry (ghcr.io) serves the operator image AND the
+        # The same private registry ($REGISTRY) serves the operator image AND the
         # consensus/UC images, so one credential is created in both namespaces:
         #   - OPERATOR_NS: the operator deployment references it (kube operator install --image-pull-secret).
         #   - NS: the operator threads it onto the consensus pods + SAs via the
         #     capsule's SoftwareVersion.ImagePullSecrets (consensus node install --image-pull-secret).
         # It only has to EXIST before the respective install; no SA patching needed.
+        # --docker-server is kubectl's flag for the registry host the credential is
+        # for (stored as the auths key, matched to the image host at pull time).
         for target_ns in "$OPERATOR_NS" "$NS"; do
           kubectl create namespace "$target_ns" --dry-run=client -o yaml | kubectl apply -f -
-          echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $target_ns ..."
+          echo "▶ Creating docker-registry secret '$SECRET_NAME' for $REGISTRY in namespace $target_ns ..."
           kubectl -n "$target_ns" create secret docker-registry "$SECRET_NAME" \
-            --docker-server=ghcr.io \
+            --docker-server="$REGISTRY" \
             --docker-username="$GITHUB_USER" \
             --docker-password="$GITHUB_ACCESS_TOKEN" \
             --dry-run=client -o yaml | kubectl apply -f -

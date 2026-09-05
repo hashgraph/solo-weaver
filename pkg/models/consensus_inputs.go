@@ -5,6 +5,7 @@ package models
 import (
 	"fmt"
 
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
 )
 
@@ -15,6 +16,11 @@ import (
 // are a lean single/local-node baseline (1g heap + 512m direct fit under 2Gi);
 // production networks should raise them via flags.
 const (
+	// ConsensusDefaultNamespace is the default namespace / Orbit name for a
+	// consensus deployment (sourced from pkg/deps alongside the other install-plan
+	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
+	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
+
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
 	ConsensusDefaultJavaHeapMax   = "1g"
@@ -24,12 +30,20 @@ const (
 	ConsensusDefaultMemoryLimit   = "2Gi"
 	ConsensusDefaultMemoryRequest = "1Gi"
 
+	// UC (Update Coordinator) sidecar image. The operator provides NO built-in
+	// default for it, so the capsule must declare it explicitly or the operator
+	// rejects the capsule with ImageRequired. It is the
+	// operator's own image, so the tag tracks the operator/chart version. Sourced
+	// from pkg/deps alongside the block-node install-plan defaults.
+	ConsensusDefaultUCImageRepo = deps.CONSENSUS_NODE_UC_IMAGE
+	ConsensusDefaultUCImageTag  = deps.CONSENSUS_NODE_UC_VERSION
+
 	// ConsensusDefaultImagePullSecret is the name of the image-pull secret the
 	// operator threads onto the consensus-node and UC containers so they can pull
 	// the private consensus/UC images (e.g. from ghcr.io). It must name a
 	// docker-registry secret that exists in the node's namespace; create it with
 	// `task uat:secrets`. Empty disables it (public images only).
-	ConsensusDefaultImagePullSecret = "ghcr-creds"
+	ConsensusDefaultImagePullSecret = deps.CONSENSUS_NODE_IMAGE_PULL_SECRET
 )
 
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
@@ -46,6 +60,11 @@ type ConsensusNodeInputs struct {
 
 	ConsensusImageRepo string `json:"consensusImageRepo"`
 	ConsensusImageTag  string `json:"consensusImageTag"`
+
+	// UC sidecar image (repository is the full "registry/path/name"). Empty falls
+	// back to ConsensusDefaultUCImageRepo/Tag. The operator has no default UC image.
+	UCImageRepo string `json:"ucImageRepo,omitempty"`
+	UCImageTag  string `json:"ucImageTag,omitempty"`
 
 	// ImagePullSecret names a docker-registry secret in the node's namespace that
 	// the operator threads onto the consensus-node and UC containers for pulling

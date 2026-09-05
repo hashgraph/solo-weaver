@@ -391,7 +391,7 @@ sudo solo-provisioner kube cluster install --profile local --node-type consensus
 #    one credential.)
 task uat:secrets NS=hiero-network-2
 
-# 4. Install the solo-operator (pulls private images via --image-pull-secret, default ghcr-creds).
+# 4. Install the solo-operator (pulls private images via --image-pull-secret, default private-registry-creds).
 sudo solo-provisioner kube operator install
 
 # 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
@@ -410,13 +410,13 @@ Expected:
 - Consensus pods pull the private images with no ServiceAccount patching:
   ```bash
   kubectl -n hiero-network-2 get pod hiero-network-2-consensus-0 \
-    -o jsonpath='{.spec.imagePullSecrets}'   # -> [{"name":"ghcr-creds"}]
+    -o jsonpath='{.spec.imagePullSecrets}'   # -> [{"name":"private-registry-creds"}]
   ```
 - After genesis, the node transitions to `platformStatus: ACTIVE`.
 
 ### Notes / gotchas
 
-- `--image-pull-secret` (default `ghcr-creds`) sets `SoftwareVersion.ImagePullSecrets`
+- `--image-pull-secret` (default `private-registry-creds`) sets `SoftwareVersion.ImagePullSecrets`
   on the capsule; the operator (>= v0.6.0) threads it onto the pods and their SAs.
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not

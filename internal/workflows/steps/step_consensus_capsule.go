@@ -349,6 +349,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			// last segment as the image name.
 			imageRepository, imageName := splitConsensusImage(inputs.ConsensusImageRepo)
 
+			// The UC sidecar image is the operator's own image (no operator default),
+			// so it is split the same way and defaults to the pinned operator version.
+			ucRepository, ucImageName := splitConsensusImage(valueOrDefault(inputs.UCImageRepo, models.ConsensusDefaultUCImageRepo))
+
 			// Resolve container sizing/JVM from inputs, falling back to defaults.
 			resources, err := buildConsensusResources(inputs)
 			if err != nil {
@@ -390,11 +394,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
-									// The operator merges ImagePullSecrets from every container's
-									// SoftwareVersion onto the pod (and the node's ServiceAccount),
-									// so setting it here covers every container in the pod — the UC
-									// sidecar included — without giving UC its own SoftwareVersion
-									// (which would override the operator's default UC image).
+									// Set on every container's SoftwareVersion; the operator merges
+									// ImagePullSecrets across containers onto the pod and the node's
+									// ServiceAccount (dedup by name), so listing the same secret on
+									// consensus-node and UC is harmless.
 									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
 								},
 								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
@@ -404,8 +407,19 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 							},
 							// The UC (Update Coordinator) sidecar is mandatory: it is the
 							// sole writer of status.platformStatus, so the operator rejects
-							// a capsule that does not enable it (UCSidecarRequired).
-							UC: &operatorv1alpha1.UcSidecar{Enabled: true},
+							// a capsule that does not enable it (UCSidecarRequired). The
+							// operator provides no default UC image, so its SoftwareVersion must
+							// be declared explicitly or the operator rejects the capsule with
+							// ImageRequired.
+							UC: &operatorv1alpha1.UcSidecar{
+								Enabled: true,
+								SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
+									Repository:       ucRepository,
+									ImageName:        ucImageName,
+									ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+								},
+							},
 						},
 					},
 				},
