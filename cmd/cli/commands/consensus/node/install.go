@@ -109,6 +109,8 @@ var installCmd = &cobra.Command{
 				ChainId:              flagChainId,
 				ConsensusImageRepo:   flagImageRepo,
 				ConsensusImageTag:    flagImageTag,
+				UCImageRepo:          flagUCImageRepo,
+				UCImageTag:           flagUCImageTag,
 				DeploymentPackageDir: flagDeploymentPkgDir,
 				GrpcTlsSecret:        flagGrpcTlsSecret,
 				SigningSecret:        flagSigningSecret,

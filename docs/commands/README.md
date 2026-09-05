@@ -170,18 +170,18 @@ cluster-scoped operator, so one install serves all namespaces/components.
 
 ```bash
 # The operator's images are private; create its pull secret first, then install.
-kubectl -n solo-operator create secret docker-registry ghcr-creds \
+kubectl -n solo-operator create secret docker-registry private-registry-creds \
   --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
-sudo solo-provisioner kube operator install               # --image-pull-secret ghcr-creds (default)
+sudo solo-provisioner kube operator install               # --image-pull-secret private-registry-creds (default)
 sudo solo-provisioner kube operator uninstall             # idempotent
 ```
 
 | Flag | What it does |
 |---|---|
-| `--image-pull-secret` | Name of a docker-registry Secret in the operator namespace used to pull the operator's private images (default `ghcr-creds`). Must already exist; empty disables (public images). |
+| `--image-pull-secret` | Name of a docker-registry Secret in the operator namespace used to pull the operator's private images (default `private-registry-creds`). Must already exist; empty disables (public images). |
 | `--stop-on-error` / `--rollback-on-error` / `--continue-on-error` | Error-handling mode (mutually exclusive). |
 
-> Run order: `kube cluster install` → create the `ghcr-creds` secret in `solo-operator` →
+> Run order: `kube cluster install` → create the `private-registry-creds` secret in `solo-operator` →
 > `kube operator install` → `consensus node install`. See
 > [acceptance-tests §F](../dev/acceptance-tests.md).
 
