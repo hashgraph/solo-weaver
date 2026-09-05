@@ -17,45 +17,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// parseNodeTypes splits the comma-separated --node-type value, trims blanks, and
-// validates each entry against the known node types.
-func parseNodeTypes(raw string) ([]string, error) {
-	var out []string
-	for _, nt := range strings.Split(raw, ",") {
-		nt = strings.TrimSpace(nt)
-		if nt == "" {
-			continue
-		}
-		if !sanity.Contains(nt, models.AllNodeTypes()) {
-			return nil, errx.Decorate(
-				errorx.IllegalArgument.New("invalid --node-type %q", nt),
-				reasons.InvalidArgument,
-				"Use one or more of: "+strings.Join(models.AllNodeTypes(), ", ")+" (comma-separated)")
-		}
-		out = append(out, nt)
-	}
-	return out, nil
-}
-
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install a Kubernetes Cluster",
 	Long:  "Run safety checks, setup a K8s cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// --node-type declares which component(s) will run on this cluster (a
-		// comma-separated list) and sizes the host hardware floor together with
-		// --profile. Cluster install itself is workload-agnostic and installs no
-		// operator/CRDs — the solo-operator is installed separately by
-		// `kube operator install` (it needs a private-registry pull secret first).
-		// The two flags have different scopes: --node-type may stand alone (validate
-		// only), but --profile requires --node-type — you cannot size a floor without
-		// knowing the workload. Multi-type sizing is not yet supported, so --profile
-		// requires a single --node-type.
+		// --node-type names the single workload intended for this cluster and, with
+		// --profile, selects which hardware floor the host is validated against
+		// (block and consensus have different requirements). Cluster install itself
+		// is workload-agnostic and installs no operator/CRDs — the solo-operator is
+		// installed separately by `kube operator install` (it needs a private-registry
+		// pull secret first). The two flags have different scopes: --node-type may
+		// stand alone (validate only), but --profile requires --node-type — you cannot
+		// size a floor without knowing the workload.
+		nodeType := strings.TrimSpace(flagNodeType)
 		nodeTypeSet := cmd.Flags().Changed(common.FlagNodeType().Name)
 
-		nodeTypes, err := parseNodeTypes(flagNodeType)
-		if err != nil {
-			return err
+		if nodeType != "" && !sanity.Contains(nodeType, models.AllNodeTypes()) {
+			return errx.Decorate(
+				errorx.IllegalArgument.New("invalid --node-type %q", nodeType),
+				reasons.InvalidArgument,
+				"Use one of: "+strings.Join(models.AllNodeTypes(), ", "))
 		}
 
 		profile, err := common.FlagProfile().Value(cmd, args)
@@ -63,22 +45,16 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagProfile().Name)
 		}
 
-		// Sizing: --profile needs a single --node-type (multi-type sizing deferred).
+		// Sizing: --profile needs an explicit --node-type to select the floor.
 		sizingNodeType := ""
 		if profile != "" {
-			if !nodeTypeSet {
+			if !nodeTypeSet || nodeType == "" {
 				return errx.Decorate(
 					errorx.IllegalArgument.New("--profile requires --node-type for 'kube cluster install'"),
 					reasons.InvalidArgument,
 					"Add --node-type to say which workload to size the host for (e.g. --profile local --node-type consensus)")
 			}
-			if len(nodeTypes) != 1 {
-				return errx.Decorate(
-					errorx.IllegalArgument.New("--profile supports a single --node-type for hardware sizing, got %d (%s)", len(nodeTypes), flagNodeType),
-					reasons.InvalidArgument,
-					"Pass one --node-type with --profile to size the host; multi-type sizing is not yet supported")
-			}
-			sizingNodeType = nodeTypes[0]
+			sizingNodeType = nodeType
 			logx.As().Info().Msgf("--profile=%s: validating the host against a %s-node hardware floor", profile, sizingNodeType)
 		}
 

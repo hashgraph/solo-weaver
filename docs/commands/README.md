@@ -148,14 +148,13 @@ sudo solo-provisioner kube cluster install --rollback-on-error
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
   block-node workflow instead — see
   [Networking switches](block-node.md#networking-two-independent-switches).
-- **`--node-type` declares the workloads; `--profile` sizes them.** `--node-type` is a
-  comma-separated list of the components that will run on this cluster (e.g.
-  `consensus`, `block`) and, with `--profile`, sizes the host hardware floor. Cluster
+- **`--node-type` declares the workload; `--profile` sizes it.** `--node-type` is the
+  single component intended for this cluster (e.g. `consensus`, `block`) and, with
+  `--profile`, selects which hardware floor the host is validated against. Cluster
   install is workload-agnostic and installs **no** operator/CRDs. Both flags are
   optional, with different scopes:
   - `--node-type` may stand alone → validate the substrate hardware floor only.
-  - `--profile` **requires** `--node-type` (you cannot size a floor without a workload), and
-    currently a **single** `--node-type` (multi-type sizing is not yet supported).
+  - `--profile` **requires** `--node-type` (you cannot size a floor without a workload).
 
 > **The solo-operator is installed separately** by [`kube operator install`](#operator),
 > not by cluster install. Its chart and images may live in a private registry, so it needs
