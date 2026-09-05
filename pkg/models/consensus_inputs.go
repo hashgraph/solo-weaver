@@ -28,7 +28,7 @@ const (
 	// operator threads onto the consensus-node and UC containers so they can pull
 	// the private consensus/UC images (e.g. from ghcr.io). It must name a
 	// docker-registry secret that exists in the node's namespace; create it with
-	// `task uat:consensus:secrets`. Empty disables it (public images only).
+	// `task uat:secrets`. Empty disables it (public images only).
 	ConsensusDefaultImagePullSecret = "ghcr-creds"
 )
 
