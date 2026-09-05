@@ -41,7 +41,10 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			ng := &operatorv1alpha1.NetworkGenesis{
@@ -101,7 +104,10 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			deadline := time.Now().Add(timeout)
@@ -282,7 +288,10 @@ func WaitNetworkGenesisReady(namespace string, provider CapsuleKubeProvider, tim
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			deadline := time.Now().Add(timeout)

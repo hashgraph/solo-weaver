@@ -57,14 +57,20 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			l := logx.As()
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			exists, err := kc.ResourceExists(ctx,
 				kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion,
 				string(kube.KindOrbit), "", inputs.OrbitName)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to check Orbit %s", inputs.OrbitName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
 			}
 
 			if exists {
@@ -95,7 +101,11 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			}
 
 			if err := kc.ApplyTyped(ctx, orbit); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to apply Orbit %s", inputs.OrbitName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that your kubeconfig has RBAC to create/update the cluster-scoped solo-operator Orbit CR",
+					"Check the solo-operator is installed and running (provisioned by 'kube cluster install' with soloOperator.enabled)")))
 			}
 
 			l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit created successfully")
@@ -125,7 +135,10 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			scope := models.ConsensusNodeScope(inputs.NodeId)
@@ -337,7 +350,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			scope := models.ConsensusNodeScope(inputs.NodeId)
@@ -453,7 +469,11 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			}
 
 			if err := kc.ApplyTyped(ctx, capsule); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to apply ConsensusCapsule %s", capsuleName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that your kubeconfig has RBAC to create/update solo-operator ConsensusCapsule CRs",
+					"If the solo-operator rejected the capsule (admission), read its message — a required image or UC sidecar version is the usual cause; re-check the resolved images via --image-repo/--image-tag, --uc-image-tag, or --deployment-package-dir")))
 			}
 
 			logx.As().Info().
