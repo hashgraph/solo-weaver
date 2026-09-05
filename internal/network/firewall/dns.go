@@ -160,7 +160,7 @@ func (e *dnsCacheEntry) touch(now time.Time) {
 func (e *dnsCacheEntry) decay(now time.Time) bool {
 	dropped := false
 	for a, seen := range e.Addresses {
-		if now.Sub(seen) > addrGracePeriod {
+		if now.Sub(seen) >= addrGracePeriod {
 			delete(e.Addresses, a)
 			dropped = true
 		}
