@@ -406,8 +406,8 @@ sudo solo-provisioner kube operator install
 
 > **Consensus commands are gated.** The whole `consensus` group is hidden and
 > refuses to run unless you opt in with `--experimental` (shown below) or
-> `SOLO_ENABLE_CONSENSUS=1` — it is not production-ready. Under `sudo` use the
-> flag; sudo drops the environment, so the env var would not reach the process.
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1` — it is not production-ready. Under `sudo`
+> use the flag; sudo drops the environment, so the env var would not reach the process.
 
 ### F1. Single consensus node
 
