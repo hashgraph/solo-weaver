@@ -48,12 +48,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.non_docs == 'true'
     uses: ./.github/workflows/zxc-code-compiles.yaml
+    secrets: inherit
     with:
       custom-job-label: Standard
 
   unit-tests:
     name: Unit Tests
     uses: ./.github/workflows/zxc-unit-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build
@@ -64,6 +66,7 @@ jobs:
   uat-compat:
     name: UAT Backward Compatibility
     uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build
@@ -78,6 +81,7 @@ jobs:
   uat-core:
     name: UAT Core Lifecycle
     uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build
@@ -92,6 +96,7 @@ jobs:
   uat-purge-storage:
     name: UAT Purge Storage
     uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build
@@ -106,6 +111,7 @@ jobs:
   uat-plugin-preset-upgrade:
     name: UAT Plugin Preset Upgrade
     uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build
@@ -120,6 +126,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     uses: ./.github/workflows/zxc-integration-test.yaml
+    secrets: inherit
     needs:
       - changes
       - build

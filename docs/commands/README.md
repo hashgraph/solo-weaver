@@ -43,6 +43,8 @@ sudo solo-provisioner block node tc-attach   --veth=<iface> [--detach]
 # KUBERNETES
 sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
+sudo solo-provisioner kube operator install     # solo-operator (private images: needs pull secret)
+sudo solo-provisioner kube operator uninstall
 
 # NETWORK — HOST FIREWALL
 sudo solo-provisioner network firewall create [--mgmt-cidrs=<cidr|fqdn,...>] [--blocked-cidrs=<cidr|fqdn,...>] [--from-file=<yaml>]
@@ -146,12 +148,42 @@ sudo solo-provisioner kube cluster install --rollback-on-error
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
   block-node workflow instead — see
   [Networking switches](block-node.md#networking-two-independent-switches).
-- **No workload sizing.** Cluster install validates only what Kubernetes itself needs to run,
-  so it takes **no `--profile` and no `--node-type`**. Workload-sized hardware validation
-  happens later, at `block node check` / `block node install`.
+- **`--node-type` declares the workloads; `--profile` sizes them.** `--node-type` is a
+  comma-separated list of the components that will run on this cluster (e.g.
+  `consensus`, `block`) and, with `--profile`, sizes the host hardware floor. Cluster
+  install is workload-agnostic and installs **no** operator/CRDs. Both flags are
+  optional, with different scopes:
+  - `--node-type` may stand alone → validate the substrate hardware floor only.
+  - `--profile` **requires** `--node-type` (you cannot size a floor without a workload), and
+    currently a **single** `--node-type` (multi-type sizing is not yet supported).
 
-> `--profile` and `--node-type` are still accepted as hidden flags so old scripts do not
-> break, but the values are **ignored** and a notice is printed. Remove them.
+> **The solo-operator is installed separately** by [`kube operator install`](#operator),
+> not by cluster install. Its chart and images may live in a private registry, so it needs
+> credentials placed first. `--profile mainnet --node-type consensus` validates a mainnet
+> consensus host but does not install anything operator-related.
+
+### Operator
+
+Installs/uninstalls the **solo-operator** (and its bundled CRDs) — required by
+consensus nodes (and, in future, other operator-based components). It is a single
+cluster-scoped operator, so one install serves all namespaces/components.
+
+```bash
+# The operator's images are private; create its pull secret first, then install.
+kubectl -n solo-operator create secret docker-registry private-registry-creds \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+sudo solo-provisioner kube operator install               # --image-pull-secret private-registry-creds (default)
+sudo solo-provisioner kube operator uninstall             # idempotent
+```
+
+| Flag | What it does |
+|---|---|
+| `--image-pull-secret` | Name of a docker-registry Secret in the operator namespace used to pull the operator's private images (default `private-registry-creds`). Must already exist; empty disables (public images). |
+| `--stop-on-error` / `--rollback-on-error` / `--continue-on-error` | Error-handling mode (mutually exclusive). |
+
+> Run order: `kube cluster install` → create the `private-registry-creds` secret in `solo-operator` →
+> `kube operator install` → `consensus node install`. See
+> [acceptance-tests §F](../dev/acceptance-tests.md).
 
 ### Uninstall
 

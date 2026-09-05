@@ -404,11 +404,18 @@ cluster:
 
 - name: solo-operator
   type: oci
-  chart: 'oci://ghcr.io/hashgraph/charts/solo-operator'
+  # Private registry. The host must have ghcr credentials in Helm's registry config
+  # before install: `task registry:login:ghcr` (writes them from the root .env).
+  # Public charts also work with no login.
+  chart: 'oci://ghcr.io/hashgraph/solo-operator/solo-operator-chart'
   namespace: 'solo-operator'
   release: 'solo-operator'
-  default: "0.3.1"
+  # This is the source of truth for the solo-operator version. The UC sidecar is the
+  # operator's own image at the same version — when bumping `default` here, also bump
+  # CONSENSUS_NODE_UC_VERSION in pkg/deps/deps.go to match.
+  default: "0.6.0"
   versions:
-    0.3.1:
+    0.6.0:
       algorithm: 'sha256'
-      checksum: 'b77cb63d456e472d5ae8e1759e85fd6e4fbdeae12398b20f9df97d54f036a73a'
+      # Private chart — regenerate with `task registry:login:ghcr && task chart-checksums`.
+      checksum: '4a221b9c9792efd0b04208e8c648f41a7b5e3d7aca3cb5fc03734d6410356c17'

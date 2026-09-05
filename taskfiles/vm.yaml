@@ -483,6 +483,10 @@ tasks:
         exec ssh -i {{.SSH_PRIVATE_KEY}} {{.SSH_OPTS}} "$@"
         EOF
         chmod +x "$SSH_WRAPPER"
+        # .git is excluded from the sync, so in-VM builds can't resolve the commit.
+        # Stamp the host HEAD into .vm-commit (synced) so the Taskfile COMMIT var
+        # falls back to it and in-VM builds still carry the real commit.
+        git -c safe.directory='*' rev-parse HEAD > .vm-commit 2>/dev/null || true
         echo "📤 Syncing $(pwd) → {{.VM_USER}}@$VM_IP:/mnt/solo-weaver/ ..."
         rsync -az --delete \
           --exclude='.git' \
@@ -627,7 +631,7 @@ tasks:
           set -e
           echo 'Installing git, curl, rsync, and build tools...'
           sudo apt-get update -qq
-          sudo apt-get install -y git curl rsync build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
+          sudo apt-get install -y git curl rsync jq build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
         
           # Install Task
           if ! command -v task >/dev/null 2>&1; then
@@ -673,6 +677,11 @@ tasks:
     interactive: true
     deps:
       - "vm:start"
+      # Refresh vendor/ on the HOST (which has GitHub creds) before entering the
+      # VM. The 'vendor' status guard makes this a no-op when already in sync.
+      # NOTE: vm:ssh does not auto-sync — run `task vm:sync` to rsync the fresh
+      # vendor/ into the VM so the in-VM `task build` stays offline.
+      - "vendor"
     cmds:
       - |
         VM_IP=$({{.GET_VM_IP}} get_vm_ip)

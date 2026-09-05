@@ -18,7 +18,7 @@ on:
         description: "Go version installed inside the VM"
         type: string
         required: false
-        default: "1.26.5"
+        default: "1.26.6"
       custom-job-label:
         description: "Custom Job Label"
         type: string
@@ -167,6 +167,10 @@ jobs:
           check_port localhost 3128 'HTTP/HTTPS proxy'
           check_port localhost 8081 'Go module proxy'
           check_port localhost 5050 'registry mirror'
+
+          # Configure access to private Go modules
+          go env -w GOPRIVATE=github.com/hashgraph/*
+          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
           # If tasks must run as root, preserve PATH/GOPATH explicitly
           sudo -E env "PATH=$PATH" "GOPATH=$GOPATH" task generate

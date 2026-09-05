@@ -3,6 +3,10 @@
 version: 3
 silent: false
 output: prefixed
+
+# Optional local secrets (not committed; see .env.example). Provides
+# GITHUB_USER / GITHUB_ACCESS_TOKEN to tasks like uat:secrets.
+dotenv: ['.env']
 vars:
   OS: [ linux ]
   ARCH: [ amd64, arm64 ]
@@ -15,8 +19,13 @@ vars:
   # non-semver value ("dev") makes `solo-provisioner install` fail. 0.0.0 also
   # matches the pre-automa behavior (the old generate script defaulted VERSION to 0.0.0).
   VERSION: '{{.VERSION | default "0.0.0"}}'
+  # -c safe.directory='*' keeps the commit stamp working when building inside the
+  # UTM VM, where the mounted /mnt/solo-weaver repo is owned by a different uid and
+  # plain git would abort with "detected dubious ownership" (stamping commit=none).
+  # The .vm-commit fallback covers in-VM builds: vm:sync excludes .git, so git has
+  # no history there — vm:sync writes the host HEAD into .vm-commit which is synced.
   COMMIT:
-    sh: 'git rev-parse HEAD 2>/dev/null || echo none'
+    sh: "git -c safe.directory='*' rev-parse HEAD 2>/dev/null || cat .vm-commit 2>/dev/null || echo none"
   DATE:
     sh: 'date -u +%Y-%m-%dT%H:%M:%SZ'
   LDFLAGS: '-w -s -X github.com/automa-saga/version.Version={{.VERSION}} -X github.com/automa-saga/version.Commit={{.COMMIT}} -X github.com/automa-saga/version.Date={{.DATE}}'
@@ -85,11 +94,118 @@ tasks:
       - "go clean -cache -testcache"
   
   vendor:
+    desc: "Populate vendor/ from go.mod (skipped when vendor/ is already in sync)"
+    # Skip re-vendoring when vendor/ is present AND already records the go.mod
+    # version of the private solo-operator module. This keeps CI and the VM build
+    # offline: the host (which has GitHub creds for the private module) populates
+    # vendor/, it is committed / rsynced by `task vm:sync`, and consumers reuse it
+    # instead of re-running `go mod vendor` — which would fail with "terminal prompts
+    # disabled" where there are no credentials.
+    #
+    # Two earlier guards were both wrong here:
+    #   1. mtime (`vendor/modules.txt -nt go.mod`): a fresh `git checkout` stamps
+    #      every file with the same mtime, so `-nt` is false, the guard fails, and
+    #      CI re-vendored — reaching for the private module it cannot fetch.
+    #   2. `GOPROXY=off go list -mod=vendor`: correct in spirit but it makes `go`
+    #      resolve the `go 1.26.x` toolchain, and with GOPROXY=off a fresh runner
+    #      cannot download it ("toolchain not available"), so the guard fails and CI
+    #      re-vendored anyway.
+    # So the guard must not invoke `go` at all. solo-operator is the only private
+    # module whose re-vendor CI cannot perform; comparing its go.mod version against
+    # the one recorded in vendor/modules.txt is a pure filesystem check that is
+    # correct on any fresh checkout. Full vendor consistency is still enforced right
+    # after, by `go build -mod=vendor` (the default when vendor/ exists).
+    #
+    # TODO(solo-operator-public): once github.com/hashgraph/solo-operator is
+    # public, module fetches no longer need auth — narrow GOPRIVATE (drop the
+    # github.com/hashgraph/* scope from CI: zxc-*.yaml) so the module is verified
+    # via proxy.golang.org / sum.golang.org again. This guard stays useful as a
+    # build-speed optimization regardless.
+    status:
+      - test -f vendor/modules.txt
+      - |
+        want=$(awk '$1=="github.com/hashgraph/solo-operator"{print $2}' go.mod)
+        test -n "$want" && grep -qxF "# github.com/hashgraph/solo-operator $want" vendor/modules.txt
     cmds:
-      - "go mod vendor"
+      # Reached only when vendor/ is stale (status above failed). The status guard
+      # keeps the offline VM/local build skipping this entirely when vendor/ is in
+      # sync; CI (fresh checkout, no vendor/) falls through and re-vendors here,
+      # fetching the private github.com/hashgraph/solo-operator module over the
+      # network using the credentials configured by the workflow (GOPRIVATE + a
+      # git insteadOf token). Any auth/transport failure surfaces as go's own error.
+      - go mod vendor
+
+  deps:solo-operator:
+    desc: "Update the github.com/hashgraph/solo-operator Go API module to SOLO_OPERATOR_VERSION (default latest) and re-vendor. The module lives in a PRIVATE repo, so this uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env. The token is injected via git's environment config (GIT_CONFIG_*) for this one command only — nothing is written to ~/.gitconfig, and GONOSUMCHECK/GONOSUMDB is set so the fetch does not hit the public sum.golang.org (which cannot see a private repo). Run on the HOST, then 'task vm:sync' to push vendor/ into the VM."
+    vars:
+      SOLO_OPERATOR_VERSION: '{{.SOLO_OPERATOR_VERSION | default "latest"}}'
+    cmds:
+      - |
+        set -e
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with repo/read access) in a root .env file (see .env.example)}"
+
+        # Inject the PAT into git via env-config (git >= 2.31) so the credential is
+        # scoped to this process and never persisted to any git config file.
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_VALUE_0="https://github.com/"
+        # Private module: fetch directly (bypass proxy) and skip the checksum DB,
+        # which 404s for a repo it cannot read.
+        export GOPRIVATE="github.com/hashgraph/*"
+        export GONOSUMCHECK=1 GONOSUMDB="github.com/hashgraph/*" GOFLAGS=-mod=mod
+
+        echo "→ go get github.com/hashgraph/solo-operator@{{.SOLO_OPERATOR_VERSION}}"
+        go get "github.com/hashgraph/solo-operator@{{.SOLO_OPERATOR_VERSION}}"
+        go mod tidy
+        go mod vendor
+        echo "✓ solo-operator now at: $(go list -m github.com/hashgraph/solo-operator)"
+
+  registry:login:ghcr:
+    desc: "Log Helm into ghcr.io using GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env, so private charts can be pulled (e.g. before 'task chart-checksums'). Tries `helm registry login` first (honours credential helpers); falls back to writing the auth entry directly when Helm's login probe returns a false 403 against ghcr."
+    cmds:
+      - |
+        set -e
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
+
+        # Preferred path: the standard helm login (respects any configured
+        # credential helper). It fails against ghcr because helm probes a
+        # placeholder repo and treats ghcr's 403 as fatal, so fall back below.
+        if printf '%s' "$GITHUB_ACCESS_TOKEN" | helm registry login ghcr.io -u "$GITHUB_USER" --password-stdin 2>/dev/null; then
+          echo "✓ helm registry login ghcr.io succeeded for $GITHUB_USER"
+          exit 0
+        fi
+        echo "ℹ helm registry login failed (ghcr 403 probe quirk); writing the auth entry directly ..."
+
+        # Fallback: write the same base64 auth entry helm/docker would store, into
+        # Helm's registry config, merging with existing auths (0600, owner-only).
+        REG_CONF=$(helm env | sed -n 's/^HELM_REGISTRY_CONFIG="\(.*\)"$/\1/p')
+        [ -n "$REG_CONF" ] || { echo "FAIL: could not resolve HELM_REGISTRY_CONFIG"; exit 1; }
+        AUTH=$(printf '%s:%s' "$GITHUB_USER" "$GITHUB_ACCESS_TOKEN" | base64 | tr -d '\n')
+        mkdir -p "$(dirname "$REG_CONF")"
+        python3 - "$REG_CONF" "$AUTH" <<'PY'
+        import json, os, sys
+        path, auth = sys.argv[1], sys.argv[2]
+        cfg = {}
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+        cfg.setdefault("auths", {})["ghcr.io"] = {"auth": auth}
+        # Create with 0600 (owner-only) so the token is not group/world-readable,
+        # matching what `helm`/`docker login` do. The value is base64, not encrypted.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.chmod(path, 0o600)
+        PY
+        echo "✓ Wrote ghcr.io auth for $GITHUB_USER to $REG_CONF"
 
   chart-checksums:
-    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Requires 'helm' on PATH."
+    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Requires 'helm' on PATH. For private charts, run 'task registry:login:ghcr' first."
     cmds:
       - "go run ./scripts/chart-checksums"
   

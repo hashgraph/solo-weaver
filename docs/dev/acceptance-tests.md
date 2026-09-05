@@ -356,6 +356,136 @@ grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 
 ---
 
+## F. Consensus Node Deployment
+
+End-to-end deployment of a Hedera consensus network — a single node (F1) or a
+multi-node network (F2) — via the solo-operator. The
+solo-operator chart and its images (consensus-node, UC sidecar) are hosted in the
+**private** `ghcr.io/hashgraph/solo-operator/*` registry, so two credential steps
+are required — one for Helm (pulling the operator *chart*) and one for Kubernetes
+(pulling the *images*).
+
+### Prerequisites
+
+- UTM VM set up and built: `task vm:ssh` then `task uat:rebuild`
+- `GITHUB_USER` and `GITHUB_ACCESS_TOKEN` in a root `.env` file (see `.env.example`)
+  — classic PAT with `read:packages`, SSO-authorized for the `hashgraph` org.
+
+### Common setup (single- and multi-node)
+
+**Order matters.** Cluster install is workload-agnostic and installs **no**
+operator. The operator is a separate step that needs private-registry credentials
+in place first:
+- Helm registry login (chart pull) is host-side, no cluster needed.
+- The operator-namespace pull secret must exist *before* `kube operator install`.
+- The consensus-namespace secrets must exist *before* `consensus node install`.
+
+These four steps are identical whether you deploy one node or many — only the
+install/genesis steps in F1/F2 below differ.
+
+```bash
+# Pick a namespace (also the Orbit name). Use a distinct one per network in a
+# shared cluster: hiero-network-1, hiero-network-2, ...
+export NS=hiero-network-2
+export PKG=./test/data/build-v0.74.2   # extracted HIP-1494 deployment package
+
+# 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
+task uat:registry:login:ghcr
+
+# 2. Install the cluster only (no operator). --node-type sizes the host with --profile.
+sudo solo-provisioner kube cluster install --profile local --node-type consensus
+
+# 3. Create ALL secrets in one shot: the ghcr pull secret in both the operator and
+#    consensus namespaces, plus the consensus gossip/gRPC secrets for node0..node4.
+#    (Same registry, one credential; NODE= unset means all nodes.)
+task uat:secrets NS="${NS}"
+
+# 4. Install the solo-operator (pulls private images via --image-pull-secret, default private-registry-creds).
+sudo solo-provisioner kube operator install
+```
+
+> **Consensus commands are gated.** The whole `consensus` group is hidden and
+> refuses to run unless you opt in with `--experimental` (shown below) or
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1` — it is not production-ready. Under `sudo`
+> use the flag; sudo drops the environment, so the env var would not reach the process.
+
+### F1. Single consensus node
+
+Install one node, then generate genesis. With defaults it is `node-id 0` /
+`account-id 0.0.3`; its secrets (`node0-gossip-keys`, `node0-grpc-tls-keys`) were
+created by step 3.
+
+```bash
+# 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+sudo solo-provisioner consensus node install \
+  --experimental \
+  --namespace "${NS}" \
+  --profile local \
+  --deployment-package-dir "${PKG}"
+
+# 6. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
+sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
+```
+
+### F2. Multi-node consensus network
+
+There is no node-count flag: **run `consensus node install` once per node into the
+same namespace**, each with a distinct `--node-id` and `--account-id`, then run
+`consensus network genesis` **once**. In discovery mode the operator builds the
+roster from *all* ConsensusCapsules in the namespace. Account IDs follow the Hedera
+convention `0.0.(3 + node-id)`. Step 3 already created secrets for `node0..node4`.
+
+```bash
+# 5. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
+for i in 0 1 2 3; do
+  sudo solo-provisioner consensus node install \
+    --experimental \
+    --namespace "${NS}" \
+    --profile local \
+    --node-id "${i}" \
+    --account-id "0.0.$((3 + i))" \
+    --deployment-package-dir "${PKG}"
+done
+
+# 6. One genesis for the whole network — operator discovers all 4 capsules.
+sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
+```
+
+Expected (both F1 and F2):
+- Cluster install completes without touching the operator/registry.
+- `kube operator install` reaches *Installing Solo Operator* and succeeds; the
+  operator pod pulls its private image (`kubectl -n solo-operator get pods`).
+- Consensus pods pull the private images with no ServiceAccount patching:
+  ```bash
+  kubectl -n "${NS}" get pod "${NS}-consensus-0" \
+    -o jsonpath='{.spec.imagePullSecrets}'   # -> [{"name":"private-registry-creds"}]
+  ```
+- After genesis, every node transitions to `platformStatus: ACTIVE`. For the
+  multi-node network, confirm the full roster is present and healthy:
+  ```bash
+  kubectl -n "${NS}" get consensuscapsules   # -> N capsules, all Active
+  ```
+
+### Notes / gotchas
+
+- `--image-pull-secret` (default `private-registry-creds`) sets `SoftwareVersion.ImagePullSecrets`
+  on the capsule; the operator (>= v0.6.0) threads it onto the pods and their SAs.
+- Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
+  discovery genesis when the packaged genesis pins IP gossip endpoints that do not
+  match the pod IPs.
+- **Multi-node:** for an in-cluster discovery network, do **not** pass
+  `--deployment-package-dir` to `consensus network genesis` — that applies the
+  package's single-node `genesis-network.json` verbatim and bypasses roster
+  discovery. Leave it off so the operator builds the roster from the capsules.
+- **Max nodes = 5** (`node0..node4`) with the sample secrets from `task uat:secrets`.
+  In discovery mode the gossip keys come from those K8s secrets (not the package's
+  `data/keys/*.pem`), so more nodes need additional gossip/gRPC secrets.
+- Identity flags (`--ledger-id`, `--chain-id`, `--image-repo`/`--image-tag`) are
+  extracted from the deployment package, so they stay identical across nodes and do
+  not need to be repeated per node.
+
+---
+
 ## Quick Reference
 
 | Scenario | Duration | Dependencies |
@@ -365,3 +495,5 @@ grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 | C. Alloy | ~3 min | Kubernetes cluster |
 | D. Proxy Verification | ~15 min | VM, proxy (fresh caches) |
 | E. Backward Compat | ~15 min | VM, proxy, released binary |
+| F1. Single Consensus Node | ~15 min | VM, ghcr PAT (private registry) |
+| F2. Multi-node Consensus Network | ~20 min | VM, ghcr PAT (private registry) |

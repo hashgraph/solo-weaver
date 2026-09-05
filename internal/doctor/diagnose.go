@@ -368,6 +368,8 @@ func CheckErr(ctx context.Context, err error) {
 	// Full stacktrace to the log file only, with the reason and hints as
 	// structured fields so the log alone carries the remediation steps.
 	ev := logx.As().Error()
+	// build_version/build_commit are already global fields on every log line (set
+	// in the CLI/daemon logger init), so the error line is self-identifying.
 	if reason, ok := errx.ReasonOf(err); ok {
 		ev = ev.Str("reason", reason.String())
 	}
@@ -413,6 +415,7 @@ func checkErrCompact(resp *ErrorDiagnosis) {
 	if logfile != "" {
 		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
 	}
+	fmt.Fprintf(os.Stderr, "  %sBuild:%s %s (commit %s)\n", Gray, Reset, resp.Version, version.Info{Commit: resp.Commit}.ShortCommit(12))
 	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics%s\n", Gray, Reset)
 }
 

@@ -8,7 +8,6 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -27,14 +26,51 @@ func DefaultWorkflowExecutionOptions() *models.WorkflowExecutionOptions {
 // (what Kubernetes itself needs), not any per-workload sizing. Per-workload preflight
 // belongs to the node install commands (e.g. block node install), which run
 // NodeSetupWorkflow before composing KubernetesSetupWorkflow themselves.
-func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime) *automa.WorkflowBuilder {
+// profile selects the preflight hardware floor: when non-empty, a workload-sized
+// check for (nodeType, profile) runs instead of the workload-agnostic substrate
+// floor — so `kube cluster install --profile mainnet --node-type consensus`
+// validates the host against that workload. Both are optional (empty profile keeps
+// the substrate-only floor).
+//
+// Cluster install is workload-agnostic and does NOT install the solo-operator: the
+// operator chart/images may live in a private registry, so it is installed separately by
+// `kube operator install` (see InstallOperatorWorkflow) once its image-pull secret
+// is in place. See docs/dev/acceptance-tests.md §F.
+func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime, profile, nodeType string) *automa.WorkflowBuilder {
+	preflight := SubstrateSetupWorkflow(skipHardwareChecks)
+	if profile != "" {
+		preflight = NodeSetupWorkflow(nodeType, profile, "", skipHardwareChecks)
+	}
 	return automa.NewWorkflowBuilder().
 		WithId("setup-kubernetes").
 		Steps(
-			SubstrateSetupWorkflow(skipHardwareChecks),
+			preflight,
 			KubernetesSetupWorkflow(mr),
 			// Record the CLI version so a fresh cluster has a state.yaml; without it the next invocation synthesises the 0.0.0 baseline and re-runs historical startup migrations.
 			steps.RecordProvisionerVersion(),
+		)
+}
+
+// InstallOperatorWorkflow installs the solo-operator (and its bundled CRDs) into an
+// existing cluster. It is decoupled from cluster install because the operator chart
+// and images can be in a private registry: the caller must first place an image-pull
+// secret (imagePullSecret) in the operator namespace, which the operator's pods
+// reference. imagePullSecret is passed to the chart as imagePullSecrets; empty
+// installs with no pull secret (public images only).
+func InstallOperatorWorkflow(imagePullSecret string) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("install-operator").
+		Steps(
+			steps.InstallSoloOperator(imagePullSecret),
+		)
+}
+
+// UninstallOperatorWorkflow removes the solo-operator release.
+func UninstallOperatorWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("uninstall-operator").
+		Steps(
+			steps.UninstallSoloOperator(),
 		)
 }
 
@@ -76,13 +112,9 @@ func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 		steps.SetupMetalLB(),
 
 		steps.DeployMetricsServer(nil),
-	}
 
-	if config.Get().SoloOperator.Enabled {
-		wfSteps = append(wfSteps, steps.InstallSoloOperator())
+		steps.CheckClusterHealth(),
 	}
-
-	wfSteps = append(wfSteps, steps.CheckClusterHealth())
 
 	return automa.NewWorkflowBuilder().
 		WithId("kubernetes-setup").

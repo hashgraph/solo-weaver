@@ -18,7 +18,7 @@ on:
         description: "Go version installed inside the VM"
         type: string
         required: false
-        default: "1.26.5"
+        default: "1.26.6"
       custom-job-label:
         description: "Custom Job Label"
         type: string
@@ -137,6 +137,10 @@ jobs:
           else
             echo 'No proxy tunnel — building with direct internet access'
           fi
+
+          # Configure access to private Go modules
+          go env -w GOPRIVATE=github.com/hashgraph/*
+          git config --global url."https://${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
           # Build binary
           echo 'Building solo-provisioner binary...'

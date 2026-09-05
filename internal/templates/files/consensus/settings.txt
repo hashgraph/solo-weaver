@@ -1,0 +1,4 @@
+checkSignedStateFromDisk,              1
+state.recoveryFile,                    data/saved/RecoveryFile.dat
+# throttle unsigned transactions above this TPS
+throttle.maxTransactionsPerSec,        10000

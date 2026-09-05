@@ -5,6 +5,8 @@ package consensus
 import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/migration"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/network"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/node"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +18,15 @@ var consensusCmd = &cobra.Command{
 }
 
 func init() {
+	// Nothing in the consensus stack is production-ready yet, but solo-provisioner
+	// ships to production block-node operators. Gate the whole group behind the
+	// experimental feature gate so it is hidden from --help and refuses to run
+	// unless the operator opts in (--experimental or SOLO_PROVISIONER_ENABLE_CONSENSUS).
+	common.GateExperimental(consensusCmd, "consensus")
+
 	consensusCmd.AddCommand(migration.GetCmd())
+	consensusCmd.AddCommand(node.GetCmd())
+	consensusCmd.AddCommand(network.GetCmd())
 }
 
 // GetCmd returns the consensus command group.

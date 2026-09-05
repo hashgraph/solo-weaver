@@ -219,6 +219,15 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
+	// Stamp the build identity onto every log line (matching the UC / solo-operator)
+	// so operators can tell which daemon build produced a given log. build_commit is
+	// the reliable discriminator; build_version aids released builds. Done before the
+	// slog bridge below so slog lines inherit these fields too.
+	logx.SetLogger(logx.As().With().
+		Str("build_version", version.Version).
+		Str("build_commit", version.Commit).
+		Logger())
+
 	// Install the slog→logx bridge so the daemon kernel (which logs via the
 	// stdlib log/slog seam, in preparation for the pkg/daemonkit extraction)
 	// emits to the same zerolog sinks logx just configured — console, the
