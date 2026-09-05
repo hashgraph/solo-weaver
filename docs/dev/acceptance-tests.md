@@ -372,33 +372,42 @@ are required — one for Helm (pulling the operator *chart*) and one for Kuberne
 
 ### Steps
 
-**Order matters.** The Helm registry login must come *before* cluster install (it
-pulls the operator chart); the Kubernetes secrets must come *after* the cluster
-exists but *before* node install (they live in the cluster and are threaded onto
-the pods).
+**Order matters.** Cluster install is workload-agnostic and installs **no**
+operator. The operator is a separate step that needs private-registry credentials
+in place first:
+- Helm registry login (chart pull) is host-side, no cluster needed.
+- The operator-namespace pull secret must exist *before* `kube operator install`.
+- The consensus-namespace secrets must exist *before* `consensus node install`.
 
 ```bash
 # 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
 task uat:registry:login:ghcr
 
-# 2. Install the cluster + solo-operator (--node-type consensus installs the operator/CRDs).
+# 2. Install the cluster only (no operator). --node-type sizes the host with --profile.
 sudo solo-provisioner kube cluster install --profile local --node-type consensus
 
-# 3. Create the in-cluster secrets: gossip/gRPC keys + the ghcr image-pull secret.
-#    (Fails fast if the cluster is not up yet.)
+# 3. Create the operator's ghcr image-pull secret (in the solo-operator namespace).
+task uat:operator:secrets
+
+# 4. Install the solo-operator (pulls private images via --image-pull-secret, default ghcr-creds).
+sudo solo-provisioner kube operator install
+
+# 5. Create the consensus in-cluster secrets: gossip/gRPC keys + ghcr image-pull secret.
 task uat:consensus:secrets NS=hiero-network-2
 
-# 4. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+# 6. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-2 \
   --deployment-package-dir <pkg>
 
-# 5. Apply genesis and wait for the node(s) to reach Active.
+# 7. Apply genesis and wait for the node(s) to reach Active.
 sudo solo-provisioner consensus network genesis --namespace hiero-network-2
 ```
 
 Expected:
-- Cluster install reaches *Installing Solo Operator* and succeeds (chart pulled from ghcr).
+- Cluster install completes without touching the operator/registry.
+- `kube operator install` reaches *Installing Solo Operator* and succeeds; the
+  operator pod pulls its private image (`kubectl -n solo-operator get pods`).
 - Consensus pods pull the private images with no ServiceAccount patching:
   ```bash
   kubectl -n hiero-network-2 get pod hiero-network-2-consensus-0 \

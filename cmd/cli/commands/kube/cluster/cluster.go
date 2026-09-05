@@ -8,9 +8,10 @@ import (
 )
 
 var (
-	// flagNodeType backs the deprecated --node-type flag on `kube cluster install`.
-	// Cluster install is workload-agnostic now, so the value is ignored; the flag is
-	// kept hidden for backward compatibility.
+	// flagNodeType backs --node-type on `kube cluster install`. It declares the
+	// workload(s) for hardware sizing (with --profile) and validation. Cluster
+	// install no longer installs the solo-operator — that moved to
+	// `kube operator install` — so --node-type only affects the preflight floor.
 	flagNodeType        string
 	flagStopOnError     bool
 	flagRollbackOnError bool

@@ -17,14 +17,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// operatorBasedNodeTypes are the node types whose deployment uses the solo-operator
-// (so cluster install must install its CRDs). Block node is helm-only today; add it
-// here when it moves to the operator. The solo-operator is a single cluster-scoped
-// operator bundling every component's CRDs, so one install covers all of these.
-var operatorBasedNodeTypes = map[string]bool{
-	models.NodeTypeConsensus: true,
-}
-
 // parseNodeTypes splits the comma-separated --node-type value, trims blanks, and
 // validates each entry against the known node types.
 func parseNodeTypes(raw string) ([]string, error) {
@@ -51,12 +43,14 @@ var installCmd = &cobra.Command{
 	Long:  "Run safety checks, setup a K8s cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// --node-type declares which component(s) will run on this cluster (a
-		// comma-separated list) and drives dependency installation (CRDs/operators).
-		// --profile sizes the host hardware floor for that workload. The two have
-		// different scopes: --node-type may stand alone (install dependencies only),
-		// but --profile requires --node-type — you cannot size a floor without knowing
-		// the workload. Multi-type sizing is not yet supported, so --profile requires a
-		// single --node-type.
+		// comma-separated list) and sizes the host hardware floor together with
+		// --profile. Cluster install itself is workload-agnostic and installs no
+		// operator/CRDs — the solo-operator is installed separately by
+		// `kube operator install` (it needs a private-registry pull secret first).
+		// The two flags have different scopes: --node-type may stand alone (validate
+		// only), but --profile requires --node-type — you cannot size a floor without
+		// knowing the workload. Multi-type sizing is not yet supported, so --profile
+		// requires a single --node-type.
 		nodeTypeSet := cmd.Flags().Changed(common.FlagNodeType().Name)
 
 		nodeTypes, err := parseNodeTypes(flagNodeType)
@@ -67,20 +61,6 @@ var installCmd = &cobra.Command{
 		profile, err := common.FlagProfile().Value(cmd, args)
 		if err != nil {
 			return errorx.IllegalArgument.Wrap(err, "failed to get %s flag", common.FlagProfile().Name)
-		}
-
-		// Dependencies: install the solo-operator (and its CRDs) when any listed
-		// component is operator-based. It is a single cluster-scoped operator bundling
-		// every component's CRDs, so one install serves all namespaces/components.
-		installOperator := false
-		for _, nt := range nodeTypes {
-			if operatorBasedNodeTypes[nt] {
-				installOperator = true
-				break
-			}
-		}
-		if installOperator {
-			logx.As().Info().Msg("installing the solo-operator (and CRDs) required by the requested component(s)")
 		}
 
 		// Sizing: --profile needs a single --node-type (multi-type sizing deferred).
@@ -130,7 +110,7 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
 		}
 
-		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType, installOperator), opts)
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
 		}
@@ -141,8 +121,8 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	// --node-type=consensus additionally installs the solo-operator (see RunE).
-	// Visible now that it has an effect; other values validate the substrate only.
+	// --node-type declares the workload for hardware sizing (with --profile) and
+	// validation. It does NOT install the operator — see `kube operator install`.
 	common.FlagNodeType().SetVarP(installCmd, &flagNodeType, false)
 	common.FlagStopOnError().SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(installCmd, &flagRollbackOnError, false)

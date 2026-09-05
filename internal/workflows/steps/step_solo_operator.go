@@ -14,10 +14,12 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 const (
-	InstallSoloOperatorStepId = "install-solo-operator"
+	InstallSoloOperatorStepId   = "install-solo-operator"
+	UninstallSoloOperatorStepId = "uninstall-solo-operator"
 )
 
 // ociRegistryHost extracts the registry host from an OCI chart reference
@@ -31,7 +33,11 @@ func ociRegistryHost(chartRef string) string {
 	return rest
 }
 
-func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
+// InstallSoloOperator installs the solo-operator Helm chart. imagePullSecret, when
+// non-empty, is passed to the chart as imagePullSecrets[0].name so the operator's
+// pods can pull images from a private registry — the named docker-registry secret
+// must already exist in the operator namespace (this step does not create it).
+func InstallSoloOperator(imagePullSecret string, allowUpgrade ...bool) automa.Builder {
 	upgrade := len(allowUpgrade) > 0 && allowUpgrade[0]
 	spec := chartSpec("solo-operator")
 	return automa.NewStepBuilder().WithId(InstallSoloOperatorStepId).
@@ -97,6 +103,16 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 					fmt.Sprintf("Verify network connectivity to %s and that chart %q version %q exists", host, spec.Chart, spec.Version))))
 			}
 
+			// A private registry needs an image-pull secret on the operator's pods.
+			// Pass it as the chart's imagePullSecrets[0].name; the named secret must
+			// already exist in spec.Namespace (created out-of-band before this step).
+			var valueOpts *values.Options
+			if imagePullSecret != "" {
+				valueOpts = &values.Options{
+					Values: []string{fmt.Sprintf("imagePullSecrets[0].name=%s", imagePullSecret)},
+				}
+			}
+
 			_, err = hm.DeployChart(
 				ctx,
 				spec.Release,
@@ -104,6 +120,7 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 				"",
 				spec.Namespace,
 				helm.DeployChartOptions{
+					ValueOpts:       valueOpts,
 					CreateNamespace: true,
 					Atomic:          true,
 					Wait:            true,
@@ -144,5 +161,41 @@ func InstallSoloOperator(allowUpgrade ...bool) automa.Builder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Solo Operator installed successfully")
+		})
+}
+
+// UninstallSoloOperator removes the solo-operator Helm release. It is a no-op (skip)
+// when the release is not installed, so `kube operator uninstall` is idempotent.
+func UninstallSoloOperator() automa.Builder {
+	spec := chartSpec("solo-operator")
+	return automa.NewStepBuilder().WithId(UninstallSoloOperatorStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			hm, err := newHelmManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if !isInstalled {
+				return automa.StepSkippedReport(stp.Id())
+			}
+
+			if err := hm.UninstallChart(spec.Release, spec.Namespace); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Uninstalling Solo Operator")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to uninstall Solo Operator")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Solo Operator uninstalled successfully")
 		})
 }
