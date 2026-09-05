@@ -5,6 +5,7 @@ package kube
 import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube/cluster"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube/operator"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,7 @@ func init() {
 	// intended workload. Persistent so cluster subcommands inherit it.
 	common.FlagProfile().SetVarP(kubeCmd, &flagProfile, false)
 	kubeCmd.AddCommand(cluster.GetCmd())
+	kubeCmd.AddCommand(operator.GetCmd())
 }
 
 func GetCmd() *cobra.Command {

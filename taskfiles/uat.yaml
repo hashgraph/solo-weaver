@@ -99,6 +99,36 @@ tasks:
         kubectl -n "$NS" get secret -l app=consensus-node
         kubectl -n "$NS" get secret "$SECRET_NAME"
 
+  uat:operator:secrets:
+    desc: "Inside VM: create the ghcr.io image-pull secret in the solo-operator namespace so 'kube operator install' can pull the operator's PRIVATE images. Run AFTER 'kube cluster install' and BEFORE 'kube operator install'. Select the secret name with SECRET_NAME= (default ghcr-creds) and namespace with NS= (default solo-operator). Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example)."
+    vars:
+      NS: '{{.NS | default "solo-operator"}}'
+      SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
+    cmds:
+      - |
+        set -e
+        NS='{{.NS}}'; SECRET_NAME='{{.SECRET_NAME}}'
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
+
+        # Needs a running cluster — fail fast rather than a raw kubectl error.
+        if ! kubectl cluster-info >/dev/null 2>&1; then
+          echo "✗ No reachable Kubernetes cluster. Run 'kube cluster install' first." >&2
+          echo "  Order: uat:registry:login:ghcr → kube cluster install → uat:operator:secrets → kube operator install" >&2
+          exit 1
+        fi
+
+        kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+        echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $NS ..."
+        kubectl -n "$NS" create secret docker-registry "$SECRET_NAME" \
+          --docker-server=ghcr.io \
+          --docker-username="$GITHUB_USER" \
+          --docker-password="$GITHUB_ACCESS_TOKEN" \
+          --dry-run=client -o yaml | kubectl apply -f -
+        echo ''
+        echo "✓ ghcr.io pull secret ready:"
+        kubectl -n "$NS" get secret "$SECRET_NAME"
+
   uat:registry:login:ghcr:
     desc: "Inside VM: write ghcr.io credentials into the Helm registry config that 'solo-provisioner ... install' reads, so it can pull the PRIVATE solo-operator OCI chart (oci://ghcr.io/hashgraph/solo-operator/...). Because install runs under sudo (root), the auth is written to BOTH root's and the invoking user's config. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example). Run once per VM before 'kube cluster install --node-type consensus'."
     cmds:
