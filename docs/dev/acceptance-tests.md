@@ -356,6 +356,66 @@ grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 
 ---
 
+## F. Consensus Node Deployment
+
+End-to-end deployment of a Hedera consensus node via the solo-operator. The
+solo-operator chart and its images (consensus-node, UC sidecar) are hosted in the
+**private** `ghcr.io/hashgraph/solo-operator/*` registry, so two credential steps
+are required — one for Helm (pulling the operator *chart*) and one for Kubernetes
+(pulling the *images*).
+
+### Prerequisites
+
+- UTM VM set up and built: `task vm:ssh` then `task uat:rebuild`
+- `GITHUB_USER` and `GITHUB_ACCESS_TOKEN` in a root `.env` file (see `.env.example`)
+  — classic PAT with `read:packages`, SSO-authorized for the `hashgraph` org.
+
+### Steps
+
+**Order matters.** The Helm registry login must come *before* cluster install (it
+pulls the operator chart); the Kubernetes secrets must come *after* the cluster
+exists but *before* node install (they live in the cluster and are threaded onto
+the pods).
+
+```bash
+# 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
+task uat:registry:login:ghcr
+
+# 2. Install the cluster + solo-operator (--node-type consensus installs the operator/CRDs).
+sudo solo-provisioner kube cluster install --profile local --node-type consensus
+
+# 3. Create the in-cluster secrets: gossip/gRPC keys + the ghcr image-pull secret.
+#    (Fails fast if the cluster is not up yet.)
+task uat:consensus:secrets NS=hiero-network-2
+
+# 4. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+sudo solo-provisioner consensus node install \
+  --namespace hiero-network-2 \
+  --deployment-package-dir <pkg>
+
+# 5. Apply genesis and wait for the node(s) to reach Active.
+sudo solo-provisioner consensus network genesis --namespace hiero-network-2
+```
+
+Expected:
+- Cluster install reaches *Installing Solo Operator* and succeeds (chart pulled from ghcr).
+- Consensus pods pull the private images with no ServiceAccount patching:
+  ```bash
+  kubectl -n hiero-network-2 get pod hiero-network-2-consensus-0 \
+    -o jsonpath='{.spec.imagePullSecrets}'   # -> [{"name":"ghcr-creds"}]
+  ```
+- After genesis, the node transitions to `platformStatus: ACTIVE`.
+
+### Notes / gotchas
+
+- `--image-pull-secret` (default `ghcr-creds`) sets `SoftwareVersion.ImagePullSecrets`
+  on the capsule; the operator (>= v0.6.0) threads it onto the pods and their SAs.
+- Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
+  discovery genesis when the packaged genesis pins IP gossip endpoints that do not
+  match the pod IPs.
+
+---
+
 ## Quick Reference
 
 | Scenario | Duration | Dependencies |
@@ -365,3 +425,4 @@ grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 | C. Alloy | ~3 min | Kubernetes cluster |
 | D. Proxy Verification | ~15 min | VM, proxy (fresh caches) |
 | E. Backward Compat | ~15 min | VM, proxy, released binary |
+| F. Consensus Node | ~15 min | VM, ghcr PAT (private registry) |
