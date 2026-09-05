@@ -386,21 +386,20 @@ task uat:registry:login:ghcr
 # 2. Install the cluster only (no operator). --node-type sizes the host with --profile.
 sudo solo-provisioner kube cluster install --profile local --node-type consensus
 
-# 3. Create the operator's ghcr image-pull secret (in the solo-operator namespace).
-task uat:operator:secrets
+# 3. Create ALL secrets in one shot: the ghcr pull secret in both the operator and
+#    consensus namespaces, plus the consensus gossip/gRPC secrets. (Same registry,
+#    one credential.)
+task uat:secrets NS=hiero-network-2
 
 # 4. Install the solo-operator (pulls private images via --image-pull-secret, default ghcr-creds).
 sudo solo-provisioner kube operator install
 
-# 5. Create the consensus in-cluster secrets: gossip/gRPC keys + ghcr image-pull secret.
-task uat:consensus:secrets NS=hiero-network-2
-
-# 6. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+# 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-2 \
   --deployment-package-dir <pkg>
 
-# 7. Apply genesis and wait for the node(s) to reach Active.
+# 6. Apply genesis and wait for the node(s) to reach Active.
 sudo solo-provisioner consensus network genesis --namespace hiero-network-2
 ```
 

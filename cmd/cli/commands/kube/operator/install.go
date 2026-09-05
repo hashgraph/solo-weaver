@@ -17,7 +17,7 @@ var installCmd = &cobra.Command{
 	Long: "Install the solo-operator Helm chart (and its bundled CRDs) into an existing cluster. " +
 		"The operator's images are pulled with --image-pull-secret, a docker-registry Secret that " +
 		"must already exist in the operator namespace. Run this after 'kube cluster install' and after " +
-		"creating that secret (see 'task uat:operator:secrets').",
+		"creating that secret (see 'task uat:secrets').",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {

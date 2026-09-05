@@ -44,35 +44,51 @@ tasks:
         task build:cli GOOS=linux GOARCH=${ARCH}
       - task: uat:bootstrap
 
-  uat:consensus:secrets:
-    desc: "Inside VM: create the secrets 'consensus node install' needs in one shot — the sample consensus-node gossip/gRPC secrets (nodes 0-4) plus the ghcr.io image-pull secret the operator threads onto the pods. Select namespace with NS= (default hiero-network-1), a single node with NODE=node2, and the pull-secret name with SECRET_NAME= (default ghcr-creds). The pull secret needs GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
+  uat:secrets:
+    desc: "Inside VM: create ALL secrets for a consensus deployment in one shot — the ghcr.io image-pull secret in BOTH the operator namespace (for 'kube operator install') and the consensus namespace (threaded onto the pods), plus the sample consensus-node gossip/gRPC secrets. Same private registry serves both, so one credential covers everything. Select the consensus namespace with NS= (default hiero-network-1), the operator namespace with OPERATOR_NS= (default solo-operator), a single node with NODE=node2, and the pull-secret name with SECRET_NAME= (default ghcr-creds). Run AFTER 'kube cluster install'. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
     vars:
       NS: '{{.NS | default "hiero-network-1"}}'
+      OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
       NODE: '{{.NODE | default ""}}'
       SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
     cmds:
       - |
         set -e
         DIR=/mnt/solo-weaver/test/sample-secrets
-        NS='{{.NS}}'; NODE='{{.NODE}}'; SECRET_NAME='{{.SECRET_NAME}}'
+        NS='{{.NS}}'; OPERATOR_NS='{{.OPERATOR_NS}}'; NODE='{{.NODE}}'; SECRET_NAME='{{.SECRET_NAME}}'
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
 
         # These secrets are Kubernetes objects, so they need a running cluster.
         # Fail fast with clear guidance if the API is unreachable — otherwise the
-        # first kubectl call dies with a raw connection error. This task must run
-        # AFTER 'kube cluster install', not before.
+        # first kubectl call dies with a raw connection error. Run AFTER 'kube
+        # cluster install', BEFORE 'kube operator install' / 'consensus node install'.
         if ! kubectl cluster-info >/dev/null 2>&1; then
           echo "✗ No reachable Kubernetes cluster (kubectl cannot reach the API)." >&2
           echo "  Run 'kube cluster install' first — this task creates secrets IN the cluster." >&2
-          echo "  Order: uat:registry:login:ghcr → kube cluster install → uat:consensus:secrets → consensus node install" >&2
+          echo "  Order: uat:registry:login:ghcr → kube cluster install → uat:secrets → kube operator install → consensus node install" >&2
           exit 1
         fi
 
-        kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+        # The same private registry (ghcr.io) serves the operator image AND the
+        # consensus/UC images, so one credential is created in both namespaces:
+        #   - OPERATOR_NS: the operator deployment references it (kube operator install --image-pull-secret).
+        #   - NS: the operator threads it onto the consensus pods + SAs via the
+        #     capsule's SoftwareVersion.ImagePullSecrets (consensus node install --image-pull-secret).
+        # It only has to EXIST before the respective install; no SA patching needed.
+        for target_ns in "$OPERATOR_NS" "$NS"; do
+          kubectl create namespace "$target_ns" --dry-run=client -o yaml | kubectl apply -f -
+          echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $target_ns ..."
+          kubectl -n "$target_ns" create secret docker-registry "$SECRET_NAME" \
+            --docker-server=ghcr.io \
+            --docker-username="$GITHUB_USER" \
+            --docker-password="$GITHUB_ACCESS_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        done
 
-        # The sample manifests carry a fixed namespace; rewrite it to $NS on apply
-        # so the same files work for any orbit/namespace.
+        # Sample consensus-node gossip/gRPC secrets (consensus namespace only). The
+        # sample manifests carry a fixed namespace; rewrite it to $NS on apply so the
+        # same files work for any orbit/namespace.
         apply_one() { sed "s/namespace: hiero-network-1/namespace: $NS/" "$1" | kubectl apply -f -; }
         if [ -n "$NODE" ]; then
           echo "▶ Applying sample gossip/gRPC secrets for $NODE in namespace $NS ..."
@@ -82,52 +98,11 @@ tasks:
           for f in "$DIR"/node*.yaml; do apply_one "$f"; done
         fi
 
-        # The operator threads this docker-registry secret onto the consensus pods
-        # (and their ServiceAccounts) via the capsule's SoftwareVersion.ImagePullSecrets
-        # — solo-operator >= v0.6.0, wired by 'consensus node install --image-pull-secret'.
-        # It only has to EXIST in the namespace before install; no SA patching or pod
-        # restarts are needed anymore.
-        echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $NS ..."
-        kubectl -n "$NS" create secret docker-registry "$SECRET_NAME" \
-          --docker-server=ghcr.io \
-          --docker-username="$GITHUB_USER" \
-          --docker-password="$GITHUB_ACCESS_TOKEN" \
-          --dry-run=client -o yaml | kubectl apply -f -
-
         echo ''
         echo '✓ Applied:'
+        kubectl -n "$OPERATOR_NS" get secret "$SECRET_NAME"
+        kubectl -n "$NS" get secret "$SECRET_NAME"
         kubectl -n "$NS" get secret -l app=consensus-node
-        kubectl -n "$NS" get secret "$SECRET_NAME"
-
-  uat:operator:secrets:
-    desc: "Inside VM: create the ghcr.io image-pull secret in the solo-operator namespace so 'kube operator install' can pull the operator's PRIVATE images. Run AFTER 'kube cluster install' and BEFORE 'kube operator install'. Select the secret name with SECRET_NAME= (default ghcr-creds) and namespace with NS= (default solo-operator). Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example)."
-    vars:
-      NS: '{{.NS | default "solo-operator"}}'
-      SECRET_NAME: '{{.SECRET_NAME | default "ghcr-creds"}}'
-    cmds:
-      - |
-        set -e
-        NS='{{.NS}}'; SECRET_NAME='{{.SECRET_NAME}}'
-        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
-        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
-
-        # Needs a running cluster — fail fast rather than a raw kubectl error.
-        if ! kubectl cluster-info >/dev/null 2>&1; then
-          echo "✗ No reachable Kubernetes cluster. Run 'kube cluster install' first." >&2
-          echo "  Order: uat:registry:login:ghcr → kube cluster install → uat:operator:secrets → kube operator install" >&2
-          exit 1
-        fi
-
-        kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
-        echo "▶ Creating docker-registry secret '$SECRET_NAME' for ghcr.io in namespace $NS ..."
-        kubectl -n "$NS" create secret docker-registry "$SECRET_NAME" \
-          --docker-server=ghcr.io \
-          --docker-username="$GITHUB_USER" \
-          --docker-password="$GITHUB_ACCESS_TOKEN" \
-          --dry-run=client -o yaml | kubectl apply -f -
-        echo ''
-        echo "✓ ghcr.io pull secret ready:"
-        kubectl -n "$NS" get secret "$SECRET_NAME"
 
   uat:registry:login:ghcr:
     desc: "Inside VM: write ghcr.io credentials into the Helm registry config that 'solo-provisioner ... install' reads, so it can pull the PRIVATE solo-operator OCI chart (oci://ghcr.io/hashgraph/solo-operator/...). Because install runs under sudo (root), the auth is written to BOTH root's and the invoking user's config. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example). Run once per VM before 'kube cluster install --node-type consensus'."
