@@ -58,6 +58,17 @@ tasks:
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
 
+        # These secrets are Kubernetes objects, so they need a running cluster.
+        # Fail fast with clear guidance if the API is unreachable — otherwise the
+        # first kubectl call dies with a raw connection error. This task must run
+        # AFTER 'kube cluster install', not before.
+        if ! kubectl cluster-info >/dev/null 2>&1; then
+          echo "✗ No reachable Kubernetes cluster (kubectl cannot reach the API)." >&2
+          echo "  Run 'kube cluster install' first — this task creates secrets IN the cluster." >&2
+          echo "  Order: uat:registry:login:ghcr → kube cluster install → uat:consensus:secrets → consensus node install" >&2
+          exit 1
+        fi
+
         kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
         # The sample manifests carry a fixed namespace; rewrite it to $NS on apply
@@ -87,6 +98,48 @@ tasks:
         echo '✓ Applied:'
         kubectl -n "$NS" get secret -l app=consensus-node
         kubectl -n "$NS" get secret "$SECRET_NAME"
+
+  uat:registry:login:ghcr:
+    desc: "Inside VM: write ghcr.io credentials into the Helm registry config that 'solo-provisioner ... install' reads, so it can pull the PRIVATE solo-operator OCI chart (oci://ghcr.io/hashgraph/solo-operator/...). Because install runs under sudo (root), the auth is written to BOTH root's and the invoking user's config. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example). Run once per VM before 'kube cluster install --node-type consensus'."
+    cmds:
+      - |
+        set -e
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
+
+        # The provisioner uses Helm's Go SDK with cli.New(), whose RegistryConfig is
+        # $HELM_REGISTRY_CONFIG or <home>/.config/helm/registry/config.json. We do not
+        # depend on a `helm` binary being present in the VM — write the JSON directly.
+        AUTH=$(printf '%s:%s' "$GITHUB_USER" "$GITHUB_ACCESS_TOKEN" | base64 | tr -d '\n')
+
+        # A single writer script, placed under /tmp (never in the repo tree). It
+        # merges the ghcr.io entry into any existing auths and writes 0600.
+        cat > /tmp/write_ghcr_helm_auth.py <<'PY'
+        import json, os, sys
+        path, auth = sys.argv[1], sys.argv[2]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        cfg = {}
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+        cfg.setdefault("auths", {})["ghcr.io"] = {"auth": auth}
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.chmod(path, 0o600)
+        print("  wrote", path)
+        PY
+
+        echo "▶ Writing ghcr.io Helm registry auth for $GITHUB_USER ..."
+        # Invoking user (covers sudo configs that preserve HOME).
+        python3 /tmp/write_ghcr_helm_auth.py "$HOME/.config/helm/registry/config.json" "$AUTH"
+        # root (install runs under sudo; Helm resolves HOME=/root there).
+        sudo python3 /tmp/write_ghcr_helm_auth.py /root/.config/helm/registry/config.json "$AUTH"
+        rm -f /tmp/write_ghcr_helm_auth.py
+        echo "✓ ghcr.io Helm credentials in place. Now: sudo solo-provisioner kube cluster install --profile local --node-type consensus"
 
   uat:setup:
     desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
