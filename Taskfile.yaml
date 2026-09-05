@@ -127,26 +127,13 @@ tasks:
         want=$(awk '$1=="github.com/hashgraph/solo-operator"{print $2}' go.mod)
         test -n "$want" && grep -qxF "# github.com/hashgraph/solo-operator $want" vendor/modules.txt
     cmds:
-      # Reached only when vendor/ is stale (status above failed), so `go mod
-      # vendor` is about to fetch the private github.com/hashgraph/solo-operator
-      # module over the network. Probe git credentials first and fail fast with
-      # actionable guidance — otherwise the VM build dies with the opaque
-      # "fatal: could not read Username for 'https://github.com'" from go.
-      - cmd: |
-          set -e
-          if ! GIT_TERMINAL_PROMPT=0 git ls-remote -q https://github.com/hashgraph/solo-operator HEAD >/dev/null 2>&1; then
-            echo "✗ vendor/ is out of sync and github.com/hashgraph/solo-operator is unreachable with the current git credentials." >&2
-            echo "" >&2
-            echo "  This usually means you are building inside the UTM VM, which has no GitHub credentials." >&2
-            echo "  Do ONE of the following:" >&2
-            echo "    1. (recommended) Run 'task vendor' on the HOST, then 'task vm:sync', then rebuild in the VM." >&2
-            echo "       vm:sync rsyncs vendor/ into the VM, so the VM build then stays offline." >&2
-            echo "    2. Configure a PAT inside the VM:" >&2
-            echo "         go env -w GOPRIVATE=github.com/hashgraph/*" >&2
-            echo "         git config --global url.\"https://<PAT>@github.com/\".insteadOf \"https://github.com/\"" >&2
-            exit 1
-          fi
-          go mod vendor
+      # Reached only when vendor/ is stale (status above failed). The status guard
+      # keeps the offline VM/local build skipping this entirely when vendor/ is in
+      # sync; CI (fresh checkout, no vendor/) falls through and re-vendors here,
+      # fetching the private github.com/hashgraph/solo-operator module over the
+      # network using the credentials configured by the workflow (GOPRIVATE + a
+      # git insteadOf token). Any auth/transport failure surfaces as go's own error.
+      - go mod vendor
 
   deps:solo-operator:
     desc: "Update the github.com/hashgraph/solo-operator Go API module to SOLO_OPERATOR_VERSION (default latest) and re-vendor. The module lives in a PRIVATE repo, so this uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env. The token is injected via git's environment config (GIT_CONFIG_*) for this one command only — nothing is written to ~/.gitconfig, and GONOSUMCHECK/GONOSUMDB is set so the fetch does not hit the public sum.golang.org (which cannot see a private repo). Run on the HOST, then 'task vm:sync' to push vendor/ into the VM."
