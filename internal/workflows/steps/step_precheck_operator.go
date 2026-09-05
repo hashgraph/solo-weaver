@@ -167,7 +167,10 @@ func PrecheckOperatorVersion() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hm, err := newHelmManager()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to initialise Helm client"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			rel, err := hm.GetRelease(operatorReleaseName, operatorNamespace)

@@ -30,7 +30,10 @@ func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder 
 
 			kc, err := kube.NewClient()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
 			for flag, name := range secrets {
