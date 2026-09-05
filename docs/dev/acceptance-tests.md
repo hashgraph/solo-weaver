@@ -404,6 +404,11 @@ task uat:secrets NS="${NS}"
 sudo solo-provisioner kube operator install
 ```
 
+> **Consensus commands are gated.** The whole `consensus` group is hidden and
+> refuses to run unless you opt in with `--experimental` (shown below) or
+> `SOLO_ENABLE_CONSENSUS=1` — it is not production-ready. Under `sudo` use the
+> flag; sudo drops the environment, so the env var would not reach the process.
+
 ### F1. Single consensus node
 
 Install one node, then generate genesis. With defaults it is `node-id 0` /
@@ -413,12 +418,13 @@ created by step 3.
 ```bash
 # 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
 sudo solo-provisioner consensus node install \
+  --experimental \
   --namespace "${NS}" \
   --profile local \
   --deployment-package-dir "${PKG}"
 
 # 6. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
-sudo solo-provisioner consensus network genesis --namespace "${NS}"
+sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
 ### F2. Multi-node consensus network
@@ -433,6 +439,7 @@ convention `0.0.(3 + node-id)`. Step 3 already created secrets for `node0..node4
 # 5. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
 for i in 0 1 2 3; do
   sudo solo-provisioner consensus node install \
+    --experimental \
     --namespace "${NS}" \
     --profile local \
     --node-id "${i}" \
@@ -441,7 +448,7 @@ for i in 0 1 2 3; do
 done
 
 # 6. One genesis for the whole network — operator discovers all 4 capsules.
-sudo solo-provisioner consensus network genesis --namespace "${NS}"
+sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
 Expected (both F1 and F2):
