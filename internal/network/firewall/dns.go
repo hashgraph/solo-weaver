@@ -27,6 +27,21 @@ import (
 // acquire, so every second held here is a daemon reconcile tick skipped.
 const resolveTimeout = 2 * time.Second
 
+// addrGracePeriod is how long one address stays in a name's rendered set after
+// answers stop mentioning it. It is an idle timer per address, not a TTL: an
+// address that appears in every answer never ages out, however long it has been
+// cached.
+//
+// It exists because a resolver may answer with a subset of a name's records --
+// geo-steering, load balancers, truncation -- and taking each answer as the whole
+// truth makes the rendered set flap. Under a default-drop input chain that is an
+// operator locked out of SSH on a new connection, intermittently.
+//
+// Six refreshes at the timer's five-minute interval. Deliberately a constant and
+// not a flag: a value too short reintroduces the flapping this exists to prevent,
+// and nothing an operator can observe would tell them so.
+const addrGracePeriod = 30 * time.Minute
+
 // Resolver looks up the IPv4 addresses of a domain name. It is an interface for
 // the same reason Runner is: the package must build and test on any platform,
 // against fixed answers, without touching the host's resolver.
@@ -63,13 +78,112 @@ func dnsCachePathFor(configPath string) string {
 	return strings.TrimSuffix(configPath, filepath.Ext(configPath)) + DNSCacheSuffix
 }
 
-// dnsCacheEntry is one name's last successful answer.
+// dnsCacheEntry is one name's known addresses, each carrying the last time an
+// answer vouched for it.
+//
+// Per address rather than per answer, because the two things the cache has to
+// survive are different: a name failing to resolve at all, and a name resolving
+// to less than it did before. A single list plus a single timestamp can only
+// express the first.
 type dnsCacheEntry struct {
-	IPs        []string  `json:"ips"`
-	ResolvedAt time.Time `json:"resolvedAt"`
+	Addresses map[string]time.Time `json:"addresses"`
 }
 
-// dnsCache maps a normalised FQDN to its last successful answer.
+// UnmarshalJSON reads either shape: the current per-address map, or the flat
+// `ips`/`resolvedAt` list written before addresses decayed independently.
+//
+// Tolerating the flat shape is what stops an already-provisioned host losing its
+// last-known addresses on upgrade -- which, for a name that is not resolving at
+// that moment, is the difference between a firewall that applies and one that
+// refuses. Every address inherits the answer's single timestamp, so a host
+// upgraded mid-outage starts its grace window from the last good answer.
+//
+// The legacy list holds nft elements (`192.0.2.7/32`); the map is keyed by bare
+// addresses, so that elementsFor stays the only place that knows the nft
+// encoding.
+func (e *dnsCacheEntry) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Addresses  map[string]time.Time `json:"addresses"`
+		IPs        []string             `json:"ips"`
+		ResolvedAt time.Time            `json:"resolvedAt"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Addresses != nil {
+		e.Addresses = raw.Addresses
+		return nil
+	}
+	e.Addresses = make(map[string]time.Time, len(raw.IPs))
+	for _, element := range raw.IPs {
+		addr, _, _ := strings.Cut(element, "/")
+		e.Addresses[addr] = raw.ResolvedAt
+	}
+	return nil
+}
+
+// mergeAnswer folds a fresh answer in: addresses it names are vouched for as of
+// now, addresses it omits keep the timestamp they had and are left to decay.
+func (e *dnsCacheEntry) mergeAnswer(addrs []netip.Addr, now time.Time) {
+	if e.Addresses == nil {
+		e.Addresses = make(map[string]time.Time, len(addrs))
+	}
+	for _, a := range addrs {
+		a = a.Unmap()
+		if !a.Is4() {
+			continue
+		}
+		e.Addresses[a.String()] = now
+	}
+}
+
+// touch vouches for every known address without a fresh answer, for a name the
+// resolver did not answer at all.
+//
+// No answer is not evidence an address is gone. Letting the clock run through an
+// outage would mean the first partial answer after it recovers finds everything
+// aged out and prunes it in one pass -- the flap this mechanism exists to
+// prevent, relocated to the moment of recovery, which is exactly when an
+// operator is likely to be reconnecting.
+func (e *dnsCacheEntry) touch(now time.Time) {
+	for a := range e.Addresses {
+		e.Addresses[a] = now
+	}
+}
+
+// decay drops addresses no answer has vouched for within addrGracePeriod,
+// reporting whether it removed any.
+//
+// It cannot empty a populated entry: mergeAnswer only ever runs on a non-empty
+// answer and stamps those addresses with now, and touch stamps all of them, so
+// every path into decay leaves at least one address inside the window.
+func (e *dnsCacheEntry) decay(now time.Time) bool {
+	dropped := false
+	for a, seen := range e.Addresses {
+		if now.Sub(seen) >= addrGracePeriod {
+			delete(e.Addresses, a)
+			dropped = true
+		}
+	}
+	return dropped
+}
+
+// elements renders the entry as nft set elements. Unparseable keys -- only
+// reachable by hand-editing the file -- are skipped rather than failing the
+// apply, on the same reasoning as loadDNSCache.
+func (e dnsCacheEntry) elements() []string {
+	addrs := make([]netip.Addr, 0, len(e.Addresses))
+	for s := range e.Addresses {
+		a, err := netip.ParseAddr(s)
+		if err != nil {
+			continue
+		}
+		addrs = append(addrs, a)
+	}
+	return elementsFor(addrs)
+}
+
+// dnsCache maps a normalised FQDN to the addresses it has recently resolved to.
 //
 // It exists for exactly one job: attribution. Without it, "on resolution
 // failure keep the last-known addresses" is only well defined when every name
@@ -130,9 +244,10 @@ type resolution struct {
 	// nor a cached one maps to an empty slice — present, contributing nothing —
 	// so expandFQDNs can tell "resolved to nothing" from "never asked".
 	byName map[string][]string
-	// fresh is true when at least one name was answered by the resolver this
-	// pass, which is what makes the cache worth rewriting.
-	fresh bool
+	// touched is true when the pass changed any name's cache entry -- a fresh
+	// answer, a re-stamp of what the fallback kept, or a decayed address -- which
+	// is what makes the cache worth rewriting.
+	touched bool
 	// stale names were served from the cache after the resolver declined.
 	stale []string
 	// missing names had neither a fresh answer nor a cached one.
@@ -225,18 +340,31 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 	}
 	wg.Wait()
 
+	// One timestamp for the whole pass, so that names resolved concurrently decay
+	// on the same clock and a test can reason about a pass rather than about the
+	// order goroutines happened to finish in.
+	now := time.Now().UTC()
+
 	// Folded back in list order, not completion order, so the warnings and the
 	// error message name things in the order the operator wrote them.
 	for i, name := range names {
+		entry := cache[name]
 		if answers[i].err == nil && len(answers[i].addrs) > 0 {
-			res.byName[name] = elementsFor(answers[i].addrs)
-			res.fresh = true
-			cache[name] = dnsCacheEntry{IPs: res.byName[name], ResolvedAt: time.Now().UTC()}
+			// The union of what the name has recently answered, not just this
+			// answer: see addrGracePeriod.
+			entry.mergeAnswer(answers[i].addrs, now)
+			entry.decay(now)
+			cache[name] = entry
+			res.byName[name] = entry.elements()
+			res.touched = true
 			continue
 		}
-		if entry, ok := cache[name]; ok && len(entry.IPs) > 0 {
-			res.byName[name] = entry.IPs
+		if len(entry.Addresses) > 0 {
+			entry.touch(now)
+			cache[name] = entry
+			res.byName[name] = entry.elements()
 			res.stale = append(res.stale, name)
+			res.touched = true
 			continue
 		}
 		res.byName[name] = nil
@@ -252,10 +380,10 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 			pruned = true
 		}
 	}
-	// Persist on a fresh answer OR a prune: a prune with the resolver down must
+	// Persist on any entry change OR a prune: a prune with the resolver down must
 	// still reach disk, or a name removed from the config during an outage
 	// lingers in the cache until the resolver happens to succeed again.
-	if res.fresh || pruned {
+	if res.touched || pruned {
 		cache.save(m.dnsCachePath)
 	}
 
