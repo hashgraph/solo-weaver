@@ -95,14 +95,26 @@ tasks:
   
   vendor:
     desc: "Populate vendor/ from go.mod (skipped when vendor/ is already in sync)"
-    # Skip when vendor/modules.txt is newer than both go.mod and go.sum, i.e.
-    # nothing has changed since the last vendoring. This keeps the VM build fully
-    # offline: the host (which has GitHub creds for the private solo-operator
-    # module) populates vendor/, `task vm:sync` rsyncs it into the VM, and the VM
-    # reuses it instead of re-running `go mod vendor` — which would fail with
-    # "terminal prompts disabled" because the VM has no credentials. A go.mod or
-    # go.sum edit bumps its mtime ahead of modules.txt and re-triggers vendoring
-    # (do it on the host, where creds exist).
+    # Skip re-vendoring when vendor/ is present AND already records the go.mod
+    # version of the private solo-operator module. This keeps CI and the VM build
+    # offline: the host (which has GitHub creds for the private module) populates
+    # vendor/, it is committed / rsynced by `task vm:sync`, and consumers reuse it
+    # instead of re-running `go mod vendor` — which would fail with "terminal prompts
+    # disabled" where there are no credentials.
+    #
+    # Two earlier guards were both wrong here:
+    #   1. mtime (`vendor/modules.txt -nt go.mod`): a fresh `git checkout` stamps
+    #      every file with the same mtime, so `-nt` is false, the guard fails, and
+    #      CI re-vendored — reaching for the private module it cannot fetch.
+    #   2. `GOPROXY=off go list -mod=vendor`: correct in spirit but it makes `go`
+    #      resolve the `go 1.26.x` toolchain, and with GOPROXY=off a fresh runner
+    #      cannot download it ("toolchain not available"), so the guard fails and CI
+    #      re-vendored anyway.
+    # So the guard must not invoke `go` at all. solo-operator is the only private
+    # module whose re-vendor CI cannot perform; comparing its go.mod version against
+    # the one recorded in vendor/modules.txt is a pure filesystem check that is
+    # correct on any fresh checkout. Full vendor consistency is still enforced right
+    # after, by `go build -mod=vendor` (the default when vendor/ exists).
     #
     # TODO(solo-operator-public): once github.com/hashgraph/solo-operator is
     # public, module fetches no longer need auth — narrow GOPRIVATE (drop the
@@ -110,8 +122,10 @@ tasks:
     # via proxy.golang.org / sum.golang.org again. This guard stays useful as a
     # build-speed optimization regardless.
     status:
-      - test vendor/modules.txt -nt go.mod
-      - test vendor/modules.txt -nt go.sum
+      - test -f vendor/modules.txt
+      - |
+        want=$(awk '$1=="github.com/hashgraph/solo-operator"{print $2}' go.mod)
+        test -n "$want" && grep -qxF "# github.com/hashgraph/solo-operator $want" vendor/modules.txt
     cmds:
       # Reached only when vendor/ is stale (status above failed), so `go mod
       # vendor` is about to fetch the private github.com/hashgraph/solo-operator
