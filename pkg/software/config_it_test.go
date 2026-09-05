@@ -386,7 +386,7 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},
 		"node-exporter":            {ChartTypeOCI, "4.5.19"},
 		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
-		"solo-operator":            {ChartTypeOCI, "0.5.0"},
+		"solo-operator":            {ChartTypeOCI, "0.6.0"},
 	}
 
 	for name, expected := range expectedCharts {
