@@ -163,6 +163,10 @@ func (p *Policy) validateDeny() error {
 // `ipv4_addr . inet_service` / `ipv6_addr . inet_service` set), plain CIDRs
 // otherwise. Both address families are accepted; each entry is routed to the
 // policy's v4 (@name) or v6 (@name6) set by family at render/apply time.
+//
+// It is the one choke point for every operator-authored membership entry —
+// create --cidrs, add/remove --cidr, set --cidrs — so the name refusal below
+// covers all four verbs.
 func (p *Policy) validateCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
 		if p.isCompoundSet() {
@@ -171,11 +175,37 @@ func (p *Policy) validateCIDRs(cidrs []string) error {
 			}
 			continue
 		}
+		if err := rejectFQDNEntry(c, c); err != nil {
+			return err
+		}
 		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --cidrs entry %q", c)
 		}
 	}
 	return nil
+}
+
+// rejectFQDNEntry refuses a domain name with the reason it is refused. Handing
+// it to sanity.ValidateCIDR instead produces "invalid CIDR: <name>", which is
+// accurate and reads like the parser is merely fussy. It is not: the sets the
+// traffic-shaper daemon owns are replaced wholesale from the block node's
+// statusz on every poll, so a name resolved once here would be gone on the next
+// tick. Names belong on the host firewall, which resolves and re-resolves them.
+//
+// name is the part tested — the whole entry for a plain set, the host half for
+// a compound ip:port one — while entry is what the operator typed and so what
+// the message quotes back. The name must be a well-formed FQDN, not merely
+// non-numeric: a typo like "not-a-cidr" is a botched address, and answering it
+// with a paragraph about statusz ownership would be its own kind of misleading.
+func rejectFQDNEntry(entry, name string) error {
+	if !sanity.IsFQDNEntry(name) || sanity.ValidateFQDN(name) != nil {
+		return nil
+	}
+	return errorx.IllegalArgument.New(
+		"invalid --cidrs entry %q: network policy takes literal addresses only — the daemon-owned "+
+			"policy sets are reconciled from the block node's statusz, so a name resolved here would be "+
+			"replaced on the next poll; use `network firewall --mgmt-cidrs/--blocked-cidrs`, which accepts "+
+			"names and re-resolves them", entry)
 }
 
 // V6SetName returns the IPv6 companion set name for a policy (or its compound
@@ -211,9 +241,17 @@ func (p *Policy) hasPortsSet() bool {
 func validateIPPort(s string) error {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
+		// A bare name carries no port, so it lands here rather than on the host
+		// check below. Answer it with the ownership reason, not the ip:port form.
+		if fqdnErr := rejectFQDNEntry(s, s); fqdnErr != nil {
+			return fqdnErr
+		}
 		return errorx.IllegalArgument.New("invalid --cidrs entry %q: --reply-stamp policies require ip:port pairs (bracket IPv6 hosts, e.g. [2001:db8::1]:443)", s)
 	}
 	if ip := net.ParseIP(host); ip == nil {
+		if fqdnErr := rejectFQDNEntry(s, host); fqdnErr != nil {
+			return fqdnErr
+		}
 		return errorx.IllegalArgument.New("invalid --cidrs entry %q: %q is not an IP address", s, host)
 	}
 	if err := sanity.ValidatePort(port); err != nil {

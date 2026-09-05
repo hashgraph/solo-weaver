@@ -4,8 +4,9 @@ Manages the `inet weaver-workload-policy` plane: named per-category rules that e
 traffic with an HTB priority class, or drop it.
 
 The scope is generic and category-agnostic — the CLI takes CIDRs and class names directly and
-knows nothing about statusz. The examples below use the block-node policies because
-`block node install` is its only caller today.
+knows nothing about statusz. The `create` examples below use the block-node policies because
+`block node install` is its only caller today; the membership examples deliberately do not, for
+the reason given there.
 
 > **Flags not listed on this page.** Every command here also accepts the
 > [global flags](../../reference/global-flags.md) — `--config`, `--output`, `--log-level`,
@@ -101,10 +102,13 @@ set membership alone, so detection is skipped for it. Unlike `network firewall c
 value is recovered from the existing `.nft` rather than being required again — it is a
 deployment-wide constant, not a per-call argument.
 
-> **Membership is never persisted to `network-weaver-workload-policy.nft`.** Statusz is the
-> source of truth and the daemon reconciles it. `--cidrs` seeds the live set only, and only on
-> a brand-new policy or a `--force` re-create (which replaces membership with exactly what you
-> pass — not a merge).
+> **Membership is persisted, but statusz still owns it.** Every membership write re-renders
+> `network-weaver-workload-policy.nft` from a live snapshot of the kernel sets, so the boot
+> oneshot replays what is currently in the kernel and a quarantined peer stays dropped across a
+> reboot. That is durability, not authority: for the daemon-owned sets, statusz remains the
+> source of truth and the next poll replaces whatever is there. `--cidrs` seeds the live set
+> only on a brand-new policy or a `--force` re-create (which replaces membership with exactly
+> what you pass — not a merge).
 
 ## What an empty statusz response does
 
@@ -145,22 +149,34 @@ Three things do **not** change, which is why this can never lock a node out:
 
 ## `add` / `remove` / `set` — change live membership
 
-**None of these re-render the `.nft`.** Only the live kernel set changes.
+**None of these re-render the chain.** Only the live kernel set changes — and then the `.nft`
+is rewritten with that set's new contents, so the change survives a reboot.
+
+> **Four sets are daemon-owned: `bn-publisher`, `bn-partner-out`, `bn-restricted`,
+> `bn-backfill`.** The traffic-shaper poll loop replaces each of them wholesale from the block
+> node's statusz, so a hand-written entry on one of these is gone on the next tick. The
+> commands below therefore use `ops-quarantine`, an operator-authored policy the daemon does
+> not touch. Writing to a daemon-owned set is still the right move for a one-off test — just
+> expect it to be undone.
 
 ```bash
 # Add (repeatable or comma-separated)
-sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.1/32
-sudo solo-provisioner network policy add --name bn-publisher --cidr 10.1.0.2/32,10.1.0.3/32
+sudo solo-provisioner network policy add --name ops-quarantine --cidr 10.1.0.1/32
+sudo solo-provisioner network policy add --name ops-quarantine --cidr 10.1.0.2/32,10.1.0.3/32
 
 # Remove
-sudo solo-provisioner network policy remove --name bn-publisher --cidr 10.1.0.1/32
+sudo solo-provisioner network policy remove --name ops-quarantine --cidr 10.1.0.1/32
 
 # Replace the whole list atomically (flush + re-add in one kernel transaction)
-sudo solo-provisioner network policy set --name bn-publisher --cidrs 10.2.0.0/16
+sudo solo-provisioner network policy set --name ops-quarantine --cidrs 10.2.0.0/16
 
 # Clear the set (omit --cidrs)
-sudo solo-provisioner network policy set --name bn-publisher
+sudo solo-provisioner network policy set --name ops-quarantine
 ```
+
+All three take literal addresses only. A domain name is refused with a pointer to
+[`network firewall`](firewall.md), whose `--mgmt-cidrs` / `--blocked-cidrs` accept names and
+re-resolve them.
 
 | Verb | Flag | Required |
 |---|---|---|

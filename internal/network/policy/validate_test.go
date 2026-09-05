@@ -126,6 +126,44 @@ func TestValidate(t *testing.T) {
 			cidrs:   []string{"10.30.5.7"},
 			wantErr: "require ip:port pairs",
 		},
+		{
+			name:    "domain name refused with the statusz-ownership reason",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
+			cidrs:   []string{"jump.corp.example.com"},
+			wantErr: "reconciled from the block node's statusz",
+		},
+		{
+			name:    "domain name points at the surface that takes names",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
+			cidrs:   []string{"jump.corp.example.com"},
+			wantErr: "network firewall --mgmt-cidrs/--blocked-cidrs",
+		},
+		{
+			name:    "bare domain name on a compound set gets the same reason",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
+			cidrs:   []string{"jump.corp.example.com"},
+			wantErr: "reconciled from the block node's statusz",
+		},
+		{
+			name:    "domain:port on a compound set gets the same reason",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
+			cidrs:   []string{"jump.corp.example.com:443"},
+			wantErr: "reconciled from the block node's statusz",
+		},
+		{
+			// A botched address is not a name; it must keep the parser's answer
+			// rather than inherit an ownership explanation that does not apply.
+			name:    "malformed address is not treated as a name",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
+			cidrs:   []string{"not-a-cidr"},
+			wantErr: "invalid CIDR: not-a-cidr",
+		},
+		{
+			name:    "maskless ip still asks for a prefix length",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
+			cidrs:   []string{"10.1.0.1"},
+			wantErr: "invalid CIDR: 10.1.0.1",
+		},
 	}
 
 	for _, tt := range tests {
