@@ -62,6 +62,10 @@ func (f *pollFakeDelegator) NetworkPolicySet(context.Context, string, []string) 
 func (f *pollFakeDelegator) TCAttach(context.Context, string) error                   { return nil }
 func (f *pollFakeDelegator) TCDetach(context.Context, string) error                   { return nil }
 
+func (f *pollFakeDelegator) NetworkReassert(context.Context) (privexec.NetworkReassertResult, error) {
+	return privexec.NetworkReassertResult{}, nil
+}
+
 func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (privexec.ReconcileShaperCheckResult, error) {
 	n := f.checkCalls.Add(1)
 	if f.blockUntilCancel {

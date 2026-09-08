@@ -4,6 +4,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,6 +344,46 @@ func TestDelete_LastPolicy_TearsDownTable(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(regDir, "bn-restricted.json"))
 }
 
+func TestDelete_LastPolicy_UnanswerableProbeLeavesArtifactsForRetry(t *testing.T) {
+	r := newFakeRunner()
+	m, nftPath, regDir := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+	regEntry := filepath.Join(regDir, "bn-restricted.json")
+
+	// Presence unknown: touch nothing, so the registry entry survives and the
+	// operator can re-run once nft answers again.
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	require.ErrorIs(t, m.Delete(context.Background(), "bn-restricted"), r.existsErr)
+	require.FileExists(t, nftPath)
+	require.FileExists(t, regEntry)
+
+	r.existsErr = nil
+	require.NoError(t, m.Delete(context.Background(), "bn-restricted"))
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, regEntry)
+}
+
+func TestDelete_LastPolicy_DeleteFailureLeavesArtifactsForRetry(t *testing.T) {
+	// A failed live delete leaves the table live, so the file and registry entry
+	// must stay too, or neither `policy delete` nor reassert can find it again.
+	r := newFakeRunner()
+	m, nftPath, regDir := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+	regEntry := filepath.Join(regDir, "bn-restricted.json")
+
+	r.deleteErr = errors.New("nft delete table failed: Operation not permitted")
+	require.ErrorIs(t, m.Delete(context.Background(), "bn-restricted"), r.deleteErr)
+	require.True(t, r.exists, "the live table is still there")
+	require.FileExists(t, nftPath)
+	require.FileExists(t, regEntry)
+
+	r.deleteErr = nil
+	require.NoError(t, m.Delete(context.Background(), "bn-restricted"))
+	require.False(t, r.exists)
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, regEntry)
+}
+
 func TestDelete_PolicyNotFound(t *testing.T) {
 	r := newFakeRunner()
 	m, _, _ := newTestManager(t, r)
@@ -425,4 +466,63 @@ func TestShow_ReplyStampPolicy(t *testing.T) {
 	require.Contains(t, out, "live set @bn-backfill:")
 	require.True(t, strings.Contains(out, "10.30.5.7 . 43473") || strings.Contains(out, "10.30.5.7:43473"),
 		"show must display compound-set membership in some recognizable form")
+}
+
+// --- unanswerable presence probe --------------------------------------------
+
+func TestCreate_UnanswerableProbeAppliesNothing(t *testing.T) {
+	// The registry already has this policy, so Create probes the kernel to decide
+	// whether it is really live. With the probe broken it must stop rather than
+	// re-render over a table whose state is unknown.
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+	appliedBefore := r.applyCount
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	_, err := m.Create(context.Background(),
+		&Policy{Name: "bn-restricted", Action: ActionDeny}, []string{"10.99.0.0/16"}, nil, false)
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.Equal(t, appliedBefore, r.applyCount, "nothing may be applied while presence is unknown")
+}
+
+// TestAdd_UnanswerableProbeDoesNotClaimTheTableIsMissing guards the advice, not
+// just the error: "run `network policy create` to restore" would tell an
+// operator to rebuild a table that may still be live and carrying rules.
+func TestAdd_UnanswerableProbeDoesNotClaimTheTableIsMissing(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	err := m.Add(context.Background(), "bn-restricted", []string{"10.1.0.1/32"})
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.NotContains(t, err.Error(), "policy table not found")
+	require.NotContains(t, err.Error(), "network policy create")
+}
+
+func TestSet_UnanswerableProbeDoesNotClaimTheTableIsMissing(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	err := m.Set(context.Background(), "bn-restricted", []string{"10.1.0.1/32"})
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.NotContains(t, err.Error(), "policy table not found")
+}
+
+func TestRemove_UnanswerableProbeDoesNotClaimTheTableIsMissing(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedDenyPolicy(t, m, "bn-restricted", []string{"10.99.0.0/16"})
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	err := m.Remove(context.Background(), "bn-restricted", []string{"10.99.0.0/16"})
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.NotContains(t, err.Error(), "policy table not found")
 }

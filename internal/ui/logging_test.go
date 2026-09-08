@@ -18,8 +18,7 @@ import (
 )
 
 // TestNewJSONConsoleLogger_EmitsJSON verifies the --output json logger writes a
-// parseable single-line JSON object (NDJSON) to stdout with the level, message,
-// and structured fields intact.
+// parseable single-line JSON object with the level, message and fields intact.
 func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
 	origLevel := zerolog.GlobalLevel()
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
@@ -27,14 +26,14 @@ func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
 
 	cfg := logx.LoggingConfig{FileLogging: true, Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
 
-	// Capture stdout: newJSONConsoleLogger binds os.Stdout at construction, so
+	// Capture stderr: newJSONConsoleLogger binds os.Stderr at construction, so
 	// swap it before building the logger, then restore before reading.
-	old := os.Stdout
+	old := os.Stderr
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	os.Stdout = w
+	os.Stderr = w
 	logger := newJSONConsoleLogger(cfg)
-	os.Stdout = old
+	os.Stderr = old
 
 	logger.Info().Str("step_id", "validate-cpu").Msg("hello")
 	_ = w.Close()
@@ -44,10 +43,51 @@ func TestNewJSONConsoleLogger_EmitsJSON(t *testing.T) {
 	line := strings.TrimSpace(buf.String())
 
 	var m map[string]any
-	require.NoError(t, json.Unmarshal([]byte(line), &m), "stdout is not JSON: %q", line)
+	require.NoError(t, json.Unmarshal([]byte(line), &m), "stderr is not JSON: %q", line)
 	assert.Equal(t, "hello", m["message"])
 	assert.Equal(t, "validate-cpu", m["step_id"])
 	assert.Equal(t, "info", m["level"])
+}
+
+// TestNewJSONConsoleLogger_WritesToStderrNotStdout is the regression guard: a
+// log line on stdout would make the stream unparseable as one document.
+func TestNewJSONConsoleLogger_WritesToStderrNotStdout(t *testing.T) {
+	origLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(origLevel) })
+
+	cfg := logx.LoggingConfig{FileLogging: true, Directory: t.TempDir(), Filename: "test.log", MaxSize: 1}
+
+	// Both streams are swapped, so a line on the wrong one is visible rather than
+	// merely absent.
+	origOut, origErr := os.Stdout, os.Stderr
+	rOut, wOut, err := os.Pipe()
+	require.NoError(t, err)
+	rErr, wErr, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout, os.Stderr = wOut, wErr
+	logger := newJSONConsoleLogger(cfg)
+	os.Stdout, os.Stderr = origOut, origErr
+
+	// The document a command writes, then the log line it emits afterwards.
+	_, _ = wOut.Write([]byte(`{"artifacts":[{"artifact":"host-firewall"}]}` + "\n"))
+	logger.Debug().Msg("weaver network state verified; nothing to re-assert")
+	logger.Warn().Msg("weaver network state was missing and has been re-asserted")
+	require.NoError(t, wOut.Close())
+	require.NoError(t, wErr.Close())
+
+	var outBuf, errBuf bytes.Buffer
+	_, _ = outBuf.ReadFrom(rOut)
+	_, _ = errBuf.ReadFrom(rErr)
+
+	// stdout must still be exactly one JSON document, whatever was logged.
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(outBuf.Bytes(), &doc),
+		"stdout must hold one parseable document, got: %q", outBuf.String())
+
+	assert.Contains(t, errBuf.String(), "nothing to re-assert", "log lines belong on stderr")
+	assert.Contains(t, errBuf.String(), "has been re-asserted")
+	assert.NotContains(t, outBuf.String(), "re-assert", "no log line may reach stdout")
 }
 
 // TestNewStderrConsoleLogger_WritesToStderrNotStdout is the regression guard for

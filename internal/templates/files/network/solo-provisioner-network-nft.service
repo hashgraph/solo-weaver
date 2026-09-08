@@ -11,8 +11,9 @@ Wants=network-pre.target
 After=local-fs.target nftables.service ufw.service firewalld.service
 Before=network-pre.target solo-provisioner-daemon.service
 # Replay the weaver tables whenever a firewall manager restarts, not just at
-# boot. PartOf= propagates restart and stop only, not reload; a reload or stop
-# leaves the tables gone until `network reassert` runs.
+# boot. Only restart and stop propagate, and the stop runs nothing here (no
+# ExecStop), so a flush the manager did on its way down — as stock
+# nftables.service does — waits for `network reassert`, as a reload does.
 PartOf=nftables.service ufw.service firewalld.service
 # Every `network firewall` / `network policy` mutation restarts this unit, so a
 # run of failed applies would otherwise trip systemd's default start rate limit

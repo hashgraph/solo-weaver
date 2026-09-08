@@ -35,6 +35,8 @@ type fakeRunner struct {
 	exists       bool
 	applyErr     error
 	listElemErr  error
+	existsErr    error    // makes Exists unable to answer
+	deleteErr    error    // makes Delete fail outright
 	setElemOrder []string // set names in the order SetElements was called
 }
 
@@ -172,12 +174,23 @@ func (f *fakeRunner) ListElements(_ context.Context, set string) ([]string, erro
 }
 func (f *fakeRunner) List(context.Context) (string, error) { return f.applied, nil }
 func (f *fakeRunner) Delete(context.Context) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	// Mirrors `nft delete table`: the table and every set in it are gone.
 	f.exists = false
 	f.elements = map[string][]string{}
 	return nil
 }
-func (f *fakeRunner) Exists(context.Context) (bool, error) { return f.exists, nil }
+
+// Exists mirrors nftexec.TableExists: a failure answers false, so no caller can
+// lean on a presence value the production runner would never hand it.
+func (f *fakeRunner) Exists(context.Context) (bool, error) {
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	return f.exists, nil
+}
 
 // newTestManager wires a Manager with a fakeRunner, temp paths, and a no-op
 // service func so the package runs on any platform without touching systemd.
