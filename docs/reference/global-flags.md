@@ -28,16 +28,22 @@ Flags on this page work on every `solo-provisioner` command.
 
 **`json`** — for automation (Ansible, `jq`, CI):
 
-- One JSON object per log event (NDJSON) on stdout.
-- A final tagged summary object:
+- **stdout carries data only.** For a workflow command that is the tagged summary
+  object; for a one-shot command (`network firewall show`, `network reassert`) it is
+  a single JSON document you can parse whole.
+- The summary object:
   `{"type":"summary","status":…,"report_path":…,"report":{…}}`
-- Select the summary by its tag, not by position — a log line can follow it:
+- Select the summary by its tag, not by position:
   ```bash
   solo-provisioner block node install --profile=mainnet -o json | jq 'select(.type=="summary")'
   ```
+- **One JSON object per log event (NDJSON) on stderr.** Read progress from there:
+  ```bash
+  solo-provisioner block node install --profile=mainnet -o json 2>&1 >/dev/null | jq -r .message
+  ```
 - `-o json` **forces non-interactive mode**. The TUI never renders, matching
   `kubectl -o json` and `terraform -json`.
-- Human-facing error panels still go to **stderr**, so the stdout JSON stays clean.
+- Human-facing error panels also go to **stderr**, so the stdout JSON stays clean.
 
 Either way, the workflow report file (`setup_report_<timestamp>.yaml`) is written. Its path
 shows up in the `report_path=…` log field and in the JSON summary object.
