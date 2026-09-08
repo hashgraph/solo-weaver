@@ -377,3 +377,109 @@ func TestTruncateStderr(t *testing.T) {
 	require.True(t, strings.HasPrefix(out, strings.Repeat("\x80", 512)))
 	require.Contains(t, out, "[stderr truncated at 512/600 bytes]")
 }
+
+func TestNetworkReassert_BuildsSudoArgv(t *testing.T) {
+	d, call := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"type":"reassert","artifacts":[{"artifact":"host-firewall","expected":true,"present":true}]}`), nil,
+	)
+
+	_, err := d.NetworkReassert(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, "/usr/bin/sudo", call.name)
+	require.Equal(t, []string{
+		"-n",
+		"/opt/solo/weaver/bin/solo-provisioner",
+		"network", "reassert", "--output", "json",
+	}, call.args)
+}
+
+func TestNetworkReassert_ParsesEveryReportedField(t *testing.T) {
+	// One compact line, as the CLI emits it.
+	stdout := []byte(`{"type":"reassert","artifacts":[` +
+		`{"artifact":"host-firewall","expected":true,"present":false,"reasserted":true,"recovered":true,"detail":"nic=eth0"},` +
+		`{"artifact":"egress-qdisc","expected":true,"present":false,"probe_failed":true,"detail":"cannot determine"}]}` + "\n")
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon", stdout, nil,
+	)
+
+	res, err := d.NetworkReassert(context.Background())
+	require.NoError(t, err)
+	require.Len(t, res.Artifacts, 2)
+
+	require.Equal(t, "host-firewall", res.Artifacts[0].Artifact)
+	require.True(t, res.Artifacts[0].Expected)
+	require.False(t, res.Artifacts[0].Present)
+	require.True(t, res.Artifacts[0].Reasserted)
+	require.True(t, res.Artifacts[0].Recovered)
+	require.Equal(t, "nic=eth0", res.Artifacts[0].Detail)
+
+	require.True(t, res.Artifacts[1].ProbeFailed)
+}
+
+// TestNetworkReassert_SelectsTheTaggedLineAmongLogEvents pins the transport:
+// the report is picked by its tag, so log lines merged onto stdout cannot displace it.
+func TestNetworkReassert_SelectsTheTaggedLineAmongLogEvents(t *testing.T) {
+	stdout := []byte(`{"level":"debug","time":"2026-09-04T10:00:00Z","message":"resolving nft binary"}
+{"type":"reassert","artifacts":[{"artifact":"host-firewall","expected":true,"present":false,"reasserted":true,"recovered":true}]}
+{"level":"warn","restored":["host-firewall"],"message":"weaver network state was missing and has been re-asserted"}
+`)
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon", stdout, nil,
+	)
+
+	res, err := d.NetworkReassert(context.Background())
+	require.NoError(t, err)
+	require.Len(t, res.Artifacts, 1)
+	require.True(t, res.Artifacts[0].Recovered)
+}
+
+func TestNetworkReassert_UntaggedReportIsAContractError(t *testing.T) {
+	// A well-formed document without the tag is not the report: accepting it
+	// would let an unrelated JSON line on stdout stand in for the worker's answer.
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"artifacts":[{"artifact":"host-firewall","expected":true,"present":true}]}`), nil,
+	)
+
+	_, err := d.NetworkReassert(context.Background())
+
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "NetworkReassertParseFailed", pe.Reason)
+}
+
+func TestNetworkReassert_UnparseableOutputIsAContractError(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte("not json"), nil,
+	)
+
+	_, err := d.NetworkReassert(context.Background())
+
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "NetworkReassertParseFailed", pe.Reason)
+}
+
+func TestNetworkReassert_EmptyArtifactListIsAContractError(t *testing.T) {
+	// The worker always reports all three artifacts, so an empty list means the
+	// output shape drifted. Accepting it would read as "nothing to do" forever.
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"type":"reassert","artifacts":[]}`), nil,
+	)
+
+	_, err := d.NetworkReassert(context.Background())
+
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "NetworkReassertEmptyReport", pe.Reason)
+}

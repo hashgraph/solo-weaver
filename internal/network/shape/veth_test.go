@@ -54,6 +54,11 @@ func (r *recordingTCRunner) ClassStats(_ context.Context, _ string) (map[string]
 	return nil, nil
 }
 
+// QdiscRootExists is unused here; the reassert engine's tests cover the probe.
+func (r *recordingTCRunner) QdiscRootExists(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
 func newRecordingManager(t *testing.T, tc TCRunner) *Manager {
 	t.Helper()
 	return NewManagerWithConfig(Config{
