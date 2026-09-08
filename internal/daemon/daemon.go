@@ -15,6 +15,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/daemon/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon/consensus"
+	"github.com/hashgraph/solo-weaver/internal/daemon/network"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"golang.org/x/sync/errgroup"
@@ -28,11 +29,14 @@ import (
 // probe is optional: components with no external dependencies (host-only) leave
 // it nil and are treated as immediately ready by the composite probe runner.
 // tracker records per-monitor state for the /status endpoint.
+// detailFn is optional: it supplies the component's `detail` field in GET
+// /status and must be safe for concurrent use.
 type component struct {
 	name     string
 	monitors []daemonkit.MonitorRunner
 	probe    daemonkit.ComponentProbe
 	tracker  *daemonkit.StatusTracker
+	detailFn func() any
 }
 
 // Daemon is the controller for solo-provisioner-daemon. It composes the
@@ -148,6 +152,21 @@ func NewFromConfig(paths models.WeaverPaths, cfg DaemonConfig) (*Daemon, error) 
 					blocknode.NewBlockNodeHandler(result.TrafficShaperMonitor, trafficShaperStateFn))
 			}
 		}
+	}
+
+	// Always registered: the monitor decides per tick whether the host has any
+	// weaver network state to check.
+	netResult, err := network.NewComponent(network.ComponentConfig{})
+	if err != nil {
+		logComponentBuildSkipped(ComponentNameNetwork, "", err)
+	} else {
+		components = append(components, component{
+			name:     ComponentNameNetwork,
+			monitors: netResult.Monitors,
+			probe:    nil,
+			tracker:  daemonkit.NewStatusTracker(),
+			detailFn: func() any { return netResult.ReassertMonitor.Snapshot() },
+		})
 	}
 
 	d := &Daemon{
@@ -330,6 +349,9 @@ func (d *Daemon) statusSnapshot() StatusResponse {
 					cs.Monitors[m.Name()] = ms
 				}
 			}
+		}
+		if comp.detailFn != nil {
+			cs.Detail = comp.detailFn()
 		}
 		resp.Components[comp.name] = cs
 	}

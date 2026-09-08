@@ -8,6 +8,7 @@ import "github.com/automa-saga/daemonkit"
 const (
 	ComponentNameConsensusNode = "consensus-node"
 	ComponentNameBlockNode     = "block-node"
+	ComponentNameNetwork       = "network"
 )
 
 // HealthResponse is returned by GET /health.
@@ -35,4 +36,7 @@ type StatusResponse struct {
 // ComponentStatus holds the per-monitor states for one component.
 type ComponentStatus struct {
 	Monitors map[string]daemonkit.MonitorState `json:"monitors"`
+	// Detail is an optional component-specific payload, for history that the
+	// running/backoff/stopped monitor states cannot express.
+	Detail any `json:"detail,omitempty"`
 }
