@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -322,20 +323,23 @@ func (m *Manager) Delete(ctx context.Context) error {
 				return err
 			}
 		}
-		// A table that no longer exists has nothing to refresh.
-		if err := m.syncRefreshTimer(ctx, false); err != nil {
-			return err
-		}
+		// From here the live table is gone, so the artifacts must go too, or reassert
+		// would bring it back. Timer errors are reported at the end, not early.
+		timerErr := m.syncRefreshTimer(ctx, false)
 		// The retained generation and the resolution cache go with them: left
 		// behind, a later `create` on this host would inherit a "previous" config —
 		// or a set of last-known addresses — belonging to a table that no longer
 		// exists.
 		for _, p := range []string{m.nftPath, m.configPath, m.prevConfigPath, m.dnsCachePath} {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				return errorx.ExternalError.Wrap(err, "failed to remove %s", p)
+				rmErr := errorx.ExternalError.Wrap(err, "failed to remove %s", p)
+				if timerErr != nil {
+					return errors.Join(timerErr, rmErr)
+				}
+				return rmErr
 			}
 		}
-		return nil
+		return timerErr
 	})
 }
 

@@ -21,6 +21,7 @@
 package privexec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,6 +101,34 @@ type Delegator interface {
 	// ReconcileShaper when the digest changed, so a steady-state roster costs no
 	// root escalation.
 	ReconcileShaperCheck(ctx context.Context, statuszURL string) (digest string, err error)
+
+	// NetworkReassert runs `network reassert --output json` under sudo and
+	// returns what the worker found and restored. Even the check needs root.
+	NetworkReassert(ctx context.Context) (NetworkReassertResult, error)
+}
+
+// networkReassertReportType is the "type" tag on the report line. Mirrors
+// reassert.ReportType; the CLI-side contract test pins them together.
+const networkReassertReportType = "reassert"
+
+// NetworkReassertResult mirrors the `network reassert --output json` document.
+// Declared here, not imported, so the daemon does not pull in the engine.
+type NetworkReassertResult struct {
+	Type      string                  `json:"type"`
+	Artifacts []NetworkArtifactStatus `json:"artifacts"`
+}
+
+// NetworkArtifactStatus is one artifact's outcome from a reassert run.
+type NetworkArtifactStatus struct {
+	Artifact    string `json:"artifact"`
+	Expected    bool   `json:"expected"`
+	Present     bool   `json:"present"`
+	ProbeFailed bool   `json:"probe_failed"`
+	// Skipped means a lock was held, so the run did not look at this artifact.
+	Skipped    bool   `json:"skipped"`
+	Reasserted bool   `json:"reasserted"`
+	Recovered  bool   `json:"recovered"`
+	Detail     string `json:"detail"`
 }
 
 // execDelegator is the production Delegator. Its resolution and exec seams are
@@ -260,6 +289,50 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 		}
 	}
 	return res.Digest, nil
+}
+
+// NetworkReassert execs `network reassert --output json` under sudo and parses
+// the report. A missing or empty report is a contract bug, not a healthy run.
+func (d *execDelegator) NetworkReassert(ctx context.Context) (NetworkReassertResult, error) {
+	out, err := d.Run(ctx, "network", "reassert", "--output", "json")
+	if err != nil {
+		return NetworkReassertResult{}, err
+	}
+	return ParseNetworkReassertReport(out)
+}
+
+// ParseNetworkReassertReport picks the report out of the worker's stdout by its
+// "type" tag, never by position, so a merged stream cannot be mistaken for it.
+func ParseNetworkReassertReport(out []byte) (NetworkReassertResult, error) {
+	var res NetworkReassertResult
+	found := false
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var candidate NetworkReassertResult
+		if json.Unmarshal(line, &candidate) != nil || candidate.Type != networkReassertReportType {
+			continue
+		}
+		res, found = candidate, true
+		break
+	}
+	if !found {
+		return NetworkReassertResult{}, &daemonkit.ProbeError{
+			Reason:     "NetworkReassertParseFailed",
+			Message:    "network reassert --output json emitted no line tagged \"type\":\"" + networkReassertReportType + "\"",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	if len(res.Artifacts) == 0 {
+		return NetworkReassertResult{}, &daemonkit.ProbeError{
+			Reason:     "NetworkReassertEmptyReport",
+			Message:    "network reassert returned no artifacts",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	return res, nil
 }
 
 // tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.

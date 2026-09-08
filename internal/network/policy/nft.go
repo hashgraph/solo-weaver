@@ -5,11 +5,12 @@ package policy
 import (
 	"bytes"
 	"context"
-	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/joomcode/errorx"
+
+	"github.com/hashgraph/solo-weaver/internal/network/nftexec"
 )
 
 // Runner is the seam over the system `nft` binary. Unlike the firewall package
@@ -48,15 +49,12 @@ type Runner interface {
 	// List returns the rendered inet weaver-workload-policy table (`nft list table inet weaver-workload-policy`).
 	List(ctx context.Context) (string, error)
 	// Delete removes the inet weaver-workload-policy table (`nft delete table inet weaver-workload-policy`).
+	// An already-absent table is not an error.
 	Delete(ctx context.Context) error
-	// Exists reports whether the inet weaver-workload-policy table is present in the kernel.
+	// Exists reports whether the inet weaver-workload-policy table is live. An
+	// error means presence is unknown, not absent.
 	Exists(ctx context.Context) (bool, error)
 }
-
-// nftBinCandidates are the absolute locations we look for the system nft binary,
-// in order. We never exec a bare "nft" off PATH to avoid picking up a binary
-// from an attacker-controlled directory (see docs/dev/security-model.md).
-var nftBinCandidates = []string{"/usr/sbin/nft", "/sbin/nft", "/usr/bin/nft"}
 
 // tableArgs splits TableName into the argv tokens nft expects for sub-commands
 // that take a family and table name as separate arguments (list, delete).
@@ -70,13 +68,7 @@ type execRunner struct {
 // NewExecRunner resolves the nft binary path and returns a Runner that applies
 // changes to the live kernel.
 func NewExecRunner() Runner {
-	bin := nftBinCandidates[0]
-	for _, c := range nftBinCandidates {
-		if _, err := os.Stat(c); err == nil {
-			bin = c
-			break
-		}
-	}
+	bin, _ := nftexec.Binary()
 	return &execRunner{bin: bin}
 }
 
@@ -214,19 +206,9 @@ func (r *execRunner) List(ctx context.Context) (string, error) {
 }
 
 func (r *execRunner) Delete(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, r.bin, append([]string{"delete", "table"}, tableArgs...)...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return errorx.ExternalError.Wrap(err, "nft delete table %s failed: %s", TableName, strings.TrimSpace(stderr.String()))
-	}
-	return nil
+	return nftexec.DeleteTable(ctx, r.bin, TableName)
 }
 
 func (r *execRunner) Exists(ctx context.Context) (bool, error) {
-	// `nft list table inet weaver-workload-policy` exits zero when the table is present and
-	// non-zero when absent. Treating any failure as "absent" is safe: a genuine
-	// nft/permission error surfaces on the subsequent Apply.
-	cmd := exec.CommandContext(ctx, r.bin, append([]string{"list", "table"}, tableArgs...)...)
-	return cmd.Run() == nil, nil
+	return nftexec.TableExists(ctx, r.bin, TableName)
 }

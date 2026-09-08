@@ -26,6 +26,12 @@ func EnsureTcEgressUnit(ctx context.Context) error {
 	return unitconv.EnsureUnit(ctx, TcEgressServiceUnitPath, TcEgressService, content)
 }
 
+// RestartTcEgressService restarts the bandwidth-shaper oneshot so it replays the
+// boot script. It writes nothing, so it is safe under the daemon's read-only fs.
+func RestartTcEgressService(ctx context.Context) error {
+	return soos.RestartService(ctx, TcEgressService)
+}
+
 // RemoveTcEgressUnit is the teardown counterpart to EnsureTcEgressUnit: it
 // removes the boot script, then stops, disables and removes the unit, then
 // daemon-reloads. Callers must tear the egress hierarchy down first — this
