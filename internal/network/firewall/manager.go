@@ -157,7 +157,7 @@ func (m *Manager) CreateRule(ctx context.Context, r Rule, force bool) (bool, err
 
 	var changed bool
 	err := m.withLock(func() error {
-		t, err := m.load()
+		t, recovered, err := m.load()
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func (m *Manager) CreateRule(ctx context.Context, r Rule, force bool) (bool, err
 			return err
 		}
 		changed = true
-		return m.applyAndPersist(ctx, t, applyOpts{})
+		return m.applyAndPersist(ctx, t, applyOpts{recoveredFromNft: recovered})
 	})
 	return changed, err
 }
@@ -279,7 +279,8 @@ func (m *Manager) Config(ctx context.Context) (*FileConfig, error) {
 // Table returns the currently-configured table. Read-only: no lock is taken,
 // because a torn read cannot happen — the config is replaced by rename.
 func (m *Manager) Table(_ context.Context) (*Table, error) {
-	return m.load()
+	t, _, err := m.load()
+	return t, err
 }
 
 // IsActive reports whether the inet weaver-host-firewall table is currently present in the
@@ -370,11 +371,11 @@ func (m *Manager) Reapply(ctx context.Context) error {
 	// refused here as everywhere — re-asserting a firewall that has quietly
 	// stopped denying something is not a recovery (Rule.unresolvedFailsOpen).
 	return m.withLock(func() error {
-		t, err := m.load()
+		t, recovered, err := m.load()
 		if err != nil {
 			return err
 		}
-		return m.applyAndPersist(ctx, t, applyOpts{tolerateUnresolved: true})
+		return m.applyAndPersist(ctx, t, applyOpts{tolerateUnresolved: true, recoveredFromNft: recovered})
 	})
 }
 
@@ -394,11 +395,15 @@ func (m *Manager) Reapply(ctx context.Context) error {
 // denying anything, and the next tick clears it once the name resolves again.
 func (m *Manager) RefreshDNS(ctx context.Context) error {
 	return m.withLock(func() error {
-		t, err := m.load()
+		t, recovered, err := m.load()
 		if err != nil {
 			return err
 		}
-		return m.applyAndPersist(ctx, t, applyOpts{tolerateUnresolved: true, skipIfUnchanged: true})
+		return m.applyAndPersist(ctx, t, applyOpts{
+			tolerateUnresolved: true,
+			skipIfUnchanged:    true,
+			recoveredFromNft:   recovered,
+		})
 	})
 }
 
@@ -414,7 +419,7 @@ func (m *Manager) RefreshDNS(ctx context.Context) error {
 // warn-only behaviour (see applyAndPersist).
 func (m *Manager) mutate(ctx context.Context, force bool, fn func(*Table) error) error {
 	return m.withLock(func() error {
-		t, err := m.load()
+		t, recovered, err := m.load()
 		if err != nil {
 			return err
 		}
@@ -426,7 +431,7 @@ func (m *Manager) mutate(ctx context.Context, force bool, fn func(*Table) error)
 		if err := checkMgmtLockout(t, cidrsBefore, portsBefore, force); err != nil {
 			return err
 		}
-		return m.applyAndPersist(ctx, t, applyOpts{})
+		return m.applyAndPersist(ctx, t, applyOpts{recoveredFromNft: recovered})
 	})
 }
 
@@ -493,11 +498,15 @@ type applyOpts struct {
 	// every other name too. An operator typing the name gets the error, because
 	// for them it is almost always a typo.
 	tolerateUnresolved bool
-	// skipIfUnchanged returns without dry-running, writing or restarting when the
-	// rendered artifacts already match what is on disk. Set by the refresh path,
-	// which runs every few minutes and would otherwise reload the ruleset — and
-	// with it the shared oneshot's workload-policy replay — on every tick.
+	// skipIfUnchanged returns without dry-running, rewriting the artifacts or
+	// restarting when the rendered artifacts already match what is on disk. Set by
+	// the refresh path, which runs every few minutes and would otherwise reload the
+	// ruleset — and with it the shared oneshot's workload-policy replay — on every
+	// tick. It still persists the resolution cache; see applyAndPersist.
 	skipIfUnchanged bool
+	// recoveredFromNft marks a table that came back from Manager.load's lossy tier,
+	// which cannot recover domain names.
+	recoveredFromNft bool
 }
 
 // artifactsMatch reports whether both on-disk artifacts already hold exactly
@@ -529,10 +538,30 @@ func (m *Manager) artifactsMatch(block, cfg string) bool {
 // operator's intent recorded and the kernel merely stale, which the next apply
 // fixes. The reverse order would lose the intent while leaving the ruleset live,
 // and there would be nothing left to re-derive it from.
+//
+// The DNS resolution cache is written last, and only past the point where
+// nothing can refuse: resolution runs first, so writing it there would let a
+// refusal restart the addrGracePeriod window for addresses the kernel never saw.
 func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts) error {
 	// Resolve first, then render a copy: the YAML below must record the names the
 	// operator wrote, while the nft document must carry only literals.
 	res := m.resolveFQDNs(ctx, t)
+
+	// Computed once, above both syncRefreshTimer call sites, so the warning cannot
+	// land on only one of them. This is the only place the config loss and its
+	// cost are both visible.
+	wantRefreshTimer := len(res.byName) > 0
+	// Gated on the cache naming something, so a literal-only table recovered the
+	// same way stays quiet: it lost no names and has no refresh to miss. Safe to
+	// read here — an empty byName means resolveFQDNs returned before loading it.
+	if lost := cachedNames(m.dnsCachePath); opts.recoveredFromNft && !wantRefreshTimer && len(lost) > 0 {
+		logx.As().Warn().Strs("fqdns", lost).Str("config", m.configPath).Msg(
+			"the config file was missing, so this table was recovered from the rendered ruleset — which holds " +
+				"addresses only. These names are gone from it and no DNS refresh timer is requested, so they stay " +
+				"frozen at the addresses they last resolved to. Restore the config from its retained copy " +
+				"(`.yaml.prev`), or re-add them with `network firewall add`")
+	}
+
 	// Ahead of the tolerated-path branch below, and deliberately not subject to
 	// it: for a rule that fails open, an unresolved name grants access rather
 	// than withdrawing it, so there is no path on which warning is enough.
@@ -597,9 +626,13 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 
 	if opts.skipIfUnchanged && m.artifactsMatch(block, string(cfg)) {
 		logx.As().Debug().Msg("host firewall artifacts already match the rendered table; nothing to apply")
+		// Still persisted: the artifacts already match, but the pass has re-stamped
+		// every address, and skipping the write would freeze the on-disk stamps at
+		// the last rendering change until they expired.
+		m.persistDNSCache(res)
 		// Still converge the timer: this is the path the timer's own runs take,
 		// so it is the only chance to notice the units were removed by hand.
-		return m.syncRefreshTimer(ctx, len(res.byName) > 0)
+		return m.syncRefreshTimer(ctx, wantRefreshTimer)
 	}
 
 	if err := m.check(ctx, block); err != nil {
@@ -616,10 +649,15 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 		return err
 	}
 
+	// The first point past which nothing can refuse. Ahead of the timer and the
+	// restart: those are post-commit, and failing one must not leave the cache out
+	// of step with artifacts that did land.
+	m.persistDNSCache(res)
+
 	// After the artifacts, before the kernel: the timer only ever re-runs what is
 	// already on disk, so installing it against a config that was never written
 	// would schedule a refresh of the wrong table.
-	if err := m.syncRefreshTimer(ctx, len(res.byName) > 0); err != nil {
+	if err := m.syncRefreshTimer(ctx, wantRefreshTimer); err != nil {
 		return err
 	}
 
@@ -712,29 +750,34 @@ func (m *Manager) check(ctx context.Context, block string) error {
 // source of truth; the rendered nft artifact is a fallback for a host
 // provisioned before the config file existed, or one that lost it. See Parse for
 // what the fallback can and cannot recover.
-func (m *Manager) load() (*Table, error) {
+//
+// The second return reports whether the lossy tier was used. Not a field on
+// Table: recovery is context about this invocation, not a property of the table.
+func (m *Manager) load() (*Table, bool, error) {
 	data, err := os.ReadFile(m.configPath)
 	switch {
 	case err == nil:
 		cfg, err := ParseConfig(data)
 		if err != nil {
-			return nil, errorx.Decorate(err, "failed to load %s", m.configPath)
+			return nil, false, errorx.Decorate(err, "failed to load %s", m.configPath)
 		}
-		return cfg.Table()
+		t, err := cfg.Table()
+		return t, false, err
 	case !os.IsNotExist(err):
-		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.configPath)
+		return nil, false, errorx.ExternalError.Wrap(err, "failed to read %s", m.configPath)
 	}
 
 	nft, err := os.ReadFile(m.nftPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errorx.IllegalState.New("inet weaver-host-firewall firewall not found at %s; run `solo-provisioner network firewall create` first", m.configPath)
+			return nil, false, errorx.IllegalState.New("inet weaver-host-firewall firewall not found at %s; run `solo-provisioner network firewall create` first", m.configPath)
 		}
-		return nil, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
+		return nil, false, errorx.ExternalError.Wrap(err, "failed to read %s", m.nftPath)
 	}
 	logx.As().Info().Str("path", m.nftPath).Msg(
 		"no host firewall config file; recovering the reserved blocks from the rendered ruleset — named allow rules are not recoverable and must be re-declared with `network firewall create-allow-rule` and then re-populated with `network firewall add`, and any management FQDN comes back as the addresses it last resolved to rather than the name")
-	return Parse(string(nft))
+	t, err := Parse(string(nft))
+	return t, err == nil, err
 }
 
 // withLock serialises a mutation behind the shared cross-command flock so a
