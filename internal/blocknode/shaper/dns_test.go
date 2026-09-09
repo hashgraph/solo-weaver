@@ -6,6 +6,7 @@ package shaper
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"sync"
 	"testing"
@@ -33,22 +34,31 @@ type fakeResolver struct {
 	// resolver that never answers (a dropped query under the default
 	// resolv.conf spends longer than resolveTimeout on one name).
 	hang map[string]bool
+	// transient names return a non-IsNotFound v4 error (a resolver timeout or
+	// SERVFAIL, not NXDOMAIN/NODATA), so a test can assert this is never
+	// treated as evidence of "no A records" even when answersV6 has an entry
+	// for the same name.
+	transient map[string]bool
 }
 
 func (f *fakeResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, host)
 	hang := f.hang[host]
+	transient := f.transient[host]
 	f.mu.Unlock()
 
 	if hang {
 		<-ctx.Done()
-		return nil, errorx.ExternalError.New("timed out: %s", host)
+		return nil, ctx.Err()
+	}
+	if transient {
+		return nil, &net.DNSError{Err: "server misbehaving", Name: host, IsTemporary: true}
 	}
 
 	raw, ok := f.answers[host]
 	if !ok || len(raw) == 0 {
-		return nil, errorx.ExternalError.New("no such host: %s", host)
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
 	}
 	addrs := make([]netip.Addr, 0, len(raw))
 	for _, s := range raw {
@@ -249,6 +259,55 @@ func TestResolveHosts_AAAAOnlyContributesNothingButIsNotUnresolved(t *testing.T)
 	require.Equal(t, []string{"v6only.example.com"}, res.aaaaOnly)
 	require.Empty(t, res.unresolved)
 	require.False(t, res.cacheDirty, "an AAAA-only name is never cached")
+}
+
+// TestResolveHosts_TransientIPv4FailureDoesNotMaskAsAAAAOnly is the
+// regression test for a Copilot review finding on PR #1148: a v4 lookup that
+// fails transiently (timeout, SERVFAIL -- not NXDOMAIN/NODATA) must not be
+// classified AAAA-only just because the name happens to also have an AAAA
+// record. AAAAOnly is a permanent, never-cached, never-retried classification,
+// so misreporting a blip as AAAA-only would silently and permanently drop a
+// dual-stack peer's IPv4 membership instead of falling back to the cache.
+func TestResolveHosts_TransientIPv4FailureDoesNotMaskAsAAAAOnly(t *testing.T) {
+	r := &fakeResolver{
+		transient: map[string]bool{"dualstack.example.com": true},
+		answersV6: map[string][]string{"dualstack.example.com": {"2001:db8::1"}},
+	}
+	cache := dnsCache{"dualstack.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
+
+	res := resolveHosts(context.Background(), r, []string{"dualstack.example.com"}, cache, resolveTimeout)
+
+	require.Empty(t, res.aaaaOnly, "a transient v4 failure must never be read as AAAA-only")
+	require.Equal(t, []string{"10.5.5.5"}, res.byName["dualstack.example.com"],
+		"must fall back to the cache instead")
+	require.Equal(t, []string{"dualstack.example.com"}, res.stale)
+}
+
+// TestResolveHosts_TransientIPv4FailureWithNoCacheIsUnresolvedNotAAAAOnly is
+// the no-cache counterpart: with nothing to fall back to, a transient v4
+// failure must report unresolved, never AAAA-only, even when v6 succeeds.
+func TestResolveHosts_TransientIPv4FailureWithNoCacheIsUnresolvedNotAAAAOnly(t *testing.T) {
+	r := &fakeResolver{
+		transient: map[string]bool{"dualstack.example.com": true},
+		answersV6: map[string][]string{"dualstack.example.com": {"2001:db8::1"}},
+	}
+
+	res := resolveHosts(context.Background(), r, []string{"dualstack.example.com"}, dnsCache{}, resolveTimeout)
+
+	require.Empty(t, res.aaaaOnly)
+	require.Equal(t, []string{"dualstack.example.com"}, res.unresolved)
+}
+
+// TestIsDNSNotFound pins the classification isDNSNotFound relies on: only a
+// real *net.DNSError with IsNotFound set counts, not a generic error, a
+// timeout/temporary DNSError, or a bare context cancellation.
+func TestIsDNSNotFound(t *testing.T) {
+	require.True(t, isDNSNotFound(&net.DNSError{IsNotFound: true}))
+	require.False(t, isDNSNotFound(&net.DNSError{IsTimeout: true}))
+	require.False(t, isDNSNotFound(&net.DNSError{IsTemporary: true}))
+	require.False(t, isDNSNotFound(context.DeadlineExceeded))
+	require.False(t, isDNSNotFound(errorx.ExternalError.New("boom")))
+	require.False(t, isDNSNotFound(nil))
 }
 
 func TestResolveHosts_FallsBackToCacheOnFailure(t *testing.T) {

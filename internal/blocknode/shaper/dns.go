@@ -5,6 +5,7 @@ package shaper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -15,8 +16,17 @@ import (
 	"time"
 
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
-	"github.com/joomcode/errorx"
 )
+
+// isDNSNotFound reports whether err is a definitive "no records for this
+// query" answer -- NXDOMAIN or NODATA, net.DNSError.IsNotFound -- as opposed
+// to a transient failure (timeout, temporary, a cancelled context). Only a
+// definitive answer is trustworthy evidence that a name has no A records;
+// anything else must be treated the same as any other resolution failure.
+func isDNSNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
+}
 
 // resolveTimeout bounds one resolution pass on the privileged apply path.
 //
@@ -82,8 +92,8 @@ type Resolver interface {
 	// LookupIPv6 looks up a name's AAAA records. It exists solely to tell "this
 	// name has no A records because it is AAAA-only" (a structural fact, never
 	// cached or retried) from "this name did not resolve at all" (a failure the
-	// cache falls back for) -- resolveHosts only calls it when LookupIPv4 came
-	// back empty.
+	// cache falls back for) -- resolveHosts only calls it when LookupIPv4 gave a
+	// definitive "no A records" answer, never on a transient failure.
 	LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
@@ -93,20 +103,19 @@ type netResolver struct{ r *net.Resolver }
 // NewNetResolver returns the production Resolver.
 func NewNetResolver() Resolver { return &netResolver{r: net.DefaultResolver} }
 
+// LookupIPv4 and LookupIPv6 return the resolver's error unwrapped, on purpose:
+// resolveHosts inspects it via errors.As for *net.DNSError.IsNotFound to tell
+// a definitive "no such record" from a transient failure (timeout, temporary,
+// a cancelled context), and errorx.Wrap does not preserve that chain for
+// errors.As to see through. Neither error ever escapes this package as a
+// return value -- both are folded into hostResolution's plain string/bool
+// fields -- so there is no boundary here that needs errorx decoration.
 func (n *netResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
-	addrs, err := n.r.LookupNetIP(ctx, "ip4", host)
-	if err != nil {
-		return nil, errorx.ExternalError.Wrap(err, "failed to resolve %s", host)
-	}
-	return addrs, nil
+	return n.r.LookupNetIP(ctx, "ip4", host)
 }
 
 func (n *netResolver) LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error) {
-	addrs, err := n.r.LookupNetIP(ctx, "ip6", host)
-	if err != nil {
-		return nil, errorx.ExternalError.Wrap(err, "failed to resolve %s", host)
-	}
-	return addrs, nil
+	return n.r.LookupNetIP(ctx, "ip6", host)
 }
 
 // dnsCacheEntry is one name's known addresses, each carrying the last time an
@@ -289,8 +298,14 @@ func resolveHosts(ctx context.Context, resolver Resolver, names []string, cache 
 	defer cancel()
 
 	// One goroutine per name, each attempting v4 first and only spending a
-	// second lookup on v6 when v4 came back empty -- avoids doubling the
-	// resolver load on the common case where v4 succeeds.
+	// second lookup on v6 when v4 gave a DEFINITIVE "no A records" answer --
+	// either it resolved to zero addresses with no error, or the error is a
+	// confirmed NXDOMAIN/NODATA (net.DNSError.IsNotFound). A transient v4
+	// failure (timeout, temporary, a cancelled context) is not evidence the
+	// name lacks A records, so it must not trigger the v6 check at all: doing
+	// so would let a resolver blip on the v4 query get misread as AAAA-only
+	// (permanent, uncached) whenever the name happens to also have an AAAA
+	// record, masking what should fall back to the cache or report unresolved.
 	answers := make([]struct {
 		v4    []netip.Addr
 		v4err error
@@ -303,7 +318,9 @@ func resolveHosts(ctx context.Context, resolver Resolver, names []string, cache 
 		go func(i int, name string) {
 			defer wg.Done()
 			answers[i].v4, answers[i].v4err = resolver.LookupIPv4(ctx, name)
-			if answers[i].v4err != nil || len(answers[i].v4) == 0 {
+			definitiveNoV4 := (answers[i].v4err == nil && len(answers[i].v4) == 0) ||
+				isDNSNotFound(answers[i].v4err)
+			if definitiveNoV4 {
 				answers[i].v6, answers[i].v6err = resolver.LookupIPv6(ctx, name)
 			}
 		}(i, name)
