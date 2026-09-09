@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/joomcode/errorx"
@@ -47,17 +48,24 @@ type Reconciler struct {
 	resolver Resolver
 	lister   elementLister
 	applier  setApplier
+	// dnsCachePath is where the last-known-good statusz name resolution is
+	// persisted (see dnsCache). Empty in most unit tests, which harmlessly
+	// disables cache persistence (loadDNSCache/save both no-op on "").
+	dnsCachePath string
 }
 
 // NewReconciler wires the production Reconciler: statusz is read over HTTP from
 // statuszURL, live nft sets are read via the exec Runner, and membership is
-// written via the network policy Manager.
+// written via the network policy Manager. The DNS cache is persisted beside
+// policy.WeaverNftPath, the one artifact the apply path already writes on
+// every successful tick.
 func NewReconciler(statuszURL string) *Reconciler {
 	return &Reconciler{
-		fetcher:  NewStatuszClient(statuszURL),
-		resolver: NewNetResolver(),
-		lister:   policy.NewExecRunner(),
-		applier:  policy.NewManager(),
+		fetcher:      NewStatuszClient(statuszURL),
+		resolver:     NewNetResolver(),
+		lister:       policy.NewExecRunner(),
+		applier:      policy.NewManager(),
+		dnsCachePath: dnsCachePathFor(policy.WeaverNftPath),
 	}
 }
 
@@ -71,10 +79,16 @@ type Result struct {
 	Skipped   []string `json:"skipped"`
 	Unchanged []string `json:"unchanged"`
 	Digest    string   `json:"digest"`
-	// Unresolved names statusz reported that produced no address this tick.
-	// Their endpoints contributed nothing, so a policy whose only member was one
-	// of them is now empty.
-	Unresolved []string `json:"unresolved,omitempty"`
+	// Unresolved names statusz reported that produced no fresh answer and had
+	// no cached fallback this tick. Their endpoints contributed nothing, so a
+	// policy whose only member was one of them is now empty.
+	Unresolved []NamedIssue `json:"unresolved,omitempty"`
+	// Stale names produced no fresh answer but were served their last-known
+	// addresses from the on-disk cache (see dnsCache).
+	Stale []NamedIssue `json:"stale,omitempty"`
+	// AAAAOnly names resolved, but only to AAAA records, so they contribute no
+	// IPv4 addresses. Structural, not a failure: never cached, never stale.
+	AAAAOnly []NamedIssue `json:"aaaa-only,omitempty"`
 }
 
 // CheckResult is the unprivileged detect path's output: the sha256 digest of the
@@ -87,19 +101,24 @@ type CheckResult struct {
 	Digest       string              `json:"desired-digest"`
 	Desired      map[string][]string `json:"desired"`
 	DesiredPorts map[string][]string `json:"desired-ports"`
-	// Unresolved carries the same meaning as Result.Unresolved. It is a field on
-	// the one JSON document rather than a log line because --output json puts log
-	// lines on stdout, where they would corrupt the digest the daemon parses.
-	Unresolved []string `json:"unresolved,omitempty"`
+	// Unresolved, Stale, and AAAAOnly carry the same meaning as their Result
+	// counterparts. They are fields on the one JSON document rather than a log
+	// line because --output json puts log lines on stdout, where they would
+	// corrupt the digest the daemon parses.
+	Unresolved []NamedIssue `json:"unresolved,omitempty"`
+	Stale      []NamedIssue `json:"stale,omitempty"`
+	AAAAOnly   []NamedIssue `json:"aaaa-only,omitempty"`
 }
 
 // Check fetches both statusz endpoints, buckets them into the desired
 // per-category membership, derives the desired per-policy listener ports from
 // the inbound local.port values, and returns the sha256 digest over both. It
 // reads no nft state and requires no privilege — it is the unprivileged detect
-// path.
+// path. Resolution falls back to the on-disk cache on the same terms as Apply
+// (see resolveHosts), but under its own, more relaxed timeout: --check holds no
+// lock, so nothing else is waiting on it the way Apply's scheduled tick is.
 func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
-	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
+	ce, inbound, report, err := r.fetchEndpoints(ctx, checkResolveTimeout)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -112,7 +131,9 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 		Digest:       membershipDigest(combinedCanonical(canon, portsDesired)),
 		Desired:      canon,
 		DesiredPorts: portsDesired,
-		Unresolved:   unresolved,
+		Unresolved:   report.Unresolved,
+		Stale:        report.Stale,
+		AAAAOnly:     report.AAAAOnly,
 	}, nil
 }
 
@@ -127,7 +148,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 // by its policy name (`bn-publisher`), a listener-port set by its nft set name
 // (`bn-publisher_ports`) — alongside the digest, which covers both dimensions.
 func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
-	ce, inbound, unresolved, err := r.fetchEndpoints(ctx)
+	ce, inbound, report, err := r.fetchEndpoints(ctx, resolveTimeout)
 	if err != nil {
 		return Result{}, err
 	}
@@ -164,7 +185,10 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	}
 	sort.Strings(changed)
 
-	res := Result{Digest: digest, Unchanged: unchangedSetNames(changed), Unresolved: unresolved}
+	res := Result{
+		Digest: digest, Unchanged: unchangedSetNames(changed),
+		Unresolved: report.Unresolved, Stale: report.Stale, AAAAOnly: report.AAAAOnly,
+	}
 
 	// ApplySets is called even with no deltas. Besides writing the kernel it also
 	// re-persists the on-disk artifact, and a converged node produces no deltas
@@ -181,17 +205,43 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	// rather than dropping them from both Applied and Unchanged.
 	if applied {
 		res.Applied = changed
+		// Only past this point can nothing undo the kernel write the cache
+		// describes: a lock-held or failed pass leaves the on-disk cache exactly
+		// as it was loaded.
+		r.persistDNSCache(report)
 	} else {
 		res.Skipped = changed
 	}
 	return res, nil
 }
 
+// persistDNSCache writes the pass's DNS cache, if the pass changed it. Call
+// only from a point past which the kernel write it describes has already
+// committed — Apply's only call site is after ApplySets reports applied.
+func (r *Reconciler) persistDNSCache(report resolutionReport) {
+	if !report.cacheDirty {
+		return
+	}
+	report.cache.save(r.dnsCachePath)
+}
+
+// resolutionReport is what Check and Apply need from one fetchEndpoints call
+// about DNS resolution: the persistable cache state, and each name needing an
+// operator's attention, attributed to the policy set(s) its endpoints would
+// have fed.
+type resolutionReport struct {
+	cache      dnsCache
+	cacheDirty bool
+	Unresolved []NamedIssue
+	Stale      []NamedIssue
+	AAAAOnly   []NamedIssue
+}
+
 // fetchEndpoints reads both statusz endpoints, resolves any domain names in
-// them to addresses, and buckets the result into the desired per-category
-// membership view. It also returns the inbound NetworkData, because listener-port
-// derivation reads local.port straight off the endpoints and the bucketized view
-// discards it.
+// them to addresses (falling back to the last-known-good cache under budget),
+// and buckets the result into the desired per-category membership view. It
+// also returns the inbound NetworkData, because listener-port derivation reads
+// local.port straight off the endpoints and the bucketized view discards it.
 //
 // Resolution feeds the membership view only, and the port pass gets the payload
 // as it arrived. Listener ports are the block node's own, so they have nothing to
@@ -205,17 +255,25 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 // membership consumer downstream sees addresses only. That is what keeps it out
 // of Check's compound-element conversion and out of the apply's CIDR validation,
 // neither of which tolerates a name.
-func (r *Reconciler) fetchEndpoints(ctx context.Context) (categoryEndpoints, NetworkData, []string, error) {
+func (r *Reconciler) fetchEndpoints(ctx context.Context, budget time.Duration) (categoryEndpoints, NetworkData, resolutionReport, error) {
 	inbound, err := r.fetcher.InboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, nil, err
+		return nil, NetworkData{}, resolutionReport{}, err
 	}
 	outbound, err := r.fetcher.OutboundClients(ctx)
 	if err != nil {
-		return nil, NetworkData{}, nil, err
+		return nil, NetworkData{}, resolutionReport{}, err
 	}
-	resolvedIn, resolvedOut, unresolved := r.resolveRemotes(ctx, inbound, outbound)
-	return bucketizeEndpoints(resolvedIn, resolvedOut), inbound, unresolved, nil
+	cache := loadDNSCache(r.dnsCachePath)
+	resolvedIn, resolvedOut, hr := r.resolveRemotes(ctx, inbound, outbound, cache, budget)
+	report := resolutionReport{
+		cache:      hr.cache,
+		cacheDirty: hr.cacheDirty,
+		Unresolved: attributeNames(hr.unresolved, inbound, outbound),
+		Stale:      attributeNames(hr.stale, inbound, outbound),
+		AAAAOnly:   attributeNames(hr.aaaaOnly, inbound, outbound),
+	}
+	return bucketizeEndpoints(resolvedIn, resolvedOut), inbound, report, nil
 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,

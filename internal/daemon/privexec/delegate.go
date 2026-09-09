@@ -62,6 +62,39 @@ var cliBinCandidates = []string{
 // of the unprivileged daemon. Failures carry an operator-facing Reason and
 // Resolution (via *daemonkit.ProbeError) so the caller can surface them through
 // the component's /status endpoint.
+// NamedIssue mirrors shaper.NamedIssue's JSON shape: a statusz FQDN needing an
+// operator's attention, together with the policy set(s) its endpoints would
+// have fed. Declared locally rather than importing internal/blocknode/shaper:
+// the contract between the daemon and the CLI worker is JSON, not a shared Go
+// type, the same reasoning as the digest-only decode this package already did
+// before this field existed.
+type NamedIssue struct {
+	Name     string   `json:"name"`
+	Policies []string `json:"policies"`
+}
+
+// ReconcileShaperCheckResult is what the daemon needs from one --check probe:
+// the desired-membership digest (the poll loop's change-detection gate) and
+// the statusz names that need an operator's attention. Unresolved/Stale/
+// AAAAOnly never reach a human otherwise: the shaper package cannot log (see
+// shaper.TestPackageEmitsNoLogs), and the CLI only prints them on the
+// human-readable path, which nobody reads for a daemon-scheduled tick.
+type ReconcileShaperCheckResult struct {
+	Digest     string
+	Unresolved []NamedIssue
+	Stale      []NamedIssue
+	AAAAOnly   []NamedIssue
+}
+
+// ReconcileShaperResult is what the daemon needs from one privileged apply:
+// the same per-category attention lists as ReconcileShaperCheckResult, read
+// back from the worker's `--output json` summary.
+type ReconcileShaperResult struct {
+	Unresolved []NamedIssue
+	Stale      []NamedIssue
+	AAAAOnly   []NamedIssue
+}
+
 type Delegator interface {
 	// Run execs `sudo <solo-provisioner> <args...>`, waits for completion, and
 	// returns the command's stdout. A missing sudo/CLI binary, a denied sudo
@@ -87,19 +120,23 @@ type Delegator interface {
 	// clean re-attach.
 	TCDetach(ctx context.Context, veth string) error
 
-	// ReconcileShaper delegates `block node reconcile-shaper --statusz-url <url>`
-	// under sudo — the traffic-shaper poll loop's privileged apply path. The
-	// worker fetches statusz, diffs the live nft policy sets, and rewrites only
-	// the policies whose membership changed.
-	ReconcileShaper(ctx context.Context, statuszURL string) error
+	// ReconcileShaper delegates `block node reconcile-shaper --statusz-url <url>
+	// --output json` under sudo — the traffic-shaper poll loop's privileged
+	// apply path. The worker fetches statusz, diffs the live nft policy sets,
+	// and rewrites only the policies whose membership changed. --output json is
+	// requested so the daemon can read back the names statusz reported that
+	// need an operator's attention (see ReconcileShaperResult); the log line
+	// this normally prints on the human-readable path never reaches a human on
+	// the daemon-scheduled path, so this is the only way it surfaces at all.
+	ReconcileShaper(ctx context.Context, statuszURL string) (ReconcileShaperResult, error)
 
 	// ReconcileShaperCheck delegates the unprivileged
 	// `block node reconcile-shaper --statusz-url <url> --check --output json`
-	// probe (no sudo, no nft) and returns the desired-membership digest. The
-	// poll loop calls it every tick and only invokes the privileged
-	// ReconcileShaper when the digest changed, so a steady-state roster costs no
-	// root escalation.
-	ReconcileShaperCheck(ctx context.Context, statuszURL string) (digest string, err error)
+	// probe (no sudo, no nft) and returns the desired-membership digest plus
+	// any names needing attention. The poll loop calls it every tick and only
+	// invokes the privileged ReconcileShaper when the digest changed, so a
+	// steady-state roster costs no root escalation.
+	ReconcileShaperCheck(ctx context.Context, statuszURL string) (ReconcileShaperCheckResult, error)
 }
 
 // execDelegator is the production Delegator. Its resolution and exec seams are
@@ -191,16 +228,32 @@ func (d *execDelegator) TCDetach(ctx context.Context, veth string) error {
 	return d.tcAttach(ctx, veth, true)
 }
 
-func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) error {
+func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) (ReconcileShaperResult, error) {
 	if strings.TrimSpace(statuszURL) == "" {
-		return &daemonkit.ProbeError{
+		return ReconcileShaperResult{}, &daemonkit.ProbeError{
 			Reason:     "StatuszURLEmpty",
 			Message:    "block node reconcile-shaper requires a non-empty statusz URL",
 			Resolution: "this is a daemon bug; report it with the daemon logs",
 		}
 	}
-	_, err := d.Run(ctx, "block", "node", "reconcile-shaper", "--statusz-url", statuszURL)
-	return err
+	out, err := d.Run(ctx, "block", "node", "reconcile-shaper", "--statusz-url", statuszURL, "--output", "json")
+	if err != nil {
+		return ReconcileShaperResult{}, err
+	}
+	var res struct {
+		Unresolved []NamedIssue `json:"unresolved"`
+		Stale      []NamedIssue `json:"stale"`
+		AAAAOnly   []NamedIssue `json:"aaaa-only"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return ReconcileShaperResult{}, &daemonkit.ProbeError{
+			Reason:     "ReconcileShaperParseFailed",
+			Message:    "could not parse reconcile-shaper --output json result",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+			Err:        err,
+		}
+	}
+	return ReconcileShaperResult{Unresolved: res.Unresolved, Stale: res.Stale, AAAAOnly: res.AAAAOnly}, nil
 }
 
 // ReconcileShaperCheck execs the reconcile-shaper worker's unprivileged --check
@@ -209,9 +262,9 @@ func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) 
 // no escalation is needed. It parses `desired-digest` from that JSON and returns
 // it. The daemon-facing name of the CLI is resolved the same way Run resolves
 // it, so the sibling-preference and granted-path fallbacks apply identically.
-func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL string) (string, error) {
+func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL string) (ReconcileShaperCheckResult, error) {
 	if strings.TrimSpace(statuszURL) == "" {
-		return "", &daemonkit.ProbeError{
+		return ReconcileShaperCheckResult{}, &daemonkit.ProbeError{
 			Reason:     "StatuszURLEmpty",
 			Message:    "block node reconcile-shaper --check requires a non-empty statusz URL",
 			Resolution: "this is a daemon bug; report it with the daemon logs",
@@ -220,7 +273,7 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 
 	cliBin, err := d.resolveCLI()
 	if err != nil {
-		return "", err
+		return ReconcileShaperCheckResult{}, err
 	}
 
 	// No sudo: --check reads only statusz over HTTP and touches no nft state, so
@@ -229,7 +282,7 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 	args := []string{"block", "node", "reconcile-shaper", "--statusz-url", statuszURL, "--check", "--output", "json"}
 	out, err := d.output(ctx, cliBin, args...)
 	if err != nil {
-		return "", &daemonkit.ProbeError{
+		return ReconcileShaperCheckResult{}, &daemonkit.ProbeError{
 			Reason:     "ReconcileShaperCheckFailed",
 			Message:    unprivilegedExecMessage(cliBin, args, err),
 			Resolution: "reproduce manually as the daemon user: " + cliBin + " " + strings.Join(args, " "),
@@ -238,10 +291,13 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 	}
 
 	var res struct {
-		Digest string `json:"desired-digest"`
+		Digest     string       `json:"desired-digest"`
+		Unresolved []NamedIssue `json:"unresolved"`
+		Stale      []NamedIssue `json:"stale"`
+		AAAAOnly   []NamedIssue `json:"aaaa-only"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil {
-		return "", &daemonkit.ProbeError{
+		return ReconcileShaperCheckResult{}, &daemonkit.ProbeError{
 			Reason:     "ReconcileShaperCheckParseFailed",
 			Message:    "could not parse reconcile-shaper --check --output json digest",
 			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
@@ -253,13 +309,13 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 	// be treated as a real membership value by the poll loop's digest gate and
 	// silently suppress the privileged apply until the next forced resync.
 	if res.Digest == "" {
-		return "", &daemonkit.ProbeError{
+		return ReconcileShaperCheckResult{}, &daemonkit.ProbeError{
 			Reason:     "ReconcileShaperCheckEmptyDigest",
 			Message:    "reconcile-shaper --check returned an empty desired-digest",
 			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
 		}
 	}
-	return res.Digest, nil
+	return ReconcileShaperCheckResult{Digest: res.Digest, Unresolved: res.Unresolved, Stale: res.Stale, AAAAOnly: res.AAAAOnly}, nil
 }
 
 // tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.

@@ -319,10 +319,12 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			Str("statusz_url", statuszURL).
 			Msg("polling statusz")
 
-		digest, err := m.delegator.ReconcileShaperCheck(ctx, statuszURL)
+		checkRes, err := m.delegator.ReconcileShaperCheck(ctx, statuszURL)
 		if err != nil {
 			return err
 		}
+		digest := checkRes.Digest
+		m.logStatuszAttentionNames("check", statuszURL, checkRes.Unresolved, checkRes.Stale, checkRes.AAAAOnly)
 		// Skip the root apply only when the desired membership is unchanged AND
 		// the force-resync window has not elapsed. lastApply.IsZero() forces the
 		// first reconcile against a (new) URL to apply.
@@ -339,9 +341,11 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			Str("monitor", m.Name()).
 			Str("statusz_url", statuszURL).
 			Msg("applying nft policy membership from statusz")
-		if err := m.delegator.ReconcileShaper(ctx, statuszURL); err != nil {
+		applyRes, err := m.delegator.ReconcileShaper(ctx, statuszURL)
+		if err != nil {
 			return err
 		}
+		m.logStatuszAttentionNames("apply", statuszURL, applyRes.Unresolved, applyRes.Stale, applyRes.AAAAOnly)
 		lastDigest = digest
 		lastApply = time.Now()
 		return nil
@@ -398,6 +402,40 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// logStatuszAttentionNames logs each category of statusz names that need an
+// operator's attention (never resolved, served stale from the shaper's DNS
+// cache, or AAAA-only), one Warn per name so each can carry its own attributed
+// policy set(s).
+//
+// This is the only place any of these three ever reach a human: the shaper
+// package that computes them cannot log at all (see shaper.TestPackageEmitsNoLogs,
+// which holds for both the --check and the apply invocations), and the CLI only
+// prints them on the human-readable path, which nobody reads for a
+// scheduler-driven tick.
+func (m *TrafficShaperMonitor) logStatuszAttentionNames(phase, statuszURL string, unresolved, stale, aaaaOnly []privexec.NamedIssue) {
+	warn := func(reason, msg string, names []privexec.NamedIssue) {
+		for _, n := range names {
+			logx.As().Warn().
+				Str("reason", reason).
+				Str("monitor", m.Name()).
+				Str("phase", phase).
+				Str("statusz_url", statuszURL).
+				Str("name", n.Name).
+				Strs("policies", n.Policies).
+				Msg(msg)
+		}
+	}
+	warn("TrafficShaperStatuszNameUnresolved",
+		"statusz name did not resolve and has no cached last-known address — its peer is unclassified this tick",
+		unresolved)
+	warn("TrafficShaperStatuszNameStale",
+		"statusz name did not resolve this tick — served its last-known address from the DNS cache",
+		stale)
+	warn("TrafficShaperStatuszNameAAAAOnly",
+		"statusz name resolved only to AAAA records — it contributes no IPv4 address to its policy set",
+		aaaaOnly)
 }
 
 // minDuration returns the smaller of a and b.

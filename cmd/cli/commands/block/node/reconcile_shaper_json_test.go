@@ -105,7 +105,7 @@ func TestReconcileShaperApply_JSONOutputIsExactlyOneDocument(t *testing.T) {
 		Applied:    []string{"bn-publisher"},
 		Unchanged:  []string{"bn-restricted"},
 		Digest:     "deadbeef",
-		Unresolved: []string{"nx.example.invalid"},
+		Unresolved: []shaper.NamedIssue{{Name: "nx.example.invalid", Policies: []string{"bn-publisher"}}},
 	}))
 
 	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))

@@ -148,22 +148,49 @@ func TestReconcileShaper_BuildsSudoArgv(t *testing.T) {
 	d, call := fakeDelegator(
 		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
 		"/opt/solo/weaver/bin/solo-provisioner-daemon",
-		nil, nil,
+		[]byte(`{"applied":[],"skipped":[],"unchanged":[],"digest":"abc123"}`), nil,
 	)
 
-	require.NoError(t, d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080"))
+	_, err := d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
 	require.Equal(t, "/usr/bin/sudo", call.name)
 	require.Equal(t, []string{
 		"-n",
 		"/opt/solo/weaver/bin/solo-provisioner",
-		"block", "node", "reconcile-shaper", "--statusz-url", "http://127.0.0.1:8080",
+		"block", "node", "reconcile-shaper", "--statusz-url", "http://127.0.0.1:8080", "--output", "json",
 	}, call.args)
+}
+
+func TestReconcileShaper_ParsesAttentionNames(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"digest":"abc123","unresolved":[{"name":"dead.example.com","policies":["bn-publisher"]}]}`), nil,
+	)
+
+	res, err := d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
+	require.Equal(t, []NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-publisher"}}}, res.Unresolved)
+}
+
+func TestReconcileShaper_BadJSONReportsParseError(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte("not json at all"), nil,
+	)
+
+	_, err := d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080")
+	require.Error(t, err)
+	var pe *daemonkit.ProbeError
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, "ReconcileShaperParseFailed", pe.Reason)
 }
 
 func TestReconcileShaper_EmptyURLIsGuarded(t *testing.T) {
 	d, call := fakeDelegator([]string{"/usr/bin/sudo", "/usr/local/bin/solo-provisioner"}, "", nil, nil)
 
-	err := d.ReconcileShaper(context.Background(), "  ")
+	_, err := d.ReconcileShaper(context.Background(), "  ")
 	require.Error(t, err)
 	var pe *daemonkit.ProbeError
 	require.ErrorAs(t, err, &pe)
@@ -180,9 +207,9 @@ func TestReconcileShaperCheck_BuildsUnprivilegedArgvAndParsesDigest(t *testing.T
 		[]byte(`{"desired-digest":"abc123","desired":{}}`), nil,
 	)
 
-	digest, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	result, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
 	require.NoError(t, err)
-	require.Equal(t, "abc123", digest)
+	require.Equal(t, "abc123", result.Digest)
 
 	require.Equal(t, "/opt/solo/weaver/bin/solo-provisioner", call.name,
 		"the check probe execs the CLI directly, not sudo")

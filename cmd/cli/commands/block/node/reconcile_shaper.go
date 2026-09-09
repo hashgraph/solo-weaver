@@ -42,18 +42,28 @@ var (
 	}
 )
 
-// printUnresolved reports the statusz names that produced no address, on the
-// human-readable path only — the JSON path already carries them as a field.
+// printNamedIssues reports one category of statusz names needing an operator's
+// attention, on the human-readable path only — the JSON path already carries
+// them as a field. label names the category ("unresolved", "stale",
+// "aaaa-only").
 //
 // They are printed rather than logged. Under --output json the root command
 // routes log lines to stdout as NDJSON, which is the stream this command's own
 // JSON document goes to and the daemon parses, so a log line here would break
 // the daemon's decode of the digest.
-func printUnresolved(cmd *cobra.Command, unresolved []string) {
-	if len(unresolved) == 0 {
+func printNamedIssues(cmd *cobra.Command, label string, issues []shaper.NamedIssue) {
+	if len(issues) == 0 {
 		return
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "unresolved: %s\n", strings.Join(unresolved, ", "))
+	parts := make([]string, 0, len(issues))
+	for _, i := range issues {
+		if len(i.Policies) == 0 {
+			parts = append(parts, i.Name)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", i.Name, strings.Join(i.Policies, ",")))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", label, strings.Join(parts, ", "))
 }
 
 // runReconcileCheck runs the unprivileged detect path: fetch statusz, digest the
@@ -74,7 +84,9 @@ func runReconcileCheck(cmd *cobra.Command, r *shaper.Reconciler) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "desired-digest: %s\n", result.Digest)
-	printUnresolved(cmd, result.Unresolved)
+	printNamedIssues(cmd, "unresolved", result.Unresolved)
+	printNamedIssues(cmd, "stale", result.Stale)
+	printNamedIssues(cmd, "aaaa-only", result.AAAAOnly)
 	return nil
 }
 
@@ -111,7 +123,9 @@ func renderApplyResult(cmd *cobra.Command, result shaper.Result) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "skipped:   %s\n", joinOrNone(result.Skipped))
 	fmt.Fprintf(cmd.OutOrStdout(), "unchanged: %s\n", joinOrNone(result.Unchanged))
 	fmt.Fprintf(cmd.OutOrStdout(), "digest:    %s\n", result.Digest)
-	printUnresolved(cmd, result.Unresolved)
+	printNamedIssues(cmd, "unresolved", result.Unresolved)
+	printNamedIssues(cmd, "stale", result.Stale)
+	printNamedIssues(cmd, "aaaa-only", result.AAAAOnly)
 
 	logx.As().Info().
 		Strs("applied", result.Applied).

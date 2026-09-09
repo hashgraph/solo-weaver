@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 )
 
 // pollFakeDelegator is a thread-safe Delegator fake for the statusz poll-loop
@@ -41,34 +43,34 @@ func (f *pollFakeDelegator) NetworkPolicySet(context.Context, string, []string) 
 func (f *pollFakeDelegator) TCAttach(context.Context, string) error                   { return nil }
 func (f *pollFakeDelegator) TCDetach(context.Context, string) error                   { return nil }
 
-func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (string, error) {
+func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (privexec.ReconcileShaperCheckResult, error) {
 	n := f.checkCalls.Add(1)
 	if f.blockUntilCancel {
 		<-ctx.Done()
-		return "", ctx.Err()
+		return privexec.ReconcileShaperCheckResult{}, ctx.Err()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastURL = url
 	if f.checkErr != nil {
-		return "", f.checkErr
+		return privexec.ReconcileShaperCheckResult{}, f.checkErr
 	}
 	if len(f.digests) == 0 {
-		return "", nil
+		return privexec.ReconcileShaperCheckResult{}, nil
 	}
 	idx := int(n - 1)
 	if idx >= len(f.digests) {
 		idx = len(f.digests) - 1 // hold the last scripted digest
 	}
-	return f.digests[idx], nil
+	return privexec.ReconcileShaperCheckResult{Digest: f.digests[idx]}, nil
 }
 
-func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) error {
+func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) (privexec.ReconcileShaperResult, error) {
 	f.applyCalls.Add(1)
 	f.mu.Lock()
 	f.lastURL = url
 	f.mu.Unlock()
-	return f.applyErr
+	return privexec.ReconcileShaperResult{}, f.applyErr
 }
 
 // newPollMonitor builds a monitor wired to a poll fake, bypassing the
