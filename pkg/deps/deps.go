@@ -25,7 +25,7 @@ const (
 	// recompiles. The catalog's solo-operator default is injected from this value at
 	// load time (see pkg/software/config.go), so the chart version and this constant
 	// can never drift.
-	SOLO_OPERATOR_VERSION = "0.6.0"
+	SOLO_OPERATOR_VERSION = "0.6.1"
 
 	CONSENSUS_NODE_UC_IMAGE = "ghcr.io/hashgraph/solo-operator/uc"
 	// CONSENSUS_NODE_UC_VERSION is the UC (Update Coordinator) sidecar image tag.
