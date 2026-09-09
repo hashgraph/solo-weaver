@@ -225,8 +225,9 @@ func TestFQDN_PartialFailureKeepsEachNameSeparate(t *testing.T) {
 
 	nft := readNft(t, nftPath)
 	require.Contains(t, nft, "192.0.2.99/32", "the rotated name must follow its new address")
-	require.NotContains(t, nft, "192.0.2.7/32", "the rotated name's old address must go")
 	require.Contains(t, nft, "198.51.100.4/32", "the unresolvable name must keep its last-known address")
+	require.NotContains(t, nft, "198.51.100.5/32",
+		"and must not inherit an address that was never its own")
 	require.Equal(t, 2, applies)
 }
 
@@ -252,6 +253,156 @@ func TestFQDN_RefreshIsANoOpWhenAddressesAreUnchanged(t *testing.T) {
 	require.Greater(t, res.callCount(), 1, "the resolver must still be consulted")
 }
 
+// seedLastSeen ages one address's last-seen timestamp by hand.
+//
+// This is how these tests move the decay clock. The cache file is the only state
+// the grace period is measured against, so rewriting a timestamp is equivalent
+// to letting the refresh timer run for that long, and cheaper than threading a
+// clock through the Manager for one constant.
+func seedLastSeen(t *testing.T, m *Manager, name, addr string, age time.Duration) {
+	t.Helper()
+	var c dnsCache
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, m.dnsCachePath)), &c))
+	entry, ok := c[name]
+	require.True(t, ok, "no cache entry for %s", name)
+	require.Contains(t, entry.Addresses, addr)
+	entry.Addresses[addr] = time.Now().UTC().Add(-age)
+	c[name] = entry
+
+	data, err := json.MarshalIndent(c, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(m.dnsCachePath, append(data, '\n'), 0o600))
+}
+
+func TestFQDN_AlternatingSubsetsRenderAStableUnion(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{
+		"jump.corp.example.com": {"192.0.2.7", "192.0.2.8"},
+	}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	nftBefore := readNft(t, nftPath)
+
+	// A geo-steered or load-balanced name answers with a subset of its records.
+	// Taken as the whole truth, each answer withdraws the address the previous one
+	// named -- and under the default-drop input chain that is an operator locked
+	// out on a new connection, intermittently.
+	for _, answer := range [][]string{{"192.0.2.7"}, {"192.0.2.8"}, {"192.0.2.7"}, {"192.0.2.8"}} {
+		res.setAnswers(map[string][]string{"jump.corp.example.com": answer})
+		require.NoError(t, m.RefreshDNS(context.Background()))
+
+		nft := readNft(t, nftPath)
+		require.Contains(t, nft, "192.0.2.7/32")
+		require.Contains(t, nft, "192.0.2.8/32")
+	}
+
+	require.Equal(t, nftBefore, readNft(t, nftPath), "an alternating answer must render byte-identically")
+	require.Equal(t, 1, applies,
+		"a flapping set defeats skipIfUnchanged and reloads the ruleset on every tick")
+}
+
+func TestFQDN_AddressSurvivesUntilTheGracePeriodElapses(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{
+		"jump.corp.example.com": {"192.0.2.7", "192.0.2.8"},
+	}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// From here on the name answers with .7 only.
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.7"}})
+
+	seedLastSeen(t, m, "jump.corp.example.com", "192.0.2.8", addrGracePeriod-time.Minute)
+	require.NoError(t, m.RefreshDNS(context.Background()))
+	require.Contains(t, readNft(t, nftPath), "192.0.2.8/32",
+		"absence must be sustained past the whole window before it counts")
+
+	seedLastSeen(t, m, "jump.corp.example.com", "192.0.2.8", addrGracePeriod+time.Minute)
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	// The other half of the bargain: an address that genuinely rotates away is
+	// still removed, or the set only ever grows.
+	nft := readNft(t, nftPath)
+	require.NotContains(t, nft, "192.0.2.8/32")
+	require.Contains(t, nft, "192.0.2.7/32")
+
+	var c dnsCache
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, m.dnsCachePath)), &c))
+	require.NotContains(t, c["jump.corp.example.com"].Addresses, "192.0.2.8",
+		"a decayed address must leave the file too, or it grows without bound")
+}
+
+func TestFQDN_OutageDoesNotAgeAddressesOut(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{
+		"jump.corp.example.com": {"192.0.2.7", "192.0.2.8"},
+	}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// The resolver goes away for longer than the grace period.
+	res.setAnswers(map[string][]string{})
+	seedLastSeen(t, m, "jump.corp.example.com", "192.0.2.8", addrGracePeriod+time.Minute)
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	// It comes back on a partial answer. If the clock had run through the outage,
+	// this is the tick that prunes everything the outage aged out -- the flap this
+	// mechanism exists to prevent, moved to the moment an operator is most likely
+	// to be reconnecting.
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.7"}})
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	require.Contains(t, readNft(t, nftPath), "192.0.2.8/32")
+}
+
+func TestFQDN_FlatCacheFromAnOlderBuildKeepsItsAddresses(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// The shape an already-provisioned host is upgraded from: one list of nft
+	// elements, one timestamp. Losing it would leave the host with no last-known
+	// addresses at exactly the moment the new binary first runs.
+	require.NoError(t, os.WriteFile(m.dnsCachePath, []byte(`{
+  "jump.corp.example.com": {
+    "ips": ["192.0.2.7/32", "192.0.2.8/32"],
+    "resolvedAt": "2020-01-01T00:00:00Z"
+  }
+}`), 0o600))
+
+	res.setAnswers(map[string][]string{})
+	require.NoError(t, m.RefreshDNS(context.Background()))
+
+	nft := readNft(t, nftPath)
+	require.Contains(t, nft, "192.0.2.7/32")
+	require.Contains(t, nft, "192.0.2.8/32")
+
+	// Read tolerantly, written back in the current shape, keyed by bare address.
+	written := readFile(t, m.dnsCachePath)
+	require.Contains(t, written, `"addresses"`)
+	require.NotContains(t, written, `"ips"`)
+	var c dnsCache
+	require.NoError(t, json.Unmarshal([]byte(written), &c))
+	require.Contains(t, c["jump.corp.example.com"].Addresses, "192.0.2.8")
+}
+
 func TestFQDN_CacheSurvivesAndIsPruned(t *testing.T) {
 	r := &fakeRunner{}
 	res := &fakeResolver{answers: map[string][]string{
@@ -274,8 +425,8 @@ func TestFQDN_CacheSurvivesAndIsPruned(t *testing.T) {
 
 	cache := readCache()
 	require.Len(t, cache, 2)
-	require.Equal(t, []string{"192.0.2.7/32"}, cache["jump.corp.example.com"].IPs)
-	require.False(t, cache["jump.corp.example.com"].ResolvedAt.IsZero())
+	require.Equal(t, []string{"192.0.2.7/32"}, cache["jump.corp.example.com"].elements())
+	require.False(t, cache["jump.corp.example.com"].Addresses["192.0.2.7"].IsZero())
 
 	// Dropping a name from the allowlist must drop it from the cache, or the file
 	// accumulates hosts this firewall no longer mentions.

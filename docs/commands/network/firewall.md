@@ -32,7 +32,7 @@ Membership (the addresses and ports inside a rule) is always editable from the C
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | The config currently applied |
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The generation before it |
 | `/etc/solo-provisioner/network-weaver-host-firewall.nft` | The rendered ruleset replayed at boot |
-| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | What each domain name last resolved to |
+| `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | The addresses each domain name has recently resolved to, and when each was last seen |
 
 Every mutation applies to the live kernel in one atomic `nft -f` transaction and rewrites both
 the `.nft` and the `.yaml` it was rendered from.
@@ -492,8 +492,9 @@ Per name, never all-or-nothing — one unreachable host does not freeze the othe
 
 | Situation | Behaviour |
 |---|---|
-| Name resolves | Addresses updated, cached in `…dns.json` |
+| Name resolves | Answer merged into the cached addresses in `…dns.json`; see the grace period below |
 | Name stops resolving, was cached | **Last-known addresses kept**, warning logged |
+| Name resolves to fewer addresses than before | **The missing ones are kept for 30 minutes**, then dropped |
 | Name has never resolved, on `create`/`create-allow-rule`/`add`/`set` | **Command fails.** Almost always a typo — this applies to every rule |
 | Name has never resolved, on `refresh-dns` | Contributes nothing, warning logged — **except in `blocked`**, which fails instead |
 | `mgmt` resolves to no addresses at all | **Refused.** An empty `@mgmt_addrs` under the default-drop input chain drops every new SSH connection, and there is no `--force` past it |
@@ -502,6 +503,34 @@ Per name, never all-or-nothing — one unreachable host does not freeze the othe
 
 The cache is a fallback, never the source of truth. Deleting it costs the last-known addresses
 and nothing else.
+
+#### An address is dropped only after 30 minutes of sustained absence
+
+A name's rendered set is the union of what it has recently answered, not just its latest answer.
+Each address carries the last time an answer named it, and it is dropped once no answer has
+named it for **30 minutes** — six refreshes at the timer's five-minute interval.
+
+This is an idle timer per address, not an expiry. An address that appears in every answer is
+never aged out, however long it has been cached.
+
+It exists because a resolver may legitimately answer with a *subset* of a name's records —
+geo-steered or latency-steered DNS, some load balancers, a truncated response. Treating each
+answer as the whole truth makes `@mgmt_addrs` flap: an operator connecting from an address
+that is valid but absent from that tick's answer is dropped by the default-drop input chain.
+`ct state established accept` keeps existing sessions alive, so this only bites *new*
+connections — intermittently, and most likely when someone needs to get in.
+
+Two consequences worth knowing:
+
+- **A rotated-away address stays admitted for up to 30 minutes.** That is a deliberate trade
+  against the lockout, and a far shorter window than the indefinite retention a name gets when
+  it stops resolving altogether.
+- **The clock does not run while the name is not resolving at all.** During a resolver outage
+  every cached address is held, and the window restarts from the answer that ends the outage.
+  Otherwise the first partial answer after a long outage would prune everything at once.
+
+The window is not configurable. A value too short reintroduces the flapping it exists to
+prevent, and nothing you could observe on the host would tell you that is what happened.
 
 > **DNS is part of your trust boundary now.** Whoever controls the answer for a name in `mgmt`
 > controls who can reach SSH on this host; a name in an allow rule controls who can reach
@@ -528,7 +557,9 @@ at the case where an entry would quietly contribute nothing:
   create/add/set gate every other name faces.
 - **After that, its addresses are cached and kept indefinitely.** A resolver outage changes
   nothing — the entry keeps denying what it last denied. That is what stops a blip breaking
-  the rule; it is also what leaves a withdrawn record pinned, see below.
+  the rule; it is also what leaves a withdrawn record pinned, see below. A name that *is*
+  still resolving is bounded by the 30-minute grace period above: an address it stops
+  answering with is dropped from the block list once the window elapses.
 - **A `blocked` name with no answer and no cached one fails every verb**, including
   `refresh-dns` and `reapply`, and even when it is one entry out of fifty. Nothing is written,
   so the live ruleset keeps enforcing the addresses it already has.
