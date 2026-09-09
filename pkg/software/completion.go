@@ -161,39 +161,52 @@ func weaverWroteLoader(fm fsx.Manager, path string) bool {
 }
 
 // ReconfigureShellCompletion writes the loader for every installed tool. It is
-// idempotent.
+// idempotent, and one tool's failure does not stop the others.
 func ReconfigureShellCompletion() error {
 	fm, err := fsx.NewManager()
 	if err != nil {
 		return NewFileSystemError(err)
 	}
 
+	return reconfigureShellCompletion(fm)
+}
+
+func reconfigureShellCompletion(fm fsx.Manager) error {
+	var firstErr error
+
 	for _, cmd := range completionCommands {
 		if !weaverManagedTool(cmd) {
 			continue
 		}
 
-		if err := writeBashCompletionLoader(fm, cmd); err != nil {
-			return err
+		if err := writeBashCompletionLoader(fm, cmd); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 // RemoveShellCompletion deletes every loader, whether or not the tool is still
-// installed; by teardown time the binaries are usually gone.
+// installed; by teardown time the binaries are usually gone. One tool's failure
+// does not stop the others.
 func RemoveShellCompletion() error {
 	fm, err := fsx.NewManager()
 	if err != nil {
 		return NewFileSystemError(err)
 	}
 
+	return removeShellCompletion(fm)
+}
+
+func removeShellCompletion(fm fsx.Manager) error {
+	var firstErr error
+
 	for _, cmd := range completionCommands {
-		if err := removeBashCompletionLoader(fm, cmd); err != nil {
-			return err
+		if err := removeBashCompletionLoader(fm, cmd); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	return nil
+	return firstErr
 }
