@@ -128,7 +128,18 @@ func InstallSoloOperator(imagePullSecret string, allowUpgrade ...bool) automa.Bu
 				},
 			)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				if isHelmOperationInProgress(err) {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						err,
+						reasons.PreconditionNotMet,
+						"A previous install/upgrade left the solo-operator release in a pending state (Helm reports \"another operation ... in progress\").",
+						fmt.Sprintf("Clear it and retry: 'sudo solo-provisioner kube operator uninstall' (removes a pending/failed release), or delete the release records: kubectl -n %s delete secret -l owner=helm,name=%s", spec.Namespace, spec.Release))))
+				}
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					err,
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that the operator namespace and its image-pull secret are in place",
+					fmt.Sprintf("Inspect the operator's pods and events: kubectl -n %s get pods,events", spec.Namespace))))
 			}
 
 			meta[InstalledByThisStep] = "true"
@@ -164,27 +175,52 @@ func InstallSoloOperator(imagePullSecret string, allowUpgrade ...bool) automa.Bu
 		})
 }
 
+// isHelmOperationInProgress reports whether err is Helm's "another operation
+// (install/upgrade/rollback) is in progress" — a prior install/upgrade that left the
+// release in a pending state, which must be cleared before a retry can succeed.
+func isHelmOperationInProgress(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "another operation") && strings.Contains(msg, "in progress")
+}
+
 // UninstallSoloOperator removes the solo-operator Helm release. It is a no-op (skip)
-// when the release is not installed, so `kube operator uninstall` is idempotent.
+// only when no release record exists at all; a release in any state — deployed,
+// pending-install/upgrade/rollback, or failed — is removed, so `kube operator
+// uninstall` is idempotent AND recovers a release stuck mid-install.
 func UninstallSoloOperator() automa.Builder {
 	spec := chartSpec("solo-operator")
 	return automa.NewStepBuilder().WithId(UninstallSoloOperatorStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			hm, err := newHelmManager()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to initialise Helm client"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if !isInstalled {
-				return automa.StepSkippedReport(stp.Id())
+			// Gate on whether a release RECORD exists (any state), not on the
+			// deployed-only IsInstalled: a release stuck in pending-*/failed is exactly
+			// what needs clearing, and skipping it would leave a broken release that
+			// blocks the next install with "another operation ... in progress".
+			if _, err := hm.GetRelease(spec.Release, spec.Namespace); err != nil {
+				if errorx.IsOfType(err, helm.ErrNotFound) {
+					return automa.StepSkippedReport(stp.Id())
+				}
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to read solo-operator Helm release"),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and that your kubeconfig has access to the operator namespace")))
 			}
 
 			if err := hm.UninstallChart(spec.Release, spec.Namespace); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to uninstall solo-operator Helm release"),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Retry; if it persists, clear the release records manually: kubectl -n %s delete secret -l owner=helm,name=%s", spec.Namespace, spec.Release))))
 			}
 			return automa.StepSuccessReport(stp.Id())
 		}).
