@@ -172,12 +172,14 @@ cluster-scoped operator, so one install serves all namespaces/components.
 kubectl -n solo-operator create secret docker-registry private-registry-creds \
   --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
 sudo solo-provisioner kube operator install               # --image-pull-secret private-registry-creds (default)
-sudo solo-provisioner kube operator uninstall             # idempotent
+sudo solo-provisioner kube operator install --allow-upgrade  # upgrade an already-installed operator to the pinned version
+sudo solo-provisioner kube operator uninstall             # idempotent; also clears a release stuck mid-install
 ```
 
 | Flag | What it does |
 |---|---|
 | `--image-pull-secret` | Name of a docker-registry Secret in the operator namespace used to pull the operator's private images (default `private-registry-creds`). Must already exist; empty disables (public images). |
+| `--allow-upgrade` | Upgrade the solo-operator to the pinned version if a different version is already installed. Off by default — a version mismatch fails rather than silently changing a running operator. |
 | `--stop-on-error` / `--rollback-on-error` / `--continue-on-error` | Error-handling mode (mutually exclusive). |
 
 > Run order: `kube cluster install` → create the `private-registry-creds` secret in `solo-operator` →

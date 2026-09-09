@@ -121,7 +121,8 @@ func (h *InstallHandler) BuildWorkflow(
 		return nil, errx.Decorate(
 			errorx.IllegalState.New("consensus node install requires an already-installed Kubernetes cluster with the solo-operator"),
 			reasons.PreconditionNotMet,
-			"Install the cluster with the solo-operator first: sudo solo-provisioner kube cluster install --profile "+ins.Profile+" (with soloOperator.enabled in the config)",
+			"Install the cluster first: sudo solo-provisioner kube cluster install --profile "+ins.Profile+" --node-type consensus",
+			"Then install the solo-operator: sudo solo-provisioner kube operator install",
 			"Then create the per-node secrets (gossip signing + gRPC TLS) in the namespace",
 			"If the images are in a private registry, create the pull secret and attach it to the node ServiceAccounts",
 			"Re-run install once the cluster is up — it fails fast if any prerequisite (operator, secrets) is still missing, without changing the cluster")
@@ -130,9 +131,9 @@ func (h *InstallHandler) BuildWorkflow(
 	// Group the steps into named phases so the TUI renders the collapsed
 	// phase + progress bar (like cluster install) rather than a flat step list.
 	preflight := phaseWorkflow("consensus-preflight", "Preflight Checks",
-		// The solo-operator is owned by `kube cluster install` (soloOperator.enabled),
-		// not installed here — consensus install is a pure consumer. These prechecks
-		// are the hard guard that the operator is present and the right version.
+		// The solo-operator is installed separately by `kube operator install`, not
+		// here — consensus install is a pure consumer. These prechecks are the hard
+		// guard that the operator is present and the right version.
 		steps.PrecheckConsensusSecrets(ins),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckOperatorRunning(),

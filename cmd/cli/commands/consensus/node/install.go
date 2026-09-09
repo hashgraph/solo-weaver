@@ -171,7 +171,10 @@ var installCmd = &cobra.Command{
 // the workflow TUI has closed and restored the terminal, so it persists in the
 // scrollback (unlike a transient step-detail line).
 func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string) {
-	base := fmt.Sprintf("sudo solo-provisioner consensus network genesis --namespace %s", namespace)
+	// --experimental is required: the consensus group is gated, and under sudo the
+	// SOLO_PROVISIONER_ENABLE_CONSENSUS env var is dropped, so the flag is the
+	// reliable opt-in for a copy-pasted command.
+	base := fmt.Sprintf("sudo solo-provisioner consensus network genesis --experimental --namespace %s", namespace)
 	pkg := strings.TrimSpace(pkgDir)
 	if pkg == "" {
 		pkg = "<deployment-package-dir>"

@@ -33,12 +33,14 @@ func ociRegistryHost(chartRef string) string {
 	return rest
 }
 
-// InstallSoloOperator installs the solo-operator Helm chart. imagePullSecret, when
+// InstallSoloOperator installs the solo-operator Helm chart. When a DIFFERENT
+// version is already installed it upgrades to the pinned version only if
+// allowUpgrade is set (via `kube operator install --allow-upgrade`); otherwise it
+// fails rather than silently changing a running operator. imagePullSecret, when
 // non-empty, is passed to the chart as imagePullSecrets[0].name so the operator's
 // pods can pull images from a private registry — the named docker-registry secret
 // must already exist in the operator namespace (this step does not create it).
-func InstallSoloOperator(imagePullSecret string, allowUpgrade ...bool) automa.Builder {
-	upgrade := len(allowUpgrade) > 0 && allowUpgrade[0]
+func InstallSoloOperator(imagePullSecret string, allowUpgrade bool) automa.Builder {
 	spec := chartSpec("solo-operator")
 	return automa.NewStepBuilder().WithId(InstallSoloOperatorStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -68,13 +70,16 @@ func InstallSoloOperator(imagePullSecret string, allowUpgrade ...bool) automa.Bu
 					return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 				}
 
-				if !upgrade {
+				// A different version is installed. Upgrading a running operator is an
+				// explicit action — require --allow-upgrade rather than silently
+				// changing it on a plain re-install.
+				if !allowUpgrade {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.New(
-							"solo-operator version mismatch: installed %s, expected %s — re-run with --upgrade-operator to upgrade",
+							"solo-operator version mismatch: installed %s, expected %s",
 							installedVersion, spec.Version),
 						reasons.PreconditionNotMet,
-						"Re-run with --upgrade-operator to upgrade solo-operator to the expected version")))
+						"Re-run to upgrade solo-operator to the expected version: 'sudo solo-provisioner kube operator install --allow-upgrade'")))
 				}
 
 				l.Info().

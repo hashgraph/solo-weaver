@@ -17,7 +17,8 @@ var installCmd = &cobra.Command{
 	Long: "Install the solo-operator Helm chart (and its bundled CRDs) into an existing cluster. " +
 		"The operator's images are pulled with --image-pull-secret, a docker-registry Secret that " +
 		"must already exist in the operator namespace. Run this after 'kube cluster install' and after " +
-		"creating that secret (see 'task uat:secrets').",
+		"creating that secret (see 'task uat:secrets'). If a different version is already installed, " +
+		"re-run with --allow-upgrade to upgrade it to the pinned version.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
 		if err != nil {
@@ -33,7 +34,7 @@ var installCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Installing solo-operator")
 
-		wb := workflows.WithWorkflowExecutionMode(workflows.InstallOperatorWorkflow(flagImagePullSecret), opts)
+		wb := workflows.WithWorkflowExecutionMode(workflows.InstallOperatorWorkflow(flagImagePullSecret, flagAllowUpgrade), opts)
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
 		}
@@ -46,6 +47,8 @@ var installCmd = &cobra.Command{
 func init() {
 	installCmd.Flags().StringVar(&flagImagePullSecret, "image-pull-secret", models.ConsensusDefaultImagePullSecret,
 		"Name of a docker-registry Secret in the operator namespace used to pull the operator's private images. Must already exist. Empty to disable (public images)")
+	installCmd.Flags().BoolVar(&flagAllowUpgrade, "allow-upgrade", false,
+		"Upgrade the solo-operator to the pinned version if a different version is already installed (default: a version mismatch fails)")
 	common.FlagStopOnError().SetVarP(installCmd, &flagStopOnError, false)
 	common.FlagRollbackOnError().SetVarP(installCmd, &flagRollbackOnError, false)
 	common.FlagContinueOnError().SetVarP(installCmd, &flagContinueOnError, false)

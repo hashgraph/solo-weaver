@@ -79,7 +79,7 @@ func PrecheckOperatorCRDs(crdNames ...string) automa.Builder {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.New("CRD %s not found — is solo-operator installed?", fqdn),
 						reasons.NotInstalled,
-						"Install solo-operator first (re-run with --upgrade-operator or install the operator), then retry")))
+						"Install solo-operator first: 'sudo solo-provisioner kube operator install', then retry")))
 				}
 			}
 
@@ -122,10 +122,10 @@ func PrecheckOperatorRunning() automa.Builder {
 			if !exists {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.New(
-						"solo-operator deployment %s/%s not found — run 'solo-provisioner operator install' first",
+						"solo-operator deployment %s/%s not found — run 'sudo solo-provisioner kube operator install' first",
 						operatorNamespace, operatorDeploymentName),
 					reasons.NotInstalled,
-					"Install and start solo-operator (run 'solo-provisioner operator install'), then retry")))
+					"Install and start solo-operator (run 'sudo solo-provisioner kube operator install'), then retry")))
 			}
 
 			available, found, err := kc.GetResourceNestedInt64(ctx, "apps/v1", "Deployment",
@@ -190,7 +190,7 @@ func PrecheckOperatorVersion() automa.Builder {
 						"solo-operator version mismatch: installed %s, expected %s — upgrade the operator before proceeding",
 						installedVersion, expectedVersion),
 					reasons.PreconditionNotMet,
-					"Re-run with --upgrade-operator to upgrade solo-operator to the expected version")))
+					"Run 'sudo solo-provisioner kube operator install --allow-upgrade' to upgrade solo-operator to the expected version")))
 			}
 
 			logx.As().Info().

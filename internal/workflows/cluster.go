@@ -56,12 +56,14 @@ func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime,
 // and images can be in a private registry: the caller must first place an image-pull
 // secret (imagePullSecret) in the operator namespace, which the operator's pods
 // reference. imagePullSecret is passed to the chart as imagePullSecrets; empty
-// installs with no pull secret (public images only).
-func InstallOperatorWorkflow(imagePullSecret string) *automa.WorkflowBuilder {
+// installs with no pull secret (public images only). allowUpgrade permits upgrading
+// an already-installed operator to the pinned version (otherwise a version mismatch
+// fails rather than silently changing a running operator).
+func InstallOperatorWorkflow(imagePullSecret string, allowUpgrade bool) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("install-operator").
 		Steps(
-			steps.InstallSoloOperator(imagePullSecret),
+			steps.InstallSoloOperator(imagePullSecret, allowUpgrade),
 		)
 }
 

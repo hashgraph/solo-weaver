@@ -13,6 +13,11 @@ var (
 	// does not create it). Empty installs with no pull secret (public images only).
 	flagImagePullSecret string
 
+	// flagAllowUpgrade permits install to upgrade an already-installed operator to
+	// the pinned version. Off by default: a version mismatch fails rather than
+	// silently changing a running operator on a plain re-install.
+	flagAllowUpgrade bool
+
 	flagStopOnError     bool
 	flagRollbackOnError bool
 	flagContinueOnError bool
