@@ -5,6 +5,7 @@ package reassert
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -196,6 +197,62 @@ func TestReport_AlwaysCarriesAllThreeArtifacts(t *testing.T) {
 		a := artifact(t, r, id)
 		assert.False(t, a.Expected, "%s should not be expected on an unprovisioned host", id)
 		assert.Contains(t, a.Detail, "not provisioned")
+	}
+}
+
+// TestReport_CarriesAllThreeArtifactsOnAPartiallyProvisionedHost pins the shape
+// the daemon parser now requires: a plane that is off is a row saying so, never a
+// row the report drops.
+func TestReport_CarriesAllThreeArtifactsOnAPartiallyProvisionedHost(t *testing.T) {
+	for name, tc := range map[string]struct {
+		p       provisioned
+		k       *fakeKernel
+		expects []string
+	}{
+		"shaper only, no nft tables": {
+			p:       provisioned{script: true, nic: "eth0"},
+			k:       &fakeKernel{qdiscPresent: true},
+			expects: []string{ArtifactEgressQdisc},
+		},
+		"nft tables only, no shaper": {
+			p:       provisioned{hostNft: true, policyNft: true},
+			k:       &fakeKernel{firewallPresent: true, policyPresent: true},
+			expects: []string{ArtifactHostFirewall, ArtifactWorkloadPolicy},
+		},
+		"host firewall only": {
+			p:       provisioned{hostNft: true},
+			k:       &fakeKernel{firewallPresent: true},
+			expects: []string{ArtifactHostFirewall},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for form, r := range map[string]Report{
+				"check":    newTestReasserter(tc.k, tc.p).Check(context.Background()),
+				"reassert": newTestReasserter(tc.k, tc.p).Reassert(context.Background()),
+			} {
+				t.Run(form, func(t *testing.T) {
+					require.Len(t, r.Artifacts, 3)
+
+					for _, id := range []string{
+						ArtifactHostFirewall, ArtifactWorkloadPolicy, ArtifactEgressQdisc,
+					} {
+						a := artifact(t, r, id)
+						if slices.Contains(tc.expects, id) {
+							assert.True(t, a.Expected, "%s is provisioned here", id)
+							assert.True(t, a.Present, "%s is present here", id)
+							continue
+						}
+						assert.False(t, a.Expected, "%s is not provisioned here", id)
+						assert.Contains(t, a.Detail, "not provisioned")
+					}
+					// An absent plane is never repaired, so no unit is restarted.
+					assert.Empty(t, r.Reasserted())
+					assert.Empty(t, r.Unhealthy())
+				})
+			}
+			assert.Zero(t, tc.k.nftRestarts)
+			assert.Zero(t, tc.k.shaperRestarts)
+		})
 	}
 }
 

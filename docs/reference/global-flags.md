@@ -29,8 +29,8 @@ Flags on this page work on every `solo-provisioner` command.
 **`json`** — for automation (Ansible, `jq`, CI):
 
 - **stdout carries data only.** For a workflow command that is the tagged summary
-  object; for a one-shot command (`network firewall show`, `network reassert`) it is
-  a single JSON document you can parse whole.
+  object; for a one-shot command (`network reassert`) it is a single JSON document.
+  A command with its own `--output` (`network firewall show`) is the exception.
 - The summary object:
   `{"type":"summary","status":…,"report_path":…,"report":{…}}`
 - Select the summary by its tag, not by position:

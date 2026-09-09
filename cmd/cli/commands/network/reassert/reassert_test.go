@@ -41,10 +41,10 @@ func TestReassertCmd_HasCheckFlag(t *testing.T) {
 	assert.Equal(t, "false", f.DefValue)
 }
 
-// TestJSONContract_MatchesWhatTheDaemonParses is the drift guard: privexec
-// declares its own result struct instead of importing the engine.
-func TestJSONContract_MatchesWhatTheDaemonParses(t *testing.T) {
-	emitted := ra.Report{Type: ra.ReportType, Artifacts: []ra.ArtifactStatus{
+// canonicalReport is what the engine emits on every run: the three artifacts in
+// probe order, once each, with every optional field exercised across them.
+func canonicalReport() ra.Report {
+	return ra.Report{Type: ra.ReportType, Artifacts: []ra.ArtifactStatus{
 		{
 			Artifact: ra.ArtifactHostFirewall,
 			Expected: true, Present: true,
@@ -52,20 +52,23 @@ func TestJSONContract_MatchesWhatTheDaemonParses(t *testing.T) {
 			Detail: "restored",
 		},
 		{
+			// The two nft artifacts share one lock; this is that lock held.
 			Artifact: ra.ArtifactWorkloadPolicy,
-			Expected: true, Present: true,
+			Skipped:  true,
+			Detail:   "skipped: an apply is in progress",
 		},
 		{
 			Artifact: ra.ArtifactEgressQdisc,
 			Expected: true, ProbeFailed: true,
 			Detail: "nic=eth0; cannot determine: no such device",
 		},
-		{
-			Artifact: ra.ArtifactWorkloadPolicy,
-			Skipped:  true,
-			Detail:   "skipped: an apply is in progress",
-		},
 	}}
+}
+
+// TestJSONContract_MatchesWhatTheDaemonParses is the drift guard: privexec
+// declares its own result struct instead of importing the engine.
+func TestJSONContract_MatchesWhatTheDaemonParses(t *testing.T) {
+	emitted := canonicalReport()
 
 	raw, err := json.Marshal(emitted)
 	require.NoError(t, err)
@@ -74,7 +77,7 @@ func TestJSONContract_MatchesWhatTheDaemonParses(t *testing.T) {
 	parsed, err := privexec.ParseNetworkReassertReport(raw)
 	require.NoError(t, err)
 	require.Equal(t, ra.ReportType, parsed.Type)
-	require.Len(t, parsed.Artifacts, 4)
+	require.Len(t, parsed.Artifacts, len(emitted.Artifacts))
 
 	for i, want := range emitted.Artifacts {
 		got := parsed.Artifacts[i]
@@ -86,6 +89,38 @@ func TestJSONContract_MatchesWhatTheDaemonParses(t *testing.T) {
 		assert.Equal(t, want.Reasserted, got.Reasserted)
 		assert.Equal(t, want.Recovered, got.Recovered)
 		assert.Equal(t, want.Detail, got.Detail)
+	}
+}
+
+// TestJSONContract_DaemonRejectsMalformedArtifactSets pins the other half: the
+// daemon indexes by artifact name, so only the three names once each may parse.
+func TestJSONContract_DaemonRejectsMalformedArtifactSets(t *testing.T) {
+	for name, mutate := range map[string]func([]ra.ArtifactStatus) []ra.ArtifactStatus{
+		"duplicate artifact": func(a []ra.ArtifactStatus) []ra.ArtifactStatus {
+			a[2].Artifact = a[0].Artifact
+			return a
+		},
+		"missing artifact": func(a []ra.ArtifactStatus) []ra.ArtifactStatus {
+			return a[:2]
+		},
+		"unknown artifact": func(a []ra.ArtifactStatus) []ra.ArtifactStatus {
+			a[1].Artifact = "ingress-qdisc"
+			return a
+		},
+		"extra artifact": func(a []ra.ArtifactStatus) []ra.ArtifactStatus {
+			return append(a, ra.ArtifactStatus{Artifact: ra.ArtifactEgressQdisc})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := canonicalReport()
+			report.Artifacts = mutate(report.Artifacts)
+
+			raw, err := json.Marshal(report)
+			require.NoError(t, err)
+
+			_, err = privexec.ParseNetworkReassertReport(raw)
+			require.Error(t, err, "the daemon must reject a report it cannot index by artifact")
+		})
 	}
 }
 

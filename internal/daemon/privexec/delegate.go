@@ -25,9 +25,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -110,6 +112,11 @@ type Delegator interface {
 // networkReassertReportType is the "type" tag on the report line. Mirrors
 // reassert.ReportType; the CLI-side contract test pins them together.
 const networkReassertReportType = "reassert"
+
+// networkReassertArtifacts is the exact set the worker reports on every run.
+// Mirrors reassert.Artifact*; the CLI-side contract test pins them together. CLI
+// and daemon ship at one version, so an unknown name is drift, not skew.
+var networkReassertArtifacts = []string{"host-firewall", "workload-policy", "egress-qdisc"}
 
 // NetworkReassertResult mirrors the `network reassert --output json` document.
 // Declared here, not imported, so the daemon does not pull in the engine.
@@ -332,7 +339,43 @@ func ParseNetworkReassertReport(out []byte) (NetworkReassertResult, error) {
 			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
 		}
 	}
+	if err := validateNetworkReassertArtifacts(res.Artifacts); err != nil {
+		return NetworkReassertResult{}, err
+	}
 	return res, nil
+}
+
+// validateNetworkReassertArtifacts rejects anything but the known set, once each:
+// the monitor keys history by artifact name, so a duplicate would overwrite a
+// sibling's and a missing one would freeze it. Order is not checked.
+func validateNetworkReassertArtifacts(artifacts []NetworkArtifactStatus) error {
+	fail := func(reason, msg string) error {
+		return &daemonkit.ProbeError{
+			Reason:     reason,
+			Message:    msg,
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	if len(artifacts) != len(networkReassertArtifacts) {
+		return fail("NetworkReassertArtifactCountMismatch",
+			fmt.Sprintf("network reassert reported %d artifacts, want %d (%s)",
+				len(artifacts), len(networkReassertArtifacts),
+				strings.Join(networkReassertArtifacts, ", ")))
+	}
+	seen := make(map[string]bool, len(artifacts))
+	for _, a := range artifacts {
+		if !slices.Contains(networkReassertArtifacts, a.Artifact) {
+			return fail("NetworkReassertUnknownArtifact",
+				fmt.Sprintf("network reassert reported unknown artifact %q, want one of %s",
+					a.Artifact, strings.Join(networkReassertArtifacts, ", ")))
+		}
+		if seen[a.Artifact] {
+			return fail("NetworkReassertDuplicateArtifact",
+				fmt.Sprintf("network reassert reported artifact %q more than once", a.Artifact))
+		}
+		seen[a.Artifact] = true
+	}
+	return nil
 }
 
 // tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.

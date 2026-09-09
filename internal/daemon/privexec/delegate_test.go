@@ -378,11 +378,18 @@ func TestTruncateStderr(t *testing.T) {
 	require.Contains(t, out, "[stderr truncated at 512/600 bytes]")
 }
 
+// fullReassertReport is the shape every happy-path case starts from: the three
+// known artifacts, once each. Anything less is rejected as contract drift.
+const fullReassertReport = `{"type":"reassert","artifacts":[` +
+	`{"artifact":"host-firewall","expected":true,"present":true},` +
+	`{"artifact":"workload-policy","expected":true,"present":true},` +
+	`{"artifact":"egress-qdisc","expected":true,"present":true}]}`
+
 func TestNetworkReassert_BuildsSudoArgv(t *testing.T) {
 	d, call := fakeDelegator(
 		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
 		"/opt/solo/weaver/bin/solo-provisioner-daemon",
-		[]byte(`{"type":"reassert","artifacts":[{"artifact":"host-firewall","expected":true,"present":true}]}`), nil,
+		[]byte(fullReassertReport), nil,
 	)
 
 	_, err := d.NetworkReassert(context.Background())
@@ -400,6 +407,7 @@ func TestNetworkReassert_ParsesEveryReportedField(t *testing.T) {
 	// One compact line, as the CLI emits it.
 	stdout := []byte(`{"type":"reassert","artifacts":[` +
 		`{"artifact":"host-firewall","expected":true,"present":false,"reasserted":true,"recovered":true,"detail":"nic=eth0"},` +
+		`{"artifact":"workload-policy","skipped":true,"detail":"skipped: an apply is in progress"},` +
 		`{"artifact":"egress-qdisc","expected":true,"present":false,"probe_failed":true,"detail":"cannot determine"}]}` + "\n")
 	d, _ := fakeDelegator(
 		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
@@ -408,7 +416,7 @@ func TestNetworkReassert_ParsesEveryReportedField(t *testing.T) {
 
 	res, err := d.NetworkReassert(context.Background())
 	require.NoError(t, err)
-	require.Len(t, res.Artifacts, 2)
+	require.Len(t, res.Artifacts, 3)
 
 	require.Equal(t, "host-firewall", res.Artifacts[0].Artifact)
 	require.True(t, res.Artifacts[0].Expected)
@@ -417,14 +425,17 @@ func TestNetworkReassert_ParsesEveryReportedField(t *testing.T) {
 	require.True(t, res.Artifacts[0].Recovered)
 	require.Equal(t, "nic=eth0", res.Artifacts[0].Detail)
 
-	require.True(t, res.Artifacts[1].ProbeFailed)
+	require.True(t, res.Artifacts[1].Skipped)
+	require.Equal(t, "skipped: an apply is in progress", res.Artifacts[1].Detail)
+
+	require.True(t, res.Artifacts[2].ProbeFailed)
 }
 
 // TestNetworkReassert_SelectsTheTaggedLineAmongLogEvents pins the transport:
 // the report is picked by its tag, so log lines merged onto stdout cannot displace it.
 func TestNetworkReassert_SelectsTheTaggedLineAmongLogEvents(t *testing.T) {
 	stdout := []byte(`{"level":"debug","time":"2026-09-04T10:00:00Z","message":"resolving nft binary"}
-{"type":"reassert","artifacts":[{"artifact":"host-firewall","expected":true,"present":false,"reasserted":true,"recovered":true}]}
+{"type":"reassert","artifacts":[{"artifact":"host-firewall","expected":true,"present":true,"reasserted":true,"recovered":true},{"artifact":"workload-policy","expected":true,"present":true},{"artifact":"egress-qdisc","expected":true,"present":true}]}
 {"level":"warn","restored":["host-firewall"],"message":"weaver network state was missing and has been re-asserted"}
 `)
 	d, _ := fakeDelegator(
@@ -434,7 +445,7 @@ func TestNetworkReassert_SelectsTheTaggedLineAmongLogEvents(t *testing.T) {
 
 	res, err := d.NetworkReassert(context.Background())
 	require.NoError(t, err)
-	require.Len(t, res.Artifacts, 1)
+	require.Len(t, res.Artifacts, 3)
 	require.True(t, res.Artifacts[0].Recovered)
 }
 
@@ -466,6 +477,47 @@ func TestNetworkReassert_UnparseableOutputIsAContractError(t *testing.T) {
 	var pe *daemonkit.ProbeError
 	require.ErrorAs(t, err, &pe)
 	require.Equal(t, "NetworkReassertParseFailed", pe.Reason)
+}
+
+// TestNetworkReassert_MalformedArtifactSetIsAContractError pins a reason code per
+// malformed shape. Unchecked, a duplicate or a missing name would read as healthy.
+func TestNetworkReassert_MalformedArtifactSetIsAContractError(t *testing.T) {
+	for name, tc := range map[string]struct {
+		artifacts  string
+		wantReason string
+	}{
+		"one artifact missing": {
+			`{"artifact":"host-firewall"},{"artifact":"workload-policy"}`,
+			"NetworkReassertArtifactCountMismatch",
+		},
+		"one artifact twice": {
+			`{"artifact":"host-firewall"},{"artifact":"host-firewall"},{"artifact":"egress-qdisc"}`,
+			"NetworkReassertDuplicateArtifact",
+		},
+		"an artifact the daemon does not know": {
+			`{"artifact":"host-firewall"},{"artifact":"workload-policy"},{"artifact":"ingress-qdisc"}`,
+			"NetworkReassertUnknownArtifact",
+		},
+		"an extra artifact": {
+			`{"artifact":"host-firewall"},{"artifact":"workload-policy"},` +
+				`{"artifact":"egress-qdisc"},{"artifact":"egress-qdisc"}`,
+			"NetworkReassertArtifactCountMismatch",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _ := fakeDelegator(
+				[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+				"/opt/solo/weaver/bin/solo-provisioner-daemon",
+				[]byte(`{"type":"reassert","artifacts":[`+tc.artifacts+`]}`), nil,
+			)
+
+			_, err := d.NetworkReassert(context.Background())
+
+			var pe *daemonkit.ProbeError
+			require.ErrorAs(t, err, &pe)
+			require.Equal(t, tc.wantReason, pe.Reason)
+		})
+	}
 }
 
 func TestNetworkReassert_EmptyArtifactListIsAContractError(t *testing.T) {
