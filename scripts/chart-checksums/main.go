@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -32,8 +33,15 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/joomcode/errorx"
+	"gopkg.in/yaml.v3"
+
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
+
+// catalogPath is the on-disk catalog the -write mode rewrites. The tool runs from
+// the repo root via the Taskfile, so a repo-relative path is correct.
+const catalogPath = "pkg/software/infrastructure-catalog.yaml"
 
 func main() {
 	if err := run(); err != nil {
@@ -43,6 +51,10 @@ func main() {
 }
 
 func run() error {
+	write := flag.Bool("write", false,
+		"rewrite the checksum values in "+catalogPath+" in place (default: print only)")
+	flag.Parse()
+
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("'helm' is required on PATH: %w", err)
 	}
@@ -67,6 +79,16 @@ func run() error {
 		return err
 	}
 
+	// digests[chartName][version] = hex digest, collected for the optional -write pass.
+	digests := map[string]map[string]string{}
+	record := func(name, version, digest string) {
+		if digests[name] == nil {
+			digests[name] = map[string]string{}
+		}
+		digests[name][version] = digest
+		printRow(name, version, digest)
+	}
+
 	fmt.Println()
 	fmt.Println("=== Classic charts (SHA256 of .tgz) ===")
 	for _, chart := range catalog.Cluster {
@@ -78,7 +100,7 @@ func run() error {
 			if err != nil {
 				return fmt.Errorf("classic %s %s: %w", chart.Name, version, err)
 			}
-			printRow(chart.Name, string(version), digest)
+			record(chart.Name, string(version), digest)
 		}
 	}
 
@@ -93,11 +115,73 @@ func run() error {
 			if err != nil {
 				return fmt.Errorf("oci %s %s: %w", chart.Name, version, err)
 			}
-			printRow(chart.Name, string(version), digest)
+			record(chart.Name, string(version), digest)
 		}
 	}
 
+	if *write {
+		if err := writeChecksums(catalogPath, digests); err != nil {
+			return errorx.ExternalError.Wrap(err, "write %s", catalogPath)
+		}
+		fmt.Fprintf(os.Stderr, "\n✓ Wrote checksums into %s\n", catalogPath)
+	}
+
 	return nil
+}
+
+// Version-key lines under a chart's `versions:` map always start with a digit
+// (e.g. "0.6.0:", "18.6.4:"); no structural key we track (name/type/algorithm/
+// checksum/versions) does — so this reliably distinguishes a version key from the
+// fields nested under it.
+var (
+	catalogChartRE    = regexp.MustCompile(`^\s*-\s*name:\s*(\S+)`)
+	catalogVersionRE  = regexp.MustCompile(`^\s+([0-9][^:]*?):\s*$`)
+	catalogChecksumRE = regexp.MustCompile(`^(\s*checksum:\s*).*$`)
+)
+
+// writeChecksums rewrites the `checksum:` values in the catalog file in place,
+// preserving all other content (comments, ordering, quoting style). It scans line
+// by line, tracking the current chart (from `- name:`) and version (from the
+// digit-leading version key), and replaces a `checksum:` line with the freshly
+// computed digest for that (chart, version). Lines for charts/versions not in
+// digests are left untouched. After writing, it re-parses the file to fail loudly
+// rather than leave a corrupt catalog on disk.
+func writeChecksums(path string, digests map[string]map[string]string) error {
+	orig, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(orig), "\n")
+	var curChart, curVersion string
+	for i, line := range lines {
+		if m := catalogChartRE.FindStringSubmatch(line); m != nil {
+			curChart = m[1]
+			curVersion = ""
+			continue
+		}
+		if m := catalogVersionRE.FindStringSubmatch(line); m != nil {
+			curVersion = strings.TrimSpace(m[1])
+			continue
+		}
+		if m := catalogChecksumRE.FindStringSubmatch(line); m != nil {
+			if byVer, ok := digests[curChart]; ok {
+				if digest, ok := byVer[curVersion]; ok {
+					lines[i] = fmt.Sprintf("%s'%s'", m[1], digest)
+				}
+			}
+		}
+	}
+
+	out := []byte(strings.Join(lines, "\n"))
+
+	// Safety: never leave a catalog on disk that no longer parses as YAML.
+	var probe map[string]any
+	if err := yaml.Unmarshal(out, &probe); err != nil {
+		return errorx.IllegalFormat.Wrap(err, "refusing to write — result does not parse as YAML")
+	}
+
+	return os.WriteFile(path, out, 0o644)
 }
 
 // helmRunner wraps a workdir-scoped helm environment. Setting

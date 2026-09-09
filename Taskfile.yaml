@@ -135,32 +135,6 @@ tasks:
       # git insteadOf token). Any auth/transport failure surfaces as go's own error.
       - go mod vendor
 
-  deps:solo-operator:
-    desc: "Update the github.com/hashgraph/solo-operator Go API module to SOLO_OPERATOR_VERSION (default latest) and re-vendor. The module lives in a PRIVATE repo, so this uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env. The token is injected via git's environment config (GIT_CONFIG_*) for this one command only — nothing is written to ~/.gitconfig, and GONOSUMCHECK/GONOSUMDB is set so the fetch does not hit the public sum.golang.org (which cannot see a private repo). Run on the HOST, then 'task vm:sync' to push vendor/ into the VM."
-    vars:
-      SOLO_OPERATOR_VERSION: '{{.SOLO_OPERATOR_VERSION | default "latest"}}'
-    cmds:
-      - |
-        set -e
-        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
-        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with repo/read access) in a root .env file (see .env.example)}"
-
-        # Inject the PAT into git via env-config (git >= 2.31) so the credential is
-        # scoped to this process and never persisted to any git config file.
-        export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
-        export GIT_CONFIG_VALUE_0="https://github.com/"
-        # Private module: fetch directly (bypass proxy) and skip the checksum DB,
-        # which 404s for a repo it cannot read.
-        export GOPRIVATE="github.com/hashgraph/*"
-        export GONOSUMCHECK=1 GONOSUMDB="github.com/hashgraph/*" GOFLAGS=-mod=mod
-
-        echo "→ go get github.com/hashgraph/solo-operator@{{.SOLO_OPERATOR_VERSION}}"
-        go get "github.com/hashgraph/solo-operator@{{.SOLO_OPERATOR_VERSION}}"
-        go mod tidy
-        go mod vendor
-        echo "✓ solo-operator now at: $(go list -m github.com/hashgraph/solo-operator)"
-
   registry:login:ghcr:
     desc: "Log Helm into ghcr.io using GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env, so private charts can be pulled (e.g. before 'task chart-checksums'). Tries `helm registry login` first (honours credential helpers); falls back to writing the auth entry directly when Helm's login probe returns a false 403 against ghcr."
     cmds:
@@ -205,10 +179,75 @@ tasks:
         echo "✓ Wrote ghcr.io auth for $GITHUB_USER to $REG_CONF"
 
   chart-checksums:
-    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Requires 'helm' on PATH. For private charts, run 'task registry:login:ghcr' first."
+    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Prints by default; pass '-write' (go run ./scripts/chart-checksums -write) to rewrite the checksums in place. Requires 'helm' on PATH. For private charts, run 'task registry:login:ghcr' first."
     cmds:
       - "go run ./scripts/chart-checksums"
-  
+
+  bump:solo-operator:
+    desc: "Bump solo-operator to VERSION in ONE command: the Go API module (go.mod + vendor, the CRD types), the SOLO_OPERATOR_VERSION constant (single source of truth for the chart + operator image + UC sidecar), and the catalog checksum — then it re-compiles and verifies the invariants. Host-only; needs 'helm' on PATH and GITHUB_USER/GITHUB_ACCESS_TOKEN in the root .env (used for BOTH the private Go module and the private ghcr chart). A breaking CRD change in the new version surfaces here as a compile error — fix the code and re-run. After it succeeds, run 'task vm:sync' to push vendor/ into the VM. Accepts 0.6.1 or v0.6.1."
+    cmds:
+      - |
+        set -e
+        VERSION="{{.VERSION}}"
+        # The Taskfile has a global VERSION (default 0.0.0, for binary ldflags), so an
+        # omitted arg resolves to 0.0.0 rather than empty — reject both so a forgotten
+        # VERSION can't silently bump the operator to 0.0.0.
+        case "$VERSION" in ""|"0.0.0") echo "✗ Pass VERSION, e.g. 'task bump:solo-operator VERSION=0.6.1'" >&2; exit 1 ;; esac
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (repo read + read:packages) in a root .env file (see .env.example)}"
+
+        BARE="${VERSION#v}"   # artifacts (constant, catalog key) use the bare version
+        MODVER="v$BARE"       # Go module versions are v-prefixed
+        DEPS=pkg/deps/deps.go
+        CATALOG=pkg/software/infrastructure-catalog.yaml
+
+        # 1. Go API module (CRD types) + re-vendor. First, so a bad version / auth fails
+        #    before anything else is touched. The PAT is injected into git via env-config
+        #    for these commands only (never written to ~/.gitconfig), and GONOSUMCHECK/
+        #    GONOSUMDB skip the public sum DB (which 404s for a private repo).
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_VALUE_0="https://github.com/"
+        export GOPRIVATE="github.com/hashgraph/*"
+        export GONOSUMCHECK=1 GONOSUMDB="github.com/hashgraph/*" GOFLAGS=-mod=mod
+        echo "→ go get github.com/hashgraph/solo-operator@$MODVER"
+        go get "github.com/hashgraph/solo-operator@$MODVER"
+        go mod tidy
+        go mod vendor
+        # Restore normal module settings for the remaining (vendored) build/test steps.
+        unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GOPRIVATE GONOSUMCHECK GONOSUMDB GOFLAGS
+
+        # 2. The single source of truth: the Go constant (chart + image + UC tag).
+        perl -i -pe 's/(SOLO_OPERATOR_VERSION\s*=\s*)"[^"]*"/${1}"'"$BARE"'"/' "$DEPS"
+        grep -q "SOLO_OPERATOR_VERSION = \"$BARE\"" "$DEPS" || { echo "✗ failed to update $DEPS" >&2; exit 1; }
+
+        # 3. Point the catalog's solo-operator version key at the new version, scoped to
+        #    the solo-operator block so no other chart is touched. Its checksum is filled
+        #    in step 5. (The catalog default is injected from the constant at load, so
+        #    only the version key + checksum live in the YAML.)
+        awk -v ver="$BARE" '
+          /^- name:/ { inblk = ($0 ~ /solo-operator/) }
+          inblk && !done && /^    [0-9][^:]*:[[:space:]]*$/ { sub(/^    [0-9][^:]*:/, "    " ver ":"); done=1 }
+          { print }
+        ' "$CATALOG" > "$CATALOG.tmp" && mv "$CATALOG.tmp" "$CATALOG"
+
+        # 4. Auth for the private chart, then 5. recompute + write the checksum.
+        task registry:login:ghcr
+        go run ./scripts/chart-checksums -write
+
+        # 6. Compatibility gate: compile the packages that use the CRD types against the
+        #    newly vendored module. A breaking schema change fails loudly here.
+        echo "→ verifying the new CRD types compile ..."
+        GOOS=linux GOARCH=amd64 go build ./cmd/cli/... ./internal/... ./pkg/...
+
+        # 7. Verify the single-source-of-truth invariants (default injected, checksum
+        #    present for the version, UC tag tracks the operator version).
+        go test -tags integration -run Test_Config_SoloOperatorVersionSourceOfTruth ./pkg/software/
+
+        echo ""
+        echo "✓ solo-operator bumped to $BARE (module + chart + image + UC sidecar)."
+        echo "  Next: review the diff (go.mod, vendor/, deps.go, catalog) and 'task vm:sync' before building in the VM."
+
   lint:
     cmds:
       - "go fmt -x ./..."

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 )
 
 // Test_Config_LoadInfrastructureCatalogYAML is an integration test that verifies the
@@ -386,7 +388,10 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},
 		"node-exporter":            {ChartTypeOCI, "4.5.19"},
 		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
-		"solo-operator":            {ChartTypeOCI, "0.6.0"},
+		// solo-operator is intentionally excluded: its version is not pinned in this
+		// map because it is owned by deps.SOLO_OPERATOR_VERSION (injected as the
+		// catalog default). Test_Config_SoloOperatorVersionSourceOfTruth_Integration
+		// guards it instead.
 	}
 
 	for name, expected := range expectedCharts {
@@ -411,4 +416,35 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Test_Config_SoloOperatorVersionSourceOfTruth_Integration pins the single-source-
+// of-truth contract for the solo-operator version: the catalog default is injected
+// from deps.SOLO_OPERATOR_VERSION, that version has a real checksum entry (so a
+// version bump can't silently forget to regenerate it), and the UC sidecar tag
+// tracks the operator version.
+func Test_Config_SoloOperatorVersionSourceOfTruth_Integration(t *testing.T) {
+	config, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+
+	chart, err := config.GetClusterComponent(SoloOperatorComponentName)
+	require.NoError(t, err)
+	require.Equal(t, ChartTypeOCI, chart.Type)
+
+	// The default is injected from the single source of truth, not pinned in YAML.
+	require.Equal(t, Version(deps.SOLO_OPERATOR_VERSION), chart.Default,
+		"catalog default must be injected from deps.SOLO_OPERATOR_VERSION")
+
+	// A checksum entry must exist for that exact version — this is what catches a
+	// bump that changed the version but not the checksum.
+	cs, ok := chart.Versions[Version(deps.SOLO_OPERATOR_VERSION)]
+	require.Truef(t, ok,
+		"no checksum entry for solo-operator %s — regenerate with 'task bump:solo-operator VERSION=%s'",
+		deps.SOLO_OPERATOR_VERSION, deps.SOLO_OPERATOR_VERSION)
+	require.NotEmptyf(t, cs.Algorithm, "solo-operator %s: algorithm must be set", deps.SOLO_OPERATOR_VERSION)
+	require.NotEmptyf(t, cs.Value, "solo-operator %s: checksum must be set", deps.SOLO_OPERATOR_VERSION)
+
+	// The UC sidecar image tracks the operator version by default.
+	require.Equal(t, deps.SOLO_OPERATOR_VERSION, deps.CONSENSUS_NODE_UC_VERSION,
+		"UC sidecar tag must track the solo-operator version")
 }
