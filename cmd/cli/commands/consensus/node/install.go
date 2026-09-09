@@ -52,6 +52,15 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
+		// Reject an empty/whitespace --namespace before building or submitting any
+		// CR. Namespace doubles as the Orbit name (OrbitName = Namespace), so an
+		// empty value (e.g. an unset $NS env var) would silently target the
+		// "default" namespace with an unset orbit. Runs after the interactive
+		// prompt so a prompted namespace is still honoured.
+		if err := common.ValidateNamespaceFlag(flagNamespace); err != nil {
+			return err
+		}
+
 		// Derive per-node secret defaults from the (possibly prompted) node ID.
 		// A consensus node needs exactly two secrets: gossip signing keys and the
 		// gRPC TLS key/cert.

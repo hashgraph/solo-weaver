@@ -64,6 +64,17 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 			}
 
 			if err := kc.ApplyTyped(ctx, ng); err != nil {
+				// A 403 admission-policy / RBAC denial already carries the operator's
+				// most actionable line verbatim (see kube.ApplyTyped, which classifies
+				// it as RejectedOperation). Surface it at the top level with a targeted
+				// hint instead of re-burying it under a generic "failed to apply" wrapper.
+				if errorx.IsOfType(err, errorx.RejectedOperation) {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						err,
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("The cluster's admission policy rejected the request; confirm --namespace %q is the intended orbit and matches spec.orbit", namespace),
+						fmt.Sprintf("Inspect the operator's admission policy: kubectl get validatingadmissionpolicybindings; check the solo-operator logs in namespace %s", namespace))))
+				}
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.Wrap(err, "failed to apply NetworkGenesis for orbit %s", orbit),
 					reasons.PreconditionNotMet,

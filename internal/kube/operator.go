@@ -5,8 +5,10 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -86,8 +88,30 @@ func (c *Client) ApplyTyped(ctx context.Context, obj runtime.Object) error {
 		FieldManager: "solo-weaver",
 		Force:        &force,
 	}); err != nil {
+		// A 403 from an admission webhook (ValidatingAdmissionPolicy) or RBAC carries
+		// the single most operator-actionable line — the admission message (e.g.
+		// "spec.orbit ... must match namespace default"). Surface it verbatim as a
+		// rejected-operation error instead of flattening it under a generic
+		// "failed to apply" internal-error wrapper that buries the message.
+		if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+			return errorx.RejectedOperation.New("%s", admissionMessage(err))
+		}
 		return errorx.InternalError.Wrap(err, "failed to apply %s/%s", gvk.Kind, u.GetName())
 	}
 
 	return nil
+}
+
+// admissionMessage returns the Kubernetes Status message for a rejected request
+// (the admission-webhook / RBAC denial text), which is the operator-actionable
+// part of a ValidatingAdmissionPolicy rejection. It falls back to err.Error()
+// when no API status is attached.
+func admissionMessage(err error) string {
+	var status kerrors.APIStatus
+	if errors.As(err, &status) {
+		if msg := status.Status().Message; msg != "" {
+			return msg
+		}
+	}
+	return err.Error()
 }

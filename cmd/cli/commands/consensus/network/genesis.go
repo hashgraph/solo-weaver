@@ -34,6 +34,13 @@ var genesisCmd = &cobra.Command{
 			return err
 		}
 
+		// Reject an empty/whitespace --namespace before building or submitting any
+		// CR — namespace doubles as spec.orbit here, and an empty value would
+		// silently target the "default" namespace with an unset orbit.
+		if err := common.ValidateNamespaceFlag(flagNamespace); err != nil {
+			return err
+		}
+
 		// A pre-built genesis is authoritative and skips the operator's cluster
 		// roster discovery. An explicit --genesis-file overrides the deployment
 		// package's genesis-network.json when both are provided.
