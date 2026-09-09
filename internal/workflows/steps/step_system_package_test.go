@@ -61,12 +61,36 @@ func TestInstallOptionalSystemPackage_AlreadyInstalledSucceeds(t *testing.T) {
 	pkg := software.NewMockPackage(ctrl)
 	pkg.EXPECT().Name().Return("bash-completion").AnyTimes()
 	pkg.EXPECT().IsInstalled().Return(true)
+	pkg.EXPECT().Info().Return(&syspkg.PackageInfo{
+		Name:    "bash-completion",
+		Version: "1:2.11-6",
+		Status:  manager.PackageStatusInstalled,
+	}, nil)
 
 	report := runOptionalStep(t, optionalPackageStub(pkg, nil))
 
 	assert.Equal(t, automa.StatusSuccess, report.Status)
 	require.NoError(t, report.Error)
 	assert.Equal(t, "true", report.Metadata[AlreadyInstalled])
+	assert.Equal(t, "1:2.11-6", report.Metadata["packageVersion"])
+}
+
+// Info() is best-effort here: its failure costs metadata, not the step.
+func TestInstallOptionalSystemPackage_AlreadyInstalledSurvivesInfoFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	pkg := software.NewMockPackage(ctrl)
+	pkg.EXPECT().Name().Return("bash-completion").AnyTimes()
+	pkg.EXPECT().IsInstalled().Return(true)
+	pkg.EXPECT().Info().Return(nil, assert.AnError)
+
+	report := runOptionalStep(t, optionalPackageStub(pkg, nil))
+
+	assert.Equal(t, automa.StatusSuccess, report.Status)
+	require.NoError(t, report.Error)
+	assert.Equal(t, "true", report.Metadata[AlreadyInstalled])
+	assert.NotContains(t, report.Metadata, "packageVersion")
 }
 
 func TestInstallOptionalSystemPackage_InstallsWhenMissing(t *testing.T) {

@@ -181,11 +181,9 @@ func InstallSystemPackage(name string, installer func() (software.Package, error
 }
 
 // InstallOptionalSystemPackage installs a system package that is an operator
-// convenience rather than a cluster dependency. Unlike InstallSystemPackage,
-// nothing here can fail the workflow: failures are logged and reported as
-// skipped, which automa does not count as a failure. Its phase is hard-fail and
-// StepBuilder has no per-step opt-out, so this is how an optional package stays
-// optional.
+// convenience rather than a cluster dependency. Failures are logged and reported
+// as skipped, so a package the cluster does not need can never fail the phase it
+// runs in.
 //
 // It has no rollback: a convenience package is left in place if a later step
 // fails.
@@ -205,9 +203,19 @@ func InstallOptionalSystemPackage(name string, installer func() (software.Packag
 
 			if pkg.IsInstalled() {
 				logx.As().Info().Msgf("Optional package %q is already installed, skipping installation", name)
-				return automa.SuccessReport(stp, automa.WithMetadata(map[string]string{
-					AlreadyInstalled: "true",
-				}))
+
+				meta := map[string]string{AlreadyInstalled: "true"}
+
+				if info, err := pkg.Info(); err != nil {
+					logx.As().Warn().Err(err).Str("package", name).
+						Msg("Could not read optional package info; reporting without it")
+				} else {
+					meta["packageName"] = info.Name
+					meta["packageVersion"] = info.Version
+					meta["packageStatus"] = string(info.Status)
+				}
+
+				return automa.SuccessReport(stp, automa.WithMetadata(meta))
 			}
 
 			logx.As().Debug().Msgf("Installing optional package %s...", name)
