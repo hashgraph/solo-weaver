@@ -22,7 +22,7 @@ import (
 //   - `nft delete table` on an absent table, which DeleteTable must swallow.
 //
 // A fake-binary test asserts what we told it to say, so only these can catch a
-// drift. They need root and run only in the VM (`task vm:test:integration`).
+// drift. VM-only (`task vm:test:integration`); they skip without nftables.
 
 // scratchTable is deliberately not one of the weaver table names, so a crashed
 // run can never leave the real firewall or policy tables damaged.
@@ -58,13 +58,35 @@ func addScratchTable(t *testing.T, bin string) {
 	})
 }
 
-// Test_Binary_ResolvesAnAbsolutePath pins that one of the hard-coded candidates
-// is actually where nft lives on a provisioned host. If a distro moves it, every
-// probe degrades to "cannot determine" and reassert stops repairing anything.
+// nftElsewhere are nft paths outside binCandidates; LookPath alone misses them
+// because sudo's PATH usually lacks the sbin dirs.
+var nftElsewhere = []string{"/usr/local/sbin/nft", "/usr/local/bin/nft", "/bin/nft"}
+
+// findNftAnywhere returns any nft on the host, candidate path or not.
+func findNftAnywhere() (string, bool) {
+	for _, c := range append(append([]string{}, binCandidates...), nftElsewhere...) {
+		if _, err := os.Stat(c); err == nil {
+			return c, true
+		}
+	}
+	if p, err := exec.LookPath("nft"); err == nil {
+		return p, true
+	}
+	return "", false
+}
+
+// Test_Binary_ResolvesAnAbsolutePath pins that an installed nft sits at one of
+// the hard-coded candidates. If a distro moves it, every probe degrades to
+// "cannot determine" and reassert stops repairing anything.
 func Test_Binary_ResolvesAnAbsolutePath_Integration(t *testing.T) {
+	found, installed := findNftAnywhere()
+	if !installed {
+		t.Skip("no nftables installed on this host")
+	}
+
 	bin, ok := Binary()
 
-	require.True(t, ok, "nft must be found at one of %v on a provisioned host", binCandidates)
+	require.True(t, ok, "nft is installed at %s but not at one of %v, so every probe degrades", found, binCandidates)
 	assert.FileExists(t, bin)
 }
 
