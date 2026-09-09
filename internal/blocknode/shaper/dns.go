@@ -208,6 +208,15 @@ func loadDNSCache(path string) dnsCache {
 // write this cache describes has already committed (see
 // Reconciler.persistDNSCache), and there is no log line this package is
 // allowed to emit to report the fallback file failed.
+//
+// 0o644, not 0o600: unlike the host firewall's cache, this one has to be
+// READ by the unprivileged --check path, which is the whole reason Check and
+// Apply agree on a digest during an outage. A 0o600 file owned by root would
+// make --check's loadDNSCache silently see an empty cache forever (permission
+// errors degrade the same as "missing" -- see loadDNSCache), so --check would
+// report a peer unresolved while Apply, running as root, correctly served it
+// stale from the very same file. The content is non-sensitive: names and
+// addresses the block node already reports over statusz.
 func (c dnsCache) save(path string) {
 	if path == "" {
 		return
@@ -216,7 +225,7 @@ func (c dnsCache) save(path string) {
 	if err != nil {
 		return
 	}
-	_ = fsx.AtomicWriteFile(path, append(data, '\n'), 0o600)
+	_ = fsx.AtomicWriteFile(path, append(data, '\n'), 0o644)
 }
 
 // hostResolution is the outcome of one pass over the names in a statusz
