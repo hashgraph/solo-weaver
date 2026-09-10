@@ -48,6 +48,9 @@ func newFakeUpgradeMonitor(t *testing.T, namespace string, objects ...runtime.Ob
 	cfg := consensus.UpgradeMonitorConfig{
 		KubeconfigPath: "/dev/null", // not used — client is injected
 		Namespace:      namespace,
+		// Empty package dir: the config-CR steps find no data/config/ and no-op, so
+		// execute succeeds once (these tests exercise dedup/concurrency, not config).
+		UpgradeDir: t.TempDir(),
 	}
 	return consensus.NewUpgradeMonitorWithClient(cfg, client), client
 }
