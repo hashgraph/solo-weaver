@@ -89,15 +89,32 @@ const (
 // match the operator's daemon reason vocabulary.
 type ConditionReason string
 
+// These mirror the operator's daemon reason vocabulary in
+// solo-operator api/v1alpha1 (networkupgrade_common_types.go, the ReasonDaemon*
+// errx.Reason values) byte-for-byte — the ExecuteReconciler reads DaemonResult's
+// reason, so any divergence breaks the handshake.
 const (
 	// ReasonDaemonSucceeded marks a successful condition (DaemonResult=True,
 	// ConfigCRsApplied=True).
 	ReasonDaemonSucceeded ConditionReason = "Succeeded"
 
-	// ReasonDaemonExecuteFailed is the generic failure reason on DaemonResult=False.
-	// TODO: map specific operator reasons (FileDownloadFailed, InfraUpgradeFailed, …)
-	// as each step surfaces its failure mode.
-	ReasonDaemonExecuteFailed ConditionReason = "ExecuteFailed"
+	// ReasonDaemonFileDownloadFailed / ReasonDaemonFileHashMismatch report a fatal
+	// external-files failure on DaemonResult=False.
+	ReasonDaemonFileDownloadFailed ConditionReason = "FileDownloadFailed"
+	ReasonDaemonFileHashMismatch   ConditionReason = "FileHashMismatch"
+
+	// ReasonDaemonInfraUpgradeFailed reports a fatal infra-upgrade failure. It is
+	// also the generic fallback reason for an unclassified fatal execute failure,
+	// mirroring the UC provisioner-proxy's fallback (provisioner_proxy.go).
+	ReasonDaemonInfraUpgradeFailed ConditionReason = "InfraUpgradeFailed"
+
+	// ReasonDaemonSelfUpgradeFailed reports a fatal daemon self-upgrade failure.
+	ReasonDaemonSelfUpgradeFailed ConditionReason = "SelfUpgradeFailed"
+
+	// ReasonDaemonDeadlineExceeded is written on DaemonResult=False when the handoff
+	// deadline (anchored to status.startTime) elapses before a terminal outcome, so
+	// a stuck-transient operation terminates rather than hanging (HIP-1496).
+	ReasonDaemonDeadlineExceeded ConditionReason = "DeadlineExceeded"
 )
 
 // IsTerminal reports whether p is a terminal phase. Terminal phases are written

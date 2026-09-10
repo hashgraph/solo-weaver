@@ -15,6 +15,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/daemonkit/eventlog"
+	"github.com/automa-saga/errx"
 	cn "github.com/hashgraph/solo-weaver/internal/consensus"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -181,15 +182,60 @@ func TestReportOutcome_SuccessSetsConditionsAndAdvancesPhase(t *testing.T) {
 	assert.Equal(t, string(cn.PhasePendingNodeUpgrade), phaseOf(t, client, testCRName), "daemon advances to PendingNodeUpgrade on success")
 }
 
-func TestReportOutcome_FailureSetsDaemonResultFalseNoPhaseAdvance(t *testing.T) {
+func TestReportOutcome_FatalWritesDaemonResultFalseNoPhaseAdvance(t *testing.T) {
 	cr := newExecuteCR(testCRName, testOperationID, string(cn.PhaseReadyForProvisionerDaemon))
 	client := newFakeDynamicClient(t, cr)
 	x := &upgradeExecutor{client: client, namespace: testNS, crName: testCRName, sink: newEventSink(nil, testNodeID, testOperationID)}
 
-	require.NoError(t, x.reportOutcome(context.Background(), errorx.IllegalState.New("boom")))
+	// A fatal error (no errorx.Temporary trait) → DaemonResult=False, returned so
+	// the op stays retryable until the operator marks it Failed.
+	err := x.reportOutcome(context.Background(), errorx.IllegalState.New("boom"))
+	require.Error(t, err)
 	assert.Equal(t, "False", conditionStatus(t, client, testCRName, "DaemonResult"))
 	assert.Nil(t, condition(t, client, testCRName, "ConfigCRsApplied"), "ConfigCRsApplied must not be set on failure")
 	assert.Equal(t, string(cn.PhaseReadyForProvisionerDaemon), phaseOf(t, client, testCRName), "daemon must not advance the phase on failure")
+	// No errx reason on the error ⇒ generic InfraUpgradeFailed fallback.
+	r, _, _ := unstructured.NestedString(condition(t, client, testCRName, "DaemonResult"), "reason")
+	assert.Equal(t, string(cn.ReasonDaemonInfraUpgradeFailed), r)
+}
+
+func TestReportOutcome_FatalCarriesStepReason(t *testing.T) {
+	cr := newExecuteCR(testCRName, testOperationID, string(cn.PhaseReadyForProvisionerDaemon))
+	client := newFakeDynamicClient(t, cr)
+	x := &upgradeExecutor{client: client, namespace: testNS, crName: testCRName, sink: newEventSink(nil, testNodeID, testOperationID)}
+
+	// A fatal error the step tagged with an errx reason surfaces that reason verbatim.
+	fatal := errx.WithReason(errorx.IllegalState.New("hash mismatch"), errx.Reason(cn.ReasonDaemonFileHashMismatch))
+	require.Error(t, x.reportOutcome(context.Background(), fatal))
+	r, _, _ := unstructured.NestedString(condition(t, client, testCRName, "DaemonResult"), "reason")
+	assert.Equal(t, string(cn.ReasonDaemonFileHashMismatch), r)
+}
+
+func TestReportOutcome_TransientWithinDeadlineRetriesWithoutDaemonResult(t *testing.T) {
+	cr := newExecuteCR(testCRName, testOperationID, string(cn.PhaseReadyForProvisionerDaemon))
+	client := newFakeDynamicClient(t, cr)
+	// startTime just now, generous deadline ⇒ within budget.
+	x := &upgradeExecutor{client: client, namespace: testNS, crName: testCRName,
+		sink: newEventSink(nil, testNodeID, testOperationID), startTime: time.Now().UTC().Format(time.RFC3339), deadline: time.Hour}
+
+	err := x.reportOutcome(context.Background(), ErrK8sAPI.New("api blip"))
+	require.Error(t, err, "transient failure is returned so the op is retried via watch re-delivery")
+	assert.Nil(t, condition(t, client, testCRName, "DaemonResult"), "must NOT write DaemonResult=False within the deadline")
+	assert.Equal(t, string(cn.PhaseReadyForProvisionerDaemon), phaseOf(t, client, testCRName))
+}
+
+func TestReportOutcome_TransientPastDeadlineWritesDeadlineExceeded(t *testing.T) {
+	cr := newExecuteCR(testCRName, testOperationID, string(cn.PhaseReadyForProvisionerDaemon))
+	client := newFakeDynamicClient(t, cr)
+	// startTime well in the past, tiny deadline ⇒ budget exhausted.
+	x := &upgradeExecutor{client: client, namespace: testNS, crName: testCRName,
+		sink: newEventSink(nil, testNodeID, testOperationID), startTime: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339), deadline: time.Hour}
+
+	require.Error(t, x.reportOutcome(context.Background(), ErrK8sAPI.New("api blip")))
+	assert.Equal(t, "False", conditionStatus(t, client, testCRName, "DaemonResult"))
+	r, _, _ := unstructured.NestedString(condition(t, client, testCRName, "DaemonResult"), "reason")
+	assert.Equal(t, string(cn.ReasonDaemonDeadlineExceeded), r)
+	assert.Equal(t, string(cn.PhaseReadyForProvisionerDaemon), phaseOf(t, client, testCRName), "deadline failure does not advance the phase")
 }
 
 func TestPatchExecutePhase_WritesDaemonWritablePhase(t *testing.T) {
@@ -228,7 +274,7 @@ func TestRunExecuteWorkflow_SuccessEmitsStartedCompleted(t *testing.T) {
 	}, readReasons(t, filepath.Join(dir, "consensus-"+testOperationID+".jsonl")))
 }
 
-func TestRunExecuteWorkflow_FailureEmitsStartedFailed(t *testing.T) {
+func TestRunExecuteWorkflow_FailureEmitsStartedOnly(t *testing.T) {
 	dir := t.TempDir()
 	logger, err := eventlog.NewOperation(dir, testOperationID)
 	require.NoError(t, err)
@@ -239,12 +285,13 @@ func TestRunExecuteWorkflow_FailureEmitsStartedFailed(t *testing.T) {
 			return errorx.IllegalState.New("boom")
 		}))
 
+	// runExecuteWorkflow returns the error but does NOT emit the failed event — that
+	// is reportOutcome's job on a terminal outcome, since a transient error retries.
 	require.Error(t, runExecuteWorkflow(context.Background(), sink, failing))
 	sink.close()
 
 	assert.Equal(t, []string{
 		ReasonExecuteWorkflowStarted.String(),
-		ReasonExecuteWorkflowFailed.String(),
 	}, readReasons(t, filepath.Join(dir, "consensus-"+testOperationID+".jsonl")))
 }
 

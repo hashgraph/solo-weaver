@@ -89,6 +89,41 @@ This differs from the CLI install path (`EnsureConfigCRs`,
 updated **in place**. Both produce the same stable ConfigMap; they differ only in CR
 naming and apply policy.
 
+## Failure semantics and termination guarantee (HIP-1496, normative)
+
+Both provisioner paths — the host `solo-provisioner-daemon` (mainnet) and the in-pod
+UC provisioner-proxy (cluster-only) — MUST present an **identical** failure contract
+to the `ExecuteReconciler`. RFC-2119 keywords are normative.
+
+- **Termination guarantee (MUST).** Every operation that enters
+  `ReadyForProvisionerDaemon` MUST eventually reach a terminal phase (`Succeeded` or
+  `Failed`). The provisioner MUST NOT leave an Execute CR non-terminal indefinitely.
+- **Fatal failures (MUST).** Unrecoverable causes — malformed/oversized/unrecognised
+  config file, `FileHashMismatch`, failed infra upgrade, or a config CR the operator
+  reconciles to terminal `Failed` — MUST set `DaemonResult=False` (with `reason` +
+  `message` naming the cause; for a bad config CR, the kind/name/filename) **without**
+  advancing `status.phase`. MUST NOT retry a fatal failure.
+- **Transient failures (SHOULD).** K8s API error, config-CR reconcile still in
+  progress, network blip — SHOULD retry with bounded backoff and SHOULD NOT set
+  `DaemonResult=False` while within the retry budget. Each retry SHOULD emit a warning
+  event so the operation does not silently stall.
+- **Deadline (MUST).** Retries MUST be bounded by a deadline **anchored to the moment
+  the CR entered `ReadyForProvisionerDaemon`** and **durable across provisioner
+  restarts**. On exceeding it, set `DaemonResult=False, reason=DeadlineExceeded`. The
+  default deadline is configurable and implementation-defined.
+
+On `DaemonResult=False` the `ExecuteReconciler` sets `status.phase = Failed`
+(terminal); recovery is by operator intervention.
+
+`DaemonResult` reasons (match the operator's `api/v1alpha1` exactly): `Succeeded`,
+`FileHashMismatch`, `InfraUpgradeFailed`, `ConfigCRInvalid`, `DeadlineExceeded`, … .
+
+**Daemon design consequence:** `reportOutcome` must classify the workflow error —
+fatal vs transient — rather than blanket-writing `DaemonResult=False`. The operation
+driver (`runExecute`) owns the retry-with-backoff loop and the durable deadline check;
+only a fatal error or a blown deadline writes `DaemonResult=False`. A transient error
+loops (warn event + backoff) until it clears, turns fatal, or the deadline fires.
+
 ## Idempotency
 
 Every step — and `handleExecute` as a whole — must be idempotent. The daemon
