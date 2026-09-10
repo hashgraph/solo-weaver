@@ -91,6 +91,15 @@ var configFileKinds = map[string]kindEntry{
 // packageRootFiles live at the package root, not under data/config/.
 var packageRootFiles = []string{"log4j2.xml", "settings.txt"}
 
+// blockNodesSubdir holds per-node block-node config, selected by node id and kept
+// out of data/config/ (HIP-1494): block-nodes/config/block-nodes-<nodeID>.json.
+const blockNodesSubdir = "block-nodes/config"
+
+// blockNodesEntry is the kind mapping for the per-node BlockNodesConfig CR. It uses
+// per-operation naming like every other kind (solo-operator#1321 removed the old
+// stable-name exception), so it is created and waited on identically.
+var blockNodesEntry = kindEntry{gvr: configGVR("blocknodesconfigs"), kind: "BlockNodesConfig", nameSuffix: "block-nodes"}
+
 // ignoredConfigFilenames legitimately ship in data/config/ but are NOT turned into
 // ConsensusConfig CRs (the operator manages them another way). Skipped, not rejected,
 // so genuinely unknown files still hard-abort. genesis-network.json is the genesis
@@ -304,13 +313,15 @@ type configCRDeployer struct {
 	upgradePath  string
 	scope        string
 	orbit        string
+	nodeID       string
 	operationID  string
 	pollInterval time.Duration
 
 	refs []configCRRef
 }
 
-// create scans the upgrade package and creates each recognised config CR. Idempotent:
+// create scans the upgrade package and creates each recognised config CR (the
+// data/config/ + package-root files, plus this node's block-node config). Idempotent:
 // AlreadyExists is success (a re-run mints no duplicate — the per-op name is stable in
 // the operationId). Populates d.refs for waitValid.
 func (d *configCRDeployer) create(ctx context.Context) error {
@@ -326,35 +337,24 @@ func (d *configCRDeployer) create(ctx context.Context) error {
 		return err
 	}
 
+	// Per-node block-node config lives outside data/config/ (block-nodes/config/,
+	// selected by node id) but is named and delivered like every other config CR
+	// (per-operation, Create-only — solo-operator#1321/#1322).
+	bn, err := d.scanBlockNodes()
+	if err != nil {
+		return err
+	}
+	if bn != nil {
+		scanned = append(scanned, *bn)
+	}
+
 	d.refs = make([]configCRRef, 0, len(scanned))
 	for _, sf := range scanned {
-		cr, err := buildConfigCR(d.namespace, d.scope, d.orbit, d.operationID, sf)
+		ref, err := d.createConfigCR(ctx, sf)
 		if err != nil {
 			return err
 		}
-
-		createCtx, cancel := context.WithTimeout(ctx, patchTimeout)
-		_, createErr := d.client.Resource(sf.entry.gvr).Namespace(d.namespace).Create(createCtx, cr, metav1.CreateOptions{})
-		cancel()
-
-		switch {
-		case createErr == nil:
-			logx.As().Info().Str("reason", ReasonConfigCRCreated.String()).
-				Str("operation_id", d.operationID).Str("cr_kind", sf.entry.kind).
-				Str("cr_name", cr.GetName()).Msg("created config CR")
-		case k8serrors.IsAlreadyExists(createErr):
-			logx.As().Debug().Str("reason", ReasonConfigCRExists.String()).
-				Str("operation_id", d.operationID).Str("cr_kind", sf.entry.kind).
-				Str("cr_name", cr.GetName()).Msg("config CR already exists — skipping create")
-		default:
-			return errx.WithHints(
-				errx.WithReason(ErrK8sAPI.Wrap(createErr, "create %s %s", sf.entry.kind, cr.GetName()), ReasonConfigCRCreateFailed),
-				"Confirm the daemon-cn kubeconfig has create permission on "+sf.entry.gvr.Resource+"."+sf.entry.gvr.Group,
-				"Check API server connectivity and that the CRD is installed",
-			)
-		}
-
-		d.refs = append(d.refs, configCRRef{name: cr.GetName(), gvr: sf.entry.gvr, kind: sf.entry.kind})
+		d.refs = append(d.refs, ref)
 	}
 
 	if len(d.refs) == 0 {
@@ -362,6 +362,69 @@ func (d *configCRDeployer) create(ctx context.Context) error {
 			Str("operation_id", d.operationID).Msg("no config files in upgrade package — nothing to deploy")
 	}
 	return nil
+}
+
+// createConfigCR builds and creates the CR for a single scanned file (Create-only:
+// AlreadyExists is success, so a re-run mints no duplicate), returning its ref.
+func (d *configCRDeployer) createConfigCR(ctx context.Context, sf scannedFile) (configCRRef, error) {
+	cr, err := buildConfigCR(d.namespace, d.scope, d.orbit, d.operationID, sf)
+	if err != nil {
+		return configCRRef{}, err
+	}
+
+	createCtx, cancel := context.WithTimeout(ctx, patchTimeout)
+	_, createErr := d.client.Resource(sf.entry.gvr).Namespace(d.namespace).Create(createCtx, cr, metav1.CreateOptions{})
+	cancel()
+
+	switch {
+	case createErr == nil:
+		logx.As().Info().Str("reason", ReasonConfigCRCreated.String()).
+			Str("operation_id", d.operationID).Str("cr_kind", sf.entry.kind).
+			Str("cr_name", cr.GetName()).Msg("created config CR")
+	case k8serrors.IsAlreadyExists(createErr):
+		logx.As().Debug().Str("reason", ReasonConfigCRExists.String()).
+			Str("operation_id", d.operationID).Str("cr_kind", sf.entry.kind).
+			Str("cr_name", cr.GetName()).Msg("config CR already exists — skipping create")
+	default:
+		return configCRRef{}, errx.WithHints(
+			errx.WithReason(ErrK8sAPI.Wrap(createErr, "create %s %s", sf.entry.kind, cr.GetName()), ReasonConfigCRCreateFailed),
+			"Confirm the daemon-cn kubeconfig has create permission on "+sf.entry.gvr.Resource+"."+sf.entry.gvr.Group,
+			"Check API server connectivity and that the CRD is installed",
+		)
+	}
+
+	return configCRRef{name: cr.GetName(), gvr: sf.entry.gvr, kind: sf.entry.kind}, nil
+}
+
+// scanBlockNodes locates this node's block-node config file
+// (block-nodes/config/block-nodes-<nodeID>.json) with the same symlink/oversize
+// rejection as the other files. Returns (nil, nil) when the node id is unset or the
+// package carries no block-node config for this node.
+func (d *configCRDeployer) scanBlockNodes() (*scannedFile, error) {
+	if d.nodeID == "" {
+		return nil, nil
+	}
+	path := filepath.Join(d.upgradePath, blockNodesSubdir, "block-nodes-"+d.nodeID+".json")
+	info, err := os.Lstat(path) // not Stat: don't follow a symlink
+	if err != nil {
+		if os.IsNotExist(err) {
+			logx.As().Info().Str("reason", ReasonConfigDirAbsent.String()).
+				Str("operation_id", d.operationID).Str("path", path).
+				Msg("no per-node block-node config in upgrade package — skipping")
+			return nil, nil
+		}
+		return nil, errx.WithHints(
+			errx.WithReason(ErrUpgradePath.Wrap(err, "stat %s", path), ReasonUpgradePathUnreadable),
+			"Confirm the upgrade package was extracted correctly and block-nodes/config/ is readable",
+		)
+	}
+	if err := rejectSymlink(path, info.Mode()); err != nil {
+		return nil, err
+	}
+	if err := rejectOversized(path, info.Size()); err != nil {
+		return nil, err
+	}
+	return &scannedFile{absPath: path, entry: blockNodesEntry}, nil
 }
 
 // waitValid polls each created CR until its status.conditions[Valid]=True. A

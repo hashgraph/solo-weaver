@@ -29,12 +29,16 @@ func newConfigFakeClient(t *testing.T, objects ...runtime.Object) *fake.FakeDyna
 	t.Helper()
 	scheme := runtime.NewScheme()
 	listKinds := map[schema.GroupVersionResource]string{}
-	for _, e := range configFileKinds {
+	register := func(e kindEntry) {
 		gvk := schema.GroupVersionKind{Group: configCRGroup, Version: configCRVersion, Kind: e.kind}
 		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(e.kind+"List"), &unstructured.UnstructuredList{})
 		listKinds[e.gvr] = e.kind + "List"
 	}
+	for _, e := range configFileKinds {
+		register(e)
+	}
+	register(blockNodesEntry)
 	return fake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, objects...)
 }
 
@@ -73,6 +77,7 @@ func newTestDeployer(client *fake.FakeDynamicClient, upgradePath string) *config
 		upgradePath:  upgradePath,
 		scope:        "node0",
 		orbit:        testNS,
+		nodeID:       "0",
 		operationID:  testOperationID,
 		pollInterval: time.Millisecond,
 	}
@@ -159,6 +164,51 @@ func TestConfigCRDeployer_CreateIdempotent(t *testing.T) {
 
 	// Re-run: AlreadyExists is success, no duplicate, no error.
 	require.NoError(t, d.create(ctx), "create must be idempotent")
+}
+
+// writeBlockNodes writes this node's block-node config into the package.
+func writeBlockNodes(t *testing.T, root, nodeID, content string) {
+	t.Helper()
+	dir := filepath.Join(root, "block-nodes", "config")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "block-nodes-"+nodeID+".json"), []byte(content), 0o644))
+}
+
+func TestConfigCRDeployer_CreateIncludesBlockNodes(t *testing.T) {
+	root := t.TempDir()
+	writePackage(t, root, map[string]string{"throttles.json": "{}"}, nil)
+	writeBlockNodes(t, root, "0", `{"nodes":[]}`)
+	client := newConfigFakeClient(t)
+	d := newTestDeployer(client, root)
+	ctx := context.Background()
+
+	require.NoError(t, d.create(ctx))
+
+	// The block-node CR uses the same per-operation naming as every other kind.
+	name := strings.ToLower(testOperationID) + "-block-nodes"
+	obj, err := client.Resource(configGVR("blocknodesconfigs")).Namespace(testNS).Get(ctx, name, metav1.GetOptions{})
+	require.NoError(t, err, "per-operation BlockNodesConfig CR should exist")
+	content, _, _ := unstructured.NestedString(obj.Object, "spec", "content")
+	scope, _, _ := unstructured.NestedString(obj.Object, "spec", "scope")
+	assert.Equal(t, `{"nodes":[]}`, content)
+	assert.Equal(t, "node0", scope)
+	assert.Equal(t, testOperationID, obj.GetLabels()[labelOperationID])
+
+	names := make([]string, len(d.refs))
+	for i, r := range d.refs {
+		names[i] = r.name
+	}
+	assert.Contains(t, names, name, "block-node CR must be waited on alongside the others")
+}
+
+func TestConfigCRDeployer_CreateSkipsAbsentBlockNodes(t *testing.T) {
+	root := t.TempDir()
+	writePackage(t, root, map[string]string{"throttles.json": "{}"}, nil) // no block-nodes file
+	client := newConfigFakeClient(t)
+	d := newTestDeployer(client, root)
+
+	require.NoError(t, d.create(context.Background()))
+	assert.Len(t, d.refs, 1, "only throttles — absent block-node config is skipped, not an error")
 }
 
 func TestConfigCRDeployer_WaitValid_Success(t *testing.T) {

@@ -48,10 +48,12 @@ type upgradeExecutor struct {
 	deadline time.Duration
 
 	// Config-CR inputs: the operationId (per-op CR names), the staged upgrade
-	// package root, the node scope (node<N>), and the owning Orbit.
+	// package root, the node scope (node<N>), the raw node id (block-node file
+	// selection), and the owning Orbit.
 	operationID string
 	upgradePath string
 	scope       string
+	nodeID      string
 	orbit       string
 }
 
@@ -112,6 +114,7 @@ func (x *upgradeExecutor) buildWorkflow() *automa.WorkflowBuilder {
 		upgradePath:  x.upgradePath,
 		scope:        x.scope,
 		orbit:        x.orbit,
+		nodeID:       x.nodeID,
 		operationID:  x.operationID,
 		pollInterval: configCRPollInterval,
 	}
@@ -230,6 +233,7 @@ func (um *UpgradeMonitor) runExecute(ctx context.Context, cr *unstructured.Unstr
 		operationID: operationID,
 		upgradePath: um.cfg.UpgradeDir,
 		scope:       "node" + um.cfg.NodeID,
+		nodeID:      um.cfg.NodeID,
 		orbit:       orbit,
 	}
 	return x.run(ctx)
