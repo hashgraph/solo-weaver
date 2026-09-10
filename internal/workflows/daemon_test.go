@@ -45,6 +45,45 @@ func TestBuildComponentSpecs_BlockNodeTrafficShaper(t *testing.T) {
 	assert.ElementsMatch(t, []string{"create"}, bn.PolicyRules[1].Verbs)
 }
 
+func TestBuildComponentSpecs_ConsensusNodeRBAC(t *testing.T) {
+	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
+		ConsensusNode: &daemon.ConsensusNodeComponentConfig{
+			Enabled:  true,
+			Orbit:    "hedera-network",
+			Monitors: daemon.ConsensusNodeMonitors{Upgrade: true},
+		},
+	}}
+
+	specs := buildComponentSpecs(cfg, testPaths())
+	require.Len(t, specs, 1)
+
+	cn := specs[0]
+	assert.Equal(t, "cn", cn.ShortName)
+	assert.Equal(t, "hedera-network", cn.Namespace)
+	assert.Equal(t, "/opt/solo/weaver/config/daemon-cn.kubeconfig", cn.KubeconfigPath)
+
+	// Three least-privilege rules cover the whole execute flow: watch/read the
+	// execute CR, patch its status (handshake), and create/get the config CRs.
+	require.Len(t, cn.PolicyRules, 3)
+
+	assert.Equal(t, []string{"networkupgradeexecutes"}, cn.PolicyRules[0].Resources)
+	assert.ElementsMatch(t, []string{"get", "list", "watch"}, cn.PolicyRules[0].Verbs)
+
+	assert.Equal(t, []string{"networkupgradeexecutes/status"}, cn.PolicyRules[1].Resources)
+	assert.ElementsMatch(t, []string{"patch"}, cn.PolicyRules[1].Verbs)
+
+	assert.ElementsMatch(t, []string{"create", "get"}, cn.PolicyRules[2].Verbs)
+	assert.ElementsMatch(t, []string{
+		"log4j2configs", "nodesettings", "applicationproperties",
+		"applicationoverrideproperties", "bootstrapproperties", "nodepropertiesconfigs",
+		"throttlesconfigs", "feeschedules", "simplefeesschedules",
+		"apipermissionproperties", "blocknodesconfigs",
+	}, cn.PolicyRules[2].Resources)
+	for _, r := range cn.PolicyRules {
+		assert.Equal(t, []string{"operator.solo.hedera.com"}, r.APIGroups)
+	}
+}
+
 func TestBuildComponentSpecs_BlockNodeWithoutTrafficShaperNoSpec(t *testing.T) {
 	cfg := daemon.DaemonConfig{Components: daemon.DaemonComponents{
 		BlockNode: &daemon.BlockNodeComponentConfig{
