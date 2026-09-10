@@ -41,11 +41,11 @@ func TestIsTerminal(t *testing.T) {
 }
 
 func TestIsDaemonWritable(t *testing.T) {
-	// The daemon writes exactly the durable resume anchor and the handshake phase.
+	// Per HIP-1496 the daemon writes the infra checkpoint and the success handoff.
 	assert.True(t, consensus.PhasePendingInfraUpgrade.IsDaemonWritable())
 	assert.True(t, consensus.PhasePendingNodeUpgrade.IsDaemonWritable())
 
-	// The daemon must never write reconciler-owned phases.
+	// The daemon must never write operator-owned phases.
 	for _, p := range []consensus.Phase{
 		consensus.PhasePending,
 		consensus.PhaseReadyForProvisionerDaemon,
@@ -57,7 +57,7 @@ func TestIsDaemonWritable(t *testing.T) {
 }
 
 func TestDaemonNeverWritesTerminal(t *testing.T) {
-	// The core #706 invariant: no phase is both daemon-writable and terminal.
+	// No phase is both daemon-writable and terminal.
 	for _, p := range []consensus.Phase{
 		consensus.PhasePending,
 		consensus.PhaseReadyForProvisionerDaemon,

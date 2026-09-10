@@ -67,7 +67,11 @@ const (
 	upgradeEventLayout = "20060102T150405Z"
 	upgradeEventMaxAge = 365 * 24 * time.Hour
 	upgradeEventKeep   = 50
-	upgradeEventGlob   = "consensus-upgrade-*.jsonl"
+	// Log files are consensus-<operationId>.jsonl and operationId carries a
+	// node<N>-upgrade- prefix, so the glob must not hardcode "upgrade-". The dir is
+	// dedicated to these files and filepruner ignores names without a parseable
+	// timestamp, so consensus-*.jsonl is safe.
+	upgradeEventGlob = "consensus-*.jsonl"
 )
 
 // networkUpgradeExecuteGroup and networkUpgradeExecuteResource are the RBAC
@@ -94,10 +98,10 @@ type UpgradeMonitorConfig struct {
 	// entries emitted by handleExecute.
 	NodeID string
 
-	// UpgradeEventsDir is the directory where per-operation consensus-upgrade-*.jsonl
+	// UpgradeEventsDir is the directory where per-operation consensus-<operationId>.jsonl
 	// files are written by handleExecute. The monitor prunes this directory at the
-	// start of each Run() invocation (covers both startup and post-crash restarts).
-	// Empty string disables pruning.
+	// start of each Run() invocation (covers both startup and post-crash restarts)
+	// and after each operation. Empty string disables pruning.
 	UpgradeEventsDir string
 
 	// HomeDir is the weaver home directory used as a safety base for path
@@ -605,68 +609,34 @@ func (um *UpgradeMonitor) handleEvent(ctx context.Context, cr *unstructured.Unst
 			if um.activeOpID == operationID {
 				um.activeOpID = ""
 			}
-			// Mark completed only on success so a failed operation can be retried.
-			// Retry in this process lifetime requires a new watch event or a
-			// listAndSeed reconnect — no automatic requeue is implemented. If
-			// handleExecute patched the CR to InProgress before failing (the
-			// intended first action once the stub is implemented), an external
-			// actor (orchestrator or operator) must re-advance the CR to
-			// ReadyForProvisionerDaemon before this daemon will pick it up again.
-			// Panic edge case: a panic after the InProgress patch leaves the CR
-			// stuck in InProgress across restarts — listAndSeed does not seed
-			// InProgress CRs and they are not ReadyForProvisionerDaemon, so
-			// recovery requires an external patch to a retryable phase.
-			// Manual operator remedy:
-			//   kubectl patch networkupgradeexecute <name> -n <namespace> \
-			//     --subresource=status --type=merge \
-			//     -p '{"status":{"phase":"ReadyForProvisionerDaemon"}}'
+			// Mark completed only on success so a failed operation can be retried
+			// (via a new watch event or a listAndSeed reconnect — there is no
+			// automatic requeue). If handleExecute wrote the PendingInfraUpgrade
+			// anchor before failing, the CR is left at that phase and recovery is
+			// owned by the resume path (listAndSeed does not yet re-dispatch it).
 			if execErr == nil {
 				um.completedOpIDs[operationID] = struct{}{}
 			}
 			um.mu.Unlock()
 		}()
+		// handleExecute emits ExecuteWorkflowFailed on both channels itself; the
+		// return value only gates the completedOpIDs bookkeeping above.
 		execErr = um.handleExecute(ctx, cr)
-		if execErr != nil {
-			logx.As().Error().Err(execErr).
-				Str("reason", "ExecuteWorkflowFailed").
-				Str("operation_id", operationID).
-				Msg("Execute workflow failed")
-		}
 	}()
 }
 
-// handleExecute runs the execute-phase automa workflow for the given CR.
-// Stub — implemented in subsequent stories:
-//
-//   - InfraConfig file placement (atomic move from upgrade dir to host filesystem)
-//   - Infra upgrade if infrastructure-versions.yaml requires it (PendingInfraUpgrade)
-//   - ConsensusConfig CR creation and reconciliation wait
-//   - Patch NetworkUpgradeExecute status to PendingNodeUpgrade + DaemonResult=Succeeded
-//
-// IMPORTANT — timeout requirement for implementors: each step must use a
-// context derived from ctx with an explicit timeout (e.g. context.WithTimeout).
-// If any step hangs indefinitely, activeOpID stays set and the daemon will
-// reject all future upgrades without crashing or logging an error.
-//
-// IMPORTANT — event log pruning: after the per-operation EventLogger is closed
-// at the end of this function, call filepruner to prune old consensus-upgrade-*.jsonl
-// files from paths.DaemonEventsDir (FilenameTimestampStrategy, maxAge=365d, keep=50).
-// Pruning at startup covers the initial case; pruning here covers long-running daemons
-// where startup pruning never re-runs. See pkg/filepruner and #555.
-//
-// Once implemented handleExecute must:
-//   - Patch CR to InProgress immediately
-//   - Patch to Succeeded or Failed on terminal outcome
-func (um *UpgradeMonitor) handleExecute(_ context.Context, cr *unstructured.Unstructured) error {
+// handleExecute drives the execute-phase workflow for the given CR: it opens the
+// per-operation event log, emits the workflow lifecycle events, and runs the
+// ordered steps (see execute_workflow.go). The step bodies are stubs filled in by
+// later stories. The daemon writes only the daemon-writable phases
+// (PendingInfraUpgrade anchor, PendingNodeUpgrade handshake); the reconciler owns
+// the terminal phases.
+func (um *UpgradeMonitor) handleExecute(ctx context.Context, cr *unstructured.Unstructured) error {
 	operationID, _, _ := unstructured.NestedString(cr.Object, "spec", "operationId")
 	if um.onExecute != nil {
 		um.onExecute(operationID)
 	}
-	logx.As().Info().
-		Str("reason", "ExecuteWorkflowStarted").
-		Str("operation_id", operationID).
-		Msg("Execute workflow stub — full implementation in subsequent stories")
-	return nil
+	return um.runExecute(ctx, cr, operationID)
 }
 
 // buildDynamicClient builds a dynamic Kubernetes client from the kubeconfig at path.
