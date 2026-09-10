@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 )
 
 // pollFakeDelegator is a thread-safe Delegator fake for the statusz poll-loop
@@ -40,6 +42,10 @@ func (f *pollFakeDelegator) Run(context.Context, ...string) ([]byte, error)     
 func (f *pollFakeDelegator) NetworkPolicySet(context.Context, string, []string) error { return nil }
 func (f *pollFakeDelegator) TCAttach(context.Context, string) error                   { return nil }
 func (f *pollFakeDelegator) TCDetach(context.Context, string) error                   { return nil }
+
+func (f *pollFakeDelegator) NetworkReassert(context.Context) (privexec.NetworkReassertResult, error) {
+	return privexec.NetworkReassertResult{}, nil
+}
 
 func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (string, error) {
 	n := f.checkCalls.Add(1)

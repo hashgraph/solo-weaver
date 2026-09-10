@@ -14,6 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 )
 
 // fakeResolver returns queued (veth, err) results in order, repeating the last
@@ -61,6 +63,9 @@ func (f *fakeDelegator) TCDetach(_ context.Context, veth string) error {
 func (f *fakeDelegator) ReconcileShaper(context.Context, string) error { return nil }
 func (f *fakeDelegator) ReconcileShaperCheck(context.Context, string) (string, error) {
 	return "", nil
+}
+func (f *fakeDelegator) NetworkReassert(context.Context) (privexec.NetworkReassertResult, error) {
+	return privexec.NetworkReassertResult{}, nil
 }
 
 func newTestMonitor(r vethResolver, d *fakeDelegator) *TrafficShaperMonitor {

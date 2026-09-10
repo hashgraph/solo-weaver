@@ -6,6 +6,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -116,6 +117,57 @@ func TestStatusSnapshot_NonConnectivityMonitorUntouched(t *testing.T) {
 	ms := resp.Components["block-node"].Monitors["traffic-shaper"]
 	assert.Equal(t, "stopped", ms.State)
 	assert.Nil(t, ms.Error)
+}
+
+func TestStatusSnapshot_DetailFnPayloadIsAttached(t *testing.T) {
+	// The network component's re-assertion history reaches operators through this
+	// field: MonitorState alone cannot express a healthy structured report.
+	payload := map[string]any{"artifacts": []string{"host-firewall"}}
+	d := &Daemon{components: []component{{
+		name:     ComponentNameNetwork,
+		monitors: []daemonkit.MonitorRunner{&blockingMonitor{name: "network-reassert-monitor"}},
+		tracker:  seedTracker(t, "network-reassert-monitor"),
+		detailFn: func() any { return payload },
+	}}}
+
+	resp := d.statusSnapshot()
+
+	assert.Equal(t, payload, resp.Components[ComponentNameNetwork].Detail)
+}
+
+func TestStatusSnapshot_DetailOmittedWhenNoDetailFn(t *testing.T) {
+	// Components that have nothing extra to report must not grow an empty key.
+	d := &Daemon{components: []component{{
+		name:     ComponentNameBlockNode,
+		monitors: []daemonkit.MonitorRunner{&blockingMonitor{name: "traffic-shaper"}},
+		tracker:  seedTracker(t, "traffic-shaper"),
+	}}}
+
+	resp := d.statusSnapshot()
+	assert.Nil(t, resp.Components[ComponentNameBlockNode].Detail)
+
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "detail")
+}
+
+func TestNewFromConfig_AlwaysRegistersTheNetworkComponent(t *testing.T) {
+	// No config gate: host networking must be re-asserted whether or not a block
+	// node is installed, and a fresh install writes the artifacts later.
+	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(t.TempDir(), "d.sock")},
+		DaemonConfig{})
+	require.NoError(t, err)
+
+	var found *component
+	for i := range d.components {
+		if d.components[i].name == ComponentNameNetwork {
+			found = &d.components[i]
+		}
+	}
+	require.NotNil(t, found, "the network component must be registered even with no components configured")
+	require.Len(t, found.monitors, 1)
+	require.NotNil(t, found.detailFn, "its re-assertion history must reach GET /status")
+	assert.NotNil(t, d.statusSnapshot().Components[ComponentNameNetwork].Detail)
 }
 
 func TestStatusSnapshot_ProbeErrorsOverlay(t *testing.T) {
@@ -250,10 +302,11 @@ func TestRunComponentProbes_PreservesSinceAcrossRetries(t *testing.T) {
 
 // ---- NewFromConfig ---------------------------------------------------------
 
-func TestNewFromConfig_NoComponentsStillBuildsServer(t *testing.T) {
+func TestNewFromConfig_NoConfiguredComponentsStillBuildsServer(t *testing.T) {
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: "/tmp/x.sock"}, DaemonConfig{})
 	require.NoError(t, err)
-	assert.Empty(t, d.components)
+	assert.Nil(t, findComponent(d, ComponentNameConsensusNode))
+	assert.Nil(t, findComponent(d, ComponentNameBlockNode))
 	assert.NotNil(t, d.server, "server must always be constructed")
 }
 
@@ -264,7 +317,8 @@ func TestNewFromConfig_DisabledComponentSkipped(t *testing.T) {
 	}}
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: "/tmp/x.sock"}, cfg)
 	require.NoError(t, err)
-	assert.Empty(t, d.components)
+	assert.Nil(t, findComponent(d, ComponentNameConsensusNode))
+	assert.Nil(t, findComponent(d, ComponentNameBlockNode))
 }
 
 func TestNewFromConfig_BlockNodeOnly(t *testing.T) {
@@ -282,10 +336,11 @@ func TestNewFromConfig_BlockNodeOnly(t *testing.T) {
 	}}
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
 	require.NoError(t, err)
-	require.Len(t, d.components, 1)
-	assert.Equal(t, "block-node", d.components[0].name)
-	assert.Nil(t, d.components[0].probe, "host-only block-node component must have a nil probe")
-	assert.Len(t, d.components[0].monitors, 1)
+	comp := findComponent(d, ComponentNameBlockNode)
+	require.NotNil(t, comp)
+	assert.Nil(t, comp.probe, "host-only block-node component must have a nil probe")
+	assert.Len(t, comp.monitors, 1)
+	assert.Nil(t, findComponent(d, ComponentNameConsensusNode))
 }
 
 func TestNewFromConfig_MissingKubeconfigSkipsComponentNotDaemon(t *testing.T) {
@@ -303,7 +358,19 @@ func TestNewFromConfig_MissingKubeconfigSkipsComponentNotDaemon(t *testing.T) {
 	}}
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
 	require.NoError(t, err, "a missing component kubeconfig must not fail daemon construction")
-	assert.Empty(t, d.components, "the block-node component must be skipped when its kubeconfig is missing")
+	assert.Nil(t, findComponent(d, ComponentNameBlockNode),
+		"the block-node component must be skipped when its kubeconfig is missing")
+}
+
+// findComponent returns the registered component with the given name, or nil.
+// Tests assert on a named component, not the slice length: network is always registered.
+func findComponent(d *Daemon, name string) *component {
+	for i := range d.components {
+		if d.components[i].name == name {
+			return &d.components[i]
+		}
+	}
+	return nil
 }
 
 func TestNewFromConfig_ConsensusNodeMissingKubeconfigSkipsComponentNotDaemon(t *testing.T) {
@@ -322,7 +389,8 @@ func TestNewFromConfig_ConsensusNodeMissingKubeconfigSkipsComponentNotDaemon(t *
 	}}
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: filepath.Join(dir, "d.sock")}, cfg)
 	require.NoError(t, err, "a missing component kubeconfig must not fail daemon construction")
-	assert.Empty(t, d.components, "the consensus-node component must be skipped when its kubeconfig is missing")
+	assert.Nil(t, findComponent(d, ComponentNameConsensusNode),
+		"the consensus-node component must be skipped when its kubeconfig is missing")
 }
 
 func TestNewFromConfig_BlockNodeEnabledNoMonitorsProducesNoComponent(t *testing.T) {
@@ -331,7 +399,8 @@ func TestNewFromConfig_BlockNodeEnabledNoMonitorsProducesNoComponent(t *testing.
 	}}
 	d, err := NewFromConfig(models.WeaverPaths{DaemonSockPath: "/tmp/x.sock"}, cfg)
 	require.NoError(t, err)
-	assert.Empty(t, d.components, "a component with no enabled monitors must be dropped")
+	assert.Nil(t, findComponent(d, ComponentNameBlockNode),
+		"a component with no enabled monitors must be dropped")
 }
 
 func TestNewFromConfig_ConsensusNodeWiring(t *testing.T) {
@@ -357,9 +426,8 @@ func TestNewFromConfig_ConsensusNodeWiring(t *testing.T) {
 
 	d, err := NewFromConfig(paths, cfg)
 	require.NoError(t, err)
-	require.Len(t, d.components, 1)
-	comp := d.components[0]
-	assert.Equal(t, "consensus-node", comp.name)
+	comp := findComponent(d, ComponentNameConsensusNode)
+	require.NotNil(t, comp)
 	assert.Len(t, comp.monitors, 2, "upgrade + migration monitors must both be wired")
 	assert.NotNil(t, comp.tracker)
 	assert.NotNil(t, comp.probe, "the upgrade monitor declares an RBAC prerequisite, so the component probe must be built")

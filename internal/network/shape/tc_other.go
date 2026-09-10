@@ -40,6 +40,11 @@ func (r *noopTCRunner) ClassStats(_ context.Context, _ string) (map[string]Class
 	return nil, errUnsupported()
 }
 
+// QdiscRootExists errors on non-Linux platforms, which cannot answer.
+func (r *noopTCRunner) QdiscRootExists(_ context.Context, _ string) (bool, error) {
+	return false, errUnsupported()
+}
+
 // newExecTCRunner returns a no-op runner on non-Linux platforms.
 func newExecTCRunner() TCRunner {
 	return &noopTCRunner{}

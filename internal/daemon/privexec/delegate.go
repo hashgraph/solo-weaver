@@ -21,12 +21,15 @@
 package privexec
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -100,6 +103,39 @@ type Delegator interface {
 	// ReconcileShaper when the digest changed, so a steady-state roster costs no
 	// root escalation.
 	ReconcileShaperCheck(ctx context.Context, statuszURL string) (digest string, err error)
+
+	// NetworkReassert runs `network reassert --output json` under sudo and
+	// returns what the worker found and restored. Even the check needs root.
+	NetworkReassert(ctx context.Context) (NetworkReassertResult, error)
+}
+
+// networkReassertReportType is the "type" tag on the report line. Mirrors
+// reassert.ReportType; the CLI-side contract test pins them together.
+const networkReassertReportType = "reassert"
+
+// networkReassertArtifacts is the exact set the worker reports on every run.
+// Mirrors reassert.Artifact*; the CLI-side contract test pins them together. CLI
+// and daemon ship at one version, so an unknown name is drift, not skew.
+var networkReassertArtifacts = []string{"host-firewall", "workload-policy", "egress-qdisc"}
+
+// NetworkReassertResult mirrors the `network reassert --output json` document.
+// Declared here, not imported, so the daemon does not pull in the engine.
+type NetworkReassertResult struct {
+	Type      string                  `json:"type"`
+	Artifacts []NetworkArtifactStatus `json:"artifacts"`
+}
+
+// NetworkArtifactStatus is one artifact's outcome from a reassert run.
+type NetworkArtifactStatus struct {
+	Artifact    string `json:"artifact"`
+	Expected    bool   `json:"expected"`
+	Present     bool   `json:"present"`
+	ProbeFailed bool   `json:"probe_failed"`
+	// Skipped means a lock was held, so the run did not look at this artifact.
+	Skipped    bool   `json:"skipped"`
+	Reasserted bool   `json:"reasserted"`
+	Recovered  bool   `json:"recovered"`
+	Detail     string `json:"detail"`
 }
 
 // execDelegator is the production Delegator. Its resolution and exec seams are
@@ -260,6 +296,86 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 		}
 	}
 	return res.Digest, nil
+}
+
+// NetworkReassert execs `network reassert --output json` under sudo and parses
+// the report. A missing or empty report is a contract bug, not a healthy run.
+func (d *execDelegator) NetworkReassert(ctx context.Context) (NetworkReassertResult, error) {
+	out, err := d.Run(ctx, "network", "reassert", "--output", "json")
+	if err != nil {
+		return NetworkReassertResult{}, err
+	}
+	return ParseNetworkReassertReport(out)
+}
+
+// ParseNetworkReassertReport picks the report out of the worker's stdout by its
+// "type" tag, never by position, so a merged stream cannot be mistaken for it.
+func ParseNetworkReassertReport(out []byte) (NetworkReassertResult, error) {
+	var res NetworkReassertResult
+	found := false
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var candidate NetworkReassertResult
+		if json.Unmarshal(line, &candidate) != nil || candidate.Type != networkReassertReportType {
+			continue
+		}
+		res, found = candidate, true
+		break
+	}
+	if !found {
+		return NetworkReassertResult{}, &daemonkit.ProbeError{
+			Reason:     "NetworkReassertParseFailed",
+			Message:    "network reassert --output json emitted no line tagged \"type\":\"" + networkReassertReportType + "\"",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	if len(res.Artifacts) == 0 {
+		return NetworkReassertResult{}, &daemonkit.ProbeError{
+			Reason:     "NetworkReassertEmptyReport",
+			Message:    "network reassert returned no artifacts",
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	if err := validateNetworkReassertArtifacts(res.Artifacts); err != nil {
+		return NetworkReassertResult{}, err
+	}
+	return res, nil
+}
+
+// validateNetworkReassertArtifacts rejects anything but the known set, once each:
+// the monitor keys history by artifact name, so a duplicate would overwrite a
+// sibling's and a missing one would freeze it. Order is not checked.
+func validateNetworkReassertArtifacts(artifacts []NetworkArtifactStatus) error {
+	fail := func(reason, msg string) error {
+		return &daemonkit.ProbeError{
+			Reason:     reason,
+			Message:    msg,
+			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
+		}
+	}
+	if len(artifacts) != len(networkReassertArtifacts) {
+		return fail("NetworkReassertArtifactCountMismatch",
+			fmt.Sprintf("network reassert reported %d artifacts, want %d (%s)",
+				len(artifacts), len(networkReassertArtifacts),
+				strings.Join(networkReassertArtifacts, ", ")))
+	}
+	seen := make(map[string]bool, len(artifacts))
+	for _, a := range artifacts {
+		if !slices.Contains(networkReassertArtifacts, a.Artifact) {
+			return fail("NetworkReassertUnknownArtifact",
+				fmt.Sprintf("network reassert reported unknown artifact %q, want one of %s",
+					a.Artifact, strings.Join(networkReassertArtifacts, ", ")))
+		}
+		if seen[a.Artifact] {
+			return fail("NetworkReassertDuplicateArtifact",
+				fmt.Sprintf("network reassert reported artifact %q more than once", a.Artifact))
+		}
+		seen[a.Artifact] = true
+	}
+	return nil
 }
 
 // tcAttach delegates the `block node tc-attach --veth <veth> [--detach]` exec.

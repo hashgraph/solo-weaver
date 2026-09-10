@@ -7,10 +7,14 @@ package workflows
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/network/nftexec"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	soos "github.com/hashgraph/solo-weaver/pkg/os"
 	"github.com/stretchr/testify/require"
@@ -331,4 +335,184 @@ func Test_NetworkNftUnitMigration_Integration(t *testing.T) {
 			"a host with no unit and no persisted artifact must not get a boot unit installed")
 		require.NoFileExists(t, path)
 	})
+}
+
+// Test_NetworkNftUnitPartOfPropagation_Integration proves that restarting a
+// firewall manager makes systemd re-run the loader immediately, asserting on
+// what systemd DID rather than the unit file text, which a rejected directive
+// would match just as happily.
+func Test_NetworkNftUnitPartOfPropagation_Integration(t *testing.T) {
+	requireRootForUnitTests(t)
+	ctx := context.Background()
+
+	// Read before installManagerStubs, which leaves a really installed manager
+	// alone. A real manager is the wrong lever: nftables.service flushes the host
+	// ruleset when it cycles, so the propagation is exercised through a stub.
+	absent := absentManagerUnits(t)
+
+	backupUnit(t, firewall.NetworkNftServiceUnitPath, firewall.NetworkNftService)
+	installManagerStubs(t)
+	require.NoError(t, firewall.EnsureNetworkNftUnit(ctx))
+
+	// systemd parsed the directive, against all three managers.
+	partOf := stringList(t, unitProperties(t, firewall.NetworkNftService), "PartOf")
+	for _, unit := range firewallManagerUnits {
+		require.Contains(t, partOf, unit, "the loader must be PartOf %s", unit)
+	}
+
+	if len(absent) == 0 {
+		t.Skip("every firewall manager is really installed here; cycling one would flush the host ruleset")
+	}
+	lever := absent[0]
+
+	require.NoError(t, soos.StartService(ctx, lever))
+	t.Cleanup(func() { _ = soos.StopService(context.Background(), lever) })
+	require.NoError(t, soos.StartService(ctx, firewall.NetworkNftService))
+	t.Cleanup(func() { _ = soos.StopService(context.Background(), firewall.NetworkNftService) })
+
+	before := activeEnterTimestamp(t, firewall.NetworkNftService)
+	require.NotZero(t, before, "the loader must be active before the propagation is observable")
+
+	require.NoError(t, soos.RestartService(ctx, lever))
+
+	// The propagated job is queued, not synchronous with the restart call.
+	require.Eventually(t, func() bool {
+		return activeEnterTimestamp(t, firewall.NetworkNftService) > before
+	}, 15*time.Second, 200*time.Millisecond,
+		"restarting %s must propagate a restart to the loader", lever)
+
+	running, err := soos.IsServiceRunning(ctx, firewall.NetworkNftService)
+	require.NoError(t, err)
+	require.True(t, running, "the loader must be active again after the propagated restart")
+}
+
+// absentManagerUnits names the firewall managers this host does not really have,
+// read BEFORE the stubs go in. A stub cycles exactly as the real unit would as
+// far as propagation is concerned, but has no ExecStop of its own to flush the
+// host's live ruleset — so it is the only safe lever for these tests.
+func absentManagerUnits(t *testing.T) []string {
+	t.Helper()
+
+	var out []string
+	for _, unit := range firewallManagerUnits {
+		if !systemdKnowsUnit(t, unit) {
+			out = append(out, unit)
+		}
+	}
+	return out
+}
+
+// activeEnterTimestamp reads when the unit last became active. A oneshot with
+// RemainAfterExit stays active, so a moving value proves it was cycled.
+func activeEnterTimestamp(t *testing.T, unit string) uint64 {
+	t.Helper()
+	value, ok := unitProperties(t, unit)["ActiveEnterTimestampMonotonic"]
+	require.True(t, ok, "unit property ActiveEnterTimestampMonotonic is absent")
+	ts, ok := value.(uint64)
+	require.True(t, ok, "ActiveEnterTimestampMonotonic is %T, not uint64", value)
+	return ts
+}
+
+// itProbeTable is a throwaway nft table this suite owns. It is loaded through
+// the loader unit's own ExecStart, so it stands in for a real weaver table
+// without the test ever touching one.
+const itProbeTable = "inet weaver-it-partof-probe"
+
+// seedLoaderArtifact writes a scoped table to the loader's own artifact path so
+// the unit's real ExecStart puts it in the kernel, and removes it afterwards.
+// A host that already has the artifact is skipped rather than clobbered: that
+// file is a provisioned host's live host firewall.
+func seedLoaderArtifact(t *testing.T, nftBin string) {
+	t.Helper()
+
+	if _, err := os.Stat(firewall.HostNftPath); err == nil {
+		t.Skipf("%s already exists; refusing to overwrite a provisioned host firewall", firewall.HostNftPath)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(firewall.HostNftPath), 0o755))
+	require.NoError(t, os.WriteFile(firewall.HostNftPath,
+		[]byte("table "+itProbeTable+" {\n}\n"), 0o600))
+
+	t.Cleanup(func() {
+		_ = os.Remove(firewall.HostNftPath)
+		del := append([]string{"delete", "table"}, strings.Fields(itProbeTable)...)
+		_ = exec.CommandContext(context.Background(), nftBin, del...).Run()
+	})
+}
+
+// probeTableLive reads the live ruleset rather than reusing any weaver code, so
+// the assertion is independent of the packages under test.
+func probeTableLive(t *testing.T, nftBin string) bool {
+	t.Helper()
+
+	out, err := exec.CommandContext(context.Background(), nftBin, "list", "tables").Output()
+	require.NoError(t, err)
+	return nftexec.TableListed(string(out), itProbeTable)
+}
+
+// Test_NetworkNftUnitPartOfStopIsInert_Integration is the other half of the
+// PartOf change. Propagation is bidirectional: `systemctl stop <manager>` now
+// stops the loader too, and that must destroy nothing. A future ExecStop on this
+// oneshot would silently turn every manager stop into a weaver-table teardown.
+func Test_NetworkNftUnitPartOfStopIsInert_Integration(t *testing.T) {
+	requireRootForUnitTests(t)
+	ctx := context.Background()
+
+	// Read before installManagerStubs, for the reason absentManagerUnits gives.
+	absent := absentManagerUnits(t)
+
+	backupUnit(t, firewall.NetworkNftServiceUnitPath, firewall.NetworkNftService)
+	installManagerStubs(t)
+	require.NoError(t, firewall.EnsureNetworkNftUnit(ctx))
+
+	// systemd parsed no ExecStop, so a propagated stop runs no teardown command.
+	// This is the invariant the production comment claims; assert it on what
+	// systemd loaded, not on the template text.
+	props := unitProperties(t, firewall.NetworkNftService)
+	stop, ok := props["ExecStop"]
+	require.True(t, ok, "unit property ExecStop is absent")
+	require.Empty(t, stop,
+		"the loader must have no ExecStop, or a manager stop would tear the weaver tables down")
+
+	if len(absent) == 0 {
+		t.Skip("every firewall manager is really installed here; cycling one would flush the host ruleset")
+	}
+	lever := absent[0]
+
+	nftBin, found := nftexec.Binary()
+	if !found {
+		t.Skipf("nft not found (looked for %s)", nftBin)
+	}
+
+	// Seeded before the loader starts, so its ExecStart is what loads the table.
+	seedLoaderArtifact(t, nftBin)
+
+	require.NoError(t, soos.StartService(ctx, lever))
+	t.Cleanup(func() { _ = soos.StopService(context.Background(), lever) })
+	require.NoError(t, soos.StartService(ctx, firewall.NetworkNftService))
+	t.Cleanup(func() { _ = soos.StopService(context.Background(), firewall.NetworkNftService) })
+
+	require.True(t, probeTableLive(t, nftBin),
+		"precondition: the loader must have put %s in the kernel", itProbeTable)
+
+	require.NoError(t, soos.StopService(ctx, lever))
+
+	// The propagated job is queued, not synchronous with the stop call.
+	require.Eventually(t, func() bool {
+		running, err := soos.IsServiceRunning(ctx, firewall.NetworkNftService)
+		return err == nil && !running
+	}, 15*time.Second, 200*time.Millisecond,
+		"stopping %s must propagate a stop to the loader", lever)
+
+	// The whole point: the loader went down and took nothing with it.
+	require.True(t, probeTableLive(t, nftBin),
+		"a propagated stop must not remove a table the loader had put in the kernel")
+
+	// And a manager start brings the loader back up, so the host does not sit
+	// unprotected until the next boot.
+	require.NoError(t, soos.StartService(ctx, lever))
+	require.NoError(t, soos.StartService(ctx, firewall.NetworkNftService))
+	running, err := soos.IsServiceRunning(ctx, firewall.NetworkNftService)
+	require.NoError(t, err)
+	require.True(t, running)
+	require.True(t, probeTableLive(t, nftBin), "the replayed table must be live again")
 }

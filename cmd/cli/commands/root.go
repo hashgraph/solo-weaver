@@ -192,7 +192,7 @@ func Execute(ctx context.Context) error {
 	cobra.OnInitialize(func() {
 		initConfig(ctx)
 		// The styled version header is human chrome; suppress it in JSON mode so
-		// it never pollutes the NDJSON stdout stream (e.g. with -o json -V).
+		// stdout stays the command's own JSON document (e.g. with -o json -V).
 		if !common.OutputIsJSON() {
 			fmt.Print(ui.RenderVersionHeader())
 		}
@@ -285,9 +285,8 @@ func initConfig(ctx context.Context) {
 
 	switch {
 	case common.OutputIsJSON():
-		// Machine-readable mode (--output json): force non-interactive so the
-		// TUI never owns stdout, and emit NDJSON log lines to stdout (and the
-		// log file) instead of the human-readable ConsoleWriter.
+		// Machine-readable mode: no TUI, NDJSON logs on stderr, and stdout left
+		// for the command's own JSON document.
 		ui.NonInteractive = true
 		logConfig.ConsoleLogging = false
 		err = logx.Initialize(logConfig)

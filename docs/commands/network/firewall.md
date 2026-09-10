@@ -363,6 +363,10 @@ asks for confirmation in an interactive session; `--force` skips the prompt.
 It does not disable `solo-provisioner-network-nft.service`, which is shared with the workload
 policy plane. Disable that by hand if you need it off.
 
+If `nft` cannot report whether the table is live, the delete fails and removes nothing. The
+`.nft` file stays, so [`network reassert`](reassert.md) replays the table once `nft` works
+again. Re-run the delete at that point.
+
 Reserved blocks cannot be deleted individually. Clear their addresses instead — `mgmt` needs
 `--force`, [see above](#emptying-the-mgmt-rule-is-guarded):
 

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/internal/network/nftexec"
 )
 
 // stockNftablesConf mirrors Debian's stock /etc/nftables.conf: a `flush ruleset`
@@ -26,8 +28,8 @@ table inet filter {
 }
 `
 
-// ipBinCandidates mirrors nftBinCandidates: absolute paths only, never a bare
-// "ip" off PATH (see docs/dev/security-model.md).
+// ipBinCandidates mirrors nftexec's nft candidates: absolute paths only, never a
+// bare "ip" off PATH (see docs/dev/security-model.md).
 var ipBinCandidates = []string{"/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"}
 
 // resolveBin returns the first candidate that exists, or skips the test.
@@ -96,7 +98,10 @@ func Test_NetworkNftBootOrder_Integration(t *testing.T) {
 	}
 
 	ipBin := resolveBin(t, "ip", ipBinCandidates)
-	nftBin := resolveBin(t, "nft", nftBinCandidates)
+	nftBin, ok := nftexec.Binary()
+	if !ok {
+		t.Skipf("nft not found (looked for %s)", nftBin)
+	}
 
 	weaverDoc, err := sampleTable().Render()
 	require.NoError(t, err)

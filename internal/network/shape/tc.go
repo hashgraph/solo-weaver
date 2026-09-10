@@ -47,6 +47,15 @@ type TCRunner interface {
 	// cumulative counters keyed by tc handle (e.g. "1:40"). It is the read
 	// counterpart to the write verbs above, backing `network shape watch`.
 	ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error)
+
+	// QdiscRootExists reports whether the `root handle 1: htb` qdisc is live on
+	// dev. An error means "could not determine" and must not be read as absence.
+	QdiscRootExists(ctx context.Context, dev string) (bool, error)
+}
+
+// QdiscRootExists is TCRunner.QdiscRootExists for callers without a Manager.
+func QdiscRootExists(ctx context.Context, dev string) (bool, error) {
+	return newExecTCRunner().QdiscRootExists(ctx, dev)
 }
 
 // The tc*Args helpers are the single source of the tc command argument

@@ -168,6 +168,12 @@ The monitor runs two independently-supervised responsibilities (each retried wit
    has already replayed the last applied membership from the `.nft` file, and
    this first poll replaces it.
 
+Alongside it runs the **network re-assert monitor** (`internal/daemon/network/`): every minute
+it checks that the two nft tables and the `$EGRESS` root qdisc are still live and restarts the
+owning unit for any definite absence (see `docs/commands/network/reassert.md`). It depends on
+one invariant here: restarting the shared nft loader for one table replays the other, so
+`persistMembership` must keep writing the artifact under the same lock as every kernel write.
+
 **statusz** is the block node's own health API — `statusz/inbound` and
 `statusz/outbound` JSON endpoints served on the pod's health port (default
 40983). The reconciler (`internal/blocknode/shaper/`) fetches both, buckets the
@@ -395,6 +401,7 @@ could count are an operator's.
 The teardown render (`Unshape`) deliberately has **no** wait loop: a host whose
 NIC is already gone needs the unshape to succeed trivially. `ConditionPathExists=`
 is the same guard one level up — a unit left behind with no script stays inactive.
+The re-assert monitor reads such a script as "not provisioned", not damage.
 
 **How a unit change reaches an existing host.** Same gap as the nft loader, same
 code: the startup migration built by `NewNetworkShaperUnitMigration`
@@ -577,23 +584,23 @@ Three interactions, each already resolved, each fragile enough to be worth namin
 
 **netplan** does not manage qdiscs: systemd-networkd only touches them when a
 traffic-control section is present, which netplan does not emit. It can therefore conflict
-only indirectly, by recreating the egress device (see the gaps below).
+only indirectly, by recreating the egress device (see below).
 
-### Known gaps
+### Third-party removal, and how it is recovered
 
-Coexistence holds while everyone leaves everyone else alone. Nothing currently re-asserts
-weaver state when a third party removes it, and every such loss is silent:
+Coexistence holds while everyone leaves everyone else alone. When someone does not, the loss is
+silent, but it is self-healing:
 
-| Trigger | Effect | Tracked by |
+| Trigger | Effect | Recovery |
 |---|---|---|
-| `nftables.service` starts or restarts (stock `/etc/nftables.conf` begins with `flush ruleset`); a `firewalld` reload; an operator's `nft -f` with a flush | Both weaver tables destroyed. Host firewall gone; policy plane gone, so nothing stamps `meta priority` and every flow falls to the HTB default class at wire speed — no error, no counter, no log | #981 (re-assert), #982 (unit ordering + install preflight) |
-| `netplan apply` recreating the egress device, a driver reload, a stray `tc qdisc del` | `$EGRESS` HTB hierarchy gone; no egress shaping | #981 |
+| `nftables.service` starts or restarts (stock `/etc/nftables.conf` begins with `flush ruleset`); a `firewalld` reload; an operator's `nft -f` with a flush | Both weaver tables destroyed: no default-drop on `input`, and nothing stamps `meta priority`, so every flow falls to the HTB default class at wire speed — no error, no counter, no log | Re-assert restarts `solo-provisioner-network-nft.service` within a minute |
+| `netplan apply` recreating the egress device, a driver reload, a stray `tc qdisc del` | `$EGRESS` HTB hierarchy gone; no egress shaping | Re-assert restarts `solo-provisioner-bandwidth-shaper.service` |
 | Egress interface is a netplan-created bond, bridge, or VLAN | Fixed in #980: the unit runs `After=network-online.target` and the script polls `/sys/class/net` for `SHAPER_DEVICE_WAIT_SECS` before its first `tc` call. A device later than that budget stays unshaped until the next converge | #980 (fixed) |
 
-The daemon's hourly force-resync reconciles nft **set membership** and the per-pod `$VETH`
-hierarchy; it does not verify that the tables or the `$EGRESS` root qdisc still exist.
-Until that changes, `systemctl status` on the two loader units and the inspection commands
-at the end of this document are the only signal.
+`PartOf=nftables.service ufw.service firewalld.service` on the loader unit makes a manager
+restart replay the tables at once; every other loss waits for the poll. A host with no daemon
+(`network firewall create` alone) gets no automatic re-assertion — run `network reassert` from
+cron there.
 
 ## Operator setup and configuration
 
@@ -791,11 +798,11 @@ field. Three details are load-bearing:
   to an address a second endpoint already reports literally, would otherwise put the same
   element in a set twice inside one `nft` transaction.
 
-**The shaper package logs nothing, deliberately.** Under `--output json` the root command
-routes log lines to stdout as NDJSON, and stdout is where the digest document goes and where
-`privexec.ReconcileShaperCheck` parses it back — so one log line on the `Check` path makes the
-daemon's decode fail and faults the poll loop into a retry-forever backoff, while the worker
-still exits 0. Names that produced no answer are returned instead, surfacing as `Unresolved` on
+**The shaper package logs nothing, deliberately.** Under `--output json` stdout carries only
+the digest document `privexec.ReconcileShaperCheck` parses back (logs go to stderr), so anything
+this package wrote to stdout on the `Check` path would break the decode and fault the poll loop
+into a retry-forever backoff while the worker still exits 0. Names that produced no answer are
+returned instead, surfacing as `Unresolved` on
 `CheckResult` and `Result`, and the command layer prints them on the human-readable path only.
 `TestPackageEmitsNoLogs` holds the line.
 
@@ -939,6 +946,9 @@ sudo nft list table inet weaver-workload-policy
 # tc: the live egress HTB hierarchy (physical NIC) and a pod's ingress veth
 tc -s class show dev "$EGRESS_NIC"
 tc -s class show dev "$POD_VETH"
+
+# what is live, and what re-assert would restore
+sudo solo-provisioner network reassert --check
 
 # systemd: the loaders and the daemon
 systemctl status solo-provisioner-network-nft.service \

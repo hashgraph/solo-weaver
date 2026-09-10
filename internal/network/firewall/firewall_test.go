@@ -28,6 +28,10 @@ type fakeRunner struct {
 	exists  bool
 	listOut string
 	deleted bool
+	// existsErr, when set, makes Exists unable to answer, standing in for an
+	// nft that cannot list tables. deleteErr makes Delete fail outright.
+	existsErr error
+	deleteErr error
 	// checkErr, when set, makes Check reject every document, standing in for an
 	// nft that refuses the rendered ruleset.
 	checkErr error
@@ -37,8 +41,23 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) List(_ context.Context) (string, error) { return f.listOut, nil }
-func (f *fakeRunner) Delete(_ context.Context) error         { f.deleted = true; f.exists = false; return nil }
-func (f *fakeRunner) Exists(_ context.Context) (bool, error) { return f.exists, nil }
+func (f *fakeRunner) Delete(_ context.Context) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleted = true
+	f.exists = false
+	return nil
+}
+
+// Exists mirrors nftexec.TableExists: a failure answers false, so no caller can
+// lean on a presence value the production runner would never hand it.
+func (f *fakeRunner) Exists(_ context.Context) (bool, error) {
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	return f.exists, nil
+}
 
 func (f *fakeRunner) Check(_ context.Context, path string) error {
 	b, err := os.ReadFile(path)
@@ -557,6 +576,88 @@ func TestManager_DeleteIsIdempotent(t *testing.T) {
 	require.NoError(t, m.Delete(ctx))
 }
 
+func TestManager_DeleteWithUnanswerableProbeLeavesArtifactsForRetry(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+
+	_, err := m.Create(ctx, sampleTable(), false)
+	require.NoError(t, err)
+
+	// Presence unknown: touch nothing. The file beside a table that may still be
+	// live is consistent, and the operator simply re-runs once nft answers.
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	require.ErrorIs(t, m.Delete(ctx), r.existsErr)
+	require.False(t, r.deleted)
+	require.FileExists(t, nftPath)
+
+	r.existsErr = nil
+	require.NoError(t, m.Delete(ctx))
+	require.True(t, r.deleted)
+	require.NoFileExists(t, nftPath)
+}
+
+func TestManager_DeleteFailureLeavesArtifactsForRetry(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+
+	_, err := m.Create(ctx, sampleTable(), false)
+	require.NoError(t, err)
+
+	// A failed live delete leaves the table live, so its artifact must stay
+	// with it: the pair is consistent and the next run retries the delete.
+	r.deleteErr = errors.New("nft delete table failed: Operation not permitted")
+	require.ErrorIs(t, m.Delete(ctx), r.deleteErr)
+	require.FileExists(t, nftPath)
+
+	r.deleteErr = nil
+	require.NoError(t, m.Delete(ctx))
+	require.True(t, r.deleted)
+	require.NoFileExists(t, nftPath)
+}
+
+// TestManager_DeleteRemovesArtifactsWhenTimerSyncFails: once the live table is
+// gone the artifacts must go with it, or reassert brings it back.
+func TestManager_DeleteRemovesArtifactsWhenTimerSyncFails(t *testing.T) {
+	r := &fakeRunner{}
+	dir := t.TempDir()
+	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
+	configPath := filepath.Join(dir, "network-weaver-host-firewall.yaml")
+	timerErr := errors.New("systemctl disable solo-provisioner-network-dns-refresh.timer failed")
+	// Armed only for the Delete: Create syncs the timer too, and must succeed.
+	timerFails := false
+	m := NewManagerWithConfig(Config{
+		Runner:     r,
+		NftPath:    nftPath,
+		ConfigPath: configPath,
+		LockPath:   filepath.Join(dir, ".applying"),
+		ApplyViaService: func(context.Context) error {
+			r.exists = true
+			return nil
+		},
+		SyncRefreshTimer: func(context.Context, bool) error {
+			if timerFails {
+				return timerErr
+			}
+			return nil
+		},
+	})
+	ctx := context.Background()
+
+	_, err := m.Create(ctx, sampleTable(), false)
+	require.NoError(t, err)
+
+	// The failure is reported, but only after every artifact is gone.
+	timerFails = true
+	require.ErrorIs(t, m.Delete(ctx), timerErr)
+	require.True(t, r.deleted)
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, configPath)
+}
+
 func TestManager_ServiceFailureReturnsError(t *testing.T) {
 	r := &fakeRunner{}
 	dir := t.TempDir()
@@ -718,6 +819,15 @@ func TestNetworkNftUnit_OrderingDirectives(t *testing.T) {
 	require.Contains(t, unit, "Before=network-pre.target solo-provisioner-daemon.service")
 	require.NotContains(t, unit, "Before=nftables.service",
 		"the loader must never order before a flushing firewall manager")
+}
+
+// TestNetworkNftUnit_PartOfFirewallManagers pins the propagation that reloads the
+// weaver tables on `systemctl restart nftables`, rather than leaving it to reassert.
+func TestNetworkNftUnit_PartOfFirewallManagers(t *testing.T) {
+	content, err := templates.Files.ReadFile(networkNftServiceTemplate)
+	require.NoError(t, err)
+
+	require.Contains(t, string(content), "PartOf=nftables.service ufw.service firewalld.service")
 }
 
 // TestIsRulesetDiagnostic pins the classification `Check` uses to tell a ruleset
@@ -935,4 +1045,100 @@ func TestMgmtLockout_RemovingLastPortIsRefused(t *testing.T) {
 	tbl, err = m.Table(ctx)
 	require.NoError(t, err)
 	require.Empty(t, tbl.Mgmt.Ports)
+}
+
+// --- unanswerable presence probe --------------------------------------------
+//
+// Exists used to swallow every nft failure as "table absent". It now reports an
+// error, so each caller must surface it rather than act on a guessed absence.
+
+func TestManager_CreateWithUnanswerableProbeAppliesNothing(t *testing.T) {
+	// Acting on a guessed absence here would apply a ruleset over a table that
+	// may still be live, and persist an artifact for it.
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	changed, err := m.Create(context.Background(), sampleTable(), false)
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.False(t, changed)
+	require.Zero(t, applyCount, "nothing may be applied while presence is unknown")
+	require.NoFileExists(t, nftPath, "no artifact may be persisted for an unapplied table")
+}
+
+func TestManager_ShowWithUnanswerableProbeErrorsRatherThanClaimingNoTable(t *testing.T) {
+	// The friendly "no table is active — run create" message is a claim about the
+	// kernel. With the probe broken it would send an operator to create a table
+	// that may already be live.
+	r := &fakeRunner{exists: true}
+	applyCount := 0
+	m, _ := newTestManager(t, r, &applyCount)
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	out, err := m.Show(context.Background())
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.Empty(t, out, "no advice may be printed when presence is unknown")
+	require.NotContains(t, out, "network firewall create")
+}
+
+func TestManager_IsActiveWithUnanswerableProbePropagatesTheError(t *testing.T) {
+	// IsActive seeds the reconfigure enable/disable decision, so a swallowed
+	// error would read as "no firewall here" and tear a live one down.
+	r := &fakeRunner{exists: true}
+	applyCount := 0
+	m, _ := newTestManager(t, r, &applyCount)
+
+	r.existsErr = errors.New("nft list tables failed: netlink: Operation not permitted")
+	active, err := m.IsActive(context.Background())
+
+	require.ErrorIs(t, err, r.existsErr)
+	require.False(t, active)
+}
+
+// TestManager_DeleteReportsBothTimerAndRemovalFailures pins the errors.Join
+// path: neither failure may hide the other, since they send an operator to
+// different places.
+func TestManager_DeleteReportsBothTimerAndRemovalFailures(t *testing.T) {
+	r := &fakeRunner{}
+	dir := t.TempDir()
+	nftPath := filepath.Join(dir, "network-weaver-host-firewall.nft")
+	timerErr := errors.New("systemctl disable solo-provisioner-network-dns-refresh.timer failed")
+	timerFails := false
+	m := NewManagerWithConfig(Config{
+		Runner:     r,
+		NftPath:    nftPath,
+		ConfigPath: filepath.Join(dir, "network-weaver-host-firewall.yaml"),
+		LockPath:   filepath.Join(dir, ".applying"),
+		ApplyViaService: func(context.Context) error {
+			r.exists = true
+			return nil
+		},
+		SyncRefreshTimer: func(context.Context, bool) error {
+			if timerFails {
+				return timerErr
+			}
+			return nil
+		},
+	})
+	ctx := context.Background()
+
+	_, err := m.Create(ctx, sampleTable(), false)
+	require.NoError(t, err)
+
+	// Make the artifact un-removable: a non-empty directory in its place fails
+	// os.Remove with ENOTEMPTY, which is not "already gone".
+	require.NoError(t, os.Remove(nftPath))
+	require.NoError(t, os.MkdirAll(nftPath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nftPath, "blocker"), []byte("x"), 0o600))
+
+	timerFails = true
+	err = m.Delete(ctx)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, timerErr, "the timer failure must not be hidden by the removal failure")
+	require.Contains(t, err.Error(), "failed to remove", "the removal failure must be reported too")
+	require.True(t, r.deleted, "the live table is still deleted first")
 }
