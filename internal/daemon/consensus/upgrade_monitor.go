@@ -72,6 +72,13 @@ const (
 	// dedicated to these files and filepruner ignores names without a parseable
 	// timestamp, so consensus-*.jsonl is safe.
 	upgradeEventGlob = "consensus-*.jsonl"
+
+	// defaultHandoffDeadline is the total budget for the provisioner handoff,
+	// measured from when the CR entered ReadyForProvisionerDaemon (status.startTime)
+	// across all retries. When exceeded, a transient failure is reported as
+	// DaemonResult=False (reason DeadlineExceeded) so a stuck operation terminates
+	// rather than hanging (HIP-1496). Mirrors the UC provisioner-proxy default.
+	defaultHandoffDeadline = 60 * time.Minute
 )
 
 // networkUpgradeExecuteGroup and networkUpgradeExecuteResource are the RBAC
@@ -116,6 +123,20 @@ type UpgradeMonitorConfig struct {
 	//
 	// Example: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
 	UpgradeDir string
+
+	// HandoffDeadline overrides the total budget for the provisioner handoff,
+	// measured from status.startTime across all watch re-deliveries. Zero falls back
+	// to defaultHandoffDeadline. When exceeded, a transient failure is reported as
+	// DaemonResult=False (reason DeadlineExceeded) instead of retried (HIP-1496).
+	HandoffDeadline time.Duration
+}
+
+// handoffDeadline returns the configured handoff budget, or the default when unset.
+func (c UpgradeMonitorConfig) handoffDeadline() time.Duration {
+	if c.HandoffDeadline > 0 {
+		return c.HandoffDeadline
+	}
+	return defaultHandoffDeadline
 }
 
 // UpgradeMonitor watches the Kubernetes API for NetworkUpgradeExecute CRs

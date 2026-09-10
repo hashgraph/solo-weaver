@@ -18,4 +18,11 @@ var (
 	// ErrSoakWatcher is returned when the soak watcher encounters an error
 	// (e.g. state file I/O, decommission failure).
 	ErrSoakWatcher = ErrNamespace.NewType("soak_watcher")
+
+	// ErrK8sAPI is returned when a Kubernetes API call (Get/Patch/List) fails during
+	// the execute phase. Carries the errorx.Temporary() trait: the execute driver
+	// classifies it as a transient failure and retries via watch re-delivery rather
+	// than writing DaemonResult=False (HIP-1496 Provisioner Failure Semantics). An
+	// execute-phase error WITHOUT this trait is treated as fatal.
+	ErrK8sAPI = ErrNamespace.NewType("k8s_api", errorx.Temporary())
 )

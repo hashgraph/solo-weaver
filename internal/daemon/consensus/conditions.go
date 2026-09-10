@@ -32,7 +32,7 @@ func setExecuteCondition(ctx context.Context, client dynamic.Interface, namespac
 	cur, err := resource.Get(getCtx, crName, metav1.GetOptions{})
 	cancel()
 	if err != nil {
-		return errorx.ExternalError.Wrap(err, "get %s to set condition %s", crName, condType)
+		return ErrK8sAPI.Wrap(err, "get %s to set condition %s", crName, condType)
 	}
 
 	conditions, _, _ := unstructured.NestedSlice(cur.Object, "status", "conditions")
@@ -82,7 +82,7 @@ func setExecuteCondition(ctx context.Context, client dynamic.Interface, namespac
 	patchCtx, cancel := context.WithTimeout(ctx, patchTimeout)
 	defer cancel()
 	if _, err := resource.Patch(patchCtx, crName, types.MergePatchType, patch, metav1.PatchOptions{}, "status"); err != nil {
-		return errorx.ExternalError.Wrap(err, "patch %s condition %s", crName, condType)
+		return ErrK8sAPI.Wrap(err, "patch %s condition %s", crName, condType)
 	}
 	return nil
 }
