@@ -43,19 +43,24 @@ func TestOperatorFlagsArePersistentAndInherited(t *testing.T) {
 	}
 }
 
-// ValidateFlagGroups is what cobra calls during execute(). One pair only: the
-// flags are package-level vars on a shared command, so setting them would
-// pollute further cases.
+// ValidateFlagGroups is what cobra calls during execute().
 func TestErrorControlFlagsAreMutuallyExclusive(t *testing.T) {
-	install := findSubcommand(t, GetCmd(), "install")
+	stop := common.FlagStopOnError().Name
+	rollback := common.FlagRollbackOnError().Name
 
-	// Flags() merges the parent's persistent set, annotations included.
+	install := findSubcommand(t, GetCmd(), "install")
 	flags := install.Flags()
-	require.NoError(t, flags.Set(common.FlagStopOnError().Name, "true"))
-	require.NoError(t, flags.Set(common.FlagRollbackOnError().Name, "true"))
+	for _, name := range []string{stop, rollback} {
+		f := flags.Lookup(name)
+		// ValidateFlagGroups reads Changed, so reset it alongside the value.
+		t.Cleanup(func() { _ = f.Value.Set(f.DefValue); f.Changed = false })
+	}
+
+	require.NoError(t, flags.Set(stop, "true"))
+	require.NoError(t, flags.Set(rollback, "true"))
 
 	require.Error(t, install.ValidateFlagGroups(),
-		"--stop-on-error and --rollback-on-error must be mutually exclusive on the subcommand")
+		"--%s and --%s must be mutually exclusive on the subcommand", stop, rollback)
 }
 
 func findSubcommand(t *testing.T, parent *cobra.Command, name string) *cobra.Command {
