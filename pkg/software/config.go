@@ -14,11 +14,17 @@ import (
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 )
 
 //go:embed infrastructure-catalog.yaml
 var infrastructureCatalogFS embed.FS
+
+// SoloOperatorComponentName is the cluster-component name of the solo-operator
+// Helm chart in the catalog. Its default version is injected from
+// deps.SOLO_OPERATOR_VERSION at load time rather than pinned in the YAML.
+const SoloOperatorComponentName = "solo-operator"
 
 // ChartType identifies how a Helm chart is distributed.
 type ChartType string
@@ -345,6 +351,18 @@ func LoadInfrastructureCatalog() (*InfrastructureCatalog, error) {
 		if err := yaml.Unmarshal(data, &catalog); err != nil {
 			cachedCatalogErr = NewConfigLoadError(err)
 			return
+		}
+
+		// The solo-operator chart version is owned by pkg/deps.SOLO_OPERATOR_VERSION
+		// — the single source of truth it shares with the UC sidecar tag — so inject
+		// it as the catalog default instead of duplicating a version string in the
+		// YAML. Injecting before validate() preserves the "default must exist in
+		// versions" invariant, which guarantees a checksum entry exists for this
+		// exact version (otherwise the catalog fails to load, loud and early).
+		for i := range catalog.Cluster {
+			if catalog.Cluster[i].Name == SoloOperatorComponentName {
+				catalog.Cluster[i].Default = Version(deps.SOLO_OPERATOR_VERSION)
+			}
 		}
 
 		if err := catalog.validate(); err != nil {

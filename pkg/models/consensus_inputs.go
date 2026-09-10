@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package models
+
+import (
+	"fmt"
+
+	"github.com/hashgraph/solo-weaver/pkg/deps"
+	"github.com/joomcode/errorx"
+)
+
+// Consensus-node container defaults. Used as flag defaults and as the fallback
+// when an input field is left empty. The Java heap must be set explicitly; without
+// it the JVM defaults MaxHeapSize to 25% of the memory limit, which stalls the node
+// on startup. Heap + direct memory must fit under the memory limit: these defaults
+// are a lean single/local-node baseline (1g heap + 512m direct fit under 2Gi);
+// production networks should raise them via flags.
+const (
+	// ConsensusDefaultNamespace is the default namespace / Orbit name for a
+	// consensus deployment (sourced from pkg/deps alongside the other install-plan
+	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
+	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
+
+	ConsensusDefaultContainerName = "consensus-node"
+	ConsensusDefaultJavaHeapMin   = "512m"
+	ConsensusDefaultJavaHeapMax   = "1g"
+	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=512m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
+	ConsensusDefaultCPULimit      = "2"
+	ConsensusDefaultCPURequest    = "250m"
+	ConsensusDefaultMemoryLimit   = "2Gi"
+	ConsensusDefaultMemoryRequest = "1Gi"
+
+	// UC (Update Coordinator) sidecar image. The operator provides NO built-in
+	// default for it, so the capsule must declare it explicitly or the operator
+	// rejects the capsule with ImageRequired. It is the
+	// operator's own image, so the tag tracks the operator/chart version. Sourced
+	// from pkg/deps alongside the block-node install-plan defaults.
+	ConsensusDefaultUCImageRepo = deps.CONSENSUS_NODE_UC_IMAGE
+	ConsensusDefaultUCImageTag  = deps.CONSENSUS_NODE_UC_VERSION
+
+	// ConsensusDefaultImagePullSecret is the name of the image-pull secret the
+	// operator threads onto the consensus-node and UC containers so they can pull
+	// the private consensus/UC images (e.g. from ghcr.io). It must name a
+	// docker-registry secret that exists in the node's namespace; create it with
+	// `task uat:secrets`. Empty disables it (public images only).
+	ConsensusDefaultImagePullSecret = deps.CONSENSUS_NODE_IMAGE_PULL_SECRET
+)
+
+// ConsensusNodeInputs holds user-supplied values for deploying a consensus node
+// via the solo-operator's ConsensusCapsule CRD.
+type ConsensusNodeInputs struct {
+	Namespace string `json:"namespace"`
+	OrbitName string `json:"orbitName"`
+	NodeId    int64  `json:"nodeId"`
+	AccountId string `json:"accountId"`
+	Weight    int    `json:"weight"`
+
+	LedgerId string `json:"ledgerId"`
+	ChainId  string `json:"chainId,omitempty"`
+
+	ConsensusImageRepo string `json:"consensusImageRepo"`
+	ConsensusImageTag  string `json:"consensusImageTag"`
+
+	// UC sidecar image (repository is the full "registry/path/name"). Empty falls
+	// back to ConsensusDefaultUCImageRepo/Tag. The operator has no default UC image.
+	UCImageRepo string `json:"ucImageRepo,omitempty"`
+	UCImageTag  string `json:"ucImageTag,omitempty"`
+
+	// ImagePullSecret names a docker-registry secret in the node's namespace that
+	// the operator threads onto the consensus-node and UC containers for pulling
+	// private images. Defaults to ConsensusDefaultImagePullSecret; empty disables it.
+	ImagePullSecret string `json:"imagePullSecret,omitempty"`
+
+	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
+
+	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
+	SigningSecret string `json:"signingSecret,omitempty"`
+
+	// Consensus-node container sizing + JVM tuning. Empty values fall back to the
+	// ConsensusDefault* constants (mirroring the solo-operator reference example).
+	// The explicit Java heap is essential — without -Xmx the 0.74 node stalls on
+	// startup with a GC death-spiral (solo-operator#1223).
+	ContainerName string `json:"containerName,omitempty"`
+	JavaHeapMin   string `json:"javaHeapMin,omitempty"`
+	JavaHeapMax   string `json:"javaHeapMax,omitempty"`
+	JavaOpts      string `json:"javaOpts,omitempty"`
+	CPULimit      string `json:"cpuLimit,omitempty"`
+	CPURequest    string `json:"cpuRequest,omitempty"`
+	MemoryLimit   string `json:"memoryLimit,omitempty"`
+	MemoryRequest string `json:"memoryRequest,omitempty"`
+
+	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
+	// the host hardware floor when this install bootstraps the cluster.
+	Profile string `json:"profile,omitempty"`
+
+	// SkipHardwareChecks bypasses the preflight hardware floor during cluster bootstrap.
+	SkipHardwareChecks bool `json:"-"`
+
+	// Resolved config file contents (populated by BLL, not by CLI flags)
+	ConfigLog4j2                string `json:"-"`
+	ConfigSettings              string `json:"-"`
+	ConfigAppProperties         string `json:"-"`
+	ConfigAppOverrideProperties string `json:"-"`
+	ConfigApiPermission         string `json:"-"`
+	ConfigBootstrap             string `json:"-"`
+	ConfigNodeProperties        string `json:"-"`
+	ConfigFeeSchedules          string `json:"-"`
+	ConfigSimpleFeesSchedules   string `json:"-"`
+	ConfigThrottles             string `json:"-"`
+	ConfigBlockNodes            string `json:"-"`
+
+	// ConfigSources records, per config key (ConfigKey*), whether the resolved
+	// content came from the deployment package or the embedded default. Populated
+	// by the BLL during resolution; drives the apply policy for config CRs.
+	ConfigSources map[string]string `json:"-"`
+}
+
+// Config keys identify each consensus config file across resolution, hashing,
+// and CR application. They double as the ConfigSources / ConfigHashes map keys.
+const (
+	ConfigKeyLog4j2              = "log4j2"
+	ConfigKeySettings            = "settings"
+	ConfigKeyAppProperties       = "application-properties"
+	ConfigKeyAppOverride         = "application-override-properties"
+	ConfigKeyApiPermission       = "api-permission-properties"
+	ConfigKeyBootstrap           = "bootstrap-properties"
+	ConfigKeyNodeProperties      = "node-properties"
+	ConfigKeyFeeSchedules        = "fee-schedules"
+	ConfigKeySimpleFeesSchedules = "simple-fees-schedules"
+	ConfigKeyThrottles           = "throttles"
+	ConfigKeyBlockNodes          = "block-nodes"
+)
+
+// consensusConfigCRSuffix maps each config key to the canonical name suffix the
+// solo-operator expects. The config CR, the ConfigMap the operator derives from
+// it, and the ConsensusCapsule *Ref that points at it all share this exact name
+// (verified against the solo-operator docs/example). This is the single source
+// of truth so EnsureConfigCRs and the capsule refs can never drift apart — a
+// mismatch leaves the capsule stuck (referenced ConfigMap "not found").
+//
+// Note simple-fee-schedules is intentionally singular "fee" here even though the
+// ConfigKey is "simple-fees-schedules": the operator/example use the singular
+// form for the resource name.
+var consensusConfigCRSuffix = map[string]string{
+	ConfigKeyLog4j2:              "log4j2",
+	ConfigKeySettings:            "settings",
+	ConfigKeyAppProperties:       "application-properties",
+	ConfigKeyAppOverride:         "application-override-properties",
+	ConfigKeyApiPermission:       "api-permission-properties",
+	ConfigKeyBootstrap:           "bootstrap-properties",
+	ConfigKeyNodeProperties:      "node-properties",
+	ConfigKeyFeeSchedules:        "fee-schedules",
+	ConfigKeySimpleFeesSchedules: "simple-fee-schedules",
+	ConfigKeyThrottles:           "throttles",
+	ConfigKeyBlockNodes:          "block-nodes",
+}
+
+// ConsensusConfigCRName returns the config CR / managed ConfigMap / capsule ref
+// name for a config key on a node, e.g.
+// ConsensusConfigCRName("node0", ConfigKeyAppProperties) == "node0-application-properties".
+func ConsensusConfigCRName(scope, configKey string) string {
+	return fmt.Sprintf("%s-%s", scope, consensusConfigCRSuffix[configKey])
+}
+
+// Config content sources, stored in ConfigSources and ConfigHashEntry.Source.
+const (
+	ConfigSourcePackage  = "deployment-package"
+	ConfigSourceEmbedded = "embedded"
+)
+
+// ConsensusNodeScope returns the node-local scope for a consensus node (e.g.
+// "node0"). Use this for names of resources that live inside the node's
+// namespace (secrets, config CR refs, secret key filenames) — the namespace
+// already disambiguates them across orbits, so they stay node-local.
+func ConsensusNodeScope(nodeId int64) string {
+	return fmt.Sprintf("node%d", nodeId)
+}
+
+// ConsensusNodeStateKey returns the orbit-qualified key for solo-weaver's local
+// state and reality maps (e.g. "hiero-network-1/node0"). Because the same
+// nodeId can be deployed into multiple orbits in one cluster, the local state
+// key must include the namespace/orbit — a bare "node0" would collide across
+// orbits and overwrite entries in state.yaml. This is NOT a cluster resource
+// name; it never appears on any Kubernetes object.
+func ConsensusNodeStateKey(namespace string, nodeId int64) string {
+	return fmt.Sprintf("%s/%s", namespace, ConsensusNodeScope(nodeId))
+}
+
+// ConsensusCapsuleName returns the CR name for a ConsensusCapsule (e.g. "myorbit-consensus-0").
+func ConsensusCapsuleName(orbitName string, nodeId int64) string {
+	return fmt.Sprintf("%s-consensus-%d", orbitName, nodeId)
+}
+
+// Validate checks that required fields are present.
+func (c *ConsensusNodeInputs) Validate() error {
+	if c.Namespace == "" {
+		return errorx.IllegalArgument.New("--namespace is required")
+	}
+	if c.AccountId == "" {
+		return errorx.IllegalArgument.New("--account-id is required")
+	}
+	if c.Weight <= 0 {
+		return errorx.IllegalArgument.New("--weight must be positive")
+	}
+	return nil
+}

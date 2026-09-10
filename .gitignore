@@ -382,3 +382,6 @@ docs/claude/
 # but allow project-level shared skills under .claude/skills/ to be committed.
 .claude/*
 !.claude/skills/
+
+# Host HEAD stamped by vm:sync for in-VM commit stamping (see Taskfile COMMIT)
+.vm-commit

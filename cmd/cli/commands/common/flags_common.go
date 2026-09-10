@@ -53,7 +53,7 @@ func FlagNodeType() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "node-type",
 		ShortName:   "n",
-		Description: fmt.Sprintf("Type of node to deploy %s", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
+		Description: fmt.Sprintf("The workload intended for this cluster %s. With --profile, selects which hardware floor the host is validated against. Cluster install installs no operator/CRDs — those come from 'kube operator install'", []string{models.NodeTypeBlock, models.NodeTypeMirror, models.NodeTypeConsensus}),
 		Default:     models.NodeTypeBlock,
 	}
 }
