@@ -51,12 +51,14 @@ func stepExternalFiles(id string, timeout time.Duration) *automa.StepBuilder {
 	return timedStep(id, timeout, func(context.Context) error { return nil })
 }
 
-// stepInfraVersionsPlacement atomically places infrastructure-versions.yaml onto
-// the host.
-//
-// TODO: implement (skip when already placed with matching content).
-func stepInfraVersionsPlacement(id string, timeout time.Duration) *automa.StepBuilder {
-	return timedStep(id, timeout, func(context.Context) error { return nil })
+// stepInfraVersionsPlacement atomically places the upgrade package's
+// infrastructure-versions.yaml at the trusted host location, overwriting any
+// existing copy (a no-op when the package carries none). Thin adapter over
+// placeInfraVersions.
+func stepInfraVersionsPlacement(id string, timeout time.Duration, srcPkgDir, destPath string) *automa.StepBuilder {
+	return timedStep(id, timeout, func(context.Context) error {
+		return placeInfraVersions(srcPkgDir, destPath)
+	})
 }
 
 // stepRuntimeSafetyGate refuses to proceed when the installed host runtime is below
