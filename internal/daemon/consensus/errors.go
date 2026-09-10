@@ -40,4 +40,9 @@ var (
 	// ErrConfigCRInvalid is returned when the operator reconciles a config CR to
 	// Valid=False (it rejected the content). FATAL — DaemonResult=False, no retry.
 	ErrConfigCRInvalid = ErrNamespace.NewType("config_cr_invalid")
+
+	// ErrInfraVersionsPlace is returned when writing infrastructure-versions.yaml to
+	// the trusted host location fails (mkdir/write/rename). Temporary — a filesystem
+	// hiccup is retried via re-delivery until the handoff deadline.
+	ErrInfraVersionsPlace = ErrNamespace.NewType("infra_versions_place", errorx.Temporary())
 )
