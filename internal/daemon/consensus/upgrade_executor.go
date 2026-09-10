@@ -55,6 +55,10 @@ type upgradeExecutor struct {
 	scope       string
 	nodeID      string
 	orbit       string
+
+	// infraVersionsPath is the trusted host destination for the package's
+	// infrastructure-versions.yaml.
+	infraVersionsPath string
 }
 
 // run executes the workflow and reports the outcome per HIP-1496 Provisioner
@@ -123,7 +127,7 @@ func (x *upgradeExecutor) buildWorkflow() *automa.WorkflowBuilder {
 		WithExecutionMode(automa.StopOnError).
 		Steps(
 			stepExternalFiles("external-files", stepTimeoutExternalFiles),
-			stepInfraVersionsPlacement("infra-versions-placement", stepTimeoutInfraVersions),
+			stepInfraVersionsPlacement("infra-versions-placement", stepTimeoutInfraVersions, x.upgradePath, x.infraVersionsPath),
 			stepRuntimeSafetyGate("runtime-safety-gate", stepTimeoutSafetyGate),
 			stepInfraUpgradeDetect("infra-upgrade-detect", stepTimeoutInfraDetect, x.client, x.namespace, x.crName, x.sink),
 			stepCreateConfigCRs("create-config-crs", stepTimeoutCreateConfigCRs, cfgDeployer),
@@ -224,17 +228,18 @@ func (um *UpgradeMonitor) runExecute(ctx context.Context, cr *unstructured.Unstr
 		orbit = um.cfg.Namespace
 	}
 	x := &upgradeExecutor{
-		client:      um.client,
-		namespace:   um.cfg.Namespace,
-		crName:      cr.GetName(),
-		sink:        sink,
-		startTime:   startTime,
-		deadline:    um.cfg.handoffDeadline(),
-		operationID: operationID,
-		upgradePath: um.cfg.UpgradeDir,
-		scope:       "node" + um.cfg.NodeID,
-		nodeID:      um.cfg.NodeID,
-		orbit:       orbit,
+		client:            um.client,
+		namespace:         um.cfg.Namespace,
+		crName:            cr.GetName(),
+		sink:              sink,
+		startTime:         startTime,
+		deadline:          um.cfg.handoffDeadline(),
+		operationID:       operationID,
+		upgradePath:       um.cfg.UpgradeDir,
+		scope:             "node" + um.cfg.NodeID,
+		nodeID:            um.cfg.NodeID,
+		orbit:             orbit,
+		infraVersionsPath: um.cfg.infraVersionsPath(),
 	}
 	return x.run(ctx)
 }

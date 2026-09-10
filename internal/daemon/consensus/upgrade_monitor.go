@@ -129,6 +129,10 @@ type UpgradeMonitorConfig struct {
 	// to defaultHandoffDeadline. When exceeded, a transient failure is reported as
 	// DaemonResult=False (reason DeadlineExceeded) instead of retried (HIP-1496).
 	HandoffDeadline time.Duration
+
+	// InfraVersionsPath overrides the trusted host destination for the package's
+	// infrastructure-versions.yaml. Empty falls back to defaultInfraVersionsPath.
+	InfraVersionsPath string
 }
 
 // handoffDeadline returns the configured handoff budget, or the default when unset.
@@ -137,6 +141,15 @@ func (c UpgradeMonitorConfig) handoffDeadline() time.Duration {
 		return c.HandoffDeadline
 	}
 	return defaultHandoffDeadline
+}
+
+// infraVersionsPath returns the configured infrastructure-versions.yaml destination,
+// or the default trusted location when unset.
+func (c UpgradeMonitorConfig) infraVersionsPath() string {
+	if c.InfraVersionsPath != "" {
+		return c.InfraVersionsPath
+	}
+	return defaultInfraVersionsPath
 }
 
 // UpgradeMonitor watches the Kubernetes API for NetworkUpgradeExecute CRs

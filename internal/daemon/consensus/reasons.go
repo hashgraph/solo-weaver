@@ -40,4 +40,10 @@ const (
 	ReasonConfigCRValid          errx.Reason = "ConfigCRValid"
 	ReasonConfigCRInvalid        errx.Reason = "ConfigCRInvalid"
 	ReasonConfigCRWaitTimeout    errx.Reason = "ConfigCRWaitTimeout"
+
+	// infrastructure-versions.yaml placement reasons.
+	ReasonInfraVersionsPlaced      errx.Reason = "InfraVersionsPlaced"
+	ReasonInfraVersionsBackedUp    errx.Reason = "InfraVersionsBackedUp"
+	ReasonInfraVersionsAbsent      errx.Reason = "InfraVersionsAbsent"
+	ReasonInfraVersionsPlaceFailed errx.Reason = "InfraVersionsPlaceFailed"
 )
