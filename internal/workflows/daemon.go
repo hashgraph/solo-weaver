@@ -28,11 +28,43 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 			ShortName:      "cn",
 			Namespace:      cn.Orbit,
 			KubeconfigPath: paths.DaemonCNKubeconfigPath,
-			PolicyRules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"operator.solo.hedera.com"},
-				Resources: []string{"networkupgradeexecutes"},
-				Verbs:     []string{"list", "watch"},
-			}},
+			PolicyRules: []rbacv1.PolicyRule{
+				{
+					// Watch NetworkUpgradeExecute CRs for the ReadyForProvisionerDaemon
+					// trigger and read them during the handshake.
+					APIGroups: []string{"operator.solo.hedera.com"},
+					Resources: []string{"networkupgradeexecutes"},
+					Verbs:     []string{"get", "list", "watch"},
+				},
+				{
+					// Write the handshake: the DaemonResult/ConfigCRsApplied conditions
+					// and the daemon-owned PendingInfraUpgrade/PendingNodeUpgrade phase
+					// transitions (status subresource, merge patch).
+					APIGroups: []string{"operator.solo.hedera.com"},
+					Resources: []string{"networkupgradeexecutes/status"},
+					Verbs:     []string{"patch"},
+				},
+				{
+					// Create the per-operation ConsensusConfig CRs from the upgrade
+					// package and read them back while waiting for Valid=True. Create +
+					// get only: the operator, not the daemon, reconciles and mutates them.
+					APIGroups: []string{"operator.solo.hedera.com"},
+					Resources: []string{
+						"log4j2configs",
+						"nodesettings",
+						"applicationproperties",
+						"applicationoverrideproperties",
+						"bootstrapproperties",
+						"nodepropertiesconfigs",
+						"throttlesconfigs",
+						"feeschedules",
+						"simplefeesschedules",
+						"apipermissionproperties",
+						"blocknodesconfigs",
+					},
+					Verbs: []string{"create", "get"},
+				},
+			},
 		})
 	}
 
