@@ -17,4 +17,9 @@ const (
 	// ReasonPendingInfraUpgrade is emitted when the daemon writes the durable
 	// PendingInfraUpgrade phase before an infra upgrade. Matches cn.PhasePendingInfraUpgrade.
 	ReasonPendingInfraUpgrade errx.Reason = "PendingInfraUpgrade"
+
+	// ReasonExecuteWorkflowRetrying is emitted (WARN) when a transient failure is
+	// left to retry via watch re-delivery, within the handoff deadline — so the
+	// operation does not silently stall (HIP-1496 "SHOULD emit a warning event").
+	ReasonExecuteWorkflowRetrying errx.Reason = "ExecuteWorkflowRetrying"
 )
