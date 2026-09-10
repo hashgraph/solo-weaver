@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 const (
@@ -325,6 +326,84 @@ func TestHandleExecute_EndToEnd_SetsConditionsEmitsAndPrunes(t *testing.T) {
 	// The aged log was pruned after the operation.
 	_, err := os.Stat(filepath.Join(dir, staleName))
 	assert.True(t, os.IsNotExist(err), "stale log should be pruned")
+}
+
+// newExecuteAndConfigFakeClient builds a fake dynamic client that knows the
+// NetworkUpgradeExecute GVK and every ConsensusConfig GVK. When autoValid is set, a
+// create reactor stamps status.conditions[Valid]=True on each config CR as it is
+// created — simulating the operator reconciling it — so wait-config-reconcile can
+// complete and the full execute handshake can be exercised end to end.
+func newExecuteAndConfigFakeClient(t *testing.T, autoValid bool, objects ...runtime.Object) *fake.FakeDynamicClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
+		&unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
+		&unstructured.UnstructuredList{})
+	listKinds := map[schema.GroupVersionResource]string{}
+	for _, e := range configFileKinds {
+		gvk := schema.GroupVersionKind{Group: configCRGroup, Version: configCRVersion, Kind: e.kind}
+		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(e.kind+"List"), &unstructured.UnstructuredList{})
+		listKinds[e.gvr] = e.kind + "List"
+	}
+	c := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, objects...)
+	if autoValid {
+		c.PrependReactor("create", "*", func(action ktesting.Action) (bool, runtime.Object, error) {
+			ca, ok := action.(ktesting.CreateAction)
+			if !ok {
+				return false, nil, nil
+			}
+			obj, ok := ca.GetObject().(*unstructured.Unstructured)
+			if !ok {
+				return false, nil, nil
+			}
+			// Mutate the object in place, then fall through so the tracker stores it
+			// with the Valid=True condition already set.
+			_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+				map[string]interface{}{"type": "Valid", "status": "True", "message": "reconciled"},
+			}, "status", "conditions")
+			return false, nil, nil
+		})
+	}
+	return c
+}
+
+func TestHandleExecute_EndToEnd_WithConfigPackage(t *testing.T) {
+	eventsDir := t.TempDir()
+	pkg := t.TempDir()
+	writePackage(t, pkg,
+		map[string]string{"throttles.json": "{}", "application.properties": "a=b"},
+		map[string]string{"log4j2.xml": "<Configuration/>"})
+
+	cr := newExecuteCR(testCRName, testOperationID, string(cn.PhaseReadyForProvisionerDaemon))
+	client := newExecuteAndConfigFakeClient(t, true, cr)
+	um := NewUpgradeMonitorWithClient(UpgradeMonitorConfig{
+		Namespace:        testNS,
+		NodeID:           "0",
+		UpgradeEventsDir: eventsDir,
+		UpgradeDir:       pkg,
+	}, client)
+
+	require.NoError(t, um.handleExecute(context.Background(), cr))
+
+	// The three config CRs were created with per-op names and reconciled to Valid.
+	for _, suffix := range []string{"throttles", "application-properties", "log4j2"} {
+		gvr := configFileKinds[map[string]string{
+			"throttles": "throttles.json", "application-properties": "application.properties", "log4j2": "log4j2.xml",
+		}[suffix]].gvr
+		name := strings.ToLower(testOperationID) + "-" + suffix
+		_, err := client.Resource(gvr).Namespace(testNS).Get(context.Background(), name, metav1.GetOptions{})
+		require.NoError(t, err, "config CR %s should exist", name)
+	}
+
+	// The full handshake landed: both conditions True and the daemon advanced the phase.
+	assert.Equal(t, "True", conditionStatus(t, client, testCRName, "ConfigCRsApplied"))
+	assert.Equal(t, "True", conditionStatus(t, client, testCRName, "DaemonResult"))
+	assert.Equal(t, string(cn.PhasePendingNodeUpgrade), phaseOf(t, client, testCRName))
 }
 
 func TestRunExecute_NilSafeWhenEventsDirUnset(t *testing.T) {
