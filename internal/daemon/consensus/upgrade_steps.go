@@ -101,20 +101,17 @@ func infraUpgradeRequired(ctx context.Context) (bool, error) {
 
 // stepCreateConfigCRs scans the upgrade package and creates the per-operation
 // ConsensusConfig CRs idempotently (AlreadyExists is success). Mirrors
-// UC.deployConfigCRs.
-//
-// TODO: implement via the shared config-CR manager; re-check the EnsureConfigCRs
-// flow first.
-func stepCreateConfigCRs(id string, timeout time.Duration) *automa.StepBuilder {
-	return timedStep(id, timeout, func(context.Context) error { return nil })
+// UC.deployConfigCRs's create half; the shared deployer records the created refs
+// for the wait step.
+func stepCreateConfigCRs(id string, timeout time.Duration, d *configCRDeployer) *automa.StepBuilder {
+	return timedStep(id, timeout, d.create)
 }
 
-// stepWaitConfigReconcile waits for every ConsensusConfig CR to reach Valid=True;
-// a CR that goes Valid=False is a terminal failure. Mirrors UC.waitForConfigCRsValid.
-//
-// TODO: implement.
-func stepWaitConfigReconcile(id string, timeout time.Duration) *automa.StepBuilder {
-	return timedStep(id, timeout, func(context.Context) error { return nil })
+// stepWaitConfigReconcile waits for every ConsensusConfig CR the create step
+// recorded to reach Valid=True; a CR that goes Valid=False is a terminal (fatal)
+// failure. Mirrors UC.waitForConfigCRsValid.
+func stepWaitConfigReconcile(id string, timeout time.Duration, d *configCRDeployer) *automa.StepBuilder {
+	return timedStep(id, timeout, d.waitValid)
 }
 
 // patchExecutePhase durably writes phase to the CR's status.phase subresource. Per

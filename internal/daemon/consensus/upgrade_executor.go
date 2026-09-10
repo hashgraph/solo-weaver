@@ -46,6 +46,13 @@ type upgradeExecutor struct {
 	// deadline bounds retries across all watch re-deliveries; measured from
 	// startTime. Exceeding it forces DaemonResult=False (reason DeadlineExceeded).
 	deadline time.Duration
+
+	// Config-CR inputs: the operationId (per-op CR names), the staged upgrade
+	// package root, the node scope (node<N>), and the owning Orbit.
+	operationID string
+	upgradePath string
+	scope       string
+	orbit       string
 }
 
 // run executes the workflow and reports the outcome per HIP-1496 Provisioner
@@ -97,6 +104,17 @@ func (x *upgradeExecutor) reportOutcome(ctx context.Context, workflowErr error) 
 // (DaemonResult / ConfigCRsApplied conditions) is reportOutcome, not a step, because
 // it reports the whole workflow's outcome.
 func (x *upgradeExecutor) buildWorkflow() *automa.WorkflowBuilder {
+	// One deployer instance is shared by the create and wait steps: create records
+	// the CR refs, wait consumes them.
+	cfgDeployer := &configCRDeployer{
+		client:       x.client,
+		namespace:    x.namespace,
+		upgradePath:  x.upgradePath,
+		scope:        x.scope,
+		orbit:        x.orbit,
+		operationID:  x.operationID,
+		pollInterval: configCRPollInterval,
+	}
 	return automa.NewWorkflowBuilder().
 		WithId(executeWorkflowID).
 		WithExecutionMode(automa.StopOnError).
@@ -105,8 +123,8 @@ func (x *upgradeExecutor) buildWorkflow() *automa.WorkflowBuilder {
 			stepInfraVersionsPlacement("infra-versions-placement", stepTimeoutInfraVersions),
 			stepRuntimeSafetyGate("runtime-safety-gate", stepTimeoutSafetyGate),
 			stepInfraUpgradeDetect("infra-upgrade-detect", stepTimeoutInfraDetect, x.client, x.namespace, x.crName, x.sink),
-			stepCreateConfigCRs("create-config-crs", stepTimeoutCreateConfigCRs),
-			stepWaitConfigReconcile("wait-config-reconcile", stepTimeoutWaitReconcile),
+			stepCreateConfigCRs("create-config-crs", stepTimeoutCreateConfigCRs, cfgDeployer),
+			stepWaitConfigReconcile("wait-config-reconcile", stepTimeoutWaitReconcile, cfgDeployer),
 		)
 }
 
@@ -198,13 +216,21 @@ func (um *UpgradeMonitor) runExecute(ctx context.Context, cr *unstructured.Unstr
 	}()
 
 	startTime, _, _ := unstructured.NestedString(cr.Object, "status", "startTime")
+	orbit, _, _ := unstructured.NestedString(cr.Object, "spec", "orbit")
+	if orbit == "" {
+		orbit = um.cfg.Namespace
+	}
 	x := &upgradeExecutor{
-		client:    um.client,
-		namespace: um.cfg.Namespace,
-		crName:    cr.GetName(),
-		sink:      sink,
-		startTime: startTime,
-		deadline:  um.cfg.handoffDeadline(),
+		client:      um.client,
+		namespace:   um.cfg.Namespace,
+		crName:      cr.GetName(),
+		sink:        sink,
+		startTime:   startTime,
+		deadline:    um.cfg.handoffDeadline(),
+		operationID: operationID,
+		upgradePath: um.cfg.UpgradeDir,
+		scope:       "node" + um.cfg.NodeID,
+		orbit:       orbit,
 	}
 	return x.run(ctx)
 }

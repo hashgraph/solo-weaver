@@ -119,12 +119,17 @@ func newUpgradeMonitorForTest(t *testing.T, eventsDir string, objects ...runtime
 		Namespace:        testNS,
 		NodeID:           testNodeID,
 		UpgradeEventsDir: eventsDir,
+		// Empty package dir: scanConfigFiles finds no data/config/, so the config-CR
+		// steps are a clean no-op and the end-to-end handshake still succeeds.
+		UpgradeDir: t.TempDir(),
 	}, newFakeDynamicClient(t, objects...))
 }
 
 func TestBuildWorkflow_StepOrder(t *testing.T) {
-	report := automa.RunWorkflow(context.Background(), (&upgradeExecutor{}).buildWorkflow())
-	require.True(t, report.IsSuccess(), "all stub steps should succeed: %v", report.Error)
+	// Empty package dir ⇒ the real config-CR steps are a clean no-op, so the whole
+	// workflow succeeds and its step order can be asserted.
+	report := automa.RunWorkflow(context.Background(), (&upgradeExecutor{upgradePath: t.TempDir()}).buildWorkflow())
+	require.True(t, report.IsSuccess(), "all steps should succeed with an empty package: %v", report.Error)
 
 	got := make([]string, len(report.StepReports))
 	for i, r := range report.StepReports {
