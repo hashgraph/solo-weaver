@@ -132,7 +132,7 @@ func patchExecutePhase(ctx context.Context, client dynamic.Interface, namespace,
 	_, err := client.Resource(networkUpgradeExecuteGVR).Namespace(namespace).
 		Patch(patchCtx, crName, types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 	if err != nil {
-		return errorx.ExternalError.Wrap(err, "patch %s status.phase to %s", crName, phase)
+		return ErrK8sAPI.Wrap(err, "patch %s status.phase to %s", crName, phase)
 	}
 	return nil
 }
