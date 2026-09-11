@@ -5,6 +5,7 @@
 package blocknode
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -12,8 +13,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/logx"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
 )
+
+// captureLogs swaps the global logger for a buffer and restores it. Global
+// state, so callers must not run in parallel (mirrors
+// internal/network/firewall/dns_test.go's helper of the same name).
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevLogger, prevLevel := *logx.As(), zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	logx.SetLogger(zerolog.New(&buf))
+	t.Cleanup(func() {
+		logx.SetLogger(prevLogger)
+		zerolog.SetGlobalLevel(prevLevel)
+	})
+	return &buf
+}
 
 // pollFakeDelegator is a thread-safe Delegator fake for the statusz poll-loop
 // tests. It scripts the digest returned by successive ReconcileShaperCheck calls
@@ -41,34 +62,34 @@ func (f *pollFakeDelegator) NetworkPolicySet(context.Context, string, []string) 
 func (f *pollFakeDelegator) TCAttach(context.Context, string) error                   { return nil }
 func (f *pollFakeDelegator) TCDetach(context.Context, string) error                   { return nil }
 
-func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (string, error) {
+func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string) (privexec.ReconcileShaperCheckResult, error) {
 	n := f.checkCalls.Add(1)
 	if f.blockUntilCancel {
 		<-ctx.Done()
-		return "", ctx.Err()
+		return privexec.ReconcileShaperCheckResult{}, ctx.Err()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastURL = url
 	if f.checkErr != nil {
-		return "", f.checkErr
+		return privexec.ReconcileShaperCheckResult{}, f.checkErr
 	}
 	if len(f.digests) == 0 {
-		return "", nil
+		return privexec.ReconcileShaperCheckResult{}, nil
 	}
 	idx := int(n - 1)
 	if idx >= len(f.digests) {
 		idx = len(f.digests) - 1 // hold the last scripted digest
 	}
-	return f.digests[idx], nil
+	return privexec.ReconcileShaperCheckResult{Digest: f.digests[idx]}, nil
 }
 
-func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) error {
+func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) (privexec.ReconcileShaperResult, error) {
 	f.applyCalls.Add(1)
 	f.mu.Lock()
 	f.lastURL = url
 	f.mu.Unlock()
-	return f.applyErr
+	return privexec.ReconcileShaperResult{}, f.applyErr
 }
 
 // newPollMonitor builds a monitor wired to a poll fake, bypassing the
@@ -427,6 +448,45 @@ func TestSuperviseResponsibility_RetriesFaultsWithoutPropagating(t *testing.T) {
 
 	require.GreaterOrEqual(t, calls.Load(), int32(3),
 		"faulting responsibility should be retried multiple times")
+}
+
+// TestLogStatuszAttentionNames_LogsOnePerNameWithPolicyAttribution verifies
+// the only place Unresolved/Stale/AAAAOnly ever reach an operator on the
+// daemon-scheduled path: the shaper package that computes them cannot log at
+// all (shaper.TestPackageEmitsNoLogs), so this is the sole surface.
+func TestLogStatuszAttentionNames_LogsOnePerNameWithPolicyAttribution(t *testing.T) {
+	buf := captureLogs(t)
+	m := &TrafficShaperMonitor{}
+
+	m.logStatuszAttentionNames("apply", "http://10.1.2.3:40983",
+		[]privexec.NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-publisher"}}},
+		[]privexec.NamedIssue{{Name: "stale.example.com", Policies: []string{"bn-restricted"}}},
+		[]privexec.NamedIssue{{Name: "v6only.example.com", Policies: []string{"bn-restricted"}}},
+	)
+
+	out := buf.String()
+	require.Contains(t, out, `"reason":"TrafficShaperStatuszNameUnresolved"`)
+	require.Contains(t, out, `"reason":"TrafficShaperStatuszNameStale"`)
+	require.Contains(t, out, `"reason":"TrafficShaperStatuszNameAAAAOnly"`)
+	require.Contains(t, out, `"name":"dead.example.com"`)
+	require.Contains(t, out, `"policies":["bn-publisher"]`)
+	require.Contains(t, out, `"name":"stale.example.com"`)
+	require.Contains(t, out, `"policies":["bn-restricted"]`)
+	require.Contains(t, out, `"name":"v6only.example.com"`)
+	require.Contains(t, out, `"phase":"apply"`)
+	require.Contains(t, out, `"statusz_url":"http://10.1.2.3:40983"`)
+}
+
+// TestLogStatuszAttentionNames_NoNamesLogsNothing verifies a clean tick (every
+// name resolved) logs nothing at all, so a converged node's daemon log stays
+// quiet.
+func TestLogStatuszAttentionNames_NoNamesLogsNothing(t *testing.T) {
+	buf := captureLogs(t)
+	m := &TrafficShaperMonitor{}
+
+	m.logStatuszAttentionNames("check", "http://10.1.2.3:40983", nil, nil, nil)
+
+	require.Empty(t, buf.String())
 }
 
 // TestSuperviseResponsibility_ResetsBackoffAndExitsOnCancel verifies the clean

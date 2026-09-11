@@ -793,19 +793,47 @@ field. Three details are load-bearing:
 
 **The shaper package logs nothing, deliberately.** Under `--output json` the root command
 routes log lines to stdout as NDJSON, and stdout is where the digest document goes and where
-`privexec.ReconcileShaperCheck` parses it back — so one log line on the `Check` path makes the
-daemon's decode fail and faults the poll loop into a retry-forever backoff, while the worker
-still exits 0. Names that produced no answer are returned instead, surfacing as `Unresolved` on
-`CheckResult` and `Result`, and the command layer prints them on the human-readable path only.
-`TestPackageEmitsNoLogs` holds the line.
+`privexec.ReconcileShaperCheck` parses it back — so one log line anywhere in this package makes
+the daemon's decode fail and faults the poll loop into a retry-forever backoff, while the worker
+still exits 0. Every name needing attention is returned instead, on three separate lists —
+`Unresolved`, `Stale`, `AAAAOnly`, each a `(name, policies)` pair — surfacing on `CheckResult`
+and `Result`. The command layer prints them on the human-readable path only; the daemon logs
+them from the `--output json` payload it already parses for both the `--check` probe and the
+privileged apply, which is the only way any of the three reach an operator on the
+daemon-scheduled path. `TestPackageEmitsNoLogs` holds the line.
 
-Failure is the inverse of the host firewall's, and weaker. A name that does not resolve
-contributes nothing and its endpoint is dropped for that tick — the worker still exits 0,
-because a non-zero exit faults the daemon's statusz responsibility and retries the same
-unresolvable name on a backoff rather than getting on with the other policies. There is no
-never-shrink rule and no last-known-good cache yet, so the peer is unclassified until a later
-poll succeeds: for a `--stamp` policy that costs prioritisation, and for `bn-restricted` it
-means a quarantined peer is not dropped for that window. A cache is a tracked follow-up.
+**A per-name last-known-good cache**, persisted at `network-weaver-workload-policy.statusz-dns.json`
+(same directory as `policy.WeaverNftPath`, suffix swapped the same way the host firewall derives
+its own cache path), makes failure symmetric with the firewall's: a name that fails to resolve on
+one tick keeps its last-known addresses rather than dropping to empty, for `addrGracePeriod` (30
+minutes, mirroring the firewall's). Per address, not per name — an address a fresh answer omits is
+left to decay on its own clock, while an address every answer still names never ages out, so a
+resolver returning a subset of records doesn't flap the set. The cache is also the attribution
+record: an operator can read it to see which address a name last produced, which the rendered nft
+set alone cannot say once several names share a set.
+
+Cache-write ordering matters here exactly the way #1121 found it does on the firewall side: only
+`Reconciler.Apply`, and only after `ApplySets` reports the kernel write committed, ever calls
+`persistDNSCache`. `--check` never writes — it runs unprivileged and cannot write `0600` files
+under `/etc/solo-provisioner/` — so it reads the cache for its last-known-good fallback but never
+updates it. A lock-held or failed apply leaves the on-disk cache exactly as it was loaded. A name
+statusz stops reporting is pruned from the cache the same tick, so it does not grow forever, and a
+name is case-folded before it is used as a cache key so a spelling change between polls does not
+lose the fallback.
+
+**AAAA-only names** are a separate, non-failure category: a name whose only records are AAAA
+resolves successfully but contributes no IPv4 address, so `resolveHosts` issues a second lookup
+(`LookupIPv6`) only when the first comes back empty, and reports the name on `AAAAOnly` rather
+than `Unresolved` or `Stale` — it is never cached and never falls back to a stale answer, because
+there was never an IPv4 address to remember.
+
+Failure for a genuinely unresolvable name (no fresh answer, no cache entry) is still the inverse
+of the host firewall's, and still weaker in one respect: the worker exits 0 regardless, because a
+non-zero exit faults the daemon's statusz responsibility and retries the same unresolvable name on
+a backoff rather than getting on with the other policies. What the cache changes is how often that
+inverse actually fires — a transient blip now produces a *stale* peer (last-known addresses,
+`bn-restricted` keeps dropping them) rather than an *unclassified* one, the same distinction the
+firewall's cache draws between `missing` and `stale`.
 
 **Listener ports are derived from the payload as it arrived, not the resolved copy.** A
 policy's `<name>_ports` set holds the block node's own listener, which has nothing to do with
@@ -815,17 +843,18 @@ from. Feeding the resolved copy to `desiredPorts` therefore empties the port set
 rule matching at all, for a reason unrelated to the port. `fetchEndpoints` hands the two passes
 different payloads on purpose.
 
-Resolution runs concurrently under a single two-second budget for the pass. A per-lookup
-deadline was measured against a shared one and makes no difference — the goroutines all start
-in the same instant, so each name gets the same budget either way. The bound is there because a
-reconcile tick is a scheduled unit of work; unlike the firewall's, it is **not** about holding
-the apply flock, since resolution finishes before `ApplySets` takes it.
+Resolution runs concurrently under a per-pass budget. A per-lookup deadline was measured against a
+shared one and makes no difference — the goroutines all start in the same instant, so each name
+gets the same budget either way. The bound is there because a reconcile tick is a scheduled unit
+of work; unlike the firewall's, it is **not** about holding the apply flock, since resolution
+finishes before `ApplySets` takes it.
 
-Two seconds is short against a default `resolv.conf`, where `timeout:5 attempts:2` lets one
-dropped query run to ten. A resolver in that state fails every name in the roster, not just the
-unlucky one, and with no cache to fall back on their peers go unclassified for the tick — for
-`bn-restricted` that means it stops dropping. Raising the budget trades that against a longer
-tick, and neither setting is right until there is a last-known-good answer to fall back on.
+The privileged apply path keeps the firewall's two-second budget, short against a default
+`resolv.conf` (`timeout:5 attempts:2` lets one dropped query run to ten) — but now a name that
+misses it falls back to the cache rather than going unclassified. The unprivileged `--check` path
+uses a longer, separate budget: it holds no lock, so nothing else is waiting on it the way the
+apply path's scheduled tick is, and paying the apply path's tight budget bought nothing but a
+spurious `unresolved`/`stale` report out of a resolver that was merely slow.
 
 A records only.
 

@@ -4,42 +4,97 @@ package shaper
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/joomcode/errorx"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 )
 
-// resolveTimeout bounds one resolution pass.
+// isDNSNotFound reports whether err is a definitive "no records for this
+// query" answer -- NXDOMAIN or NODATA, net.DNSError.IsNotFound -- as opposed
+// to a transient failure (timeout, temporary, a cancelled context). Only a
+// definitive answer is trustworthy evidence that a name has no A records;
+// anything else must be treated the same as any other resolution failure.
+func isDNSNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
+}
+
+// resolveTimeout bounds one resolution pass on the privileged apply path.
 //
 // The bound exists because a reconcile tick is a scheduled unit of work, NOT
 // because of lock contention: resolution finishes inside fetchEndpoints, well
-// before ApplySets takes the shared apply flock.
-//
-// Two seconds is short against a default resolv.conf, where `timeout:5
-// attempts:2` lets a single dropped query run to ten. Every name behind a
-// resolver in that state fails this budget, and with no last-known-good cache
-// their peers go unclassified for the tick -- which for a deny policy such as
-// bn-restricted means it stops dropping. Raising the budget trades that against
-// a longer tick; neither is right until the cache exists to fall back on.
+// before ApplySets takes the shared apply flock. Two seconds is short against a
+// default resolv.conf, where `timeout:5 attempts:2` lets a single dropped query
+// run to ten seconds -- but a name that misses this budget now has the cache
+// (see dnsCache) to fall back on, so a slow resolver costs a stale answer
+// rather than an unclassified peer.
 //
 // A var, not a const, only so tests can shrink it and avoid waiting out a real
 // deadline; production never reassigns it.
 var resolveTimeout = 2 * time.Second
 
-// Resolver looks up the IPv4 addresses of a host name. It is an interface so a
-// reconcile can be driven against fixed answers without touching the host's
-// resolver.
+// checkResolveTimeout bounds the unprivileged --check path's resolution pass,
+// separately from resolveTimeout. --check takes no lock at all, so nothing else
+// is waiting on it the way the apply path's scheduled tick is; there is no
+// reason to pay the apply path's tight budget here and manufacture a spurious
+// unresolved/stale report out of a resolver that is merely slow rather than
+// down. Longer, not unbounded: --check still runs once per poll tick, so it
+// must not hang indefinitely on a dead resolver.
+var checkResolveTimeout = 5 * time.Second
+
+// addrGracePeriod is how long one address stays in a name's cached entry after
+// answers stop mentioning it. It is an idle timer per address, not a TTL: an
+// address that appears in every answer never ages out, however long it has
+// been cached.
 //
-// Implementations must be safe for concurrent use: resolveHosts looks every name
-// up at once, so a roster of names costs one round trip of wall time rather
-// than N.
+// It exists because a resolver may answer with a subset of a name's records --
+// geo-steering, load balancers, truncation -- and taking each answer as the
+// whole truth makes the rendered set flap. For bn-restricted, a deny policy,
+// flapping a quarantined peer's membership means briefly un-quarantining it.
+//
+// Mirrors the host firewall's addrGracePeriod (internal/network/firewall/dns.go)
+// by value; kept as a separate constant here rather than shared, matching how
+// the two packages already duplicate their nft path constants (see
+// internal/network/policy/paths.go).
+const addrGracePeriod = 30 * time.Minute
+
+// dnsCacheSuffix names the on-disk statusz name-resolution cache file,
+// replacing policy.WeaverNftPath's own extension the same way the host
+// firewall derives its cache path from its config path (see
+// internal/network/firewall/dns.go dnsCachePathFor) -- so the cache can never
+// drift from the artifact it sits beside.
+const dnsCacheSuffix = ".statusz-dns.json"
+
+// dnsCachePathFor names the statusz DNS resolution cache for a given
+// policy-plane nft artifact path.
+func dnsCachePathFor(nftPath string) string {
+	return strings.TrimSuffix(nftPath, filepath.Ext(nftPath)) + dnsCacheSuffix
+}
+
+// Resolver looks up a host name's addresses. It is an interface so a reconcile
+// can be driven against fixed answers without touching the host's resolver.
+//
+// Implementations must be safe for concurrent use: resolveHosts looks every
+// name up at once, so a roster of names costs one round trip of wall time
+// rather than N.
 type Resolver interface {
+	// LookupIPv4 looks up a name's A records.
 	LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error)
+	// LookupIPv6 looks up a name's AAAA records. It exists solely to tell "this
+	// name has no A records because it is AAAA-only" (a structural fact, never
+	// cached or retried) from "this name did not resolve at all" (a failure the
+	// cache falls back for) -- resolveHosts only calls it when LookupIPv4 gave a
+	// definitive "no A records" answer, never on a transient failure.
+	LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
 // netResolver is the production Resolver, backed by the standard library.
@@ -48,23 +103,295 @@ type netResolver struct{ r *net.Resolver }
 // NewNetResolver returns the production Resolver.
 func NewNetResolver() Resolver { return &netResolver{r: net.DefaultResolver} }
 
+// LookupIPv4 and LookupIPv6 return the resolver's error unwrapped, on purpose:
+// resolveHosts inspects it via errors.As for *net.DNSError.IsNotFound to tell
+// a definitive "no such record" from a transient failure (timeout, temporary,
+// a cancelled context), and errorx.Wrap does not preserve that chain for
+// errors.As to see through. Neither error ever escapes this package as a
+// return value -- both are folded into hostResolution's plain string/bool
+// fields -- so there is no boundary here that needs errorx decoration.
 func (n *netResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
-	addrs, err := n.r.LookupNetIP(ctx, "ip4", host)
-	if err != nil {
-		return nil, errorx.ExternalError.Wrap(err, "failed to resolve %s", host)
-	}
-	return addrs, nil
+	return n.r.LookupNetIP(ctx, "ip4", host)
 }
 
-// hostResolution is the outcome of one pass over the names in a statusz payload.
+func (n *netResolver) LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error) {
+	return n.r.LookupNetIP(ctx, "ip6", host)
+}
+
+// dnsCacheEntry is one name's known addresses, each carrying the last time an
+// answer vouched for it. Per address rather than per answer, because the two
+// things the cache has to survive are different: a name failing to resolve at
+// all, and a name resolving to less than it did before. A single list plus a
+// single timestamp can only express the first.
+type dnsCacheEntry struct {
+	Addresses map[string]time.Time `json:"addresses"`
+}
+
+// mergeAnswer folds a fresh answer in: addresses it names are vouched for as of
+// now, addresses it omits keep the timestamp they had and are left to decay.
+func (e *dnsCacheEntry) mergeAnswer(addrs []netip.Addr, now time.Time) {
+	if e.Addresses == nil {
+		e.Addresses = make(map[string]time.Time, len(addrs))
+	}
+	for _, a := range addrs {
+		a = a.Unmap()
+		if !a.Is4() {
+			continue
+		}
+		e.Addresses[a.String()] = now
+	}
+}
+
+// touch vouches for every known address without a fresh answer, for a name the
+// resolver did not answer at all.
+//
+// No answer is not evidence an address is gone. Letting the clock run through
+// an outage would mean the first partial answer after it recovers finds
+// everything aged out and prunes it in one pass -- the flap this mechanism
+// exists to prevent, relocated to the moment of recovery.
+func (e *dnsCacheEntry) touch(now time.Time) {
+	for a := range e.Addresses {
+		e.Addresses[a] = now
+	}
+}
+
+// decay drops addresses no answer has vouched for within addrGracePeriod.
+func (e *dnsCacheEntry) decay(now time.Time) {
+	for a, seen := range e.Addresses {
+		if now.Sub(seen) >= addrGracePeriod {
+			delete(e.Addresses, a)
+		}
+	}
+}
+
+// elements renders the entry as the same bare, sorted, deduped address form
+// addressesFor produces from a fresh answer, so a cache-served name and a
+// freshly resolved one feed expandFQDNs identically.
+func (e dnsCacheEntry) elements() []string {
+	addrs := make([]netip.Addr, 0, len(e.Addresses))
+	for s := range e.Addresses {
+		if a, err := netip.ParseAddr(s); err == nil {
+			addrs = append(addrs, a)
+		}
+	}
+	return addressesFor(addrs)
+}
+
+// dnsCache maps a normalised (lower-cased) FQDN to its last-known addresses.
+//
+// It exists for two jobs at once: last-known-good fallback when a name fails
+// to resolve, and attribution -- an operator reading this file can see which
+// address a name last produced, which the rendered nft set membership alone
+// cannot say once several names share a set.
+//
+// It is never the source of truth: statusz is. A missing or unreadable file
+// degrades to "no last-known addresses" rather than failing a tick. It cannot
+// be written from --check: that path runs unprivileged and cannot write 0600
+// files under /etc/solo-provisioner/, so only Reconciler.Apply ever calls
+// save, and only after the kernel write the cache describes has already
+// succeeded (see Reconciler.persistDNSCache).
+type dnsCache map[string]dnsCacheEntry
+
+// loadDNSCache reads the cache, returning an empty one for any problem at all
+// -- a cache that cannot be read is indistinguishable from a cold start, and
+// neither is a reason to fail a tick. Silent on error rather than warning,
+// unlike the host firewall's equivalent: this package must never log (see
+// TestPackageEmitsNoLogs), on the Check path or the Apply path alike.
+func loadDNSCache(path string) dnsCache {
+	if path == "" {
+		return dnsCache{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return dnsCache{}
+	}
+	var c dnsCache
+	if err := json.Unmarshal(data, &c); err != nil || c == nil {
+		return dnsCache{}
+	}
+	return c
+}
+
+// save writes the cache atomically, swallowing any failure the same way
+// loadDNSCache swallows a read failure: by the time save is called the kernel
+// write this cache describes has already committed (see
+// Reconciler.persistDNSCache), and there is no log line this package is
+// allowed to emit to report the fallback file failed.
+//
+// 0o644, not 0o600: unlike the host firewall's cache, this one has to be
+// READ by the unprivileged --check path, which is the whole reason Check and
+// Apply agree on a digest during an outage. A 0o600 file owned by root would
+// make --check's loadDNSCache silently see an empty cache forever (permission
+// errors degrade the same as "missing" -- see loadDNSCache), so --check would
+// report a peer unresolved while Apply, running as root, correctly served it
+// stale from the very same file. The content is non-sensitive: names and
+// addresses the block node already reports over statusz.
+func (c dnsCache) save(path string) {
+	if path == "" {
+		return
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = fsx.AtomicWriteFile(path, append(data, '\n'), 0o644)
+}
+
+// hostResolution is the outcome of one pass over the names in a statusz
+// payload.
 type hostResolution struct {
-	// byName holds an entry for every name asked about. A name that produced no
-	// answer maps to an empty slice — present, contributing nothing — so the
-	// expansion can tell "resolved to nothing" from "never asked".
+	// byName holds an entry for every name asked about, keyed by its ORIGINAL
+	// spelling (not case-folded), because expandFQDNs looks up
+	// conn.Remote.Address verbatim. A name that produced no addresses -- never
+	// resolved, AAAA-only, or resolved-but-not-cached -- maps to an empty
+	// slice: present, contributing nothing, so expandFQDNs can tell "resolved
+	// to nothing" from "never asked".
 	byName map[string][]string
-	// unresolved names produced no answer this pass, in the order they were
-	// discovered.
+	// unresolved names produced no fresh answer and had no cached fallback, in
+	// discovery order.
 	unresolved []string
+	// stale names produced no fresh answer but were served their last-known
+	// addresses from the cache, in discovery order.
+	stale []string
+	// aaaaOnly names resolved, but only to AAAA records. This is a structural
+	// fact about the name, not a resolution failure: it is never cached and
+	// never falls back to a last-known-good answer, because there has never
+	// been an IPv4 address to remember.
+	aaaaOnly []string
+	// cache is what the on-disk cache should become if this pass's apply
+	// commits. Written only by Reconciler.persistDNSCache, past the point
+	// nothing can undo the kernel write it describes.
+	cache dnsCache
+	// cacheDirty is true when cache differs from what was loaded from disk.
+	cacheDirty bool
+}
+
+// resolveHosts resolves every name concurrently against the resolver,
+// preferring a fresh answer and falling back to the cache per name.
+//
+// Per name, not per pass: one name being unreachable must not freeze the
+// answers for the others, and one name rotating must not resurrect another
+// name's stale address. cache is mutated in place (merged answers, touches,
+// decays, prunes) and doubles as the return value's cache field.
+func resolveHosts(ctx context.Context, resolver Resolver, names []string, cache dnsCache, budget time.Duration) *hostResolution {
+	res := &hostResolution{byName: make(map[string][]string, len(names)), cache: cache}
+
+	// Prune names statusz no longer reports, so the cache does not grow
+	// forever. This runs even when names is empty: a roster that drops to
+	// nothing must still empty the cache, not leave it to decay one address at
+	// a time.
+	wanted := make(map[string]bool, len(names))
+	for _, n := range names {
+		wanted[strings.ToLower(n)] = true
+	}
+	for key := range cache {
+		if !wanted[key] {
+			delete(cache, key)
+			res.cacheDirty = true
+		}
+	}
+	if len(names) == 0 {
+		return res
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	// One goroutine per name, each attempting v4 first and only spending a
+	// second lookup on v6 when v4 gave a DEFINITIVE "no A records" answer --
+	// either it resolved to zero addresses with no error, or the error is a
+	// confirmed NXDOMAIN/NODATA (net.DNSError.IsNotFound). A transient v4
+	// failure (timeout, temporary, a cancelled context) is not evidence the
+	// name lacks A records, so it must not trigger the v6 check at all: doing
+	// so would let a resolver blip on the v4 query get misread as AAAA-only
+	// (permanent, uncached) whenever the name happens to also have an AAAA
+	// record, masking what should fall back to the cache or report unresolved.
+	answers := make([]struct {
+		v4    []netip.Addr
+		v4err error
+		v6    []netip.Addr
+		v6err error
+	}, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			answers[i].v4, answers[i].v4err = resolver.LookupIPv4(ctx, name)
+			definitiveNoV4 := (answers[i].v4err == nil && len(answers[i].v4) == 0) ||
+				isDNSNotFound(answers[i].v4err)
+			if definitiveNoV4 {
+				answers[i].v6, answers[i].v6err = resolver.LookupIPv6(ctx, name)
+			}
+		}(i, name)
+	}
+	wg.Wait()
+
+	// One timestamp for the whole pass, so names resolved concurrently decay on
+	// the same clock.
+	now := time.Now().UTC()
+
+	// Folded back in list order, not completion order, so the daemon's log and
+	// the CLI's text output name things in the order statusz reported them.
+	for i, name := range names {
+		key := strings.ToLower(name)
+		if answers[i].v4err == nil && len(answers[i].v4) > 0 {
+			entry := cache[key]
+			entry.mergeAnswer(answers[i].v4, now)
+			entry.decay(now)
+			cache[key] = entry
+			res.byName[name] = entry.elements()
+			res.cacheDirty = true
+			continue
+		}
+		if answers[i].v6err == nil && len(answers[i].v6) > 0 {
+			res.byName[name] = nil
+			res.aaaaOnly = append(res.aaaaOnly, name)
+			continue
+		}
+		if entry, ok := cache[key]; ok && len(entry.Addresses) > 0 {
+			entry.touch(now)
+			cache[key] = entry
+			res.byName[name] = entry.elements()
+			res.stale = append(res.stale, name)
+			res.cacheDirty = true
+			continue
+		}
+		res.byName[name] = nil
+		res.unresolved = append(res.unresolved, name)
+	}
+	return res
+}
+
+// addressesFor turns a resolver answer into sorted, deduplicated bare IPv4
+// address strings.
+//
+// Bare addresses rather than /32s: the endpoints they expand into are read back
+// by hostCIDR, which applies the mask for the plain-CIDR sets, and by
+// net.JoinHostPort, which requires an unmasked host for the compound set. A mask
+// applied here would break the compound path.
+//
+// Sorting is not cosmetic. DNS rotates record order between answers, so an
+// unsorted expansion makes every poll look like a membership change and rewrites
+// the sets — and the persisted artifact — for nothing.
+func addressesFor(addrs []netip.Addr) []string {
+	uniq := make([]netip.Addr, 0, len(addrs))
+	seen := map[netip.Addr]bool{}
+	for _, a := range addrs {
+		a = a.Unmap()
+		if !a.Is4() || seen[a] {
+			continue
+		}
+		seen[a] = true
+		uniq = append(uniq, a)
+	}
+	sort.Slice(uniq, func(i, j int) bool { return uniq[i].Compare(uniq[j]) < 0 })
+
+	out := make([]string, 0, len(uniq))
+	for _, a := range uniq {
+		out = append(out, a.String())
+	}
+	return out
 }
 
 // isRemoteFQDN reports whether a statusz remote address is a domain name this
@@ -112,86 +439,6 @@ func remoteFQDNs(datas ...NetworkData) []string {
 	return out
 }
 
-// resolveHosts resolves every name concurrently, each under its own deadline.
-//
-// Concurrent so a roster costs one round trip of wall time rather than N:
-// sequentially, a handful of names behind a slow resolver would take N times as
-// long and, under any fixed budget, report names after the first few as
-// unresolvable. Each goroutine owns one slot, so no locking is needed.
-//
-// One goroutine per name, with no cap. The rosters this reads are peer lists a
-// block node reports, not arbitrary input, so the fan-out is small; a cap would
-// be the thing to add if that ever stops being true.
-func resolveHosts(ctx context.Context, resolver Resolver, names []string) *hostResolution {
-	res := &hostResolution{byName: make(map[string][]string, len(names))}
-	if len(names) == 0 {
-		return res
-	}
-
-	// One deadline for the pass. Per-lookup deadlines were measured against this
-	// and make no difference: the goroutines all start in the same instant, so
-	// each name gets the same budget either way.
-	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
-	defer cancel()
-
-	answers := make([]struct {
-		addrs []netip.Addr
-		err   error
-	}, len(names))
-	var wg sync.WaitGroup
-	for i, name := range names {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			answers[i].addrs, answers[i].err = resolver.LookupIPv4(ctx, name)
-		}()
-	}
-	wg.Wait()
-
-	// Folded back in discovery order, not completion order, so logs name things
-	// in the order statusz reported them.
-	for i, name := range names {
-		if answers[i].err == nil && len(answers[i].addrs) > 0 {
-			res.byName[name] = addressesFor(answers[i].addrs)
-			continue
-		}
-		res.byName[name] = nil
-		res.unresolved = append(res.unresolved, name)
-	}
-	return res
-}
-
-// addressesFor turns a resolver answer into sorted, deduplicated bare IPv4
-// address strings.
-//
-// Bare addresses rather than /32s: the endpoints they expand into are read back
-// by hostCIDR, which applies the mask for the plain-CIDR sets, and by
-// net.JoinHostPort, which requires an unmasked host for the compound set. A mask
-// applied here would break the compound path.
-//
-// Sorting is not cosmetic. DNS rotates record order between answers, so an
-// unsorted expansion makes every poll look like a membership change and rewrites
-// the sets — and the persisted artifact — for nothing.
-func addressesFor(addrs []netip.Addr) []string {
-	uniq := make([]netip.Addr, 0, len(addrs))
-	seen := map[netip.Addr]bool{}
-	for _, a := range addrs {
-		a = a.Unmap()
-		if !a.Is4() || seen[a] {
-			continue
-		}
-		seen[a] = true
-		uniq = append(uniq, a)
-	}
-	sort.Slice(uniq, func(i, j int) bool { return uniq[i].Compare(uniq[j]) < 0 })
-
-	out := make([]string, 0, len(uniq))
-	for _, a := range uniq {
-		out = append(out, a.String())
-	}
-	return out
-}
-
 // expandFQDNs returns a copy of nd with every endpoint whose remote address is a
 // name replaced by one endpoint per address it resolved to, leaving the receiver
 // untouched. An endpoint whose name resolved to nothing is dropped.
@@ -228,30 +475,22 @@ func expandFQDNs(nd NetworkData, byName map[string][]string) NetworkData {
 }
 
 // resolveRemotes replaces every domain name in the two payloads with the
-// addresses it resolves to, returning resolved copies plus the names that
-// produced no answer.
+// addresses it resolves to (fresh, or last-known-good from cache), returning
+// resolved copies plus the pass's hostResolution.
 //
 // Both payloads go through one pass so a name reported on both the inbound and
 // outbound rosters costs a single lookup and cannot resolve two different ways
 // within a tick.
 //
-// It never fails. A name that does not resolve contributes nothing and its
-// endpoint is dropped, because the alternative — returning an error — exits the
-// worker non-zero, which faults the daemon's poll loop and retries the same
-// unresolvable name on a backoff forever.
-//
-// The unresolved names are RETURNED rather than logged. Under --output json the
-// root command routes every log line to stdout as NDJSON, which is the same
-// stream the digest is written to and the daemon parses — so a log line here
-// makes the daemon's json.Unmarshal fail and faults the poll loop just as surely
-// as a non-zero exit would. The caller folds them into its result instead, where
-// they ride the one JSON document the contract allows.
-func (r *Reconciler) resolveRemotes(ctx context.Context, inbound, outbound NetworkData) (NetworkData, NetworkData, []string) {
+// It never fails. A name that does not resolve and has no cached fallback
+// contributes nothing and its endpoint is dropped, because the alternative --
+// returning an error -- exits the worker non-zero, which faults the daemon's
+// poll loop and retries the same unresolvable name on a backoff forever.
+func (r *Reconciler) resolveRemotes(ctx context.Context, inbound, outbound NetworkData, cache dnsCache, budget time.Duration) (NetworkData, NetworkData, *hostResolution) {
 	names := remoteFQDNs(inbound, outbound)
+	res := resolveHosts(ctx, r.resolver, names, cache, budget)
 	if len(names) == 0 {
-		return inbound, outbound, nil
+		return inbound, outbound, res
 	}
-
-	res := resolveHosts(ctx, r.resolver, names)
-	return expandFQDNs(inbound, res.byName), expandFQDNs(outbound, res.byName), res.unresolved
+	return expandFQDNs(inbound, res.byName), expandFQDNs(outbound, res.byName), res
 }

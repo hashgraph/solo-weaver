@@ -6,6 +6,7 @@ package shaper
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"sync"
 	"testing"
@@ -25,25 +26,51 @@ import (
 type fakeResolver struct {
 	mu      sync.Mutex
 	answers map[string][]string
-	calls   []string
+	// answersV6 seeds AAAA-only names: present here (with a non-empty slice)
+	// and absent from answers means "resolves, but only to AAAA".
+	answersV6 map[string][]string
+	calls     []string
 	// hang names block until their own context is cancelled, standing in for a
 	// resolver that never answers (a dropped query under the default
 	// resolv.conf spends longer than resolveTimeout on one name).
 	hang map[string]bool
+	// transient names return a non-IsNotFound v4 error (a resolver timeout or
+	// SERVFAIL, not NXDOMAIN/NODATA), so a test can assert this is never
+	// treated as evidence of "no A records" even when answersV6 has an entry
+	// for the same name.
+	transient map[string]bool
 }
 
 func (f *fakeResolver) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, host)
 	hang := f.hang[host]
+	transient := f.transient[host]
 	f.mu.Unlock()
 
 	if hang {
 		<-ctx.Done()
-		return nil, errorx.ExternalError.New("timed out: %s", host)
+		return nil, ctx.Err()
+	}
+	if transient {
+		return nil, &net.DNSError{Err: "server misbehaving", Name: host, IsTemporary: true}
 	}
 
 	raw, ok := f.answers[host]
+	if !ok || len(raw) == 0 {
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	addrs := make([]netip.Addr, 0, len(raw))
+	for _, s := range raw {
+		addrs = append(addrs, netip.MustParseAddr(s))
+	}
+	return addrs, nil
+}
+
+func (f *fakeResolver) LookupIPv6(_ context.Context, host string) ([]netip.Addr, error) {
+	f.mu.Lock()
+	raw, ok := f.answersV6[host]
+	f.mu.Unlock()
 	if !ok || len(raw) == 0 {
 		return nil, errorx.ExternalError.New("no such host: %s", host)
 	}
@@ -204,7 +231,7 @@ func TestResolveHosts_ReportsUnresolvedInDiscoveryOrder(t *testing.T) {
 	}}
 
 	res := resolveHosts(context.Background(), r,
-		[]string{"first.example.com", "ok.example.com", "second.example.com"})
+		[]string{"first.example.com", "ok.example.com", "second.example.com"}, dnsCache{}, resolveTimeout)
 
 	require.Equal(t, []string{"10.1.0.1"}, res.byName["ok.example.com"])
 	require.Nil(t, res.byName["first.example.com"])
@@ -216,9 +243,105 @@ func TestResolveHosts_ReportsUnresolvedInDiscoveryOrder(t *testing.T) {
 
 func TestResolveHosts_NoNamesDoesNotTouchTheResolver(t *testing.T) {
 	r := &fakeResolver{}
-	res := resolveHosts(context.Background(), r, nil)
+	res := resolveHosts(context.Background(), r, nil, dnsCache{}, resolveTimeout)
 	require.Empty(t, res.byName)
 	require.Empty(t, r.calls)
+}
+
+func TestResolveHosts_AAAAOnlyContributesNothingButIsNotUnresolved(t *testing.T) {
+	r := &fakeResolver{
+		answersV6: map[string][]string{"v6only.example.com": {"2001:db8::1"}},
+	}
+
+	res := resolveHosts(context.Background(), r, []string{"v6only.example.com"}, dnsCache{}, resolveTimeout)
+
+	require.Nil(t, res.byName["v6only.example.com"])
+	require.Equal(t, []string{"v6only.example.com"}, res.aaaaOnly)
+	require.Empty(t, res.unresolved)
+	require.False(t, res.cacheDirty, "an AAAA-only name is never cached")
+}
+
+// TestResolveHosts_TransientIPv4FailureDoesNotMaskAsAAAAOnly is the
+// regression test for a Copilot review finding on PR #1148: a v4 lookup that
+// fails transiently (timeout, SERVFAIL -- not NXDOMAIN/NODATA) must not be
+// classified AAAA-only just because the name happens to also have an AAAA
+// record. AAAAOnly is a permanent, never-cached, never-retried classification,
+// so misreporting a blip as AAAA-only would silently and permanently drop a
+// dual-stack peer's IPv4 membership instead of falling back to the cache.
+func TestResolveHosts_TransientIPv4FailureDoesNotMaskAsAAAAOnly(t *testing.T) {
+	r := &fakeResolver{
+		transient: map[string]bool{"dualstack.example.com": true},
+		answersV6: map[string][]string{"dualstack.example.com": {"2001:db8::1"}},
+	}
+	cache := dnsCache{"dualstack.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
+
+	res := resolveHosts(context.Background(), r, []string{"dualstack.example.com"}, cache, resolveTimeout)
+
+	require.Empty(t, res.aaaaOnly, "a transient v4 failure must never be read as AAAA-only")
+	require.Equal(t, []string{"10.5.5.5"}, res.byName["dualstack.example.com"],
+		"must fall back to the cache instead")
+	require.Equal(t, []string{"dualstack.example.com"}, res.stale)
+}
+
+// TestResolveHosts_TransientIPv4FailureWithNoCacheIsUnresolvedNotAAAAOnly is
+// the no-cache counterpart: with nothing to fall back to, a transient v4
+// failure must report unresolved, never AAAA-only, even when v6 succeeds.
+func TestResolveHosts_TransientIPv4FailureWithNoCacheIsUnresolvedNotAAAAOnly(t *testing.T) {
+	r := &fakeResolver{
+		transient: map[string]bool{"dualstack.example.com": true},
+		answersV6: map[string][]string{"dualstack.example.com": {"2001:db8::1"}},
+	}
+
+	res := resolveHosts(context.Background(), r, []string{"dualstack.example.com"}, dnsCache{}, resolveTimeout)
+
+	require.Empty(t, res.aaaaOnly)
+	require.Equal(t, []string{"dualstack.example.com"}, res.unresolved)
+}
+
+// TestIsDNSNotFound pins the classification isDNSNotFound relies on: only a
+// real *net.DNSError with IsNotFound set counts, not a generic error, a
+// timeout/temporary DNSError, or a bare context cancellation.
+func TestIsDNSNotFound(t *testing.T) {
+	require.True(t, isDNSNotFound(&net.DNSError{IsNotFound: true}))
+	require.False(t, isDNSNotFound(&net.DNSError{IsTimeout: true}))
+	require.False(t, isDNSNotFound(&net.DNSError{IsTemporary: true}))
+	require.False(t, isDNSNotFound(context.DeadlineExceeded))
+	require.False(t, isDNSNotFound(errorx.ExternalError.New("boom")))
+	require.False(t, isDNSNotFound(nil))
+}
+
+func TestResolveHosts_FallsBackToCacheOnFailure(t *testing.T) {
+	r := &fakeResolver{answers: map[string][]string{}}
+	cache := dnsCache{"stale.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
+
+	res := resolveHosts(context.Background(), r, []string{"stale.example.com"}, cache, resolveTimeout)
+
+	require.Equal(t, []string{"10.5.5.5"}, res.byName["stale.example.com"])
+	require.Equal(t, []string{"stale.example.com"}, res.stale)
+	require.Empty(t, res.unresolved)
+	require.True(t, res.cacheDirty, "touch re-stamps the cached address")
+}
+
+func TestResolveHosts_PrunesNamesNoLongerReported(t *testing.T) {
+	r := &fakeResolver{}
+	cache := dnsCache{"gone.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
+
+	res := resolveHosts(context.Background(), r, nil, cache, resolveTimeout)
+
+	require.Empty(t, cache, "a name absent from this tick's roster is pruned from the cache")
+	require.True(t, res.cacheDirty)
+}
+
+func TestResolveHosts_IsCaseInsensitiveAsACacheKey(t *testing.T) {
+	r := &fakeResolver{answers: map[string][]string{}}
+	cache := dnsCache{"peer.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
+
+	// A spelling change between polls (statusz re-cases the name) must still hit
+	// the same cache entry.
+	res := resolveHosts(context.Background(), r, []string{"Peer.Example.Com"}, cache, resolveTimeout)
+
+	require.Equal(t, []string{"10.5.5.5"}, res.byName["Peer.Example.Com"])
+	require.Equal(t, []string{"Peer.Example.Com"}, res.stale)
 }
 
 func TestResolveRemotes_ResolvesBothPayloadsInOnePass(t *testing.T) {
@@ -229,12 +352,13 @@ func TestResolveRemotes_ResolvesBothPayloadsInOnePass(t *testing.T) {
 
 	// The same name on both rosters must cost one lookup and cannot resolve two
 	// different ways within a tick.
-	inbound, outbound, unresolved := rec.resolveRemotes(context.Background(),
+	inbound, outbound, res := rec.resolveRemotes(context.Background(),
 		nd(conn("publisher", "peer.example.com", "*")),
-		nd(conn("partner", "peer.example.com", "50980")))
+		nd(conn("partner", "peer.example.com", "50980")),
+		dnsCache{}, resolveTimeout)
 
 	require.Equal(t, []string{"peer.example.com"}, r.calls)
-	require.Empty(t, unresolved)
+	require.Empty(t, res.unresolved)
 	require.Equal(t, nd(
 		conn("publisher", "10.1.0.1", "*"),
 		conn("publisher", "10.1.0.2", "*"),
@@ -251,23 +375,25 @@ func TestResolveRemotes_UnresolvableNameDoesNotFail(t *testing.T) {
 
 	// Returning an error here would exit the worker non-zero, which faults the
 	// daemon's poll loop and retries the same name on a backoff forever.
-	inbound, outbound, unresolved := rec.resolveRemotes(context.Background(),
+	inbound, outbound, res := rec.resolveRemotes(context.Background(),
 		nd(conn("publisher", "gone.example.com", "*"), conn("partner", "10.2.0.1", "*")),
-		nd())
+		nd(), dnsCache{}, resolveTimeout)
 
 	require.Equal(t, nd(conn("partner", "10.2.0.1", "*")), inbound)
 	require.Empty(t, outbound.ActiveEndpoints)
 	// Returned, never logged: under --output json a log line lands on stdout and
 	// corrupts the digest document the daemon parses.
-	require.Equal(t, []string{"gone.example.com"}, unresolved)
+	require.Equal(t, []string{"gone.example.com"}, res.unresolved)
 }
 
-// shrinkResolveTimeout keeps the hang cases from waiting out a real 2s deadline.
+// shrinkResolveTimeout keeps the hang cases from waiting out a real deadline,
+// on both the apply-path and check-path budgets.
 func shrinkResolveTimeout(t *testing.T) {
 	t.Helper()
-	prev := resolveTimeout
+	prevApply, prevCheck := resolveTimeout, checkResolveTimeout
 	resolveTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { resolveTimeout = prev })
+	checkResolveTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { resolveTimeout, checkResolveTimeout = prevApply, prevCheck })
 }
 
 func TestResolveHosts_OneHangingNameDoesNotFailTheOthers(t *testing.T) {
@@ -284,7 +410,7 @@ func TestResolveHosts_OneHangingNameDoesNotFailTheOthers(t *testing.T) {
 	// one unanswered name takes down the names beside it. Each lookup owns its
 	// own deadline instead.
 	res := resolveHosts(context.Background(), r,
-		[]string{"slow.example.com", "fast.example.com"})
+		[]string{"slow.example.com", "fast.example.com"}, dnsCache{}, resolveTimeout)
 
 	require.Equal(t, []string{"10.1.0.1"}, res.byName["fast.example.com"],
 		"a name that answered must survive a sibling that never did")
@@ -299,15 +425,15 @@ func TestResolveRemotes_UnresolvedPeerDoesNotDisturbOtherPolicies(t *testing.T) 
 	}
 	rec := &Reconciler{resolver: r}
 
-	inbound, _, unresolved := rec.resolveRemotes(context.Background(),
+	inbound, _, res := rec.resolveRemotes(context.Background(),
 		nd(
 			conn("publisher", "dead.example.com", "*"),
 			conn("partner", "ok.example.com", "*"),
 			conn("restricted", "10.2.0.1", "*"),
 		),
-		nd())
+		nd(), dnsCache{}, resolveTimeout)
 
-	require.Equal(t, []string{"dead.example.com"}, unresolved)
+	require.Equal(t, []string{"dead.example.com"}, res.unresolved)
 	require.Equal(t, nd(
 		conn("partner", "10.1.0.1", "*"),
 		conn("restricted", "10.2.0.1", "*"),
@@ -332,7 +458,7 @@ func TestCheck_UnresolvedPeerKeepsItsPolicyListenerPort(t *testing.T) {
 	res, err := rec.Check(context.Background())
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"dead.example.com"}, res.Unresolved)
+	require.Equal(t, []NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-publisher"}}}, res.Unresolved)
 	require.Empty(t, res.Desired["bn-publisher"],
 		"the peer itself cannot be classified — that part is expected")
 	require.Equal(t, []string{"40840"}, res.DesiredPorts["bn-publisher"],

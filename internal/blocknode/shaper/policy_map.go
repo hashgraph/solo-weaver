@@ -271,6 +271,61 @@ func desiredElements(b categoryBinding, endpoints []string) ([]string, error) {
 	return out, nil
 }
 
+// NamedIssue names one statusz FQDN that needs an operator's attention (never
+// resolved, served stale from cache, or AAAA-only), together with the policy
+// set(s) whose membership its endpoints would have fed. Plural because the
+// same name could in principle appear under two categories, though the BN's
+// contract makes that a formality in practice.
+type NamedIssue struct {
+	Name     string   `json:"name"`
+	Policies []string `json:"policies"`
+}
+
+// attributeNames maps each name in names to the distinct policy set(s) its
+// endpoints would have fed, by scanning the pre-resolution payloads, and
+// returns one NamedIssue per name in names' own order. A name absent from both
+// payloads (unreachable in practice: resolveHosts only ever reports a name it
+// read from these same payloads) gets an empty Policies list rather than being
+// dropped, so an attribution bug surfaces as an empty list, not a silently
+// shrunk report.
+func attributeNames(names []string, inbound, outbound NetworkData) []NamedIssue {
+	if len(names) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(names))
+	policiesFor := make(map[string]map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+		policiesFor[n] = map[string]bool{}
+	}
+	scan := func(dir Direction, data NetworkData) {
+		for _, conn := range data.ActiveEndpoints {
+			addr := conn.Remote.Address
+			if !want[addr] {
+				continue
+			}
+			b, ok := categoryBindings[bindingKey{dir: dir, cat: Category(conn.Category)}]
+			if !ok {
+				continue
+			}
+			policiesFor[addr][b.policyName] = true
+		}
+	}
+	scan(Inbound, inbound)
+	scan(Outbound, outbound)
+
+	out := make([]NamedIssue, 0, len(names))
+	for _, n := range names {
+		ps := make([]string, 0, len(policiesFor[n]))
+		for p := range policiesFor[n] {
+			ps = append(ps, p)
+		}
+		sort.Strings(ps)
+		out = append(out, NamedIssue{Name: n, Policies: ps})
+	}
+	return out
+}
+
 // sortedKeys returns ce's keys ordered by (direction, category) for
 // deterministic iteration.
 func sortedKeys(ce categoryEndpoints) []bindingKey {
