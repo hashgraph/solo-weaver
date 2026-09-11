@@ -7,7 +7,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var flagESONamespace string
+var (
+	flagESONamespace string
+
+	// Error-control flags (persistent → apply to both install and uninstall)
+	flagStopOnError     bool
+	flagRollbackOnError bool
+	flagContinueOnError bool
+)
 
 var operatorCmd = &cobra.Command{
 	Use:   "operator",
@@ -17,6 +24,18 @@ var operatorCmd = &cobra.Command{
 }
 
 func init() {
+	// Persistent on the operator command, so both install and uninstall inherit
+	// them — mirrors the alloy cluster pattern in alloy/cluster/cluster.go.
+	common.FlagESONamespace().SetVarP(operatorCmd, &flagESONamespace, false)
+	common.FlagStopOnError().SetVarP(operatorCmd, &flagStopOnError, false)
+	common.FlagRollbackOnError().SetVarP(operatorCmd, &flagRollbackOnError, false)
+	common.FlagContinueOnError().SetVarP(operatorCmd, &flagContinueOnError, false)
+	operatorCmd.MarkFlagsMutuallyExclusive(
+		common.FlagStopOnError().Name,
+		common.FlagContinueOnError().Name,
+		common.FlagRollbackOnError().Name,
+	)
+
 	operatorCmd.AddCommand(installCmd)
 	operatorCmd.AddCommand(uninstallCmd)
 }
