@@ -163,6 +163,8 @@ func (p *Policy) validateDeny() error {
 // `ipv4_addr . inet_service` / `ipv6_addr . inet_service` set), plain CIDRs
 // otherwise. Both address families are accepted; each entry is routed to the
 // policy's v4 (@name) or v6 (@name6) set by family at render/apply time.
+//
+// It is the one choke point for create --cidrs, add/remove --cidr and set --cidrs.
 func (p *Policy) validateCIDRs(cidrs []string) error {
 	for _, c := range cidrs {
 		if p.isCompoundSet() {
@@ -171,11 +173,30 @@ func (p *Policy) validateCIDRs(cidrs []string) error {
 			}
 			continue
 		}
+		if err := validateNotFQDN(c, c); err != nil {
+			return err
+		}
 		if err := sanity.ValidateCIDR(c); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --cidrs entry %q", c)
 		}
 	}
 	return nil
+}
+
+// validateNotFQDN refuses a domain name, which sanity.ValidateCIDR would
+// otherwise answer with a bare "invalid CIDR". name is the part tested — the
+// host half for a compound ip:port entry — while entry is what the message
+// quotes back. ValidateFQDN gates the refusal because sanity.IsFQDNEntry alone
+// also matches a botched address like "not-a-cidr".
+func validateNotFQDN(entry, name string) error {
+	if !sanity.IsFQDNEntry(name) || sanity.ValidateFQDN(name) != nil {
+		return nil
+	}
+	return errorx.IllegalArgument.New(
+		"invalid --cidrs entry %q: network policy takes literal addresses only — the traffic-shaper "+
+			"daemon replaces the policy sets it owns on every poll, so a name resolved here would not "+
+			"survive; use `network firewall --mgmt-cidrs/--blocked-cidrs`, which accepts names and "+
+			"re-resolves them", entry)
 }
 
 // V6SetName returns the IPv6 companion set name for a policy (or its compound
@@ -211,9 +232,16 @@ func (p *Policy) hasPortsSet() bool {
 func validateIPPort(s string) error {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
+		// A bare name carries no port, so it lands here, not on the host check below.
+		if fqdnErr := validateNotFQDN(s, s); fqdnErr != nil {
+			return fqdnErr
+		}
 		return errorx.IllegalArgument.New("invalid --cidrs entry %q: --reply-stamp policies require ip:port pairs (bracket IPv6 hosts, e.g. [2001:db8::1]:443)", s)
 	}
 	if ip := net.ParseIP(host); ip == nil {
+		if fqdnErr := validateNotFQDN(s, host); fqdnErr != nil {
+			return fqdnErr
+		}
 		return errorx.IllegalArgument.New("invalid --cidrs entry %q: %q is not an IP address", s, host)
 	}
 	if err := sanity.ValidatePort(port); err != nil {

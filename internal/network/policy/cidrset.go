@@ -95,9 +95,9 @@ func covers(outer, inner netip.Prefix) bool {
 //
 // Used by the operator-authored paths (`network policy create`/`add`/`set`),
 // which reject rather than fold: folding would leave a later
-// `network policy remove --cidr <covered>` with no correct answer, because
-// policy set membership is never persisted and the kernel is the only copy of
-// what was authored.
+// `network policy remove --cidr <covered>` with no correct answer. The persisted
+// artifact is re-rendered from the live set, so it cannot recover the original
+// spelling either.
 func containmentPair(elements []string) (outer, inner string, found bool) {
 	elems := parseCIDRElems(elements)
 	if len(elems) < 2 {
