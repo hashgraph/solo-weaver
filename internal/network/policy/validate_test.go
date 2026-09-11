@@ -130,7 +130,7 @@ func TestValidate(t *testing.T) {
 			name:    "domain name refused with the statusz-ownership reason",
 			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
 			cidrs:   []string{"jump.corp.example.com"},
-			wantErr: "reconciled from the block node's statusz",
+			wantErr: "replaces the policy sets it owns on every poll",
 		},
 		{
 			name:    "domain name points at the surface that takes names",
@@ -142,17 +142,15 @@ func TestValidate(t *testing.T) {
 			name:    "bare domain name on a compound set gets the same reason",
 			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
 			cidrs:   []string{"jump.corp.example.com"},
-			wantErr: "reconciled from the block node's statusz",
+			wantErr: "replaces the policy sets it owns on every poll",
 		},
 		{
 			name:    "domain:port on a compound set gets the same reason",
 			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-egress", ReplyStamp: "backfill-response"},
 			cidrs:   []string{"jump.corp.example.com:443"},
-			wantErr: "reconciled from the block node's statusz",
+			wantErr: "replaces the policy sets it owns on every poll",
 		},
 		{
-			// A botched address is not a name; it must keep the parser's answer
-			// rather than inherit an ownership explanation that does not apply.
 			name:    "malformed address is not treated as a name",
 			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher"},
 			cidrs:   []string{"not-a-cidr"},
