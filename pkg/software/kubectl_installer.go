@@ -5,5 +5,5 @@ package software
 const KubectlBinaryName = "kubectl"
 
 func NewKubectlInstaller(opts ...InstallerOption) (Software, error) {
-	return newBaseInstaller("kubectl", opts...)
+	return newBaseInstaller(KubectlBinaryName, opts...)
 }

@@ -101,6 +101,39 @@ func RemoveConfigDirectories() *automa.StepBuilder {
 		})
 }
 
+// RemoveShellCompletionLoaders removes the kubectl/helm bash completion loaders
+// written during cluster install. Teardown calls no installer's
+// RemoveConfiguration, so it needs its own step.
+func RemoveShellCompletionLoaders() *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId("remove-shell-completion-loaders").
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Removing shell completion loaders")
+			return ctx, nil
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			if rpt.Status == automa.StatusSkipped {
+				notify.As().StepCompletion(ctx, stp, rpt,
+					"Shell completion loaders could not be removed; continuing with teardown")
+				return
+			}
+
+			notify.As().StepCompletion(ctx, stp, rpt, "Shell completion loaders removed")
+		}).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			// Teardown is best-effort throughout; a leftover completion file must
+			// not be the thing that fails an uninstall. Report it as skipped rather
+			// than success, so the run does not claim work it did not do.
+			if err := removeShellCompletion(); err != nil {
+				logx.As().Warn().Err(err).Msg("Failed to remove shell completion loaders, continuing with teardown")
+
+				return automa.SkippedReport(stp,
+					automa.WithDetail("Shell completion loaders could not be removed"))
+			}
+
+			return automa.SuccessReport(stp)
+		})
+}
+
 // CleanupWeaverFiles removes weaver installation files while preserving downloads, bin, and logs folders
 func CleanupWeaverFiles() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("cleanup-weaver-files").
