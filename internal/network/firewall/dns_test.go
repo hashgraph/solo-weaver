@@ -3,6 +3,7 @@
 package firewall
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/logx"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -925,4 +928,221 @@ func TestFQDN_TimerFollowsBlockListNamesToo(t *testing.T) {
 
 	require.NoError(t, m.Set(context.Background(), RuleBlocked, []string{"203.0.113.0/24"}, nil, false))
 	require.Equal(t, []bool{true, false}, *timerWants, "and removing it must take the timer with it")
+}
+
+// captureLogs swaps the global logger for a buffer and restores it. Global
+// state, so callers must not run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevLogger, prevLevel := *logx.As(), zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	logx.SetLogger(zerolog.New(&buf))
+	t.Cleanup(func() {
+		logx.SetLogger(prevLogger)
+		zerolog.SetGlobalLevel(prevLevel)
+	})
+	return &buf
+}
+
+// readCacheBytes returns the raw cache file, or "" when there is none.
+func readCacheBytes(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	require.NoError(t, err)
+	return string(data)
+}
+
+// cacheSeenAt returns the recorded last-seen time of one address of one name.
+func cacheSeenAt(t *testing.T, path, name, addr string) time.Time {
+	t.Helper()
+	var c dnsCache
+	require.NoError(t, json.Unmarshal([]byte(readCacheBytes(t, path)), &c))
+	seen, ok := c[name].Addresses[addr]
+	require.True(t, ok, "%s should hold %s", name, addr)
+	return seen
+}
+
+func TestFQDN_SuccessfulApplyWritesTheCache(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// Deferring the write must not turn into not writing at all.
+	require.Equal(t, []string{"192.0.2.7/32"},
+		func() []string {
+			var c dnsCache
+			require.NoError(t, json.Unmarshal([]byte(readCacheBytes(t, m.dnsCachePath)), &c))
+			return c["jump.corp.example.com"].elements()
+		}())
+}
+
+func TestFQDN_DryRunRejectionLeavesTheCacheUntouched(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	before := readCacheBytes(t, m.dnsCachePath)
+	require.NotEmpty(t, before)
+
+	// The name rotates and nft refuses the document. The rotation must not reach
+	// the cache.
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.9"}})
+	r.checkErr = errors.New("nft: syntax error")
+
+	require.Error(t, m.Reapply(context.Background()))
+	require.Equal(t, before, readCacheBytes(t, m.dnsCachePath))
+}
+
+func TestFQDN_FailOpenRefusalLeavesTheCacheUntouched(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{
+		"jump.corp.example.com": {"192.0.2.7"},
+		"bad.corp.example.com":  {"198.51.100.4"},
+	}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	before := readCacheBytes(t, m.dnsCachePath)
+	require.Contains(t, before, "192.0.2.7")
+
+	// One name rotates and resolves cleanly, a block-list name that has never
+	// resolved refuses the apply. The rotation must not reach the cache.
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.9"}})
+	refused := NewTable()
+	refused.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	refused.Blocked.CIDRs = []string{"never.corp.example.com"}
+
+	err := m.Apply(context.Background(), refused)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "never.corp.example.com")
+	require.Equal(t, before, readCacheBytes(t, m.dnsCachePath))
+}
+
+func TestFQDN_ArtifactWriteFailureLeavesTheCacheUntouched(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, nftPath, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	before := readCacheBytes(t, m.dnsCachePath)
+
+	// A directory at the nft path fails the commit rename while leaving the cache's
+	// own directory writable, so an unchanged cache proves the write was never
+	// attempted rather than denied.
+	require.NoError(t, os.Remove(nftPath))
+	require.NoError(t, os.Mkdir(nftPath, 0o755))
+
+	res.setAnswers(map[string][]string{"jump.corp.example.com": {"192.0.2.9"}})
+	require.Error(t, m.Reapply(context.Background()))
+	require.Equal(t, before, readCacheBytes(t, m.dnsCachePath))
+}
+
+func TestFQDN_UnchangedRefreshStillPersistsTheCache(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// Just inside the grace period: a host refreshing steadily without the rendered
+	// set changing.
+	stale := time.Now().UTC().Add(-addrGracePeriod + time.Minute)
+	require.NoError(t, os.WriteFile(m.dnsCachePath, []byte(
+		`{"jump.corp.example.com":{"addresses":{"192.0.2.7":"`+stale.Format(time.RFC3339Nano)+`"}}}`), 0o600))
+
+	appliesBefore := applies
+	require.NoError(t, m.RefreshDNS(context.Background()))
+	require.Equal(t, appliesBefore, applies, "the render is identical, so nothing should be re-applied")
+
+	// It took the skipIfUnchanged return but still re-stamped the address. Left
+	// stale on disk, that stamp would expire mid-outage.
+	require.True(t, cacheSeenAt(t, m.dnsCachePath, "jump.corp.example.com", "192.0.2.7").After(stale),
+		"an artifact no-op refresh must still persist the re-stamped last-seen time")
+}
+
+func TestFQDN_LossyRecoveryWarnsThatTheRefreshTimerGoesWithIt(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, _, timerWants := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	require.Equal(t, []bool{true}, *timerWants)
+
+	// Losing the config drops load() to the nft reparse, which sees only addresses.
+	require.NoError(t, os.Remove(m.configPath))
+
+	logs := captureLogs(t)
+	require.NoError(t, m.Reapply(context.Background()))
+
+	require.Equal(t, []bool{true, false}, *timerWants)
+	out := logs.String()
+	require.Contains(t, out, "recovered from the rendered ruleset",
+		"the warning must name the config loss")
+	require.Contains(t, out, "no DNS refresh timer is requested",
+		"and must name what that costs, in the same line")
+	require.Contains(t, out, `"fqdns":["jump.corp.example.com"]`,
+		"and must name the entries that were lost")
+}
+
+func TestFQDN_RecoveredConfigDoesNotWarnWhileNamesSurvive(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{answers: map[string][]string{"jump.corp.example.com": {"192.0.2.7"}}}
+	applies := 0
+	m, _, _ := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"jump.corp.example.com"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+
+	// The warning is about the lossy tier, not about every apply.
+	logs := captureLogs(t)
+	require.NoError(t, m.Reapply(context.Background()))
+	require.NotContains(t, logs.String(), "no DNS refresh timer is requested")
+}
+
+func TestFQDN_LiteralOnlyRecoveryDoesNotWarn(t *testing.T) {
+	r := &fakeRunner{}
+	res := &fakeResolver{}
+	applies := 0
+	m, _, timerWants := newDNSTestManager(t, r, res, &applies)
+
+	tbl := NewTable()
+	tbl.Mgmt.CIDRs = []string{"10.0.0.0/8"}
+	require.NoError(t, m.Apply(context.Background(), tbl))
+	require.NoFileExists(t, m.dnsCachePath, "a table with no names caches nothing")
+
+	// Same lossy tier, but this table never held a name: nothing was frozen and
+	// there was no refresh to lose, so the warning would be misleading.
+	require.NoError(t, os.Remove(m.configPath))
+
+	logs := captureLogs(t)
+	require.NoError(t, m.Reapply(context.Background()))
+
+	require.Equal(t, []bool{false, false}, *timerWants)
+	require.NotContains(t, logs.String(), "recovered from the rendered ruleset")
 }

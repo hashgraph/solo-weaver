@@ -223,7 +223,7 @@ func loadDNSCache(path string) dnsCache {
 }
 
 // save writes the cache atomically. A failure here is logged and swallowed: the
-// firewall it describes has already been applied, and refusing the whole verb
+// artifacts it describes are already committed, and refusing the whole verb
 // because a fallback file could not be written would be the worse outcome.
 func (c dnsCache) save(path string) {
 	data, err := json.MarshalIndent(c, "", "  ")
@@ -237,6 +237,19 @@ func (c dnsCache) save(path string) {
 	}
 }
 
+// cachedNames returns the names the cache still holds, sorted. After a lossy
+// recovery it is the only surviving record that the table ever had FQDNs -- the
+// rendered nft artifact keeps addresses only.
+func cachedNames(path string) []string {
+	c := loadDNSCache(path)
+	out := make([]string, 0, len(c))
+	for n := range c {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // resolution is the outcome of one pass over a table's FQDN entries.
 type resolution struct {
 	// byName holds an entry for every FQDN in the table, mapping it to its
@@ -244,14 +257,25 @@ type resolution struct {
 	// nor a cached one maps to an empty slice — present, contributing nothing —
 	// so expandFQDNs can tell "resolved to nothing" from "never asked".
 	byName map[string][]string
-	// touched is true when the pass changed any name's cache entry -- a fresh
-	// answer, a re-stamp of what the fallback kept, or a decayed address -- which
-	// is what makes the cache worth rewriting.
-	touched bool
+	// cache is what the on-disk cache should become if this pass's apply commits.
+	// Built here, written only by Manager.persistDNSCache -- everything that can
+	// refuse an apply runs after resolution.
+	cache dnsCache
+	// cacheDirty is true when cache differs from what is on disk.
+	cacheDirty bool
 	// stale names were served from the cache after the resolver declined.
 	stale []string
 	// missing names had neither a fresh answer nor a cached one.
 	missing []string
+}
+
+// persistDNSCache writes the pass's cache, if the pass changed it. Call only
+// from a point past which nothing can refuse the apply.
+func (m *Manager) persistDNSCache(res *resolution) {
+	if !res.cacheDirty {
+		return
+	}
+	res.cache.save(m.dnsCachePath)
 }
 
 // fqdnEntries returns the distinct FQDN entries across every rule that accepts
@@ -319,6 +343,7 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 	}
 
 	cache := loadDNSCache(m.dnsCachePath)
+	res.cache = cache
 	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
 
@@ -356,7 +381,7 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 			entry.decay(now)
 			cache[name] = entry
 			res.byName[name] = entry.elements()
-			res.touched = true
+			res.cacheDirty = true
 			continue
 		}
 		if len(entry.Addresses) > 0 {
@@ -364,27 +389,21 @@ func (m *Manager) resolveFQDNs(ctx context.Context, t *Table) *resolution {
 			cache[name] = entry
 			res.byName[name] = entry.elements()
 			res.stale = append(res.stale, name)
-			res.touched = true
+			res.cacheDirty = true
 			continue
 		}
 		res.byName[name] = nil
 		res.missing = append(res.missing, name)
 	}
 
-	// Drop names the operator has since removed, so the file does not grow
-	// forever with hosts this firewall no longer mentions.
-	pruned := false
+	// Drop names the operator has since removed. Dirty on its own: with the
+	// resolver down nothing else marks it, and the name would linger until the
+	// resolver recovered.
 	for name := range cache {
 		if _, ok := res.byName[name]; !ok {
 			delete(cache, name)
-			pruned = true
+			res.cacheDirty = true
 		}
-	}
-	// Persist on any entry change OR a prune: a prune with the resolver down must
-	// still reach disk, or a name removed from the config during an outage
-	// lingers in the cache until the resolver happens to succeed again.
-	if res.touched || pruned {
-		cache.save(m.dnsCachePath)
 	}
 
 	if len(res.stale) > 0 {
