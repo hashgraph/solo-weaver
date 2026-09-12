@@ -8,21 +8,30 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 const (
+	PreCheckExternalSecretsStepId  = "precheck-external-secrets"
 	SetupExternalSecretsStepId     = "setup-external-secrets"
 	InstallExternalSecretsStepId   = "install-external-secrets"
 	IsExternalSecretsReadyStepId   = "is-external-secrets-ready"
 	TeardownExternalSecretsStepId  = "teardown-external-secrets"
 	UninstallExternalSecretsStepId = "uninstall-external-secrets"
+
+	// esoChartName identifies an ESO release whatever it was named. The catalog's
+	// spec.Chart is alias-prefixed ("external-secrets/external-secrets"), so it
+	// cannot be compared to Chart.Metadata.Name directly.
+	esoChartName = "external-secrets"
 )
 
 // SetupExternalSecrets returns a workflow builder that installs the External
@@ -35,6 +44,7 @@ func SetupExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
+		preCheckExternalSecrets(spec, true),
 		installExternalSecrets(spec),
 		isExternalSecretsReady(spec),
 	).
@@ -59,6 +69,7 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(TeardownExternalSecretsStepId).Steps(
+		preCheckExternalSecrets(spec, false),
 		uninstallExternalSecrets(spec),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -70,6 +81,144 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "External Secrets Operator torn down successfully")
+		})
+}
+
+// checkClusterReachable fails when the cluster is unreachable, so that surfaces
+// here instead of as a cryptic Helm error from the first IsInstalled call. probe
+// is kube.ClusterExists in production; it is a parameter so this can be
+// unit-tested without a cluster.
+func checkClusterReachable(probe func() (bool, error)) error {
+	// ClusterExists collapses every failure to (false, nil) today; this branch
+	// exists because the signature allows an error.
+	exists, err := probe()
+	if err != nil {
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to probe Kubernetes cluster reachability"),
+			reasons.PreconditionNotMet,
+			"Ensure the cluster is installed and its API server is reachable:",
+			"  solo-provisioner kube cluster install",
+			"  kubectl cluster-info",
+		)
+	}
+	if !exists {
+		return errx.Decorate(
+			errorx.IllegalState.New("Kubernetes cluster is not reachable"),
+			reasons.PreconditionNotMet,
+			"Install or verify the cluster first:",
+			"  solo-provisioner kube cluster install",
+			"Confirm the API server is reachable:",
+			"  kubectl cluster-info",
+		)
+	}
+	return nil
+}
+
+// isESORelease reports whether rel is an ESO installation. The chart name is
+// authoritative; the release name is only a fallback for a release whose chart
+// metadata is missing, so an unrelated chart named "external-secrets" does not
+// match.
+func isESORelease(rel *release.Release, spec *helmChartSpec) bool {
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		return rel.Chart.Metadata.Name == esoChartName
+	}
+	return rel.Name == spec.Release
+}
+
+// checkESOSingleton fails when ESO already exists somewhere that blocks this
+// install. ESO's CRDs are cluster-scoped, so only one instance can exist: a
+// second one collides on Helm ownership metadata and leaves a half-created
+// namespace behind.
+//
+// ListAll is used rather than IsInstalled because IsInstalled counts only
+// deployed releases, so it cannot see a stalled one.
+func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
+	releases, err := hm.ListAll()
+	if err != nil {
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to list Helm releases"),
+			reasons.PreconditionNotMet,
+			"Verify the cluster is reachable: kubectl cluster-info",
+		)
+	}
+
+	for _, rel := range releases {
+		if rel == nil || !isESORelease(rel, spec) {
+			continue
+		}
+
+		// Both hints name raw "helm uninstall" rather than "eso operator
+		// uninstall": that command gates on IsInstalled, which is deployed-only
+		// and keyed to the catalog release name, so it silently skips a stalled
+		// release or one installed under a different name.
+		if rel.Namespace != spec.Namespace {
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"External Secrets Operator already exists in namespace %q; its CRDs are cluster-scoped, so only one instance can exist",
+					rel.Namespace),
+				reasons.PreconditionNotMet,
+				"Use the existing installation, or remove it first:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+		}
+
+		if rel.Info == nil || rel.Info.Status != release.StatusDeployed {
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"External Secrets Operator release %q in namespace %q is not deployed (%s)",
+					rel.Name, rel.Namespace, releaseStatus(rel)),
+				reasons.PreconditionNotMet,
+				"Remove the stalled release, then retry:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+		}
+	}
+
+	return nil
+}
+
+func releaseStatus(rel *release.Release) release.Status {
+	if rel.Info == nil {
+		return release.StatusUnknown
+	}
+	return rel.Info.Status
+}
+
+// preCheckExternalSecrets gates both ESO workflows, failing before Helm installs anything
+// rather than deep inside one. The singleton guard is install-only: an uninstall
+// should remove ESO from whichever namespace it actually occupies.
+func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Builder {
+	return automa.NewStepBuilder().WithId(PreCheckExternalSecretsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if err := checkClusterReachable(kube.ClusterExists); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if singletonGuard {
+				hm, err := newHelmManager()
+				if err != nil {
+					// Internal per docs/dev/error-handling.md: a bug, so no hints.
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.InternalError.Wrap(err, "failed to initialise Helm manager"),
+						reasons.Internal,
+					)))
+				}
+				if err := checkESOSingleton(hm, spec); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking prerequisites")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Prerequisite checks failed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Prerequisites satisfied")
 		})
 }
 
