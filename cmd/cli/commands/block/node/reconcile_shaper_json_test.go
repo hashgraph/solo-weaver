@@ -106,6 +106,7 @@ func TestReconcileShaperApply_JSONOutputIsExactlyOneDocument(t *testing.T) {
 		Unchanged:  []string{"bn-restricted"},
 		Digest:     "deadbeef",
 		Unresolved: []shaper.NamedIssue{{Name: "nx.example.invalid", Policies: []string{"bn-publisher"}}},
+		Cleared:    []string{"bn-publisher"},
 	}))
 
 	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
@@ -118,6 +119,28 @@ func TestReconcileShaperApply_JSONOutputIsExactlyOneDocument(t *testing.T) {
 
 	require.Equal(t, "deadbeef", doc["digest"])
 	require.Contains(t, doc, "unresolved")
+	require.Contains(t, doc, "cleared")
+}
+
+// `cleared` is omitempty, so a tick that emptied nothing carries no such key.
+func TestReconcileShaperApply_OmitsClearedOnAQuietTick(t *testing.T) {
+	prevFormat := common.OutputFormat
+	t.Cleanup(func() { common.OutputFormat = prevFormat })
+	common.OutputFormat = "json"
+
+	var out bytes.Buffer
+	cmd := reconcileShaperCmd
+	cmd.SetOut(&out)
+	t.Cleanup(func() { cmd.SetOut(nil) })
+
+	require.NoError(t, renderApplyResult(cmd, shaper.Result{
+		Unchanged: []string{"bn-publisher", "bn-restricted"},
+		Digest:    "deadbeef",
+	}))
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &doc))
+	require.NotContains(t, doc, "cleared", "no set was emptied")
 }
 
 // TestReconcileShaperCheck_OmitsUnresolvedWhenEverythingResolved keeps the

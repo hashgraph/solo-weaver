@@ -104,11 +104,13 @@ func runReconcileApply(cmd *cobra.Command, r *shaper.Reconciler) error {
 // for. Split out of runReconcileApply so the JSON form can be exercised without
 // a live nft table.
 //
-// The log line sits INSIDE the human-readable branch. Under --output json the
+// The log lines sit INSIDE the human-readable branch. Under --output json the
 // root command routes log lines to stdout as NDJSON, so logging here as well
 // would append a second document to the one this function just wrote and leave
 // the combined stream unparseable. Nothing is lost by the omission: the JSON
-// document already carries every field the log line does, and more.
+// document already carries every field the log line does, and more — including
+// cleared, which the daemon reads back from it and logs itself (see
+// TrafficShaperMonitor.logClearedSets).
 func renderApplyResult(cmd *cobra.Command, result shaper.Result) error {
 	if common.OutputIsJSON() {
 		out, err := json.MarshalIndent(result, "", "  ")
@@ -122,6 +124,7 @@ func renderApplyResult(cmd *cobra.Command, result shaper.Result) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "applied:   %s\n", joinOrNone(result.Applied))
 	fmt.Fprintf(cmd.OutOrStdout(), "skipped:   %s\n", joinOrNone(result.Skipped))
 	fmt.Fprintf(cmd.OutOrStdout(), "unchanged: %s\n", joinOrNone(result.Unchanged))
+	fmt.Fprintf(cmd.OutOrStdout(), "cleared:   %s\n", joinOrNone(result.Cleared))
 	fmt.Fprintf(cmd.OutOrStdout(), "digest:    %s\n", result.Digest)
 	printNamedIssues(cmd, "unresolved", result.Unresolved)
 	printNamedIssues(cmd, "stale", result.Stale)
@@ -131,6 +134,7 @@ func renderApplyResult(cmd *cobra.Command, result shaper.Result) error {
 		Strs("applied", result.Applied).
 		Strs("skipped", result.Skipped).
 		Strs("unchanged", result.Unchanged).
+		Strs("cleared", result.Cleared).
 		Str("digest", result.Digest).
 		Msg("block node traffic-shaper membership reconciled")
 	return nil
