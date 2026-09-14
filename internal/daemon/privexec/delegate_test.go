@@ -173,6 +173,18 @@ func TestReconcileShaper_ParsesAttentionNames(t *testing.T) {
 	require.Equal(t, []NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-publisher"}}}, res.Unresolved)
 }
 
+func TestReconcileShaper_ParsesClearedSets(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"digest":"abc123","cleared":["bn-restricted"]}`), nil,
+	)
+
+	res, err := d.ReconcileShaper(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
+	require.Equal(t, []string{"bn-restricted"}, res.Cleared)
+}
+
 func TestReconcileShaper_BadJSONReportsParseError(t *testing.T) {
 	d, _ := fakeDelegator(
 		[]string{"/usr/bin/sudo", "/opt/solo/weaver/bin/solo-provisioner"},

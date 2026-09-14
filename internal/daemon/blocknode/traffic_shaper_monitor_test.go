@@ -46,12 +46,18 @@ type pollFakeDelegator struct {
 	digests  []string // scripted check digests, in call order
 	checkErr error
 	applyErr error
+	cleared  []string // scripted Cleared list for ReconcileShaper
 	lastURL  string
 
 	// blockUntilCancel makes ReconcileShaperCheck block until ctx is cancelled
 	// and then return ctx.Err() — simulating a worker exec killed by a shutdown
 	// mid-flight, which must surface as a clean (nil) exit from runStatuszPoll.
 	blockUntilCancel bool
+
+	// onApply runs inside ReconcileShaper, before it returns. Set it to the poll
+	// context's cancel to get exactly one entry reconcile: the loop finishes the
+	// tick and then exits on ctx.Done, all on the calling goroutine.
+	onApply func()
 
 	checkCalls atomic.Int32
 	applyCalls atomic.Int32
@@ -88,8 +94,12 @@ func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) (priv
 	f.applyCalls.Add(1)
 	f.mu.Lock()
 	f.lastURL = url
+	cleared, onApply := f.cleared, f.onApply
 	f.mu.Unlock()
-	return privexec.ReconcileShaperResult{}, f.applyErr
+	if onApply != nil {
+		onApply()
+	}
+	return privexec.ReconcileShaperResult{Cleared: cleared}, f.applyErr
 }
 
 // newPollMonitor builds a monitor wired to a poll fake, bypassing the
@@ -366,6 +376,38 @@ func TestRunStatuszPoll_ApplyFaultReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 }
 
+// TestRunStatuszPoll_LogsClearedSetsFromApplyResult verifies the loop reports what
+// the apply emptied: the WARN carries the reason the operator docs tell people to
+// grep for, and the set names come off the apply result rather than being
+// invented by the monitor.
+//
+// onApply cancels the poll context, so the entry reconcile runs check, apply and
+// logClearedSets, then the loop exits on ctx.Done at its first select. One pass,
+// all of it on this goroutine, so the log buffer has no concurrent writer. The
+// interval has to be unreachable: a ready ticker could win that select and add a
+// second apply.
+func TestRunStatuszPoll_LogsClearedSetsFromApplyResult(t *testing.T) {
+	buf := captureLogs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	d := &pollFakeDelegator{
+		digests: []string{"D1"},
+		cleared: []string{"bn-publisher_ports", "bn-restricted"}, // as Apply sorts them
+		onApply: cancel,
+	}
+	m := newPollMonitor(d, "http://127.0.0.1:8080", time.Hour)
+
+	require.NoError(t, m.runStatuszPoll(ctx))
+	require.Equal(t, int32(1), d.applyCalls.Load(), "one entry apply, no ticks")
+
+	out := buf.String()
+	require.Contains(t, out, `"level":"warn"`)
+	require.Contains(t, out, `"reason":"TrafficShaperMembershipCleared"`)
+	require.Contains(t, out, `"sets":["bn-publisher_ports","bn-restricted"]`)
+	require.Contains(t, out, `"statusz_url":"http://127.0.0.1:8080"`)
+}
+
 // TestRunStatuszPoll_CancelMidExecReturnsNil verifies that a cancellation while a
 // worker exec is in flight surfaces as a clean (nil) exit, not a fault — the loop
 // must honor its "ctx cancellation returns nil" contract even when the error
@@ -485,6 +527,33 @@ func TestLogStatuszAttentionNames_NoNamesLogsNothing(t *testing.T) {
 	m := &TrafficShaperMonitor{}
 
 	m.logStatuszAttentionNames("check", "http://10.1.2.3:40983", nil, nil, nil)
+
+	require.Empty(t, buf.String())
+}
+
+// TestLogClearedSets_WarnsWithReasonAndSets pins the reason string the operator
+// docs tell people to journalctl -g for: like logStatuszAttentionNames, this is
+// the only surface a scheduler-driven clear reaches.
+func TestLogClearedSets_WarnsWithReasonAndSets(t *testing.T) {
+	buf := captureLogs(t)
+	m := &TrafficShaperMonitor{}
+
+	m.logClearedSets("http://10.1.2.3:40983", []string{"bn-restricted"})
+
+	out := buf.String()
+	require.Contains(t, out, `"level":"warn"`)
+	require.Contains(t, out, `"reason":"TrafficShaperMembershipCleared"`)
+	require.Contains(t, out, `"sets":["bn-restricted"]`)
+	require.Contains(t, out, `"statusz_url":"http://10.1.2.3:40983"`)
+}
+
+// TestLogClearedSets_NothingClearedLogsNothing verifies a tick that emptied no
+// set stays quiet.
+func TestLogClearedSets_NothingClearedLogsNothing(t *testing.T) {
+	buf := captureLogs(t)
+	m := &TrafficShaperMonitor{}
+
+	m.logClearedSets("http://10.1.2.3:40983", nil)
 
 	require.Empty(t, buf.String())
 }
