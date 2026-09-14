@@ -117,9 +117,11 @@ is intentionally dropped during bucketing rather than treated as an unknown
 category. The operator-curated management sets are likewise never touched by the
 monitor.
 
-Each owned category is reconciled on every successful poll: an address that
-drops out of statusz is removed from its set, not left stale. A poll that
-reports no endpoints for an owned category clears that set.
+Each owned category fed by a statusz call that reported something is reconciled
+on every successful poll: an address that drops out of statusz is removed from
+its set, not left stale, and a category that call no longer reports is cleared.
+A call that returns no endpoints at all leaves the sets it feeds untouched — see
+[docs/dev/traffic-shaper.md](../traffic-shaper.md).
 
 ## Statusz endpoint: discovery and override
 

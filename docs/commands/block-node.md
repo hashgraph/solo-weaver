@@ -502,6 +502,36 @@ Not touched by the reconciler: the public category has no membership binding (it
 match any source), and `bn-health` has no binding at all — its match key is a static port
 list, not membership.
 
+### What it reports
+
+Every owned set lands in exactly one of `applied`, `skipped` and `unchanged`. `cleared` is
+not a fourth bucket — it is the subset of `applied` that went to empty.
+
+```
+applied:   bn-publisher, bn-restricted
+skipped:   (none)
+unchanged: bn-backfill, bn-partner-out, bn-partner-out_ports, bn-public-out_ports, bn-publisher_ports, bn-subscriber-in_ports
+cleared:   bn-restricted
+digest:    3f9a…
+```
+
+| Line | Meaning |
+|---|---|
+| `applied` | Differed from statusz, rewritten |
+| `skipped` | Differed, but an operator command held the apply lock — still out of sync |
+| `unchanged` | Not rewritten: already in the desired state, or withheld because its statusz call reported nothing |
+| `cleared` | The `applied` sets that went to empty: statusz reported no usable endpoint for them this tick |
+
+The three inbound sets and all four `_ports` sets ride on `/statusz/inbound`, `bn-backfill` on
+`/statusz/outbound` — see
+[what an empty statusz response does](network/policy.md#what-an-empty-statusz-response-does).
+
+On a daemon tick a clear is logged at `WARN`:
+
+```bash
+journalctl -u solo-provisioner-daemon -g TrafficShaperMembershipCleared
+```
+
 > **Privilege:** `--check` needs none. The apply path reads and writes live
 > `inet weaver-workload-policy` sets and must run as root. The daemon invokes it via sudo.
 
