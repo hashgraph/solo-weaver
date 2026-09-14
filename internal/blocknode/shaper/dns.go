@@ -276,17 +276,36 @@ type hostResolution struct {
 func resolveHosts(ctx context.Context, resolver Resolver, names []string, cache dnsCache, budget time.Duration) *hostResolution {
 	res := &hostResolution{byName: make(map[string][]string, len(names)), cache: cache}
 
-	// Prune names statusz no longer reports, so the cache does not grow
-	// forever. This runs even when names is empty: a roster that drops to
-	// nothing must still empty the cache, not leave it to decay one address at
-	// a time.
+	// One timestamp for the whole pass, so every name decays on the same clock,
+	// whether this pass resolved it, served it stale, or no longer finds it on
+	// the roster.
+	now := time.Now().UTC()
+
+	// A name statusz no longer reports decays on the same per-address clock as an
+	// address a fresh answer omits (see addrGracePeriod), and its key goes with
+	// its last address, which bounds the cache at addrGracePeriod past a name's
+	// last sighting. A roster is a live poll and can come back empty without the
+	// names being gone, so a name reported again before then still has its
+	// fallback -- unlike the host firewall's equivalent, whose roster is an
+	// operator-authored table where absence is authoritative.
 	wanted := make(map[string]bool, len(names))
 	for _, n := range names {
 		wanted[strings.ToLower(n)] = true
 	}
-	for key := range cache {
-		if !wanted[key] {
+	for key, entry := range cache {
+		if wanted[key] {
+			continue
+		}
+		before := len(entry.Addresses)
+		entry.decay(now)
+		if len(entry.Addresses) == 0 {
+			// An entry loaded with no addresses at all decays nothing, so the
+			// length comparison below would miss that its key is still going.
 			delete(cache, key)
+			res.cacheDirty = true
+			continue
+		}
+		if len(entry.Addresses) != before {
 			res.cacheDirty = true
 		}
 	}
@@ -326,10 +345,6 @@ func resolveHosts(ctx context.Context, resolver Resolver, names []string, cache 
 		}(i, name)
 	}
 	wg.Wait()
-
-	// One timestamp for the whole pass, so names resolved concurrently decay on
-	// the same clock.
-	now := time.Now().UTC()
 
 	// Folded back in list order, not completion order, so the daemon's log and
 	// the CLI's text output name things in the order statusz reported them.

@@ -71,9 +71,10 @@ func NewReconciler(statuszURL string) *Reconciler {
 
 // Result summarizes one Apply: the owned policies whose live membership was
 // rewritten, those skipped because the operator apply lock was held (still out
-// of sync, not yet reconciled), those left unchanged (already in the desired
-// state), and the digest of the full desired membership (identical to what
-// Check reports for the same statusz snapshot).
+// of sync, not yet reconciled), those not rewritten (already in the desired
+// state, or withheld because their statusz call reported nothing), those it
+// emptied, and the digest of the full desired membership
+// (identical to what Check reports for the same statusz snapshot).
 type Result struct {
 	Applied   []string `json:"applied"`
 	Skipped   []string `json:"skipped"`
@@ -89,6 +90,9 @@ type Result struct {
 	// AAAAOnly names resolved, but only to AAAA records, so they contribute no
 	// IPv4 addresses. Structural, not a failure: never cached, never stale.
 	AAAAOnly []NamedIssue `json:"aaaa-only,omitempty"`
+	// Cleared is the subset of Applied that went to empty: desired was empty and
+	// live nft had members.
+	Cleared []string `json:"cleared,omitempty"`
 }
 
 // CheckResult is the unprivileged detect path's output: the sha256 digest of the
@@ -175,15 +179,23 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	changedMem := make(map[string][]string, len(memDeltas))
 	changedPorts := make(map[string][]string, len(portDeltas))
 	changed := make([]string, 0, len(memDeltas)+len(portDeltas))
+	var cleared []string
 	for _, d := range memDeltas {
 		changedMem[d.Policy] = desired[d.Policy]
 		changed = append(changed, d.Policy)
+		if len(desired[d.Policy]) == 0 {
+			cleared = append(cleared, d.Policy)
+		}
 	}
 	for _, d := range portDeltas {
 		changedPorts[d.Policy] = portsDesired[d.Policy]
 		changed = append(changed, policy.PortsSetName(d.Policy))
+		if len(portsDesired[d.Policy]) == 0 {
+			cleared = append(cleared, policy.PortsSetName(d.Policy))
+		}
 	}
 	sort.Strings(changed)
+	sort.Strings(cleared)
 
 	res := Result{
 		Digest: digest, Unchanged: unchangedSetNames(changed),
@@ -205,6 +217,7 @@ func (r *Reconciler) Apply(ctx context.Context) (Result, error) {
 	// rather than dropping them from both Applied and Unchanged.
 	if applied {
 		res.Applied = changed
+		res.Cleared = cleared
 		// Only past this point can nothing undo the kernel write the cache
 		// describes: a lock-held or failed pass leaves the on-disk cache exactly
 		// as it was loaded.
@@ -266,6 +279,7 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context, budget time.Duration) (
 	}
 	cache := loadDNSCache(r.dnsCachePath)
 	resolvedIn, resolvedOut, hr := r.resolveRemotes(ctx, inbound, outbound, cache, budget)
+	reportedIn, reportedOut := reported(inbound), reported(outbound)
 	report := resolutionReport{
 		cache:      hr.cache,
 		cacheDirty: hr.cacheDirty,
@@ -273,8 +287,15 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context, budget time.Duration) (
 		Stale:      attributeNames(hr.stale, inbound, outbound),
 		AAAAOnly:   attributeNames(hr.aaaaOnly, inbound, outbound),
 	}
-	return bucketizeEndpoints(resolvedIn, resolvedOut), inbound, report, nil
+	return bucketizeEndpoints(resolvedIn, resolvedOut, reportedIn, reportedOut), inbound, report, nil
 }
+
+// reported reports whether a statusz call returned any endpoint at all.
+//
+// Judged on the payload as it arrived, not the resolved copy: a roster whose names
+// all failed to resolve is a resolution outcome, reported through Unresolved/Stale,
+// not a BN reporting nothing.
+func reported(d NetworkData) bool { return len(d.ActiveEndpoints) > 0 }
 
 // bucketizeEndpoints folds one statusz snapshot into the desired membership,
 // keyed by (direction, category). Inbound endpoints are matched against the
@@ -285,21 +306,34 @@ func (r *Reconciler) fetchEndpoints(ctx context.Context, budget time.Duration) (
 // "remote.Address:remote.Port" pairs, skipping any endpoint whose port is empty
 // or "*" (a wildcard port cannot key a compound set).
 //
-// Every owned binding is seeded present with an empty slice, so a category the
-// BN no longer reports collapses to an empty membership that clears its set
-// rather than leaving stale members behind — each owned set is fully reconciled
-// every tick. Endpoints whose (direction, category) is not an owned binding
-// (e.g. the public category, or operator-curated mgmt sets) are ignored.
-func bucketizeEndpoints(inbound, outbound NetworkData) categoryEndpoints {
+// A direction that reported (see reported) has its bindings seeded present-and-
+// empty, so a category the BN stopped reporting clears rather than going stale.
+// One that did not seeds nothing, leaving its bindings absent and their sets alone
+// (see categoryEndpoints). Endpoints with no owned binding (the public category,
+// mgmt sets) are ignored.
+func bucketizeEndpoints(inbound, outbound NetworkData, reportedIn, reportedOut bool) categoryEndpoints {
 	ce := make(categoryEndpoints, len(categoryBindings))
-	for k := range categoryBindings {
-		ce[k] = []string{}
+
+	if reportedIn {
+		seedOwned(ce, Inbound)
+		bucketize(ce, Inbound, inbound)
+	}
+	if reportedOut {
+		seedOwned(ce, Outbound)
+		bucketize(ce, Outbound, outbound)
 	}
 
-	bucketize(ce, Inbound, inbound)
-	bucketize(ce, Outbound, outbound)
-
 	return ce
+}
+
+// seedOwned marks dir's owned bindings present-and-empty, the state that clears
+// a set.
+func seedOwned(ce categoryEndpoints, dir Direction) {
+	for k := range categoryBindings {
+		if k.dir == dir {
+			ce[k] = []string{}
+		}
+	}
 }
 
 // bucketize appends one direction's endpoints into ce under their owned
@@ -376,9 +410,12 @@ func desiredMembership(ce categoryEndpoints) map[string][]string {
 // desiredPorts derives each managed-ports policy's desired listener ports from
 // the inbound statusz local.port values, per the portBindings table. It is the
 // port-dimension counterpart to desiredMembership, and carries the same
-// present/absent semantics: every policy in portBindings is seeded present (with
-// an empty, de-duplicated slice), so a category the BN stops reporting collapses
-// its ports set to empty — clearing it — rather than leaving stale ports behind.
+// present/absent semantics: on a payload that reported something, every policy in
+// portBindings is seeded present (with an empty, de-duplicated slice), so a
+// category the BN stops reporting collapses its ports set to empty — clearing it —
+// rather than leaving stale ports behind. A payload that reported nothing returns
+// nil instead, withholding every managed-ports set: all of them derive from that
+// one call.
 //
 // Only local.port is read (the BN's own listener port); an endpoint whose
 // local.port is empty or "*" (an unspecified/wildcard port) is skipped, since a
@@ -386,6 +423,10 @@ func desiredMembership(ce categoryEndpoints) map[string][]string {
 // consulted: an outbound connection originates from an ephemeral local port and
 // is not a listener.
 func desiredPorts(inbound NetworkData) map[string][]string {
+	if !reported(inbound) {
+		return nil
+	}
+
 	perPolicy := make(map[string]map[string]struct{})
 	for _, names := range portBindings {
 		for _, name := range names {

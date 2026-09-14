@@ -322,14 +322,55 @@ func TestResolveHosts_FallsBackToCacheOnFailure(t *testing.T) {
 	require.True(t, res.cacheDirty, "touch re-stamps the cached address")
 }
 
-func TestResolveHosts_PrunesNamesNoLongerReported(t *testing.T) {
+// A name absent from this tick's roster keeps its fallback: an empty roster is
+// not evidence the name is gone, and the next tick may be the one that reports
+// it while the resolver is still down.
+func TestResolveHosts_UnreportedNameKeepsItsFallbackWhileFresh(t *testing.T) {
 	r := &fakeResolver{}
 	cache := dnsCache{"gone.example.com": {Addresses: map[string]time.Time{"10.5.5.5": time.Now().UTC()}}}
 
 	res := resolveHosts(context.Background(), r, nil, cache, resolveTimeout)
 
-	require.Empty(t, cache, "a name absent from this tick's roster is pruned from the cache")
+	require.Equal(t, []string{"10.5.5.5"}, cache["gone.example.com"].elements())
+	require.False(t, res.cacheDirty, "nothing changed, so the cache file is not rewritten")
+}
+
+// Past the grace period the address goes, and the key goes with it -- that is
+// what bounds the cache.
+func TestResolveHosts_UnreportedNameIsDroppedOncePastTheGracePeriod(t *testing.T) {
+	r := &fakeResolver{}
+	aged := time.Now().UTC().Add(-addrGracePeriod - time.Minute)
+	cache := dnsCache{"gone.example.com": {Addresses: map[string]time.Time{"10.5.5.5": aged}}}
+
+	res := resolveHosts(context.Background(), r, nil, cache, resolveTimeout)
+
+	require.Empty(t, cache, "a name nothing has vouched for within addrGracePeriod is dropped")
 	require.True(t, res.cacheDirty)
+}
+
+// An entry that arrives holding no addresses still has its key removed, and the
+// pass still counts as dirty so the file loses the key too.
+func TestResolveHosts_UnreportedEmptyEntryIsDroppedAndDirties(t *testing.T) {
+	r := &fakeResolver{}
+	cache := dnsCache{"empty.example.com": {Addresses: map[string]time.Time{}}}
+
+	res := resolveHosts(context.Background(), r, nil, cache, resolveTimeout)
+
+	require.Empty(t, cache)
+	require.True(t, res.cacheDirty)
+}
+
+// The sequence an empty statusz response used to break: the name is absent for
+// one tick, reported again the next, and the resolver is down for both.
+func TestResolveHosts_NameReportedAgainAfterAnEmptyRosterIsServedStale(t *testing.T) {
+	r := &fakeResolver{}
+	cache := dnsCache{"peer.example.com": {Addresses: map[string]time.Time{"10.1.0.1": time.Now().UTC()}}}
+
+	resolveHosts(context.Background(), r, nil, cache, resolveTimeout)
+	res := resolveHosts(context.Background(), r, []string{"peer.example.com"}, cache, resolveTimeout)
+
+	require.Equal(t, []string{"10.1.0.1"}, res.byName["peer.example.com"])
+	require.Equal(t, []string{"peer.example.com"}, res.stale)
 }
 
 func TestResolveHosts_IsCaseInsensitiveAsACacheKey(t *testing.T) {
