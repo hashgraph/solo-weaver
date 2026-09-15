@@ -32,7 +32,15 @@ Examples:
 			Str("namespace", flagESONamespace).
 			Msg("Installing External Secrets Operator")
 
-		wb := workflows.NewESOInstallWorkflow(flagESONamespace)
+		// Argument order is (continue, stop, rollback).
+		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
+		if err != nil {
+			return err
+		}
+		opts := workflows.DefaultWorkflowExecutionOptions()
+		opts.ExecutionMode = execMode
+
+		wb := workflows.WithWorkflowExecutionMode(workflows.NewESOInstallWorkflow(flagESONamespace), opts)
 
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
@@ -41,8 +49,4 @@ Examples:
 		l.Info().Msg("Successfully installed External Secrets Operator")
 		return nil
 	},
-}
-
-func init() {
-	common.FlagESONamespace().SetVar(installCmd, &flagESONamespace, false)
 }

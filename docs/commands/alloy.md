@@ -228,6 +228,9 @@ sudo solo-provisioner eso operator install --namespace my-eso
 | Flag | What it does | Default |
 |---|---|---|
 | `--namespace` | Namespace for the operator | `external-secrets` |
+| `--stop-on-error` | Stop at the first failing step (default) | — |
+| `--rollback-on-error` | Undo completed steps on failure | — |
+| `--continue-on-error` | Keep going past failures | — |
 
 ## `eso operator uninstall`
 
@@ -239,6 +242,9 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 | Flag | What it does | Default |
 |---|---|---|
 | `--namespace` | Namespace to uninstall from | `external-secrets` |
+| `--stop-on-error` | Stop at the first failing step (default) | — |
+| `--rollback-on-error` | Undo completed steps on failure | — |
+| `--continue-on-error` | Keep going past failures | — |
 
 > **This deletes secrets across the whole cluster.** Uninstalling ESO removes its
 > cluster-scoped CRDs, which deletes every `ExternalSecret` and `SecretStore` in the cluster —
@@ -246,6 +252,16 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 > secret.
 
 Idempotent: if ESO is not installed in the target namespace, the uninstall is skipped.
+
+The three error-handling flags are mutually exclusive and apply to both `eso operator
+install` and `eso operator uninstall`. See
+[Global flags](../reference/global-flags.md#error-handling-flags).
+
+> **`--rollback-on-error` is not the same as Helm's own rollback.** The install already
+> runs Helm atomically, so a *failed* chart install reverts itself. The flag matters when
+> the install succeeds and a later step fails — for example the readiness wait timing out —
+> in which case it uninstalls the release this run created. Rollback is not shown in the
+> TUI; confirm it with `helm list -A` or the workflow report named in `report_path=…`.
 
 ## `eso secret create`
 
