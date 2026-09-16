@@ -217,13 +217,17 @@ Installs the `external-secrets/external-secrets` Helm chart. The chart version i
 the infrastructure catalog. Idempotent: if ESO is already in the target namespace, the install
 is skipped with a clear message.
 
-> **ESO is one per cluster.** Its CRDs are cluster-scoped, so a second instance in a different
-> namespace cannot coexist with the first. Installing into another namespace is refused before
-> Helm installs anything, naming the namespace ESO already occupies — rather than failing
-> partway through on a CRD ownership error and leaving the new namespace behind. A release
-> left in a failed or pending state is refused too; clear it with
-> `helm uninstall <release> -n <namespace>` first
-> (`eso operator uninstall` skips releases that are not fully deployed).
+> **ESO is one per cluster.** Its CRDs are cluster-scoped, so a second instance cannot coexist
+> with the first. The install is refused before Helm changes anything — rather than failing
+> partway through on a CRD ownership error and leaving the new namespace behind — when:
+>
+> * ESO already exists elsewhere in the cluster, in another namespace or under another release name;
+> * the release in the target namespace is left in a failed, pending or uninstalled state;
+> * the `external-secrets` release name in the target namespace belongs to a different chart.
+>
+> Each message names the release and namespace in the way. Clear it with
+> `helm uninstall <release> -n <namespace>` — `eso operator uninstall` skips releases that are
+> not fully deployed.
 
 ```bash
 # Default namespace: external-secrets
