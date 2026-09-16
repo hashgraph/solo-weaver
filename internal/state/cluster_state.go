@@ -7,6 +7,7 @@ package state
 
 import (
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 )
@@ -30,13 +31,22 @@ func GetBlockNodeNamespace() (string, error) {
 		return "", errorx.ExternalError.Wrap(err, "failed to list helm releases")
 	}
 
+	return blockNodeNamespaceFrom(releases), nil
+}
+
+// blockNodeNamespaceFrom returns the namespace of the deployed block node release,
+// or "" when there is none. ListAll reports releases in every state, so a failed or
+// uninstalled record would otherwise name a namespace holding no block node.
+// Extracted from GetBlockNodeNamespace so it can be unit-tested without a cluster.
+func blockNodeNamespaceFrom(releases []*release.Release) string {
 	for _, rel := range releases {
-		if rel.Chart != nil && rel.Chart.Metadata != nil {
-			if rel.Chart.Metadata.Name == BlockNodeChartName {
-				return rel.Namespace, nil
-			}
+		if rel == nil || rel.Info == nil || rel.Info.Status != release.StatusDeployed {
+			continue
+		}
+		if rel.Chart != nil && rel.Chart.Metadata != nil && rel.Chart.Metadata.Name == BlockNodeChartName {
+			return rel.Namespace
 		}
 	}
 
-	return "", nil
+	return ""
 }
