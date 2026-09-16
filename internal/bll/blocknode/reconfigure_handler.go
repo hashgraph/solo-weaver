@@ -72,7 +72,10 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// tear a feature down when it is turned off. See networkPlaneSteps.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
 
-	var wb *automa.WorkflowBuilder
+	var (
+		stepList   []automa.Builder
+		workflowId string
+	)
 	switch {
 	case ins.PurgeStorage:
 		// Purge data at the currently deployed paths: build a copy of ins that
@@ -85,12 +88,12 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		// After purging old dirs, recreate PVs/PVCs and create new directories at
 		// the new paths, then upgrade the chart.
-		stepList := append(networkSteps,
+		workflowId = "block-node-reconfigure-purge-storage"
+		stepList = append(networkSteps,
 			steps.PurgeBlockNodeStorage(oldIns),
 			steps.RecreateBlockNodeStorage(ins),
 			steps.UpgradeBlockNode(ins),
 		)
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-purge-storage").Steps(stepList...)
 	case ins.ResetStorage:
 		// --with-reset wipes data only; PVs/PVCs are preserved. Storage paths must
 		// not have changed because local-PV hostPath is immutable.
@@ -107,11 +110,11 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 		oldIns := ins
 		oldIns.Storage = currentState.BlockNodeState.Storage
-		stepList := append(networkSteps,
+		workflowId = "block-node-reconfigure-with-reset"
+		stepList = append(networkSteps,
 			steps.PurgeBlockNodeStorage(oldIns),
 			steps.UpgradeBlockNode(ins),
 		)
-		wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-with-reset").Steps(stepList...)
 	default:
 		// For non-reset reconfigures, storage path changes require --purge-storage because
 		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
@@ -126,18 +129,30 @@ func (h *ReconfigureHandler) BuildWorkflow(
 					"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
 		}
 
-		if ins.NoRestart {
+		stepList = append(networkSteps, steps.UpgradeBlockNode(ins))
+		switch {
+		case ins.NoRestart:
 			// Opt-out: apply new values via helm but skip the rollout-restart.
-			stepList := append(networkSteps, steps.UpgradeBlockNode(ins))
-			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure-no-restart").Steps(stepList...)
-		} else {
+			workflowId = "block-node-reconfigure-no-restart"
+		case ins.LeaveScaledDown:
+			// A rollout-restart would recreate the pod only for the trailing
+			// scale-down to remove it again.
+			workflowId = "block-node-reconfigure-scaled-down"
+		default:
 			// Default: apply new values then trigger a rolling restart so ConfigMap-only
 			// changes are picked up by the running pod.
-			stepList := append(networkSteps, steps.UpgradeBlockNode(ins), steps.RolloutRestartBlockNode(ins))
-			wb = automa.NewWorkflowBuilder().WithId("block-node-reconfigure").Steps(stepList...)
+			workflowId = "block-node-reconfigure"
+			stepList = append(stepList, steps.RolloutRestartBlockNode(ins))
 		}
 	}
-	return wb, nil
+
+	// --scale-up=false must be the last word: the branches it can reach all end in
+	// a helm upgrade, which re-asserts the chart's replica default.
+	if ins.LeaveScaledDown {
+		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))
+	}
+
+	return automa.NewWorkflowBuilder().WithId(workflowId).Steps(stepList...), nil
 }
 
 // HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.

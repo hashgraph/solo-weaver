@@ -12,6 +12,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// flagScaleUp is shared by reset, reconfigure and upgrade. It is initialised to
+// true rather than left at Go's zero value because prepareBlocknodeInputs is
+// shared with install and check, which do not register the flag and would
+// otherwise report a block node that ends up scaled down.
+var flagScaleUp = true
+
 var resetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Reset a Hedera Block Node by clearing its storage",
@@ -23,6 +29,9 @@ This command will:
 3. Clear all files from the storage directories
 4. Scale the StatefulSet back up to restart the pod
 5. Wait for the block node to become ready
+
+Pass --scale-up=false to stop after step 3, leaving the StatefulSet at 0 replicas
+so the storage tree can be inspected or seeded before the node starts again.
 
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,4 +73,8 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 		logx.As().Info().Msg("Successfully reset Hedera Block Node")
 		return nil
 	},
+}
+
+func init() {
+	common.FlagScaleUp().SetVar(resetCmd, &flagScaleUp, false)
 }

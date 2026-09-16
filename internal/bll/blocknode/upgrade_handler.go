@@ -109,15 +109,21 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// enabled, is handled post-workflow in the CLI layer.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
 
-	var wb *automa.WorkflowBuilder
+	stepList := networkSteps
+	workflowId := "block-node-upgrade"
 	if ins.ResetStorage {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade-with-reset").
-			Steps(append(networkSteps, steps.PurgeBlockNodeStorage(ins), steps.UpgradeBlockNode(ins))...)
-	} else {
-		wb = automa.NewWorkflowBuilder().WithId("block-node-upgrade").
-			Steps(append(networkSteps, steps.UpgradeBlockNode(ins))...)
+		workflowId = "block-node-upgrade-with-reset"
+		stepList = append(stepList, steps.PurgeBlockNodeStorage(ins))
 	}
-	return wb, nil
+	stepList = append(stepList, steps.UpgradeBlockNode(ins))
+
+	// --scale-up=false must be the last word: the helm upgrade above re-asserts
+	// the chart's replica default.
+	if ins.LeaveScaledDown {
+		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))
+	}
+
+	return automa.NewWorkflowBuilder().WithId(workflowId).Steps(stepList...), nil
 }
 
 // HandleIntent delegates to the shared BaseHandler which orchestrates all block-node intents.

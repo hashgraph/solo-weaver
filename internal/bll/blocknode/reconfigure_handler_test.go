@@ -283,3 +283,84 @@ func TestBuildWorkflow_NotInstalled_ReturnsError(t *testing.T) {
 	assert.Nil(t, wb)
 	assert.Contains(t, err.Error(), "block node is not installed")
 }
+
+// TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown pins --scale-up=false
+// across every reconfigure branch. The scale-down must be last: each branch ends
+// in a helm upgrade, which re-asserts the chart's replica default and would undo
+// a scale-down placed any earlier.
+func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	for _, tc := range []struct {
+		name       string
+		inputs     models.UserInputs[models.BlockNodeInputs]
+		workflowId string
+		tail       []string
+	}{
+		{
+			name:       "purge_storage",
+			inputs:     reconfigureInputsWithFlags("/mnt/new", false, true),
+			workflowId: "block-node-reconfigure-purge-storage",
+			tail: []string{
+				steps.PurgeBlockNodeStorageStepId,
+				steps.RecreateBlockNodeStorageStepId,
+				steps.UpgradeBlockNodeStepId,
+				steps.ScaleDownAfterUpgradeStepId,
+			},
+		},
+		{
+			name:       "with_reset",
+			inputs:     reconfigureInputs("/mnt/storage", true),
+			workflowId: "block-node-reconfigure-with-reset",
+			tail: []string{
+				steps.PurgeBlockNodeStorageStepId,
+				steps.UpgradeBlockNodeStepId,
+				steps.ScaleDownAfterUpgradeStepId,
+			},
+		},
+		{
+			// A rollout-restart would recreate the pod only for the scale-down to
+			// remove it again, so the default branch drops it.
+			name:       "no_reset_drops_rollout_restart",
+			inputs:     reconfigureInputs("/mnt/storage", false),
+			workflowId: "block-node-reconfigure-scaled-down",
+			tail: []string{
+				steps.UpgradeBlockNodeStepId,
+				steps.ScaleDownAfterUpgradeStepId,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := tc.inputs
+			inputs.Custom.LeaveScaledDown = true
+
+			wb, err := h.BuildWorkflow(deployedBlockNodeState("/mnt/storage"), inputs)
+
+			require.NoError(t, err)
+			require.NotNil(t, wb)
+			assert.Equal(t, tc.workflowId, wb.Id())
+			assert.Equal(t, append(append([]string{}, enableNetworkPrefix...), tc.tail...),
+				workflowStepIDs(t, wb))
+		})
+	}
+}
+
+// TestBuildWorkflow_NoRestartWithLeaveScaledDown keeps the --no-restart workflow
+// id when both flags are passed; the two agree on skipping the restart, so the
+// explicit opt-out is the one worth naming.
+func TestBuildWorkflow_NoRestartWithLeaveScaledDown(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/storage", false)
+	inputs.Custom.NoRestart = true
+	inputs.Custom.LeaveScaledDown = true
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeState("/mnt/storage"), inputs)
+
+	require.NoError(t, err)
+	assert.Equal(t, "block-node-reconfigure-no-restart", wb.Id())
+	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+		steps.UpgradeBlockNodeStepId,
+		steps.ScaleDownAfterUpgradeStepId,
+	), workflowStepIDs(t, wb))
+}

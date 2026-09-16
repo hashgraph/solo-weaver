@@ -330,12 +330,17 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 # Upgrade and wipe storage in one go
 sudo solo-provisioner block node upgrade --profile=mainnet \
   --chart-version=0.24.0 --with-reset
+
+# Wipe storage and leave the node stopped
+sudo solo-provisioner block node upgrade --profile=mainnet \
+  --chart-version=0.24.0 --with-reset --scale-up=false
 ```
 
 | Flag | What it does | Default |
 |---|---|---|
 | `--no-reuse-values` | Do not reuse the previous release's values | `false` |
 | `--with-reset` | Wipe block node data directories. PVs and PVCs are kept | `false` |
+| `--scale-up` | Scale the StatefulSet back up when the upgrade completes. `--scale-up=false` leaves it at 0 replicas | `true` |
 | `--timeout` | Helm operation budget as a Go duration. Rolls back on overrun | `5m0s` |
 
 > **Upgrade never flips a feature switch.** It does not expose `--firewall-enabled` or
@@ -364,6 +369,10 @@ sudo solo-provisioner block node reconfigure --profile=mainnet --traffic-shaping
 # Tear down a host firewall that was previously enabled
 sudo solo-provisioner block node reconfigure --profile=mainnet --firewall-enabled=false
 
+# Re-apply configuration but leave the node stopped
+sudo solo-provisioner block node reconfigure --profile=mainnet \
+  --values=/path/to/values.yaml --scale-up=false
+
 # Point the daemon at a port-forwarded BN and slow its polling
 sudo solo-provisioner block node reconfigure --profile=mainnet \
   --statusz-base-url=http://127.0.0.1:8080 --statusz-poll-interval=10s
@@ -375,6 +384,7 @@ sudo solo-provisioner block node reconfigure --profile=mainnet \
 | `--no-restart` | Skip the rollout-restart of the block node pod | `false` |
 | `--with-reset` | Wipe data directories. PVs and PVCs are kept | `false` |
 | `--purge-storage` | Delete PVs and PVCs as well as wiping data. Implies `--with-reset` | `false` |
+| `--scale-up` | Scale the StatefulSet back up when the reconfigure completes. `--scale-up=false` leaves it at 0 replicas and skips the rollout-restart | `true` |
 | `--firewall-enabled` | Turn the host firewall on or off. Same sub-flags as `install` | current state |
 | `--traffic-shaping-enabled` | Turn the traffic-shaping bundle on or off. Same sub-flags as `install` | persisted state |
 | `--statusz-base-url` | Override the statusz endpoint. Omitting it preserves what is on disk | preserved |
@@ -408,7 +418,14 @@ prompt for a feature that is currently on:
 
 ```bash
 sudo solo-provisioner block node reset --profile=mainnet
+
+# Wipe storage and leave the node stopped
+sudo solo-provisioner block node reset --profile=mainnet --scale-up=false
 ```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--scale-up` | Scale the StatefulSet back up once the storage is cleared. `--scale-up=false` stops after step 3 | `true` |
 
 What happens, in order:
 
@@ -423,6 +440,20 @@ What happens, in order:
 > **This deletes all block data.** There is no undo. Think twice on `mainnet`.
 
 To reset and change version at the same time, use `upgrade --with-reset` instead.
+
+### Leaving the node stopped
+
+`--scale-up=false` ends the command with the StatefulSet at 0 replicas, so you can
+inspect or seed the empty storage tree before the node starts writing to it again.
+Bring it back up with `block node reconfigure`.
+
+The flag is one-shot — nothing is recorded on disk. The next `reconfigure` or `upgrade`
+starts the node again unless you pass `--scale-up=false` to that command too.
+
+> **Only `reset` keeps the pod down for the whole operation.** `reconfigure` and
+> `upgrade` run `helm upgrade` with `--wait`, so on those two the pod starts and becomes
+> ready before the scale-down lands. If the node must never touch the wiped directories,
+> use `reset --scale-up=false`.
 
 ---
 
