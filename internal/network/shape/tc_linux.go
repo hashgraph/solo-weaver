@@ -118,6 +118,68 @@ func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]C
 	return stats, nil
 }
 
+// tcQdiscJSON is the subset of `tc -j qdisc show` output the probe reads.
+// iproute2 emits "root": true or "parent", never "root": false.
+type tcQdiscJSON struct {
+	Kind   string `json:"kind"`
+	Handle string `json:"handle"`
+	Parent string `json:"parent"`
+	Root   *bool  `json:"root"`
+}
+
+// isWeaverRoot reports whether this entry is weaver's `root handle 1: htb`
+// qdisc, not a foreign hierarchy's child HTB that happens to reuse handle 1:.
+func (q tcQdiscJSON) isWeaverRoot() bool {
+	if q.Kind != "htb" || strings.TrimSuffix(q.Handle, ":") != "1" {
+		return false
+	}
+	if q.Parent != "" {
+		return false
+	}
+	// A missing "root" is tolerated for iproute2 builds that omit the field.
+	return q.Root == nil || *q.Root
+}
+
+// QdiscRootExists implements TCRunner.
+func (r *execTCRunner) QdiscRootExists(ctx context.Context, dev string) (bool, error) {
+	cmd := exec.CommandContext(ctx, tcBin, "-j", "qdisc", "show", "dev", dev)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		// A missing device lands here: "cannot determine", not "no qdisc".
+		return false, errorx.ExternalError.Wrap(err,
+			"tc -j qdisc show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+	}
+
+	return qdiscRootPresent(out, dev)
+}
+
+// qdiscRootPresent decides whether `tc -j qdisc show` output declares weaver's
+// root qdisc. Split from the exec so the "cannot determine" branches are
+// testable without a kernel.
+func qdiscRootPresent(out []byte, dev string) (bool, error) {
+	// Empty stdout would decode as an empty list; reject it rather than read it
+	// as "root qdisc gone".
+	if len(bytes.TrimSpace(out)) == 0 {
+		return false, errorx.ExternalError.New(
+			"tc -j qdisc show dev %s produced no output; cannot determine whether the root qdisc is present", dev)
+	}
+
+	var raw []tcQdiscJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return false, errorx.ExternalError.Wrap(err,
+			"failed to parse tc qdisc JSON for dev %s", dev)
+	}
+
+	for _, q := range raw {
+		if q.isWeaverRoot() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // newExecTCRunner returns the production TC runner that shells out to /sbin/tc.
 func newExecTCRunner() TCRunner {
 	return &execTCRunner{}

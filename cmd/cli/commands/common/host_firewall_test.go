@@ -4,6 +4,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,12 +18,25 @@ import (
 // probeRunner satisfies firewall.Runner without touching the kernel. Only
 // Exists is exercised here — the seed is a pure presence probe, and the content
 // tier reads the persisted config rather than the kernel.
-type probeRunner struct{ exists bool }
+type probeRunner struct {
+	exists bool
+	// existsErr makes the probe unable to answer, standing in for an nft that
+	// cannot list tables.
+	existsErr error
+}
 
 func (p *probeRunner) List(context.Context) (string, error) { return "", nil }
 func (p *probeRunner) Check(context.Context, string) error  { return nil }
 func (p *probeRunner) Delete(context.Context) error         { p.exists = false; return nil }
-func (p *probeRunner) Exists(context.Context) (bool, error) { return p.exists, nil }
+
+// Exists mirrors nftexec.TableExists: a failure answers false, never a stale
+// presence value.
+func (p *probeRunner) Exists(context.Context) (bool, error) {
+	if p.existsErr != nil {
+		return false, p.existsErr
+	}
+	return p.exists, nil
+}
 
 // stubFirewallManager points the package's firewall seam at a manager backed by
 // a fake nft runner and temp artifact paths. active drives the IsActive probe;
@@ -38,10 +52,17 @@ func stubFirewallManager(t *testing.T, active bool, table *firewall.Table) {
 		require.NoError(t, os.WriteFile(configPath, data, 0o600))
 	}
 
+	stubFirewallManagerWithRunner(t, &probeRunner{exists: active}, dir, configPath)
+}
+
+// stubFirewallManagerWithRunner is the seam behind stubFirewallManager, exposed
+// so a test can supply a runner whose probe fails.
+func stubFirewallManagerWithRunner(t *testing.T, r firewall.Runner, dir, configPath string) {
+	t.Helper()
 	orig := newHostFirewallManager
 	newHostFirewallManager = func() *firewall.Manager {
 		return firewall.NewManagerWithConfig(firewall.Config{
-			Runner:          &probeRunner{exists: active},
+			Runner:          r,
 			NftPath:         filepath.Join(dir, "network-weaver-host-firewall.nft"),
 			ConfigPath:      configPath,
 			LockPath:        filepath.Join(dir, ".applying"),
@@ -244,4 +265,33 @@ func TestHostConfigFromTable_PodCIDRStaysLiteralOnly(t *testing.T) {
 
 	assert.Empty(t, got.PodCIDR, "a name is not usable as the pod CIDR")
 	assert.NoError(t, got.Validate())
+}
+
+// TestResolveFirewallSeed_UnanswerableProbeFallsBackToRecordedState: Exists now
+// reports an nft failure instead of answering "absent", and the seed must fall
+// back to what state recorded — never read the failure as "no firewall here"
+// and tear a live one down.
+func TestResolveFirewallSeed_UnanswerableProbeFallsBackToRecordedState(t *testing.T) {
+	probeErr := errors.New("nft list tables failed: netlink: Operation not permitted")
+
+	tests := []struct {
+		name      string
+		persisted *models.HostConfig
+		want      bool
+	}{
+		{"recorded enabled", &models.HostConfig{Disabled: false}, true},
+		{"recorded disabled", &models.HostConfig{Disabled: true}, false},
+		{"nothing recorded", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			stubFirewallManagerWithRunner(t, &probeRunner{existsErr: probeErr},
+				dir, filepath.Join(dir, "network-weaver-host-firewall.yaml"))
+
+			// A broken probe must never panic or propagate: the seed has no error
+			// return, so its only safe answer is the recorded decision.
+			assert.Equal(t, tt.want, ResolveFirewallSeed(context.Background(), tt.persisted))
+		})
+	}
 }

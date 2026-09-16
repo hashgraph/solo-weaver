@@ -14,3 +14,7 @@ func EnsureTcEgressUnit(_ context.Context) error { return nil }
 // RemoveTcEgressUnit is a no-op on non-Linux platforms, for the same reason as
 // EnsureTcEgressUnit.
 func RemoveTcEgressUnit(_ context.Context) error { return nil }
+
+// RestartTcEgressService is a no-op on non-Linux platforms, for the same reason
+// as EnsureTcEgressUnit.
+func RestartTcEgressService(_ context.Context) error { return nil }

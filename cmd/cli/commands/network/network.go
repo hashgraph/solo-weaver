@@ -6,6 +6,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network/firewall"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network/policy"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network/reassert"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network/shape"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,7 @@ func init() {
 	networkCmd.AddCommand(firewall.GetCmd())
 	networkCmd.AddCommand(policy.GetCmd())
 	networkCmd.AddCommand(shape.GetCmd())
+	networkCmd.AddCommand(reassert.GetCmd())
 }
 
 // GetCmd returns the root of the `network` command group.

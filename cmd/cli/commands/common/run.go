@@ -38,7 +38,7 @@ const KeyRequireGlobalChecks = "requireGlobalChecks"
 // command's SetVarP so the value is visible to this package without threading a
 // *cobra.Command through every workflow-run call site. It selects the stdout
 // log format: "text" (default) keeps the human-readable console / TUI, while
-// "json" emits machine-readable NDJSON log lines plus a final summary object.
+// "json" emits the summary object on stdout and NDJSON log lines on stderr.
 var OutputFormat string
 
 // resolveOutputFormat normalizes the raw --output value to "text" or "json".
@@ -177,16 +177,10 @@ func RunWorkflowBuilder(ctx context.Context, b automa.Builder) error {
 	})
 }
 
-// finalizeWorkflowReport saves the YAML report to disk, renders the run summary,
-// and returns the deepest failure error in the report tree. In JSON output mode
-// the human summary table is replaced by a single compact JSON summary line so
-// stdout stays a valid NDJSON stream. Returning
-// the deepest error (rather than the immediate top-level step error) preserves
-// errorx properties such as ErrPropertyResolution: when a sub-workflow step
-// fails, automa sets the parent's step-report Error to a fresh
-// "workflow X completed with N step failures" wrapper that does NOT preserve
-// the leaf error's properties. Walking the StepReports tree to the leaf keeps
-// the user-facing resolution panel intact.
+// finalizeWorkflowReport saves the YAML report, renders the run summary, and
+// returns the deepest failure error in the report tree — a sub-workflow's error
+// gets rewrapped by automa, dropping errorx properties like ErrPropertyResolution
+// that the leaf still has.
 func finalizeWorkflowReport(report *automa.Report) error {
 	if report == nil {
 		return nil
@@ -204,10 +198,8 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		daemonLogPath = p
 	}
 
-	// Human mode: render the summary table before the save log (unchanged
-	// ordering). JSON mode emits its summary object last (below) so it is the
-	// final line finalizeWorkflowReport writes; the table would otherwise
-	// corrupt the NDJSON stdout stream.
+	// Human mode only: JSON mode emits its summary object last (below) instead,
+	// since the table would otherwise corrupt stdout's JSON.
 	if !OutputIsJSON() {
 		fmt.Print(ui.RenderSummaryTable(report, totalDuration, reportPath, logPath, daemonLogPath))
 	}
@@ -226,9 +218,7 @@ func finalizeWorkflowReport(report *automa.Report) error {
 			Msg("Workflow report is saved")
 	}
 
-	// Emit the machine-readable summary as the final finalize output. It is
-	// tagged "type":"summary" so consumers select it regardless of position
-	// (a caller may still log further lines after finalize returns).
+	// Emit the machine-readable summary, tagged "type":"summary".
 	if OutputIsJSON() {
 		printJSONSummary(report, totalDuration, reportPath)
 	}
@@ -239,11 +229,8 @@ func finalizeWorkflowReport(report *automa.Report) error {
 	return report.Error
 }
 
-// printJSONSummary writes a single compact JSON object to stdout summarizing the
-// workflow run. It is the final line of the NDJSON stream emitted in --output
-// json mode, tagged "type":"summary" so consumers can distinguish it from the
-// per-event log lines that precede it. The full report tree is embedded via
-// automa.Report's JSON marshaler.
+// printJSONSummary writes one compact JSON object summarising the workflow run
+// to stdout. It bypasses logx, whose --output json events go to stderr.
 func printJSONSummary(report *automa.Report, duration time.Duration, reportPath string) {
 	summary := struct {
 		Type       string         `json:"type"`

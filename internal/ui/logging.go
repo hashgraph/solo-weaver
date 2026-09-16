@@ -124,14 +124,11 @@ func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
 		Logger()
 }
 
-// newJSONConsoleLogger creates a zerolog.Logger that writes machine-readable
-// JSON to stdout AND to the rolling log file. Neither writer is a
-// zerolog.ConsoleWriter, so zerolog's native compact single-line JSON encoding
-// is used — i.e. stdout becomes an NDJSON stream. Used by SetJSONConsoleLogging
-// for --output json.
+// newJSONConsoleLogger creates a zerolog.Logger that writes NDJSON to stderr and
+// the rolling log file, leaving stdout for the command's own JSON.
 func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(os.Stdout, newLogFileWriter(cfg))
+	mw := zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg))
 	return zerolog.New(mw).With().
 		Timestamp().
 		Int("pid", pid).
@@ -175,10 +172,7 @@ func SetStderrConsoleLogging(cfg logx.LoggingConfig) {
 }
 
 // SetJSONConsoleLogging replaces the global logx logger with one that emits
-// NDJSON to stdout (and the log file). Used in --output json mode so downstream
-// automation can parse each log event. Like its sibling SuppressConsoleLogging,
-// it works around logx.Initialize() unconditionally installing a human-readable
-// ConsoleWriter.
+// NDJSON to stderr. Used in --output json mode.
 func SetJSONConsoleLogging(cfg logx.LoggingConfig) {
 	logx.SetLogger(newJSONConsoleLogger(cfg))
 }

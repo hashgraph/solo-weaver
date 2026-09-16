@@ -66,6 +66,9 @@ func (f *fakeDelegator) ReconcileShaper(context.Context, string) (privexec.Recon
 func (f *fakeDelegator) ReconcileShaperCheck(context.Context, string) (privexec.ReconcileShaperCheckResult, error) {
 	return privexec.ReconcileShaperCheckResult{}, nil
 }
+func (f *fakeDelegator) NetworkReassert(context.Context) (privexec.NetworkReassertResult, error) {
+	return privexec.NetworkReassertResult{}, nil
+}
 
 func newTestMonitor(r vethResolver, d *fakeDelegator) *TrafficShaperMonitor {
 	return &TrafficShaperMonitor{

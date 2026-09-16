@@ -1,7 +1,7 @@
 # Network Commands
 
 `solo-provisioner network …` manages the node's network state. There are three scopes, each
-with its own guide.
+with its own guide, plus one verb that spans them all.
 
 Most operators never run these directly — [`block node install`](../block-node.md#networking-two-independent-switches)
 sets all three up. Use them to inspect, adjust, or repair what it created.
@@ -32,6 +32,11 @@ flowchart TB
 | Control who can SSH to the host, or block an address outright | `network firewall` | [firewall.md](firewall.md) |
 | Decide which QoS class a workload's traffic lands in | `network policy` | [policy.md](policy.md) |
 | Decide how much bandwidth each class gets | `network shape` | [shape.md](shape.md) |
+| Check all three are still live, and restore any that were wiped | `network reassert` | [reassert.md](reassert.md) |
+
+`reassert` spans all three planes rather than owning one, which is why it sits at the
+`network` level. It is normally run by the daemon, not by hand — see
+[reassert.md](reassert.md).
 
 ## How they relate
 
@@ -65,6 +70,10 @@ Two systemd units replay this at boot:
 
 Ingress shaping is **not** replayed by a boot unit: the pod's veth is ephemeral, so the daemon
 re-attaches it per-pod with [`block node tc-attach`](../block-node.md#tc-attach--attach-ingress-shaping-to-a-pod-veth).
+
+Those two units also replay this state **mid-life**, not only at boot: if something else on the
+host destroys a table or the tc hierarchy, the daemon notices within a minute and restarts the
+owning unit. See [`network reassert`](reassert.md).
 
 ## See also
 

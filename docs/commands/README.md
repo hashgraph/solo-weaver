@@ -5,7 +5,7 @@ Every `solo-provisioner` command, by stack.
 | Stack | Guide | What it does |
 |---|---|---|
 | `block node` | [block-node.md](block-node.md) | Install, upgrade, reset and remove a Hedera Block Node |
-| `network` | [network/](network/) | Three scopes, one guide each: [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md) |
+| `network` | [network/](network/) | Three scopes, one guide each: [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md); plus [reassert](network/reassert.md), which spans all three |
 | `alloy` / `eso` | [alloy.md](alloy.md) | Grafana Alloy metrics and logs; External Secrets Operator |
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
@@ -70,6 +70,9 @@ sudo solo-provisioner network shape set    --class=<name> [--rate=<rate>] [--cei
 sudo solo-provisioner network shape show   [--class=<name>]
 sudo solo-provisioner network shape watch  --device=<dir> --iface=<iface> [--class=<name>] [--interval=<d>] [--count=<n>]
 sudo solo-provisioner network shape delete --class=<name>
+
+# NETWORK — RECOVERY (spans all three planes; the daemon runs this automatically)
+sudo solo-provisioner network reassert [--check]
 
 # TELEPORT
 sudo solo-provisioner teleport node install    --token=<token> --proxy=<addr>

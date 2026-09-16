@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,11 +21,22 @@ import (
 type fakeFwRunner struct {
 	exists  bool
 	deleted bool
+	// existsErr makes the presence probe unable to answer, standing in for an
+	// nft that cannot list tables.
+	existsErr error
 }
 
 func (f *fakeFwRunner) List(context.Context) (string, error) { return "", nil }
 func (f *fakeFwRunner) Delete(context.Context) error         { f.deleted = true; f.exists = false; return nil }
-func (f *fakeFwRunner) Exists(context.Context) (bool, error) { return f.exists, nil }
+
+// Exists mirrors nftexec.TableExists: a failure answers false, never a stale
+// presence value.
+func (f *fakeFwRunner) Exists(context.Context) (bool, error) {
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	return f.exists, nil
+}
 
 // Check accepts every document: the step test covers step wiring, not nft's
 // verdict on the rendered ruleset (that lives in internal/network/firewall).
@@ -236,4 +248,24 @@ func TestNetworkFirewallCreate_PreservesNamedAllowRules(t *testing.T) {
 	require.Contains(t, string(rendered), "192.168.68.0/24", "the reconfigured mgmt allowlist must be applied")
 	require.Contains(t, string(rendered), "@k8s-node", "the named allow rule must survive a reconfigure")
 	require.Contains(t, string(rendered), "2379-2380")
+}
+
+// TestNetworkFirewallCreate_UnanswerableProbeFailsBeforeApplying pins the probe
+// contract at the step boundary. The pre-existence probe decides whether
+// rollback may delete the table, so a swallowed error would let a rollback
+// remove a firewall this step never created.
+func TestNetworkFirewallCreate_UnanswerableProbeFailsBeforeApplying(t *testing.T) {
+	r := &fakeFwRunner{existsErr: errors.New("nft list tables failed: netlink: Operation not permitted")}
+	nftPath := withStubbedFirewall(t, r)
+	setHostConfig(t, models.HostConfig{ManagementCIDRs: []string{"10.0.0.0/8"}})
+
+	step, err := NetworkFirewallCreate(false).Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+
+	require.Error(t, report.Error)
+	require.ErrorIs(t, report.Error, r.existsErr)
+	require.Equal(t, automa.StatusFailed, report.Status)
+	require.NoFileExists(t, nftPath, "nothing may be applied or persisted while presence is unknown")
 }
