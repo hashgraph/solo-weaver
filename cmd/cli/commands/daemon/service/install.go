@@ -95,8 +95,12 @@ func init() {
 	common.FlagDaemonComponents().SetVarP(installCmd, &flagComponents, false)
 	common.FlagDaemonCNNodeID().SetVarP(installCmd, &flagCNNodeID, false)
 	common.FlagDaemonCNOrbit().SetVarP(installCmd, &flagCNOrbit, false)
+	// --cn-namespace / --bn-namespace are hidden aliases bound to the same vars, so
+	// the orbit can be spelled either way (aligning with `consensus node --namespace`).
+	common.FlagDaemonCNNamespace().SetVarPHidden(installCmd, &flagCNOrbit, false)
 	common.FlagDaemonCNUpgradeDir().SetVarP(installCmd, &flagCNUpgradeDir, false)
 	common.FlagDaemonBNOrbit().SetVarP(installCmd, &flagBNOrbit, false)
+	common.FlagDaemonBNNamespace().SetVarPHidden(installCmd, &flagBNOrbit, false)
 	common.FlagDaemonFromConfig().SetVarP(installCmd, &flagFromConfig, false)
 	common.FlagDaemonBin().SetVarP(installCmd, &flagDaemonBin, false)
 	common.FlagDaemonChecksum().SetVarP(installCmd, &flagDaemonChecksum, false)

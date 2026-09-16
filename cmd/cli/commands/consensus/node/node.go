@@ -55,7 +55,11 @@ var (
 )
 
 func init() {
-	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", models.ConsensusDefaultNamespace, "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...)")
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", models.ConsensusDefaultNamespace, "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...) (alias: --orbit)")
+	// --orbit is a hidden alias for --namespace (the namespace IS the Orbit name),
+	// bound to the same variable so either spelling works; keep the default identical.
+	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "orbit", models.ConsensusDefaultNamespace, "Alias for --namespace (the Orbit CR name)")
+	_ = nodeCmd.PersistentFlags().MarkHidden("orbit")
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
 	nodeCmd.PersistentFlags().StringVar(&flagAccountId, "account-id", "0.0.3", "Node account ID (e.g. 0.0.3)")
 	nodeCmd.PersistentFlags().IntVar(&flagWeight, "weight", 500, "Consensus weight for this node")

@@ -300,9 +300,19 @@ func FlagDaemonCNOrbit() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "cn-orbit",
 		ShortName:   "",
-		Description: "Kubernetes namespace (orbit) where consensus-node NetworkUpgradeExecute CRs are watched",
+		Description: "Kubernetes namespace (orbit) where consensus-node NetworkUpgradeExecute CRs are watched (alias: --cn-namespace)",
 		Default:     "",
 	}
+}
+
+// FlagDaemonCNNamespace is a hidden alias for --cn-orbit: the orbit IS the
+// Kubernetes namespace, and `consensus node` commands spell it --namespace, so
+// both spellings are accepted. Register it with SetVarPHidden onto the SAME
+// variable as FlagDaemonCNOrbit.
+func FlagDaemonCNNamespace() FlagDefinition[string] {
+	f := FlagDaemonCNOrbit()
+	f.Name = "cn-namespace"
+	return f
 }
 
 // FlagDaemonCNUpgradeDir is an optional override for the consensus-node upgrade
@@ -324,9 +334,16 @@ func FlagDaemonBNOrbit() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "bn-orbit",
 		ShortName:   "",
-		Description: "Kubernetes namespace (orbit) for the block-node component",
+		Description: "Kubernetes namespace (orbit) for the block-node component (alias: --bn-namespace)",
 		Default:     "",
 	}
+}
+
+// FlagDaemonBNNamespace is a hidden alias for --bn-orbit (see FlagDaemonCNNamespace).
+func FlagDaemonBNNamespace() FlagDefinition[string] {
+	f := FlagDaemonBNOrbit()
+	f.Name = "bn-namespace"
+	return f
 }
 
 // FlagDaemonFromConfig is an optional path to an existing daemon.yaml to copy
