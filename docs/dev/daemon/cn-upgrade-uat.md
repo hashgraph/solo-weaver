@@ -38,12 +38,20 @@ Keep the upgrade package to config-only changes for a clean run.
    `ReadyForProvisionerDaemon` and wait for the host daemon. Confirm how this profile
    is selected in the capsule/UC config before starting — the stock docs/beacon e2e is
    the cluster-only path and lets the UC proxy do execute.
-3. **Shared upgrade directory.** The daemon reads the extracted package from its
-   `upgrade_dir` on the host; the CN pod extracts special file 0.0.150 into that same
-   location. On kind this is a hostPath that both the node and the host daemon see.
-   Confirm the mount before starting — this is the most fragile part of the local setup.
-4. Tooling: `kind`, `docker`, this weaver checkout, and a solo-operator checkout with
-   `beacon` (see solo-operator `docs/beacon/README.md`).
+3. **Where the daemon runs + shared upgrade directory.** The daemon reads the
+   extracted package from its `upgrade_dir`; the CN pod extracts special file 0.0.150
+   into that same directory, so the daemon must run somewhere that (a) reaches the
+   cluster API and (b) shares that `upgrade_dir` path with the CN pod. In a real
+   single-node deployment both live on the same host, so this is automatic. **On kind
+   it is not**: the node is a container, so the dev machine does not see the node's
+   filesystem. Run the daemon **inside the kind node container** (or bind the node's
+   `upgrade_dir` hostPath into wherever the daemon runs) — this is the most fragile
+   part of the local setup; confirm the shared path before starting.
+4. **daemon-cn RBAC + scoped kubeconfig** — provisioned in Step 3 by
+   `daemon service install` (the rules added in this PR). No manual action needed, but
+   the daemon will not start healthy without it.
+5. Tooling: `kind`, `docker`, this weaver checkout, and a solo-operator checkout at
+   **v0.7.0+** with `beacon` (see solo-operator `docs/beacon/README.md`).
 
 Version map (matches docs/beacon): deployed `0.74.0`, upgrade to `0.74.2`.
 
