@@ -72,63 +72,33 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// tear a feature down when it is turned off. See networkPlaneSteps.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
 
+	plan, err := planStorage(currentState, ins)
+	if err != nil {
+		return nil, err
+	}
+
 	var (
 		stepList   []automa.Builder
 		workflowId string
 	)
 	switch {
-	case ins.PurgeStorage:
-		// Purge data at the currently deployed paths: build a copy of ins that
-		// carries the *old* storage configuration so that ResetStorage clears the
-		// directories that actually exist on disk. Namespace and release are the
-		// same in both old and new inputs, so ScaleStatefulSet / WaitForPodsTerminated
-		// are unaffected.
-		oldIns := ins
-		oldIns.Storage = currentState.BlockNodeState.Storage
-
-		// After purging old dirs, recreate PVs/PVCs and create new directories at
-		// the new paths, then upgrade the chart.
+	case plan.recreate:
+		// Wipe the deployed directories, then recreate PVs/PVCs and the directories
+		// at the requested paths before applying the chart.
 		workflowId = "block-node-reconfigure-purge-storage"
 		stepList = append(networkSteps,
-			steps.PurgeBlockNodeStorage(oldIns),
+			steps.PurgeBlockNodeStorage(plan.purgeIns),
 			steps.RecreateBlockNodeStorage(ins),
 			steps.UpgradeBlockNode(ins),
 		)
 	case ins.ResetStorage:
-		// --with-reset wipes data only; PVs/PVCs are preserved. Storage paths must
-		// not have changed because local-PV hostPath is immutable.
-		changed, err := storagePathsChanged(currentState.BlockNodeState.Storage, ins)
-		if err != nil {
-			return nil, errorx.IllegalState.Wrap(err, "failed to compare storage paths")
-		}
-		if changed {
-			return nil, errorx.IllegalArgument.New(
-				"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
-				WithProperty(models.ErrPropertyResolution,
-					"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
-		}
-
-		oldIns := ins
-		oldIns.Storage = currentState.BlockNodeState.Storage
+		// --with-reset wipes data only; PVs/PVCs are preserved.
 		workflowId = "block-node-reconfigure-with-reset"
 		stepList = append(networkSteps,
-			steps.PurgeBlockNodeStorage(oldIns),
+			steps.PurgeBlockNodeStorage(plan.purgeIns),
 			steps.UpgradeBlockNode(ins),
 		)
 	default:
-		// For non-reset reconfigures, storage path changes require --purge-storage because
-		// existing PVs/PVCs cannot be mutated in-place; block with a clear error.
-		changed, err := storagePathsChanged(currentState.BlockNodeState.Storage, ins)
-		if err != nil {
-			return nil, errorx.IllegalState.Wrap(err, "failed to compare storage paths")
-		}
-		if changed {
-			return nil, errorx.IllegalArgument.New(
-				"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
-				WithProperty(models.ErrPropertyResolution,
-					"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
-		}
-
 		stepList = append(networkSteps, steps.UpgradeBlockNode(ins))
 		switch {
 		case ins.NoRestart:

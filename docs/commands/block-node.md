@@ -45,8 +45,8 @@ stateDiagram-v2
 |---|---|---|---|---|
 | `check` | — | — | — | no (read-only) |
 | `install` | you pick | you pick | created | yes |
-| `upgrade` | **changes** | you pick | kept (unless `--with-reset`) | no |
-| `reconfigure` | unchanged | you pick | kept (unless `--with-reset`) | yes |
+| `upgrade` | **changes** | you pick | kept (unless `--with-reset` / `--purge-storage`) | no |
+| `reconfigure` | unchanged | you pick | kept (unless `--with-reset` / `--purge-storage`) | yes |
 | `reset` | unchanged | unchanged | **wiped** | no |
 | `uninstall` | release removed | — | kept unless you ask | no |
 
@@ -334,12 +334,17 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 # Wipe storage and leave the node stopped
 sudo solo-provisioner block node upgrade --profile=mainnet \
   --chart-version=0.24.0 --with-reset --no-scale-up
+
+# Move to new storage paths and a new version in one pass
+sudo solo-provisioner block node upgrade --profile=mainnet \
+  --chart-version=0.24.0 --base-path=/new/path --purge-storage
 ```
 
 | Flag | What it does | Default |
 |---|---|---|
 | `--no-reuse-values` | Do not reuse the previous release's values | `false` |
 | `--with-reset` | Wipe block node data directories. PVs and PVCs are kept | `false` |
+| `--purge-storage` | Delete PVs and PVCs as well as wiping data, then recreate them at the requested paths. Implies `--with-reset` | `false` |
 | `--no-scale-up` | Leave the StatefulSet at 0 replicas when the upgrade completes instead of scaling it back up | `false` |
 | `--timeout` | Helm operation budget as a Go duration. Rolls back on overrun | `5m0s` |
 
@@ -409,8 +414,9 @@ prompt for a feature that is currently on:
 - Turning traffic shaping on activates the daemon, same as `install`.
 
 > **Changing a storage path needs `--purge-storage`.** A local PV's `hostPath.path` is
-> immutable, so the PV/PVCs must be deleted and recreated at the new paths. Running
-> `reconfigure --with-reset` with a path change is rejected with a clear error.
+> immutable, so the PV/PVCs must be deleted and recreated at the new paths. A path change
+> passed to `reconfigure`, `upgrade` or `reset` without it is rejected with a clear error,
+> whether or not `--with-reset` is also set.
 
 ---
 
@@ -421,10 +427,15 @@ sudo solo-provisioner block node reset --profile=mainnet
 
 # Wipe storage and leave the node stopped
 sudo solo-provisioner block node reset --profile=mainnet --no-scale-up
+
+# Re-lay the PV/PVC topology at new paths, same version, no Helm operation
+sudo solo-provisioner block node reset --profile=mainnet \
+  --base-path=/new/path --purge-storage
 ```
 
 | Flag | What it does | Default |
 |---|---|---|
+| `--purge-storage` | Delete the PVs and PVCs after step 3 and recreate them at the requested paths before step 4 | `false` |
 | `--no-scale-up` | Stop after step 3, leaving the StatefulSet at 0 replicas once the storage is cleared | `false` |
 
 What happens, in order:
@@ -440,6 +451,22 @@ What happens, in order:
 > **This deletes all block data.** There is no undo. Think twice on `mainnet`.
 
 To reset and change version at the same time, use `upgrade --with-reset` instead.
+
+### Moving to new storage paths
+
+`--purge-storage` deletes the PVs and PVCs once the deployed directories are cleared and
+recreates them at the paths you pass, between steps 3 and 4. It is the only way to move a
+block node's storage without a Helm operation — the release stays exactly as deployed.
+
+```bash
+sudo solo-provisioner block node reset --profile=mainnet \
+  --base-path=/new/path --purge-storage
+```
+
+The directories that get cleared are always the **deployed** ones, so the data you are
+replacing is removed rather than orphaned. `--purge-storage` also implies the data wipe, so
+there is nothing to keep: use `uninstall --purge-storage` if you want the volumes gone for
+good, and `reconfigure --purge-storage` if the same move should also re-apply chart values.
 
 ### Leaving the node stopped
 

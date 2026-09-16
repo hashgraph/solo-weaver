@@ -134,3 +134,99 @@ func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 		})
 	}
 }
+
+// TestUpgrade_PurgeStorage_RecreatesBeforeChartUpgrade pins the branch
+// --purge-storage adds to upgrade: wipe the deployed directories, recreate the
+// PVs/PVCs at the requested paths, then apply the chart. Moving a block node and
+// bumping its version is one operation.
+func TestUpgrade_PurgeStorage_RecreatesBeforeChartUpgrade(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+
+	inputs := upgradeInputs()
+	inputs.Custom.Storage = models.BlockNodeStorage{BasePath: "/mnt/new"}
+	inputs.Custom.ResetStorage = true
+	inputs.Custom.PurgeStorage = true
+
+	wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+	require.NoError(t, err)
+
+	assert.Equal(t, "block-node-upgrade-purge-storage", wb.Id())
+	assert.Equal(t, []string{
+		steps.NetworkFirewallCreateStepId,
+		steps.PurgeBlockNodeStorageStepId,
+		steps.RecreateBlockNodeStorageStepId,
+		steps.UpgradeBlockNodeStepId,
+	}, workflowStepIDs(t, wb))
+}
+
+// TestUpgrade_PathChangeWithoutPurgeIsRejected covers both non-purge branches.
+// Before the storage plan was shared, upgrade applied no guard at all: it wiped
+// the requested paths and then upgraded against PVs still bound to the deployed
+// ones.
+func TestUpgrade_PathChangeWithoutPurgeIsRejected(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+
+	for _, tc := range []struct {
+		name         string
+		resetStorage bool
+	}{
+		{name: "with_reset", resetStorage: true},
+		{name: "no_storage_flag", resetStorage: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := upgradeInputs()
+			inputs.Custom.Storage = models.BlockNodeStorage{BasePath: "/mnt/new"}
+			inputs.Custom.ResetStorage = tc.resetStorage
+
+			_, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "storage paths have changed")
+			assertResolutionMentions(t, err, "--purge-storage")
+		})
+	}
+}
+
+// TestUpgrade_UnchangedPathsKeepExistingWorkflowIds guards against the shared
+// storage plan renaming or reordering the branches that existed before it.
+func TestUpgrade_UnchangedPathsKeepExistingWorkflowIds(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+
+	for _, tc := range []struct {
+		name         string
+		resetStorage bool
+		workflowId   string
+		want         []string
+	}{
+		{
+			name:         "plain_upgrade",
+			resetStorage: false,
+			workflowId:   "block-node-upgrade",
+			want: []string{
+				steps.NetworkFirewallCreateStepId,
+				steps.UpgradeBlockNodeStepId,
+			},
+		},
+		{
+			name:         "with_reset",
+			resetStorage: true,
+			workflowId:   "block-node-upgrade-with-reset",
+			want: []string{
+				steps.NetworkFirewallCreateStepId,
+				steps.PurgeBlockNodeStorageStepId,
+				steps.UpgradeBlockNodeStepId,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := upgradeInputs()
+			inputs.Custom.ResetStorage = tc.resetStorage
+
+			wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.workflowId, wb.Id())
+			assert.Equal(t, tc.want, workflowStepIDs(t, wb))
+		})
+	}
+}

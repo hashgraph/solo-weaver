@@ -262,7 +262,7 @@ func TestResetBlockNode_Success(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, installReport.Status)
 
 	// Now test the reset workflow
-	wb := ResetBlockNode(inputs)
+	wb := ResetBlockNode(inputs.Storage, inputs)
 	require.NotNil(t, wb)
 
 	workflow, err := wb.Build()
