@@ -114,10 +114,9 @@ func checkClusterReachable(probe func() (bool, error)) error {
 	return nil
 }
 
-// isESORelease reports whether rel is an ESO installation. The chart name is
-// authoritative; the release name is only a fallback for a release whose chart
-// metadata is missing, so an unrelated chart named "external-secrets" does not
-// match.
+// isESORelease reports whether rel installs the ESO chart, whatever the release
+// was named. The release name is only a fallback for a release whose chart
+// metadata is missing.
 func isESORelease(rel *release.Release, spec *helmChartSpec) bool {
 	if rel.Chart != nil && rel.Chart.Metadata != nil {
 		return rel.Chart.Metadata.Name == esoChartName
@@ -125,9 +124,9 @@ func isESORelease(rel *release.Release, spec *helmChartSpec) bool {
 	return rel.Name == spec.Release
 }
 
-// checkESOSingleton fails when ESO already exists somewhere that blocks this
-// install. ESO's CRDs are cluster-scoped, so only one instance can exist: a
-// second one collides on Helm ownership metadata and leaves a half-created
+// checkESOSingleton fails when ESO cannot be installed as spec.Release in
+// spec.Namespace. ESO's CRDs are cluster-scoped, so only one instance can exist:
+// a second one collides on Helm ownership metadata and leaves a half-created
 // namespace behind.
 //
 // ListAll is used rather than IsInstalled because IsInstalled counts only
@@ -142,30 +141,42 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 		)
 	}
 
+	// Every hint below names raw "helm uninstall": "eso operator uninstall" is
+	// keyed to the catalog release name and to deployed-only IsInstalled, so it
+	// silently skips each of these releases.
 	for _, rel := range releases {
-		if rel == nil || !isESORelease(rel, spec) {
+		if rel == nil {
 			continue
 		}
+		atTarget := rel.Name == spec.Release && rel.Namespace == spec.Namespace
 
-		// Both hints name raw "helm uninstall" rather than "eso operator
-		// uninstall": that command gates on IsInstalled, which is deployed-only
-		// and keyed to the catalog release name, so it silently skips a stalled
-		// release or one installed under a different name.
-		if rel.Namespace != spec.Namespace {
+		switch {
+		case isESORelease(rel, spec) && !atTarget:
 			return errx.Decorate(
 				errorx.IllegalState.New(
-					"External Secrets Operator already exists in namespace %q; its CRDs are cluster-scoped, so only one instance can exist",
-					rel.Namespace),
+					"External Secrets Operator is already installed as release %q in namespace %q; its CRDs are cluster-scoped, so only one instance can exist",
+					rel.Name, rel.Namespace),
 				reasons.PreconditionNotMet,
 				"Use the existing installation, or remove it first:",
 				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
 			)
-		}
 
-		if rel.Info == nil || rel.Info.Status != release.StatusDeployed {
+		case !isESORelease(rel, spec) && atTarget:
+			// Left alone, installESOChart's deployed-only IsInstalled would read
+			// this as ESO and report a no-op install.
 			return errx.Decorate(
 				errorx.IllegalState.New(
-					"External Secrets Operator release %q in namespace %q is not deployed (%s)",
+					"release %q in namespace %q is chart %q, not the External Secrets Operator",
+					rel.Name, rel.Namespace, chartName(rel)),
+				reasons.PreconditionNotMet,
+				"Install into a different namespace, or remove the conflicting release:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+
+		case atTarget && releaseStatus(rel) != release.StatusDeployed:
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"External Secrets Operator release %q in namespace %q is %s, not deployed",
 					rel.Name, rel.Namespace, releaseStatus(rel)),
 				reasons.PreconditionNotMet,
 				"Remove the stalled release, then retry:",
@@ -177,6 +188,15 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 	return nil
 }
 
+// chartName reports rel's chart name, or "unknown" when its metadata is missing.
+func chartName(rel *release.Release) string {
+	if rel.Chart == nil || rel.Chart.Metadata == nil {
+		return "unknown"
+	}
+	return rel.Chart.Metadata.Name
+}
+
+// releaseStatus reports rel's status, or unknown when its info is missing.
 func releaseStatus(rel *release.Release) release.Status {
 	if rel.Info == nil {
 		return release.StatusUnknown
@@ -197,7 +217,6 @@ func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Bu
 			if singletonGuard {
 				hm, err := newHelmManager()
 				if err != nil {
-					// Internal per docs/dev/error-handling.md: a bug, so no hints.
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.InternalError.Wrap(err, "failed to initialise Helm manager"),
 						reasons.Internal,

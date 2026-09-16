@@ -322,3 +322,69 @@ func Test_checkESOSingleton_ListError(t *testing.T) {
 	assert.True(t, errorx.IsOfType(err, errorx.ExternalError),
 		"a failed release listing is an ExternalError, got %v", err)
 }
+
+// A deployed ESO under a name other than the catalog release still owns the
+// cluster-scoped CRDs, and installESOChart's IsInstalled check would miss it.
+func Test_checkESOSingleton_DeployedInTargetNamespaceUnderAnotherName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease("my-eso", spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"my-eso"`, "the message must name the existing release")
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall my-eso -n external-secrets")
+}
+
+// IsInstalled matches on release name alone, so a foreign chart holding that name
+// would otherwise be reported as an already-installed ESO.
+func Test_checkESOSingleton_ForeignChartUnderReleaseName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, "some-other-chart", release.StatusDeployed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"some-other-chart"`, "the message must name the conflicting chart")
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall external-secrets -n external-secrets")
+}
+
+func Test_checkESOSingleton_SkipsNilRelease(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{nil}, nil)
+
+	require.NoError(t, checkESOSingleton(hm, spec))
+}
+
+func Test_isESORelease_FallsBackToReleaseName(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	assert.True(t, isESORelease(&release.Release{Name: spec.Release}, spec),
+		"a release with no chart metadata is matched by name")
+	assert.False(t, isESORelease(&release.Release{Name: "something-else"}, spec))
+}
