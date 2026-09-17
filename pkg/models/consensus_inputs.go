@@ -89,6 +89,18 @@ type ConsensusNodeInputs struct {
 	MemoryLimit   string `json:"memoryLimit,omitempty"`
 	MemoryRequest string `json:"memoryRequest,omitempty"`
 
+	// Volumes is the fully-merged per-volume backing configuration (emptyDir /
+	// hostPath / PVC) with global defaults. Built by the CLI from --volumes-file plus
+	// the --default-* and --volume flags. Empty = every volume emptyDir (operator
+	// default). Resolve a volume's effective backing with Volumes.EffectiveSpec.
+	Volumes ConsensusVolumeConfig `json:"volumes,omitempty"`
+
+	// HostPathUID/HostPathGID own the hostPath directories created for hostpath-backed
+	// volumes. Default to ConsensusDefaultHostPathUID/GID (hedera 2000:2000); non-positive
+	// values fall back to the defaults.
+	HostPathUID int `json:"hostPathUid,omitempty"`
+	HostPathGID int `json:"hostPathGid,omitempty"`
+
 	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
 	// the host hardware floor when this install bootstraps the cluster.
 	Profile string `json:"profile,omitempty"`
