@@ -80,7 +80,7 @@ func TestBuildComponentSpecs_ConsensusNodeRBAC(t *testing.T) {
 		"apipermissionproperties", "blocknodesconfigs",
 	}, cn.PolicyRules[2].Resources)
 	for _, r := range cn.PolicyRules {
-		assert.Equal(t, []string{"operator.solo.hedera.com"}, r.APIGroups)
+		assert.Equal(t, []string{"operator.solo.hiero.org"}, r.APIGroups)
 	}
 }
 

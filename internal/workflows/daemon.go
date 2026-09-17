@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	daemon "github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -32,7 +33,7 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 				{
 					// Watch NetworkUpgradeExecute CRs for the ReadyForProvisionerDaemon
 					// trigger and read them during the handshake.
-					APIGroups: []string{"operator.solo.hedera.com"},
+					APIGroups: []string{kube.SoloOperatorGroup},
 					Resources: []string{"networkupgradeexecutes"},
 					Verbs:     []string{"get", "list", "watch"},
 				},
@@ -40,7 +41,7 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 					// Write the handshake: the DaemonResult/ConfigCRsApplied conditions
 					// and the daemon-owned PendingInfraUpgrade/PendingNodeUpgrade phase
 					// transitions (status subresource, merge patch).
-					APIGroups: []string{"operator.solo.hedera.com"},
+					APIGroups: []string{kube.SoloOperatorGroup},
 					Resources: []string{"networkupgradeexecutes/status"},
 					Verbs:     []string{"patch"},
 				},
@@ -48,7 +49,7 @@ func buildComponentSpecs(cfg daemon.DaemonConfig, paths models.WeaverPaths) []st
 					// Create the per-operation ConsensusConfig CRs from the upgrade
 					// package and read them back while waiting for Valid=True. Create +
 					// get only: the operator, not the daemon, reconciles and mutates them.
-					APIGroups: []string{"operator.solo.hedera.com"},
+					APIGroups: []string{kube.SoloOperatorGroup},
 					Resources: []string{
 						"log4j2configs",
 						"nodesettings",
