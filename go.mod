@@ -8,7 +8,7 @@ require (
 	github.com/automa-saga/automa v1.0.0
 	github.com/automa-saga/daemonkit v0.4.0
 	github.com/automa-saga/errx v1.0.0
-	github.com/automa-saga/logx v0.5.1
+	github.com/automa-saga/logx v0.9.0
 	github.com/automa-saga/version v1.0.1
 	github.com/bluet/syspkg v0.1.7
 	github.com/charmbracelet/bubbles v1.0.0
@@ -19,7 +19,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
-	github.com/hashgraph/solo-operator v0.6.1
+	github.com/hashgraph/solo-operator v0.7.3
 	github.com/joomcode/errorx v1.2.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
 	github.com/muesli/termenv v0.16.0
@@ -29,7 +29,7 @@ require (
 	github.com/zcalusic/sysinfo v1.1.3
 	golang.org/x/sync v0.23.0
 	golang.org/x/text v0.41.0
-	helm.sh/helm/v3 v3.21.4
+	helm.sh/helm/v3 v3.22.0
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
@@ -126,7 +126,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rubenv/sql-migrate v1.8.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
@@ -141,7 +141,7 @@ require (
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
@@ -150,16 +150,16 @@ require (
 	honnef.co/go/tools v0.7.0 // indirect
 	k8s.io/apiextensions-apiserver v0.37.0 // indirect
 	k8s.io/apiserver v0.37.0 // indirect
-	k8s.io/cli-runtime v0.36.2 // indirect
+	k8s.io/cli-runtime v0.37.0 // indirect
 	k8s.io/component-base v0.37.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
-	k8s.io/kubectl v0.36.2 // indirect
+	k8s.io/kubectl v0.37.0 // indirect
 	k8s.io/streaming v0.37.0 // indirect
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	pault.ag/go/topsort v0.1.1 // indirect
-	sigs.k8s.io/controller-runtime v0.24.1 // indirect
+	sigs.k8s.io/controller-runtime v0.25.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/kustomize/api v0.21.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.21.1 // indirect
