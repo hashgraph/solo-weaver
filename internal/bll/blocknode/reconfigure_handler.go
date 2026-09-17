@@ -37,6 +37,7 @@ func (h *ReconfigureHandler) PrepareEffectiveInputs(
 // BuildWorkflow validates reconfigure preconditions and returns the workflow.
 // Preconditions:
 //   - Block node must already be deployed (or --force).
+//   - The chart ref and chart version must match the deployed release.
 func (h *ReconfigureHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
@@ -46,6 +47,40 @@ func (h *ReconfigureHandler) BuildWorkflow(
 			"block node is not installed; cannot reconfigure").
 			WithProperty(models.ErrPropertyResolution,
 				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
+	}
+
+	// Reconfigure re-applies values at the deployed chart and version, and performs
+	// none of upgrade's checks — no downgrade guard, no already-at-this-version
+	// guard, no chart-switch warning. Neither field has a flag on this command, so
+	// the only way either can differ is a config file declaring it, where a stale
+	// desired-state declaration is far likelier than a deliberate request to move
+	// the release through this command. Refuse instead of silently performing an
+	// unguarded upgrade or chart switch. --force does not bypass either check: the
+	// remedy is a different command, not a flag.
+	//
+	// Both guards apply only to a release that is actually deployed. The reality
+	// checker fills ReleaseInfo for a failed or superseded release too, but
+	// setStateSources drops the state tier for those, so the effective values fall
+	// back to the compiled-in defaults — which would trip these guards on the bare
+	// `reconfigure --force` that the precondition above points at as the remedy.
+	if deployed := currentState.BlockNodeState.ReleaseInfo; deployed.Status == release.StatusDeployed {
+		if deployed.ChartVersion != "" && inputs.Custom.ChartVersion != deployed.ChartVersion {
+			return nil, errorx.IllegalArgument.New(
+				"block node chart version cannot be changed by a reconfigure: deployed %q, requested %q",
+				deployed.ChartVersion, inputs.Custom.ChartVersion).
+				WithProperty(models.ErrPropertyResolution,
+					"use 'solo-provisioner block node upgrade' to move to a different chart version, "+
+						"or drop blockNode.version from the config file to reconfigure at the deployed version")
+		}
+
+		if deployed.ChartRef != "" && inputs.Custom.Chart != deployed.ChartRef {
+			return nil, errorx.IllegalArgument.New(
+				"block node chart cannot be changed by a reconfigure: deployed %q, requested %q",
+				deployed.ChartRef, inputs.Custom.Chart).
+				WithProperty(models.ErrPropertyResolution,
+					"use 'solo-provisioner block node upgrade' to move to a different chart, "+
+						"or drop blockNode.chart from the config file to reconfigure from the deployed chart")
+		}
 	}
 
 	// Fail fast if storage paths can't be resolved.

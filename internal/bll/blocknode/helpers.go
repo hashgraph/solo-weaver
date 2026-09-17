@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // patchBlockNodeState persists fields that cannot be recovered from the Helm
@@ -254,6 +255,50 @@ func resolveBlocknodeEffectiveInputs(
 			Msg("Applied persisted traffic-shaping content as fallback for unset inputs")
 	}
 
+	// An operator who passed --config is declaring desired state, so that file
+	// outranks whatever the resolver read back from the deployed release. The RSL
+	// selectors cannot express this on their own: with no --config the config tier
+	// still holds the compiled-in deps constants (see pkg/config.globalConfig), and
+	// promoting those over the deployed release would reset the running chart
+	// version and storage layout on every invocation.
+	//
+	// Release identity — namespace, release name, chart name — is deliberately left
+	// out. Redeclaring it does not reconfigure the running release; it points Helm
+	// at a second one and orphans the first. The destructive actions are left out
+	// too — see promotesConfigFile.
+	chartRef := effChartRepo.Get().Val()
+	chartVersion := effChartVersion.Get().Val()
+	storage := effStorage.Get().Val()
+	if configFile := config.File(); configFile != "" && promotesConfigFile(intent.Action) {
+		fileCfg := config.Get().BlockNode
+		envCfg := config.EnvConfig().BlockNode
+
+		chartRef = preferConfigFile(chartRef, fileCfg.Chart, inputs.Custom.Chart, envCfg.Chart)
+		chartVersion = preferConfigFile(chartVersion, fileCfg.ChartVersion, inputs.Custom.ChartVersion, envCfg.ChartVersion)
+
+		// Storage is a per-field merge rather than a winner, so rebuild the cascade
+		// with the file slotted above the deployed release. MergeFrom only fills
+		// gaps, so applying it flags → file → resolved yields that precedence, and
+		// it keeps base-path mode intact: once BasePath is set the individual paths
+		// the reality checker read off the PVs are not merged back in.
+		//
+		// Not gated on fileCfg.Storage.IsEmpty(): that predicate only inspects seven
+		// of the thirteen fields, so a file declaring just pluginsSize or
+		// applicationStatePath would read as empty and be dropped. MergeFrom is
+		// already a no-op for an all-empty source, so the cascade needs no gate.
+		merged := inputs.Custom.Storage
+		merged.MergeFrom(fileCfg.Storage)
+		merged.MergeFrom(storage)
+		storage = merged
+
+		logx.As().Debug().
+			Str("configFile", configFile).
+			Str("chartRef", chartRef).
+			Str("chartVersion", chartVersion).
+			Any("storage", storage).
+			Msg("Applied explicit config file over deployed block node state")
+	}
+
 	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlockNodeInputs{
@@ -262,9 +307,9 @@ func resolveBlocknodeEffectiveInputs(
 			Release:           effReleaseName.Get().Val(),
 			Namespace:         effNamespace.Get().Val(),
 			ChartName:         effChartName.Get().Val(),
-			Chart:             effChartRepo.Get().Val(),
-			ChartVersion:      effChartVersion.Get().Val(),
-			Storage:           effStorage.Get().Val(),
+			Chart:             chartRef,
+			ChartVersion:      chartVersion,
+			Storage:           storage,
 			HistoricRetention: effHistoricRetention.Get().Val(),
 			RecentRetention:   effRecentRetention.Get().Val(),
 			// Passed through from user input (no resolution)
@@ -431,5 +476,103 @@ func planStorage(currentState state.State, ins models.BlockNodeInputs) (storageP
 				"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
 	}
 
+	// A volume size reaches the cluster only through CreatePersistentVolumes,
+	// which only the recreate path above runs. Refuse a size change here rather
+	// than carrying it to a successful report against a PVC that kept its
+	// capacity.
+	resized, err := storageSizesChanged(deployed, ins.Storage)
+	if err != nil {
+		return storagePlan{}, err
+	}
+	if resized != "" {
+		return storagePlan{}, errorx.IllegalArgument.New(
+			"block node storage %s cannot be changed without --purge-storage: PVs/PVCs are not re-rendered",
+			resized).
+			WithProperty(models.ErrPropertyResolution,
+				"re-run with --purge-storage to delete the existing PVs/PVCs and recreate them at the new "+
+					"size, or drop the size from the config file to proceed at the deployed one")
+	}
+
 	return storagePlan{purgeIns: purgeIns, recreate: false}, nil
+}
+
+// preferConfigFile orders the tiers that compete with an explicitly supplied
+// --config file, yielding flag > SOLO_PROVISIONER_* > file > deployed release.
+//
+// resolved is the resolver's answer, which for a deployed release is the value
+// read off the cluster. A flag returns resolved untouched because the selectors
+// already rank user input first wherever it can win; env and the file are
+// returned directly, since for chartRef and chartVersion the selectors rank a
+// deployed release ahead of both.
+func preferConfigFile(resolved, file, flag, env string) string {
+	switch {
+	case flag != "":
+		return resolved
+	case env != "":
+		return env
+	case file != "":
+		return file
+	default:
+		return resolved
+	}
+}
+
+// promotesConfigFile reports whether an explicit --config file outranks the
+// deployed release for the given action.
+//
+// uninstall is excluded. It clears the directories named by the effective
+// storage and deletes the PVs, without going through planStorage, so a file
+// naming a different basePath would point the wipe at a tree the block node
+// never used — deleting whatever lives there and leaving the real data behind.
+// Redefining where the data lives while tearing the node down has no meaning
+// anyway.
+//
+// reset is included: planStorage gives it the same path guard the other
+// provisioning actions have, and its purge always runs at the deployed paths, so
+// a file can only move storage the way --purge-storage intends.
+func promotesConfigFile(action models.ActionType) bool {
+	switch action {
+	case models.ActionInstall, models.ActionUpgrade, models.ActionReconfigure, models.ActionReset:
+		return true
+	default:
+		return false
+	}
+}
+
+// storageSizesChanged returns the config-file name of the first volume whose
+// requested size differs from the deployed one, or "" when they all match.
+//
+// Sizes either side leaves unset are skipped: the reality checker only records a
+// size for a volume with a bound PV. The rest are compared as Kubernetes
+// quantities, so equivalent spellings (20Gi and 20480Mi) do not read as a change.
+func storageSizesChanged(deployed, requested models.BlockNodeStorage) (string, error) {
+	for _, size := range []struct {
+		name                string
+		deployed, requested string
+	}{
+		{"liveSize", deployed.LiveSize, requested.LiveSize},
+		{"archiveSize", deployed.ArchiveSize, requested.ArchiveSize},
+		{"logSize", deployed.LogSize, requested.LogSize},
+		{"verificationSize", deployed.VerificationSize, requested.VerificationSize},
+		{"pluginsSize", deployed.PluginsSize, requested.PluginsSize},
+		{"applicationStateSize", deployed.ApplicationStateSize, requested.ApplicationStateSize},
+	} {
+		if size.deployed == "" || size.requested == "" {
+			continue
+		}
+		deployedQty, err := resource.ParseQuantity(size.deployed)
+		if err != nil {
+			return "", errorx.IllegalState.Wrap(err,
+				"deployed %s is not a valid storage size: %s", size.name, size.deployed)
+		}
+		requestedQty, err := resource.ParseQuantity(size.requested)
+		if err != nil {
+			return "", errorx.IllegalArgument.Wrap(err,
+				"%s is not a valid storage size: %s", size.name, size.requested)
+		}
+		if deployedQty.Cmp(requestedQty) != 0 {
+			return size.name, nil
+		}
+	}
+	return "", nil
 }

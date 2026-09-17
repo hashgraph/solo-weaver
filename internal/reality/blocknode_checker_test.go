@@ -262,3 +262,60 @@ metadata:
 		t.Errorf("Shaping overrides not preserved: got %+v", got.Shaping.ShapeOverrides)
 	}
 }
+
+// TestRefreshState_PreservesChartRef verifies the chart reference survives a
+// reality refresh. Helm does not record it in release metadata, so rebuilding
+// BlockNodeState from a found release loses it; patchBlockNodeState re-injects it
+// on flush, which is after the workflow has already run.
+//
+// The gap between those two points is what makes this matter. Anything reading
+// ReleaseInfo.ChartRef off a freshly refreshed state sees an empty ref and
+// concludes the deployed release has no chart — which silently disables the
+// upgrade handler's chart-switch warning and the reconfigure handler's
+// chart-change guard, letting a config file move a running release onto a
+// different chart and then persist that chart on the way out.
+func TestRefreshState_PreservesChartRef(t *testing.T) {
+	const manifest = `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`
+	re := &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.28.0", AppVersion: "0.28.0"},
+		},
+		Manifest: manifest,
+	}
+
+	persisted := state.NewBlockNodeState()
+	persisted.ReleaseInfo.Status = release.StatusDeployed
+	persisted.ReleaseInfo.ChartRef = "oci://ghcr.io/hiero-ledger/hiero-block-node/block-node-server"
+
+	full := state.State{}
+	full.BlockNodeState = persisted
+
+	checker := &blockNodeChecker{
+		sm:            fakeStateManager{st: full},
+		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube:       func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		clusterExists: func() (bool, error) { return true, nil },
+	}
+
+	got, err := checker.RefreshState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ReleaseInfo.Name != "block-node" {
+		t.Fatalf("expected release to be found and rebuilt, got name %q", got.ReleaseInfo.Name)
+	}
+	if got.ReleaseInfo.ChartRef != persisted.ReleaseInfo.ChartRef {
+		t.Errorf("ChartRef must be preserved across a reality refresh: want %q, got %q",
+			persisted.ReleaseInfo.ChartRef, got.ReleaseInfo.ChartRef)
+	}
+}

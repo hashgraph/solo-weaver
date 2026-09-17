@@ -364,3 +364,233 @@ func TestBuildWorkflow_NoRestartWithLeaveScaledDown(t *testing.T) {
 		steps.ScaleDownAfterUpgradeStepId,
 	), workflowStepIDs(t, wb))
 }
+
+// deployedBlockNodeStateAtVersion is deployedBlockNodeState with the chart version
+// filled in. The bare helper leaves ReleaseInfo.ChartVersion empty, which is what
+// keeps the chart-version guard out of the way of every other test in this file.
+func deployedBlockNodeStateAtVersion(basePath, version string) state.State {
+	st := deployedBlockNodeState(basePath)
+	st.BlockNodeState.ReleaseInfo.ChartVersion = version
+	return st
+}
+
+// deployedBlockNodeStateAtChart is the chart-ref counterpart. reconfigureInputs
+// uses "oci://example.com/block-node", so pass that to model no change.
+func deployedBlockNodeStateAtChart(basePath, chartRef string) state.State {
+	st := deployedBlockNodeState(basePath)
+	st.BlockNodeState.ReleaseInfo.ChartRef = chartRef
+	return st
+}
+
+// TestReconfigure_RejectsChartRefChange is the chart half of the same guard. The
+// chart ref has no flag on this command either, so only a config file can change
+// it — and reconfigure does not even emit the chart-switch warning that upgrade
+// logs, so an unnoticed repo switch underneath a running release is the failure
+// mode being closed off here.
+//
+// This test builds currentState by hand, so it cannot see whether the real
+// pipeline ever delivers a non-empty ChartRef to BuildWorkflow. It does not:
+// rebuilding BlockNodeState from a Helm release drops the chart ref, which made
+// this guard unreachable in practice until the reality checker was fixed to
+// preserve it. TestRefreshState_PreservesChartRef in internal/reality is the test
+// that covers that half; neither is sufficient alone.
+func TestReconfigure_RejectsChartRefChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Chart = "oci://registry.example.com/hiero/block-node"
+
+	_, err := h.BuildWorkflow(
+		deployedBlockNodeStateAtChart("/mnt/fast-storage", "oci://example.com/block-node"), inputs)
+
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument),
+		"a rejected config value must classify as IllegalArgument, got %v", err)
+	assert.Contains(t, err.Error(), "oci://example.com/block-node")
+	assert.Contains(t, err.Error(), "oci://registry.example.com/hiero/block-node")
+	assertResolutionMentions(t, err, "block node upgrade")
+}
+
+// TestReconfigure_ForceDoesNotBypassChartRefGuard mirrors the version guard: a
+// flag must not be able to turn a reconfigure into an unwarned chart switch.
+func TestReconfigure_ForceDoesNotBypassChartRefGuard(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Chart = "oci://registry.example.com/hiero/block-node"
+	inputs.Common.Force = true
+
+	_, err := h.BuildWorkflow(
+		deployedBlockNodeStateAtChart("/mnt/fast-storage", "oci://example.com/block-node"), inputs)
+
+	require.Error(t, err)
+	assertResolutionMentions(t, err, "block node upgrade")
+}
+
+// TestReconfigure_MatchingChartRefProceeds is the negative control for the chart
+// half: the ordinary reconfigure, where the effective chart is the deployed one.
+func TestReconfigure_MatchingChartRefProceeds(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+
+	wb, err := h.BuildWorkflow(
+		deployedBlockNodeStateAtChart("/mnt/fast-storage", inputs.Custom.Chart), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}
+
+// TestReconfigure_RejectsChartVersionChange pins the guard that stops a
+// reconfigure from turning into an unguarded upgrade. Reconfigure re-applies
+// values at the deployed version and runs none of upgrade's semver checks, so a
+// config file declaring a different version would otherwise move the release with
+// no downgrade protection.
+func TestReconfigure_RejectsChartVersionChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.31.0"
+
+	_, err := h.BuildWorkflow(deployedBlockNodeStateAtVersion("/mnt/fast-storage", "0.30.0"), inputs)
+
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument),
+		"a rejected config value must classify as IllegalArgument, got %v", err)
+	assert.Contains(t, err.Error(), "0.30.0")
+	assert.Contains(t, err.Error(), "0.31.0")
+	assertResolutionMentions(t, err, "block node upgrade")
+}
+
+// TestReconfigure_RejectsChartVersionDowngrade covers the direction that matters
+// most: upgrade refuses a downgrade outright, so reconfigure must not become the
+// way around that check.
+func TestReconfigure_RejectsChartVersionDowngrade(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.29.0"
+
+	_, err := h.BuildWorkflow(deployedBlockNodeStateAtVersion("/mnt/fast-storage", "0.30.0"), inputs)
+
+	require.Error(t, err)
+	assertResolutionMentions(t, err, "block node upgrade")
+}
+
+// TestReconfigure_ForceDoesNotBypassChartVersionGuard verifies the guard is not
+// force-bypassable, unlike the not-installed precondition above it. The remedy is
+// a different command, so letting --force through would just reintroduce the
+// unguarded upgrade path.
+func TestReconfigure_ForceDoesNotBypassChartVersionGuard(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.31.0"
+	inputs.Common.Force = true
+
+	_, err := h.BuildWorkflow(deployedBlockNodeStateAtVersion("/mnt/fast-storage", "0.30.0"), inputs)
+
+	require.Error(t, err)
+	assertResolutionMentions(t, err, "block node upgrade")
+}
+
+// TestReconfigure_MatchingChartVersionProceeds is the negative control: the
+// ordinary reconfigure, where the effective version is the deployed one, must not
+// be caught by the guard.
+func TestReconfigure_MatchingChartVersionProceeds(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.30.0"
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeStateAtVersion("/mnt/fast-storage", "0.30.0"), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}
+
+// deployedBlockNodeStateWithStatus models a release Helm still knows about but
+// that is not deployed — a failed or half-applied upgrade. The reality checker
+// fills ReleaseInfo for these too, so the guards have to look at Status.
+func deployedBlockNodeStateWithStatus(basePath, version string, status release.Status) state.State {
+	st := deployedBlockNodeStateAtVersion(basePath, version)
+	st.BlockNodeState.ReleaseInfo.Status = status
+	return st
+}
+
+// TestReconfigure_FailedReleaseSkipsChartGuards covers the interaction between
+// the guards and the state tier. setStateSources drops the state and reality
+// tiers for any status other than deployed, so the effective chart version falls
+// back to the compiled-in default while ReleaseInfo still reports the version
+// Helm has on record. Comparing the two would abort `reconfigure --force` — the
+// remedy the not-installed precondition in this same function points at.
+func TestReconfigure_FailedReleaseSkipsChartGuards(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.41.0" // deps.BLOCK_NODE_VERSION, not the release's
+	inputs.Common.Force = true
+
+	wb, err := h.BuildWorkflow(
+		deployedBlockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
+
+	require.NoError(t, err, "a failed release must stay reconfigurable with --force")
+	require.NotNil(t, wb)
+}
+
+// deployedBlockNodeStateWithLiveSize records a bound live PV at the given size,
+// the way the reality checker reads capacity back off the PV.
+func deployedBlockNodeStateWithLiveSize(basePath, liveSize string) state.State {
+	st := deployedBlockNodeState(basePath)
+	st.BlockNodeState.Storage.LiveSize = liveSize
+	return st
+}
+
+// TestReconfigure_RejectsStorageSizeChange pins the guard on storage sizes. Only
+// the recreate path re-renders PVs/PVCs, so on every other branch a new size
+// would be carried all the way to a successful report while the PVC kept its old
+// capacity. The guard lives in planStorage, so reset and upgrade inherit it.
+func TestReconfigure_RejectsStorageSizeChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Storage.LiveSize = "500Gi"
+
+	_, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "200Gi"), inputs)
+
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument),
+		"a rejected config value must classify as IllegalArgument, got %v", err)
+	assert.Contains(t, err.Error(), "liveSize")
+	assertResolutionMentions(t, err, "--purge-storage")
+}
+
+// TestReconfigure_PurgeStorageAllowsSizeChange is the escape hatch the guard's
+// resolution names: --purge-storage deletes and recreates the PVs, so it is the
+// one branch that can act on a new size.
+func TestReconfigure_PurgeStorageAllowsSizeChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputsWithFlags("/mnt/fast-storage", false, true)
+	inputs.Custom.Storage.LiveSize = "500Gi"
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "200Gi"), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}
+
+// TestReconfigure_EquivalentStorageSizeProceeds keeps the guard off spellings
+// that mean the same capacity: a PV reports what it was created with, so a file
+// saying 20Gi against a PV recorded as 20480Mi is not a change.
+func TestReconfigure_EquivalentStorageSizeProceeds(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Storage.LiveSize = "20Gi"
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "20480Mi"), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}

@@ -84,13 +84,21 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// drop it — otherwise upgrade/reconfigure would auto-detect the NIC/rate instead
 	// of re-asserting the operator's original shaping.
 	shaping := bn.Shaping
+	// ChartRef is a third record in the same class: Helm does not keep the chart
+	// reference in release metadata, so rebuilding from the release loses it.
+	// patchBlockNodeState re-injects it when state is flushed, but that is after
+	// the workflow has run — anything that reads ReleaseInfo.ChartRef off a
+	// refreshed state in between would see an empty ref and conclude the deployed
+	// release has none. Two callers do exactly that: the upgrade handler's
+	// chart-switch warning and the reconfigure handler's chart-change guard.
+	chartRef := bn.ReleaseInfo.ChartRef
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
 			ChartVersion:  re.Chart.Metadata.Version,
 			AppVersion:    re.Chart.Metadata.AppVersion,
 			Namespace:     re.Namespace,
-			ChartRef:      "", // it is not stored in Helm Release, so caller need to inject it
+			ChartRef:      chartRef,
 			ChartName:     re.Chart.ChartFullPath(),
 			FirstDeployed: re.Info.FirstDeployed,
 			LastDeployed:  re.Info.LastDeployed,
