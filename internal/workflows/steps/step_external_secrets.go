@@ -17,6 +17,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 const (
@@ -26,6 +27,11 @@ const (
 	IsExternalSecretsReadyStepId   = "is-external-secrets-ready"
 	TeardownExternalSecretsStepId  = "teardown-external-secrets"
 	UninstallExternalSecretsStepId = "uninstall-external-secrets"
+
+	// esoChartName identifies an ESO release whatever it was named. The catalog's
+	// spec.Chart is alias-prefixed ("external-secrets/external-secrets"), so it
+	// cannot be compared to Chart.Metadata.Name directly.
+	esoChartName = "external-secrets"
 )
 
 // SetupExternalSecrets returns a workflow builder that installs the External
@@ -38,7 +44,7 @@ func SetupExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
-		preCheckExternalSecrets(),
+		preCheckExternalSecrets(spec, true),
 		installExternalSecrets(spec),
 		isExternalSecretsReady(spec),
 	).
@@ -63,7 +69,7 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 	}
 
 	return automa.NewWorkflowBuilder().WithId(TeardownExternalSecretsStepId).Steps(
-		preCheckExternalSecrets(),
+		preCheckExternalSecrets(spec, false),
 		uninstallExternalSecrets(spec),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -108,14 +114,119 @@ func checkClusterReachable(probe func() (bool, error)) error {
 	return nil
 }
 
-// preCheckExternalSecrets gates both ESO workflows, failing before any Helm call
-// rather than deep inside one.
-func preCheckExternalSecrets() automa.Builder {
+// isESORelease reports whether rel installs the ESO chart, whatever the release
+// was named. The release name is only a fallback for a release whose chart
+// metadata is missing.
+func isESORelease(rel *release.Release, spec *helmChartSpec) bool {
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		return rel.Chart.Metadata.Name == esoChartName
+	}
+	return rel.Name == spec.Release
+}
+
+// checkESOSingleton fails when ESO cannot be installed as spec.Release in
+// spec.Namespace. ESO's CRDs are cluster-scoped, so only one instance can exist:
+// a second one collides on Helm ownership metadata and leaves a half-created
+// namespace behind.
+//
+// ListAll is used rather than IsInstalled because IsInstalled counts only
+// deployed releases, so it cannot see a stalled one.
+func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
+	releases, err := hm.ListAll()
+	if err != nil {
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to list Helm releases"),
+			reasons.PreconditionNotMet,
+			"Verify the cluster is reachable: kubectl cluster-info",
+		)
+	}
+
+	// Every hint below names raw "helm uninstall": "eso operator uninstall" is
+	// keyed to the catalog release name and to deployed-only IsInstalled, so it
+	// silently skips each of these releases.
+	for _, rel := range releases {
+		if rel == nil {
+			continue
+		}
+		atTarget := rel.Name == spec.Release && rel.Namespace == spec.Namespace
+
+		switch {
+		case isESORelease(rel, spec) && !atTarget:
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"External Secrets Operator is already installed as release %q in namespace %q; its CRDs are cluster-scoped, so only one instance can exist",
+					rel.Name, rel.Namespace),
+				reasons.PreconditionNotMet,
+				"Use the existing installation, or remove it first:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+
+		case !isESORelease(rel, spec) && atTarget:
+			// Left alone, installESOChart's deployed-only IsInstalled would read
+			// this as ESO and report a no-op install.
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"release %q in namespace %q is chart %q, not the External Secrets Operator",
+					rel.Name, rel.Namespace, chartName(rel)),
+				reasons.PreconditionNotMet,
+				"Install into a different namespace, or remove the conflicting release:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+
+		case atTarget && releaseStatus(rel) != release.StatusDeployed:
+			return errx.Decorate(
+				errorx.IllegalState.New(
+					"External Secrets Operator release %q in namespace %q is %s, not deployed",
+					rel.Name, rel.Namespace, releaseStatus(rel)),
+				reasons.PreconditionNotMet,
+				"Remove the stalled release, then retry:",
+				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			)
+		}
+	}
+
+	return nil
+}
+
+// chartName reports rel's chart name, or "unknown" when its metadata is missing.
+func chartName(rel *release.Release) string {
+	if rel.Chart == nil || rel.Chart.Metadata == nil {
+		return "unknown"
+	}
+	return rel.Chart.Metadata.Name
+}
+
+// releaseStatus reports rel's status, or unknown when its info is missing.
+func releaseStatus(rel *release.Release) release.Status {
+	if rel.Info == nil {
+		return release.StatusUnknown
+	}
+	return rel.Info.Status
+}
+
+// preCheckExternalSecrets gates both ESO workflows, failing before Helm installs anything
+// rather than deep inside one. The singleton guard is install-only: an uninstall
+// should remove ESO from whichever namespace it actually occupies.
+func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Builder {
 	return automa.NewStepBuilder().WithId(PreCheckExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			if err := checkClusterReachable(kube.ClusterExists); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
+
+			if singletonGuard {
+				hm, err := newHelmManager()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.InternalError.Wrap(err, "failed to initialise Helm manager"),
+						reasons.Internal,
+					)))
+				}
+				if err := checkESOSingleton(hm, spec); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+			}
+
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

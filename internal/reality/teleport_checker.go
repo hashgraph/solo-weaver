@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
@@ -94,15 +95,27 @@ func (t *teleportChecker) refreshClusterAgentState() (state.TeleportClusterAgent
 
 	teleportChart := software.MustGetClusterComponent("teleport-cluster-agent")
 	for _, rel := range releases {
+		// ListAll reports releases in every state; only a deployed one is a live agent.
+		if rel == nil || rel.Info == nil || rel.Info.Status != release.StatusDeployed {
+			continue
+		}
 		if rel.Name == teleportChart.Release && rel.Namespace == teleportChart.Namespace {
 			return state.TeleportClusterAgentState{
 				Installed:    true,
 				Release:      rel.Name,
 				Namespace:    rel.Namespace,
-				ChartVersion: rel.Chart.Metadata.Version,
+				ChartVersion: chartVersion(rel),
 			}, nil
 		}
 	}
 
 	return state.TeleportClusterAgentState{}, nil
+}
+
+// chartVersion reports rel's chart version, or "" when its metadata is missing.
+func chartVersion(rel *release.Release) string {
+	if rel.Chart == nil || rel.Chart.Metadata == nil {
+		return ""
+	}
+	return rel.Chart.Metadata.Version
 }

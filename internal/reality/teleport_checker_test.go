@@ -72,6 +72,7 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 				{
 					Name:      teleport.Release,
 					Namespace: teleport.Namespace,
+					Info:      &release.Info{Status: release.StatusDeployed},
 					Chart: &chart.Chart{
 						Metadata: &chart.Metadata{
 							Version: "18.6.4",
@@ -92,6 +93,62 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 	assert.Equal(t, teleport.Release, ts.ClusterAgent.Release)
 	assert.Equal(t, teleport.Namespace, ts.ClusterAgent.Namespace)
 	assert.Equal(t, "18.6.4", ts.ClusterAgent.ChartVersion)
+}
+
+// ListAll reports releases in every state, so a release that is not deployed must
+// not be read as a live agent.
+func TestTeleportChecker_HelmReleaseNotDeployed_ClusterAgentNotInstalled(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+
+	clusterExists := func() (bool, error) { return true, nil }
+	teleport := teleportCatalogChart()
+	newHelm := func() (reality.HelmManager, error) {
+		return &fakeHelmManager{
+			releases: []*release.Release{
+				{
+					Name:      teleport.Release,
+					Namespace: teleport.Namespace,
+					Info:      &release.Info{Status: release.StatusFailed},
+					Chart:     &chart.Chart{Metadata: &chart.Metadata{Version: "18.6.4"}},
+				},
+			},
+		}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, ts.ClusterAgent.Installed, "a failed release is not a live cluster agent")
+}
+
+func TestTeleportChecker_HelmReleaseWithoutChartMetadata_ReportsEmptyVersion(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+
+	clusterExists := func() (bool, error) { return true, nil }
+	teleport := teleportCatalogChart()
+	newHelm := func() (reality.HelmManager, error) {
+		return &fakeHelmManager{
+			releases: []*release.Release{
+				{
+					Name:      teleport.Release,
+					Namespace: teleport.Namespace,
+					Info:      &release.Info{Status: release.StatusDeployed},
+				},
+			},
+		}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.True(t, ts.ClusterAgent.Installed)
+	assert.Empty(t, ts.ClusterAgent.ChartVersion)
 }
 
 func TestTeleportChecker_HelmReleaseAbsent_ClusterAgentNotInstalled(t *testing.T) {

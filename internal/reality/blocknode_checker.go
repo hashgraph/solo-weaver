@@ -126,6 +126,11 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 // findBlockNodeHelmRelease iterates all Helm releases and returns the first one
 // whose manifest contains a StatefulSet labelled app.kubernetes.io/instance=block-node.
 // Returns (nil, nil) when no matching release is found.
+//
+// Unlike the other ListAll callers this deliberately accepts every release state:
+// RefreshState records rel.Info.Status and detects deletion from a previously
+// deployed release going missing, so filtering to deployed here would erase the
+// state of a block node stuck mid-install.
 func (b *blockNodeChecker) findBlockNodeHelmRelease() (*release.Release, error) {
 	helm, err := b.newHelm()
 	if err != nil {

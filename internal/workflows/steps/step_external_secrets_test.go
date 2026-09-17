@@ -12,6 +12,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -201,4 +202,189 @@ func Test_checkClusterReachable_ProbeError(t *testing.T) {
 	assert.ErrorContains(t, err, "probe boom")
 	assert.True(t, errorx.IsOfType(err, errorx.ExternalError),
 		"a failed probe is an ExternalError, got %v", err)
+}
+
+func esoRelease(name, namespace, chartName string, status release.Status) *release.Release {
+	return &release.Release{
+		Name:      name,
+		Namespace: namespace,
+		Info:      &release.Info{Status: status},
+		Chart:     &chart.Chart{Metadata: &chart.Metadata{Name: chartName}},
+	}
+}
+
+func Test_checkESOSingleton_NoExistingRelease(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return(nil, nil)
+
+	require.NoError(t, checkESOSingleton(hm, spec))
+}
+
+func Test_checkESOSingleton_DeployedInTargetNamespace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+
+	// The existing idempotent no-op in installESOChart handles this case.
+	require.NoError(t, checkESOSingleton(hm, spec))
+}
+
+func Test_checkESOSingleton_DeployedInAnotherNamespace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	spec.Namespace = "my-eso"
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease("eso", "eso-old", esoChartName, release.StatusDeployed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	// Distinct release and namespace, so a swapped format argument fails here.
+	assert.Contains(t, err.Error(), `"eso-old"`, "the message must name the occupied namespace")
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall eso -n eso-old")
+}
+
+// A stalled release is invisible to IsInstalled, so installESOChart would treat
+// it as absent and Helm would then reject the name collision.
+func Test_checkESOSingleton_StalledInTargetNamespace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusFailed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	// helm, not "eso operator uninstall": that command skips a non-deployed release.
+	assert.Contains(t, hints, "  helm uninstall external-secrets -n external-secrets")
+}
+
+// Chart name is authoritative, so an unrelated chart that happens to be named
+// "external-secrets" must not trip the guard.
+func Test_checkESOSingleton_IgnoresUnrelatedChart(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	spec.Namespace = "my-eso"
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease("external-secrets", "somewhere-else", "some-other-chart", release.StatusDeployed),
+	}, nil)
+
+	require.NoError(t, checkESOSingleton(hm, spec))
+}
+
+func Test_checkESOSingleton_ListError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return(nil, errors.New("list boom"))
+
+	err = checkESOSingleton(hm, spec)
+	// errorx.Type.Wrap is opaque, so the cause is readable in the message but
+	// not reachable through errors.Is.
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "list boom")
+	assert.True(t, errorx.IsOfType(err, errorx.ExternalError),
+		"a failed release listing is an ExternalError, got %v", err)
+}
+
+// A deployed ESO under a name other than the catalog release still owns the
+// cluster-scoped CRDs, and installESOChart's IsInstalled check would miss it.
+func Test_checkESOSingleton_DeployedInTargetNamespaceUnderAnotherName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease("my-eso", spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"my-eso"`, "the message must name the existing release")
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall my-eso -n external-secrets")
+}
+
+// IsInstalled matches on release name alone, so a foreign chart holding that name
+// would otherwise be reported as an already-installed ESO.
+func Test_checkESOSingleton_ForeignChartUnderReleaseName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, "some-other-chart", release.StatusDeployed),
+	}, nil)
+
+	err = checkESOSingleton(hm, spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"some-other-chart"`, "the message must name the conflicting chart")
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall external-secrets -n external-secrets")
+}
+
+func Test_checkESOSingleton_SkipsNilRelease(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().ListAll().Return([]*release.Release{nil}, nil)
+
+	require.NoError(t, checkESOSingleton(hm, spec))
+}
+
+func Test_isESORelease_FallsBackToReleaseName(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	assert.True(t, isESORelease(&release.Release{Name: spec.Release}, spec),
+		"a release with no chart metadata is matched by name")
+	assert.False(t, isESORelease(&release.Release{Name: "something-else"}, spec))
 }

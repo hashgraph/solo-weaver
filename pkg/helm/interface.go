@@ -53,12 +53,12 @@ type Manager interface {
 	// This is equivalent to "helm upgrade --install"
 	DeployChart(ctx context.Context, releaseName, chartRef, chartVersion, namespace string, o DeployChartOptions) (*release.Release, error)
 
-	// List lists Helm releases in the specified namespace
-	// It only lists releases in deployed state
+	// List lists Helm releases in the specified namespace, in every state
+	// (deployed, failed, pending-*, superseded, uninstalling).
 	List(namespace string, allNamespaces bool) ([]*release.Release, error)
 
-	// ListAll lists Helm releases in all namespaces
-	// It only lists releases in deployed state
+	// ListAll lists Helm releases in all namespaces, in every state. Unlike
+	// IsInstalled, which counts only deployed releases, this sees a stalled one.
 	ListAll() ([]*release.Release, error)
 
 	// GetRelease retrieves a Helm release by name in the specified namespace
