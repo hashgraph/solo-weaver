@@ -1,0 +1,456 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# solo-provisioner-daemon — CN-upgrade end-to-end test harness.
+#
+# Validates the daemon's HIP-1496 execute phase of a config-only consensus-node
+# software upgrade, driven for real by solo-operator's `beacon` (HAPI control
+# plane). A REAL v0.74.0 single-node consensus network is deployed on a single-node
+# k8s cluster (the daemon's own install path: `kube cluster install` +
+# `kube operator install`, NOT kind). beacon then uploads the v0.74.2 package,
+# freezes the network, and the host daemon performs the execute phase; we verify
+# its handshake (ConfigCRsApplied=True, DaemonResult=True, phase PendingNodeUpgrade).
+#
+# The VM build/bootstrap/secrets/registry-login tasks are NOT duplicated here —
+# they are reused from the repo's `taskfiles/uat.yaml` (surfaced on the root
+# Taskfile as `uat:*`). This file adds only the CN-upgrade-specific tasks.
+#
+# Two steps are long-running and MUST each get their own terminal — `operator`
+# is implicit (the daemon watches; the operator runs in-cluster) but the
+# `daemon:logs` tail and the beacon `port-forward` each want their own terminal.
+# Run `task -d docs/daemon` (or `cd docs/daemon && task`) to print the ordered runbook.
+#
+# beacon needs a solo-operator checkout (SOLO_OPERATOR_DIR) for `bin/beacon` and
+# the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip); solo-operator is
+# pinned to v0.7.0 (deps.SOLO_OPERATOR_VERSION), which includes the #1323 alignment.
+
+version: '3'
+
+# Load the repo-root .env (GITHUB_USER / GITHUB_ACCESS_TOKEN for uat:secrets and
+# uat:registry:login:ghcr). The root Taskfile declares this dotenv too, but an
+# INCLUDED taskfile may not carry a dotenv — so the root Taskfile itself can't be
+# included here; we include taskfiles/uat.yaml directly (below) and load .env here.
+dotenv: ['../../.env']
+
+includes:
+  # The repo root already flattens taskfiles/uat.yaml into itself, so its tasks are
+  # named `uat:*`. We include the same file directly and `flatten: true` keeps those
+  # names (`uat:rebuild`, `uat:secrets`, `uat:teardown`, `uat:registry:login:ghcr`)
+  # callable verbatim; they don't collide with this file's un-prefixed tasks.
+  # `dir: ../..` runs the reused tasks in the repo-root context, so their shelled-out
+  # `task build:cli` (which resolves via the root Taskfile), arch detection, and
+  # /mnt/solo-weaver paths all work.
+  uat:
+    taskfile: ../../taskfiles/uat.yaml
+    dir: ../..
+    flatten: true
+
+vars:
+  # Absolute weaver repo root (this Taskfile lives in docs/daemon), so host-side tasks
+  # resolve regardless of where `task` is invoked.
+  WEAVER_ROOT:
+    sh: cd ../.. && pwd
+  # Path to a solo-operator checkout at v0.7.0+ (provides bin/beacon and the test/dev
+  # staging zips). Defaults to a sibling checkout beside solo-weaver (the standard
+  # go-import layout, .../github.com/hashgraph/solo-operator); override with
+  # `task -d docs/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
+  SOLO_OPERATOR_DIR: '{{.SOLO_OPERATOR_DIR | default (printf "%s/../solo-operator" .WEAVER_ROOT)}}'
+
+  # Version map — mirrors solo-operator docs/beacon. beacon uploads the UPGRADE zip.
+  BASE_VERSION: "0.74.0"
+  UPGRADE_VERSION: "0.74.2"
+
+  # Orbit namespace where the CN + NetworkUpgradeExecute CRs live. Matches beacon's
+  # config (haproxy-node0 in solo-orbit) and TC-42.
+  NS: '{{.NS | default "solo-orbit"}}'
+  # Operator namespace (where `kube operator install` deploys + reads its pull secret).
+  OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
+
+  # The consensus node under test.
+  NODE_ID: '{{.NODE_ID | default "0"}}'
+
+  # Daemon upgrade staging dir — daemon reads the extracted package here; the CN pod
+  # extracts special file 0.0.150 into the same path (shared on a single host).
+  UPGRADE_DIR: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+
+  # The upgrade package zip beacon uploads, and its coupling hash H (SHA-384).
+  # Recomputed from the zip on every task run; empty until `task zip` has produced it.
+  ZIP: "{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.UPGRADE_VERSION}}.zip"
+  H:
+    sh: >-
+      shasum -a 384 "{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.UPGRADE_VERSION}}.zip" 2>/dev/null
+      | awk '{print $1}'
+  # The base-version deployment package, UNZIPPED into the weaver checkout so it is
+  # visible in the VM at /mnt/solo-weaver. `task package` unzips it here from the
+  # solo-operator base zip. PKG_SRC is the host path (weaver checkout); PKG is the
+  # same location as seen inside the VM (used by `consensus node install`).
+  PKG_SRC: "{{.WEAVER_ROOT}}/test/data/build-v{{.BASE_VERSION}}"
+  PKG: "/mnt/solo-weaver/test/data/build-v{{.BASE_VERSION}}"
+
+  # beacon binary + its network context (config.yaml + keys/ live under BEACON_HOME).
+  BEACON: "{{.SOLO_OPERATOR_DIR}}/bin/beacon"
+  BEACON_HOME: /tmp/beacon-solo
+  CONFIG: "{{.BEACON_HOME}}/config.yaml"
+
+  # Node HAPI gRPC endpoint exposed to the host by the port-forward.
+  PF_SVC: haproxy-node0
+  PORT: "50211"
+  # How far out (minutes) to schedule the upgrade freeze.
+  FREEZE_DELAY_MIN: "3"
+
+  # Well-known 0.0.2 genesis key (its public key matches the network-genesis
+  # bootstrap.genesisPublicKey). Copied verbatim from solo-operator docs/beacon.
+  ACCOUNT2_KEY_HEX: "302e020100300506032b65700422042091132178e72057a1d7528025956fe39b0b847f200ab59b2fdd367017f3087137"
+
+  # solo-operator API group used by the verify jsonpath / label selectors.
+  API_GROUP: operator.solo.hiero.org
+
+tasks:
+  default:
+    desc: "Print the ordered CN-upgrade e2e runbook (which tasks need their own terminal)"
+    silent: true
+    cmds:
+      - |
+        cat <<'EOF'
+        solo-provisioner-daemon CN-upgrade e2e — run IN A LINUX VM, in order:
+
+          # ── deployment packages (host: needs a solo-operator checkout) ──
+          T1  task -d docs/daemon zip            # build staging/build-v0.74.0 + v0.74.2 zips, print H
+          T2  task -d docs/daemon package        # unzip the v0.74.0 base package into test/data (for --deployment-package-dir)
+
+          # ── substrate: the daemon's real install path (single-node k8s) ──
+          T3  task -d docs/daemon rebuild        # build CLI+daemon on the VM + self-install
+          T4  task -d docs/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
+          T5  task -d docs/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
+          T6  task -d docs/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
+
+          # ── a REAL v0.74.0 consensus network in DAEMON-DELEGATED mode ──
+          T7  task -d docs/daemon network        # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
+
+          # ── install + run the host daemon (execute phase performer) ──
+          T8  task -d docs/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
+          T9  task -d docs/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
+
+          # ── drive the upgrade with beacon ──
+          T10 task -d docs/daemon beacon:build   # build bin/beacon in the solo-operator checkout
+          T11 task -d docs/daemon config         # write beacon config.yaml + 0.0.2 payer key
+          T12 task -d docs/daemon port-forward   # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
+          T13 task -d docs/daemon upload         # upload the v0.74.2 package into special file 0.0.150
+          T14 task -d docs/daemon prepare        # freeze prepare (staged, pinned to H)
+          T15 task -d docs/daemon freeze         # freeze upgrade (~3 min out) — network freezes, daemon executes
+
+          # ── observe + verify the daemon execute handshake ──
+          T16 task -d docs/daemon watch          # watch NetworkUpgradeExecute advance + tail the daemon log
+          T17 task -d docs/daemon verify         # assert ConfigCRsApplied/DaemonResult + config CRs Valid
+          T18 task -d docs/daemon version        # beacon network version -> 0.74.2
+
+          # ── clean up ──
+          T19 task -d docs/daemon reset          # daemon + cluster uninstall, restore upgrade dir
+          T20 task -d docs/daemon teardown       # reuses uat:teardown
+
+        daemon:logs (T9) and port-forward (T12) are long-running — each in its own terminal.
+        EOF
+
+  # ── 1. build the binaries on the VM ───────────────────────────────────────────
+  build:
+    desc: "Alias for rebuild — build CLI + daemon on the VM (incremental) and self-install"
+    cmds:
+      - task: rebuild
+
+  rebuild:
+    desc: "Inside VM: incrementally rebuild the CLI + daemon for this VM's arch and self-install (reuses uat:rebuild)"
+    cmds:
+      - task: uat:rebuild
+
+  # ── 2. cluster substrate + orbit + hedera user + upgrade staging dir ──────────
+  cluster:
+    desc: "Inside VM: ghcr Helm login + single-node k8s (kube cluster install) + orbit namespace + hedera user/group + upgrade staging dir"
+    cmds:
+      # ghcr Helm auth so the private solo-operator OCI chart can be pulled later.
+      - task: uat:registry:login:ghcr
+      - |
+        set -e
+        echo "▶ kube cluster install (single-node)"
+        sudo solo-provisioner kube cluster install --non-interactive
+        sudo kubectl get nodes
+
+        echo "▶ Create orbit namespace {{.NS}}"
+        sudo kubectl create ns {{.NS}} --dry-run=client -o yaml | sudo kubectl apply -f -
+
+        echo "▶ hedera group / user + upgrade staging dir {{.UPGRADE_DIR}}"
+        sudo groupadd -g 2000 hedera 2>/dev/null || true
+        sudo useradd -r -u 2000 -g hedera -s /sbin/nologin hedera 2>/dev/null || true
+        sudo mkdir -p {{.UPGRADE_DIR}}
+        sudo chown hedera:hedera \
+          /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade \
+          {{.UPGRADE_DIR}}
+        sudo chmod 0775 {{.UPGRADE_DIR}}
+        # The daemon runs as the weaver service account; it must be able to write the
+        # extracted package into the shared upgrade dir.
+        sudo usermod -aG hedera weaver
+        sudo -u weaver touch {{.UPGRADE_DIR}}/.probe && sudo -u weaver rm {{.UPGRADE_DIR}}/.probe && echo "✓ weaver can write {{.UPGRADE_DIR}}"
+
+  # ── 3. secrets: pull secret (operator+orbit ns) + node0 gossip/gRPC ──────────
+  secrets:
+    desc: "Inside VM: create the private-registry pull secret (operator + orbit ns) and node0 gossip/gRPC secrets (reuses uat:secrets)"
+    cmds:
+      # uat:secrets rewrites the sample manifests' namespace to NS and applies the
+      # node0-gossip-keys / node0-grpc-tls-keys secrets `consensus node install` expects.
+      - task: uat:secrets
+        vars:
+          NS: "{{.NS}}"
+          OPERATOR_NS: "{{.OPERATOR_NS}}"
+          NODE: "node{{.NODE_ID}}"
+
+  # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
+  operator:
+    desc: "Inside VM: install the solo-operator (v0.7.0 chart + CRDs incl. networkupgradeexecutes)"
+    cmds:
+      - |
+        set -e
+        echo "▶ kube operator install"
+        sudo solo-provisioner kube operator install --non-interactive
+        sudo kubectl -n {{.OPERATOR_NS}} get pods
+        sudo kubectl get crd networkupgradeexecutes.{{.API_GROUP}}
+
+  # ── 5. a REAL v0.74.0 consensus network ──────────────────────────────────────
+  network:
+    desc: "Inside VM: deploy consensus node{{.NODE_ID}} (v{{.BASE_VERSION}}) from the extracted package + generate genesis"
+    cmds:
+      - |
+        set -e
+        # The consensus stack is experimental-gated: --experimental (or
+        # SOLO_PROVISIONER_ENABLE_CONSENSUS) is required, and under sudo the env var is
+        # dropped, so the flag is the reliable opt-in.
+        echo "▶ consensus node install (node{{.NODE_ID}}, from deployment package {{.PKG}})"
+        # PKG is the unzipped v{{.BASE_VERSION}} package (run `task package` first).
+        # Image tags / ledger / chain id are read from it.
+        # --provisioner-daemon deploys the Orbit in mainnet mode: the UC sidecar runs
+        # UC_MODE=mainnet and DEFERS the execute phase to the host daemon (the Orbit is
+        # created with spec.consensus.provisionerDaemonEnabled=true from the start, so
+        # the UC comes up in mainnet mode on first reconcile — no post-patch needed).
+        sudo solo-provisioner --skip-hardware-checks consensus node install --experimental \
+          --namespace {{.NS}} --node-id {{.NODE_ID}} --profile local \
+          --provisioner-daemon \
+          --deployment-package-dir {{.PKG}} \
+          --signing-secret node{{.NODE_ID}}-gossip-keys \
+          --grpc-tls-secret node{{.NODE_ID}}-grpc-tls-keys
+
+        echo "▶ consensus network genesis"
+        sudo solo-provisioner consensus network genesis --experimental --namespace {{.NS}}
+
+        echo "▶ Checkpoint: node{{.NODE_ID}} pod status + UC mode"
+        sudo kubectl -n {{.NS}} get pods -l app.kubernetes.io/component=consensus-node
+        # Confirm the UC sidecar came up in mainnet mode (defers execute to the daemon):
+        sudo kubectl -n {{.NS}} get pods -l app.kubernetes.io/component=consensus-node \
+          -o jsonpath='{range .items[*].spec.containers[?(@.name=="uc")]}{.env[?(@.name=="UC_MODE")].value}{"\n"}{end}' 2>/dev/null || true
+
+  # ── 6. install + run the host daemon ──────────────────────────────────────────
+  daemon:install:
+    desc: "Inside VM: install the solo-provisioner-daemon for consensus-node (provisions daemon-cn RBAC + scoped kubeconfig) and start it"
+    cmds:
+      - |
+        set -e
+        UNAME_ARCH=$(uname -m)
+        case "$UNAME_ARCH" in
+          x86_64)  ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+          *) echo "FAIL: unsupported architecture '$UNAME_ARCH'."; exit 1 ;;
+        esac
+        DAEMON_BIN=/mnt/solo-weaver/bin/solo-provisioner-daemon-linux-${ARCH}
+
+        echo "▶ daemon service install (--cn-orbit is aliased by --cn-namespace)"
+        # --daemon-bin points at the freshly built dev binary (auto-download of the
+        # 0.0.0 placeholder version has no GitHub release and would fail).
+        sudo solo-provisioner daemon service install \
+          --components consensus-node \
+          --cn-node-id {{.NODE_ID}} \
+          --cn-orbit {{.NS}} \
+          --daemon-bin "$DAEMON_BIN" \
+          --non-interactive
+
+        echo "▶ Sanity-check the daemon-cn grant landed (both should print 'yes')"
+        kubectl auth can-i create log4j2configs.{{.API_GROUP}} \
+          --as=system:serviceaccount:{{.NS}}:solo-provisioner-daemon-cn -n {{.NS}} || true
+        kubectl auth can-i patch networkupgradeexecutes/status.{{.API_GROUP}} \
+          --as=system:serviceaccount:{{.NS}}:solo-provisioner-daemon-cn -n {{.NS}} || true
+
+        sudo systemctl start solo-provisioner-daemon || true
+        sudo solo-provisioner daemon service check || true
+
+  daemon:logs:
+    desc: "Inside VM: tail the daemon journal (LEAVE RUNNING in its own terminal)"
+    cmds:
+      - journalctl -u solo-provisioner-daemon.service -f
+
+  daemon:check:
+    desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
+    cmds:
+      - sudo solo-provisioner daemon service check
+
+  # ── 7. upgrade package + beacon (needs the solo-operator checkout) ────────────
+  zip:
+    desc: "Build the v{{.BASE_VERSION}}+v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree and print H"
+    cmds:
+      - |
+        set -e
+        cd {{.SOLO_OPERATOR_DIR}}/test/dev
+        task setup            # downloads the base+upgrade zips (needs internet)
+        task build            # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
+      - task: print-hash
+
+  print-hash:
+    desc: "Print the upgrade zip path and its SHA-384 (H)"
+    silent: true
+    cmds:
+      - |
+        if [ ! -f "{{.ZIP}}" ]; then
+          echo "!! upgrade zip not found: {{.ZIP}} — run 'task -d docs/daemon zip' first" >&2
+          exit 1
+        fi
+        echo "ZIP={{.ZIP}}"
+        echo "H={{.H}}"
+
+  package:
+    desc: "Host: unzip the base-version (v{{.BASE_VERSION}}) deployment package into the weaver checkout (test/data) for `consensus node install --deployment-package-dir`"
+    cmds:
+      - |
+        set -e
+        BASE_ZIP="{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.BASE_VERSION}}.zip"
+        if [ ! -f "$BASE_ZIP" ]; then
+          echo "!! base zip not found: $BASE_ZIP — run 'task -d docs/daemon zip' first" >&2
+          exit 1
+        fi
+        mkdir -p "{{.PKG_SRC}}"
+        unzip -o "$BASE_ZIP" -d "{{.PKG_SRC}}"
+        echo "✓ unzipped v{{.BASE_VERSION}} package to {{.PKG_SRC}}"
+        echo "  (visible in the VM at {{.PKG}} via the /mnt/solo-weaver mount)"
+
+  beacon:build:
+    desc: "Build bin/beacon in the solo-operator checkout (alt: ghcr.io/hashgraph/solo-operator/beacon:0.7.0 image — see docs/beacon README §B)"
+    cmds:
+      - |
+        set -e
+        cd {{.SOLO_OPERATOR_DIR}}
+        task build:beacon      # -> {{.BEACON}}
+        ls -l {{.BEACON}}
+
+  config:
+    desc: "Write {{.BEACON_HOME}} config.yaml + the 0.0.2 payer key (copied from solo-operator docs/beacon)"
+    cmds:
+      - mkdir -p {{.BEACON_HOME}}/keys
+      - |
+        # 0.0.2 genesis key as an unencrypted PEM (+ empty passphrase file).
+        { echo "-----BEGIN PRIVATE KEY-----"; \
+          echo "{{.ACCOUNT2_KEY_HEX}}" | xxd -r -p | base64; \
+          echo "-----END PRIVATE KEY-----"; } > {{.BEACON_HOME}}/keys/account2.pem
+        : > {{.BEACON_HOME}}/keys/account2.pass
+      - |
+        cat > {{.CONFIG}} <<'EOF'
+        name: solo-local
+        shard: 0
+        realm: 0
+        defaultPayer: 2
+        defaultNodeAccount: 3
+        nodes:
+          - id: {{.NODE_ID}}
+            account: 3
+            host: 127.0.0.1
+            port: {{.PORT}}
+            tls: false
+        EOF
+      - echo ">> wrote {{.CONFIG}} and {{.BEACON_HOME}}/keys/account2.pem"
+
+  port-forward:
+    desc: "Port-forward node{{.NODE_ID}} HAPI gRPC to localhost:{{.PORT}} (foreground — LEAVE RUNNING in its own terminal)"
+    cmds:
+      - kubectl -n {{.NS}} port-forward svc/{{.PF_SVC}} {{.PORT}}:{{.PORT}}
+
+  # ── 8. drive the upgrade with beacon (needs the port-forward running) ─────────
+  upload:
+    desc: "Upload the v{{.UPGRADE_VERSION}} package into special file 0.0.150 (verify-before-write with H)"
+    preconditions:
+      - sh: 'test -f "{{.ZIP}}"'
+        msg: "upgrade zip not found: {{.ZIP}} — run 'task -d docs/daemon zip'"
+      - sh: 'test -f "{{.CONFIG}}"'
+        msg: "beacon config not found: {{.CONFIG}} — run 'task -d docs/daemon config'"
+    cmds:
+      - '{{.BEACON}} -c {{.CONFIG}} file upload --zip "{{.ZIP}}" --expect-hash "{{.H}}"'
+      - '{{.BEACON}} -c {{.CONFIG}} file info'          # SHA-384 read-back must equal H
+
+  prepare:
+    desc: "Stage the upgrade on every node, pinned to H (freeze prepare)"
+    cmds:
+      - '{{.BEACON}} -c {{.CONFIG}} freeze prepare --upgrade-zip-hash "{{.H}}" --yes'
+
+  freeze:
+    desc: "Schedule the freeze that boots the new software (~{{.FREEZE_DELAY_MIN}} min out, UTC)"
+    cmds:
+      - |
+        START=$(date -u -v+{{.FREEZE_DELAY_MIN}}M '+%Y-%m-%d.%H:%M:%S' 2>/dev/null \
+          || date -u -d '+{{.FREEZE_DELAY_MIN}} min' '+%Y-%m-%d.%H:%M:%S')
+        echo ">> freeze start-time (UTC): $START"
+        {{.BEACON}} -c {{.CONFIG}} freeze upgrade --start-time "$START" --upgrade-zip-hash "{{.H}}" --yes
+
+  abort:
+    desc: "Abort a scheduled freeze before it fires"
+    cmds:
+      - '{{.BEACON}} -c {{.CONFIG}} freeze abort --yes'
+
+  # ── 9. observe + verify the daemon execute handshake ──────────────────────────
+  watch:
+    desc: "Watch the NetworkUpgradeExecute CR advance (ReadyForProvisionerDaemon -> PendingNodeUpgrade) and tail the daemon log"
+    cmds:
+      - |
+        echo "▶ Watching NetworkUpgradeExecute in {{.NS}} (Ctrl-C to stop, then run 'task -d docs/daemon verify')"
+        kubectl -n {{.NS}} get networkupgradeexecute -w
+
+  verify:
+    desc: "Assert the daemon execute handshake landed: ConfigCRsApplied=True, DaemonResult=True, phase PendingNodeUpgrade, config CRs Valid"
+    cmds:
+      - |
+        set -e
+        echo "▶ Phase (expect PendingNodeUpgrade):"
+        kubectl -n {{.NS}} get networkupgradeexecute \
+          -o jsonpath='{.items[0].status.phase}{"\n"}'
+
+        echo "▶ Handshake conditions (expect ConfigCRsApplied=True and DaemonResult=True):"
+        kubectl -n {{.NS}} get networkupgradeexecute -o \
+          jsonpath='{range .items[0].status.conditions[*]}{.type}={.status}/{.reason}{"\n"}{end}'
+
+        echo "▶ Per-operation config CRs (each should reach Valid=True):"
+        OP=$(kubectl -n {{.NS}} get networkupgradeexecute -o jsonpath='{.items[0].spec.operationId}')
+        echo "  operationId=$OP"
+        kubectl -n {{.NS}} get \
+          log4j2configs,nodesettings,applicationproperties,throttlesconfigs,blocknodesconfigs \
+          -l {{.API_GROUP}}/operation-id=$OP
+
+        echo "▶ Daemon execute event log (ExecuteWorkflowStarted … ExecuteWorkflowCompleted):"
+        sudo ls /opt/solo/weaver/*/consensus-$OP.jsonl 2>/dev/null || echo "  (event log not found — check the daemon log)"
+        # infrastructure-versions.yaml is placed only if the package ships one (config-only = absent).
+        sudo ls -l /opt/solo/weaver/config/infrastructure-versions.yaml 2>/dev/null || echo "  (no infrastructure-versions.yaml — expected for a config-only upgrade)"
+
+  version:
+    desc: "Confirm the live Services version (expect {{.UPGRADE_VERSION}} after the pod restarts on the new software)"
+    cmds:
+      - '{{.BEACON}} -c {{.CONFIG}} network version'
+      - kubectl -n {{.NS}} get pods -l app.kubernetes.io/component=consensus-node -o wide
+
+  # ── 10. clean up ──────────────────────────────────────────────────────────────
+  reset:
+    desc: "Inside VM: uninstall the daemon + cluster and restore the upgrade staging dir"
+    cmds:
+      - |
+        set -e
+        sudo solo-provisioner daemon service uninstall --components consensus-node --non-interactive 2>/dev/null || true
+        sudo solo-provisioner kube cluster uninstall --non-interactive 2>/dev/null || true
+        # Restore the upgrade staging dir if a failure-path test renamed it.
+        sudo mv /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current.bak \
+                {{.UPGRADE_DIR}} 2>/dev/null || true
+        echo "=== Reset complete ==="
+        systemctl is-active solo-provisioner-daemon.service 2>&1 || true
+
+  teardown:
+    desc: "Inside VM: full teardown (reuses uat:teardown)"
+    cmds:
+      - task: reset
+      - task: uat:teardown
