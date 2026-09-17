@@ -442,12 +442,34 @@ quarantined is dropped from the first forwarded packet after a reboot, not from
 the first successful statusz poll.
 
 statusz remains the source of truth. The persisted elements are a warm start, not
-an authority: every owned set is fully replaced on the first successful poll, and
-`bucketizeEndpoints` seeds each owned binding present-with-an-empty-slice, so a
-category the block node no longer reports collapses to an empty set rather than
-leaving stale peers behind. A node that has been off for a long time therefore
-replays a stale list until that first poll — which for `bn-restricted` errs
-toward over-blocking, the safe direction for a quarantine.
+an authority: every owned set fed by a statusz call that reported something is
+fully replaced on the first successful poll. `bucketizeEndpoints` seeds each of
+that direction's owned bindings present-with-an-empty-slice, so a category the
+block node no longer reports collapses to an empty set rather than leaving stale
+peers behind. A node that has been off for a long time therefore replays a stale
+list until that first poll — which for `bn-restricted` errs toward over-blocking,
+the safe direction for a quarantine.
+
+A statusz call that reports **nothing at all** is the exception: `activeEndpoints:
+[]` is indistinguishable from a broken handler, an error that still returns `200`,
+or a truncated body, so that direction's bindings are left absent from
+`categoryEndpoints` rather than seeded, which leaves their sets unwritten in the
+kernel — and still present in the artifact, since `persistMembership` re-renders
+it from a live snapshot (below) rather than from what the tick wrote.
+
+The judgement is per call, the granularity the client fetches at: an empty
+`/statusz/inbound` withholds `bn-publisher`, `bn-partner-out`, `bn-restricted` and
+all four managed `_ports` sets together, an empty `/statusz/outbound` withholds
+`bn-backfill` alone. It reads the payload as it arrived, not the resolved copy: a
+roster whose names all failed to look up is a resolution outcome, handled by the
+last-known-good cache and reported through `Unresolved`/`Stale` — see
+[FQDNs in statusz peer rosters](#fqdns-in-statusz-peer-rosters). Sets an apply
+actually empties ride out on `Result.Cleared`; the daemon reads them back from the
+apply's JSON and logs them as `reason=TrafficShaperMembershipCleared`.
+
+The same reasoning covers the resolution cache: an empty call does not prune the
+names it stopped reporting either, since a name withheld this tick is one a later
+tick may report while the resolver is still down.
 
 The writer is `policy.Manager.persistMembership`, which re-renders the document
 from the registry plus the *live* contents of every daemon-owned set. It runs
@@ -823,9 +845,11 @@ Cache-write ordering matters here exactly the way #1121 found it does on the fir
 `persistDNSCache`. `--check` never writes — it runs unprivileged and cannot write `0600` files
 under `/etc/solo-provisioner/` — so it reads the cache for its last-known-good fallback but never
 updates it. A lock-held or failed apply leaves the on-disk cache exactly as it was loaded. A name
-statusz stops reporting is pruned from the cache the same tick, so it does not grow forever, and a
-name is case-folded before it is used as a cache key so a spelling change between polls does not
-lose the fallback.
+statusz stops reporting is not dropped on sight — it decays on the same per-address clock as an
+address a fresh answer omits, and its key goes with its last address, so the cache is bounded at
+`addrGracePeriod` past a name's last sighting while a roster that goes briefly empty still leaves
+a fallback for the name it reports again. A name is case-folded before it is used as a cache key,
+so a spelling change between polls does not lose the fallback.
 
 **AAAA-only names** are a separate, non-failure category: a name whose only records are AAAA
 resolves successfully but contributes no IPv4 address, so `resolveHosts` issues a second lookup

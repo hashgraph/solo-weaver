@@ -112,14 +112,52 @@ deployment-wide constant, not a per-call argument.
 
 ## What an empty statusz response does
 
-Worth knowing before you read too much into an empty set: **this plane fails open, not
-closed.**
+Two different things, depending on whether the *call* came back empty or just the *category*.
+
+### The whole call came back empty — the sets are left alone
+
+When `GET /statusz/inbound` or `/statusz/outbound` returns `200` with
+`activeEndpoints: []`, the daemon **withholds** every set that call feeds: it diffs none of
+them and writes none of them, so they keep exactly the members they had.
+
+| Empty call | Sets left alone |
+|---|---|
+| `/statusz/inbound` | `bn-publisher`, `bn-partner-out`, `bn-restricted`, and all four managed `_ports` sets |
+| `/statusz/outbound` | `bn-backfill` |
+
+A response with nothing in it is indistinguishable from a broken handler, an internal error
+that still returns `200`, or a body truncated in flight, so it is not trusted to empty
+`bn-restricted` and lift a quarantine.
+
+The apply summary lists them under `unchanged` because they produced no delta and nothing was
+written to them, not because nothing looked at them. Whenever the apply re-renders the `.nft`
+it snapshots every daemon-owned set from the live kernel (see above), and that snapshot is
+what carries a withheld set's members into the file.
+
+`solo-provisioner block node reconcile-shaper --statusz-url=<url> --check --output=json` leaves
+them out of `desired` entirely, and returns `desired-ports: null` when the empty call is
+`/statusz/inbound`.
+
+### The call reported peers but not this category — the set is cleared
+
+When the payload *has* entries and simply does not mention a category, that is believed and
+the category's set is emptied on that tick. It is the ordinary case (no partner connections
+right now), and for `bn-restricted` it is the **only** un-quarantine signal there is — a peer
+is released purely by dropping out of the restricted category, so there is no confirmation
+window and no added latency.
+
+A clear is reported in the apply summary, and logged at `WARN` by the daemon on a poll tick:
+
+```bash
+journalctl -u solo-provisioner-daemon -g TrafficShaperMembershipCleared
+```
+
+Worth knowing before you read too much into a set that *was* cleared: **this plane fails open,
+not closed.**
 
 The forward chain's policy is `accept`. A packet that no rule matches carries no
 `meta priority` and lands in the HTB default class — it is not dropped. Only the deny tier
 drops, and a deny rule whose set is empty matches nothing.
-
-So when statusz returns `200` with an empty list, the daemon clears the owned sets and:
 
 | Policy | Set cleared means |
 |---|---|
@@ -140,8 +178,8 @@ Three things do **not** change, which is why this can never lock a node out:
   marked packets.
 
 > **This is easy to miss in testing.** The default class ceils at 100% of the trunk, so while
-> the other classes sit idle it borrows the whole link. A throughput test during an
-> empty-statusz window measures full line rate and looks healthy. The loss only shows up once
+> the other classes sit idle it borrows the whole link. A throughput test taken while the
+> stamp sets are empty measures full line rate and looks healthy. The loss only shows up once
 > the other classes have traffic again and the default class is squeezed back to its
 > guarantee. Confirm classification with
 > [`network shape watch`](shape.md#watch--live-counters-read-only) rather than with a

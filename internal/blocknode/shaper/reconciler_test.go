@@ -7,8 +7,11 @@ package shaper
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -124,7 +127,7 @@ func TestBucketizeEndpoints_CategorizesAndSeedsAllOwned(t *testing.T) {
 		conn("partner", "10.30.5.7", "43473"), // outbound partner → bn-backfill
 	}}
 
-	ce := bucketizeEndpoints(inbound, outbound)
+	ce := bucketizeEndpoints(inbound, outbound, true, true)
 
 	// All four owned bindings present.
 	require.Len(t, ce, 4)
@@ -152,7 +155,7 @@ func TestBucketizeEndpoints_SkipsWildcardAndEmptyBackfillPort(t *testing.T) {
 		conn("partner", "10.30.5.9", ""),      // empty port → skipped
 	}}
 
-	ce := bucketizeEndpoints(NetworkData{}, outbound)
+	ce := bucketizeEndpoints(NetworkData{}, outbound, false, true)
 	assert.Equal(t, []string{"10.30.5.7:43473"}, ce[bindingKey{Outbound, CategoryPartner}])
 }
 
@@ -168,7 +171,7 @@ func TestBucketizeEndpoints_NormalizesBareHostToSlash32(t *testing.T) {
 		conn("partner", "198.51.100.0/24", "*"),  // already a CIDR → unchanged
 	}}
 
-	ce := bucketizeEndpoints(inbound, NetworkData{})
+	ce := bucketizeEndpoints(inbound, NetworkData{}, true, false)
 
 	assert.Equal(t, []string{"198.51.100.234/32"}, ce[bindingKey{Inbound, CategoryPublisher}])
 	assert.Equal(t, []string{"198.51.100.0/24"}, ce[bindingKey{Inbound, CategoryPartner}])
@@ -187,7 +190,7 @@ func TestBucketizeEndpoints_IPv6(t *testing.T) {
 		conn("partner", "2001:db8::2", "43473"), // compound v6 → bracketed ip:port
 	}}
 
-	ce := bucketizeEndpoints(inbound, outbound)
+	ce := bucketizeEndpoints(inbound, outbound, true, true)
 
 	assert.Equal(t, []string{"2001:db8::1/128"}, ce[bindingKey{Inbound, CategoryPublisher}])
 	assert.Equal(t, []string{"2001:db8:a::/48"}, ce[bindingKey{Inbound, CategoryPartner}])
@@ -218,12 +221,40 @@ func TestReconciler_Apply_NormalizesBareHostMembership(t *testing.T) {
 	assert.Equal(t, []string{"bn-publisher"}, res.Applied)
 }
 
-func TestBucketizeEndpoints_EmptySnapshotSeedsAllOwnedEmpty(t *testing.T) {
-	ce := bucketizeEndpoints(NetworkData{}, NetworkData{})
-	require.Len(t, ce, 4)
+// A reported direction seeds every binding it feeds, even categories the payload
+// never mentions — that is what clears those sets.
+func TestBucketizeEndpoints_ReportedDirectionSeedsItsOwnedBindingsEmpty(t *testing.T) {
+	// A payload carrying only the unmapped public category: it reported
+	// something, but nothing that lands in an owned binding.
+	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		conn("public", "0.0.0.0/0", "*"),
+	}}
+
+	ce := bucketizeEndpoints(inbound, NetworkData{}, true, false)
+
+	require.Len(t, ce, 3, "all three inbound bindings, and only those")
 	for k := range categoryBindings {
+		if k.dir != Inbound {
+			continue
+		}
+		require.Contains(t, ce, k)
 		assert.Empty(t, ce[k], "binding %+v should be present but empty", k)
 	}
+}
+
+// An unreported direction seeds nothing, so its sets are left alone.
+func TestBucketizeEndpoints_UnreportedDirectionIsAbsent(t *testing.T) {
+	outbound := NetworkData{ActiveEndpoints: []NetworkConnection{
+		conn("partner", "10.30.5.7", "43473"),
+	}}
+
+	// Inbound reported nothing; outbound reported a peer.
+	ce := bucketizeEndpoints(NetworkData{}, outbound, false, true)
+	require.Len(t, ce, 1)
+	require.Contains(t, ce, bindingKey{Outbound, CategoryPartner})
+
+	// Neither reported: nothing is desired, so nothing is touched.
+	require.Empty(t, bucketizeEndpoints(NetworkData{}, NetworkData{}, false, false))
 }
 
 func TestDesiredMembership_MapsOwnedCategoriesToPolicies(t *testing.T) {
@@ -256,7 +287,7 @@ func TestReconciler_Check_DigestsDesired(t *testing.T) {
 	// The digest is exactly the digest of the canonical desired membership AND
 	// listener ports derived from the same snapshot — no nft read/write happened
 	// (nil lister/applier untouched).
-	ce := bucketizeEndpoints(f.inbound, f.outbound)
+	ce := bucketizeEndpoints(f.inbound, f.outbound, reported(f.inbound), reported(f.outbound))
 	wantCanon, err := canonicalDesiredMembership(ce)
 	require.NoError(t, err)
 	wantPorts := desiredPorts(f.inbound)
@@ -304,7 +335,8 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 	}
 	lister := newFakeLister()
 	// bn-partner-out already matches desired; bn-publisher differs; bn-restricted
-	// and bn-backfill are seeded empty and live-empty → no change.
+	// is seeded empty and live-empty → no change. bn-backfill is never diffed: its
+	// outbound payload reported nothing, so it is withheld.
 	lister.elements["bn-partner-out"] = []string{"10.2.0.1"}
 	lister.elements["bn-publisher"] = []string{"10.9.9.9"}
 
@@ -322,14 +354,14 @@ func TestReconciler_Apply_AppliesOnlyChangedPolicies(t *testing.T) {
 	require.Empty(t, applier.gotPorts, "no port change → empty ports batch")
 
 	assert.Equal(t, []string{"bn-publisher"}, res.Applied)
-	// Every other owned set — membership sets and the managed `_ports` sets — is
-	// reported unchanged.
 	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher"), res.Unchanged)
+	// bn-publisher gained a member rather than losing its last one.
+	assert.Empty(t, res.Cleared)
 	assert.NotEmpty(t, res.Digest)
 }
 
 func TestReconciler_Apply_NoChangesStillCallsApplierWithEmptyBatches(t *testing.T) {
-	f := &fakeFetcher{} // empty snapshot → all owned sets desired-empty
+	f := &fakeFetcher{} // both statusz calls reported nothing → everything withheld
 	lister := newFakeLister()
 	applier := &fakeApplier{applied: true}
 	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
@@ -346,10 +378,11 @@ func TestReconciler_Apply_NoChangesStillCallsApplierWithEmptyBatches(t *testing.
 	require.Empty(t, applier.got, "no membership change → empty membership batch")
 	require.Empty(t, applier.gotPorts, "no port change → empty ports batch")
 
-	// Nothing was written, so nothing is reported applied and every owned set
-	// stays in the unchanged list.
+	// Neither statusz call reported an endpoint, so no live set is diffed.
+	assert.Empty(t, lister.reads, "an unreported call diffs no live set")
 	assert.Empty(t, res.Applied)
 	assert.Equal(t, ownedSetNames(), res.Unchanged)
+	assert.Empty(t, res.Cleared)
 }
 
 func TestReconciler_Apply_LockHeldReportsNothingApplied(t *testing.T) {
@@ -369,6 +402,233 @@ func TestReconciler_Apply_LockHeldReportsNothingApplied(t *testing.T) {
 	// reported skipped (still out of sync), not folded into unchanged.
 	assert.Equal(t, []string{"bn-publisher"}, res.Skipped)
 	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher"), res.Unchanged)
+}
+
+// quarantined is a fake lister with a live member in every owned membership set;
+// bn-restricted's is a quarantined peer.
+func quarantined() *fakeLister {
+	l := newFakeLister()
+	l.elements["bn-publisher"] = []string{"10.1.0.1"}
+	l.elements["bn-partner-out"] = []string{"10.2.0.1"}
+	l.elements["bn-restricted"] = []string{"10.3.0.1"}
+	l.elements["bn-backfill"] = []string{"10.30.5.7 . 43473"}
+	return l
+}
+
+// An empty /statusz/inbound leaves all seven sets it feeds exactly as they are.
+func TestReconciler_Apply_EmptyInboundLeavesInboundFedSetsUntouched(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{}, // 200, activeEndpoints: []
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+	lister := quarantined()
+	// Live listener ports too: all four managed `_ports` sets ride on the inbound
+	// call, so they are withheld with it.
+	for _, p := range managedPortsPolicyNames() {
+		lister.elements[policy.PortsSetName(p)] = []string{"40984"}
+	}
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	// Nothing inbound-fed reaches the applier, so neither the kernel nor the
+	// persisted artifact loses a member: policy.Manager re-renders the .nft from a
+	// live snapshot, so a set it never writes keeps what it had.
+	require.Equal(t, 1, applier.calls)
+	assert.Empty(t, applier.got, "bn-backfill already matches live → no membership write")
+	assert.Empty(t, applier.gotPorts)
+
+	// Not diffed, not just written back with the old value.
+	for _, set := range []string{
+		"bn-partner-out", "bn-partner-out_ports", "bn-public-out_ports",
+		"bn-publisher", "bn-publisher_ports", "bn-restricted", "bn-subscriber-in_ports",
+	} {
+		assert.NotContains(t, lister.reads, set, "%s must not be diffed when its statusz call reported nothing", set)
+	}
+
+	assert.Equal(t, ownedSetNames(), res.Unchanged, "withheld sets are reported unchanged")
+	assert.Empty(t, res.Cleared, "withholding can never lift a quarantine")
+}
+
+// The other half of the empty-response guarantee: withholding the sets is no use
+// if the same tick discards the cached address the next tick's fallback is built
+// from, because the tick after that clears the set instead.
+func TestReconciler_Apply_EmptyInboundKeepsTheDNSFallbackForTheNextTick(t *testing.T) {
+	cachePath := dnsCachePathFor(filepath.Join(t.TempDir(), "policy.nft"))
+	roster := nd(conn("publisher", "peer.example.com", "*"))
+	resolver := &fakeResolver{answers: map[string][]string{"peer.example.com": {"10.1.0.1"}}}
+	f := &fakeFetcher{inbound: roster}
+	lister := newFakeLister()
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{
+		fetcher: f, resolver: resolver, lister: lister, applier: applier,
+		dnsCachePath: cachePath,
+	}
+
+	// Tick 1: the peer resolves, lands in bn-publisher, and its address is
+	// persisted as the last-known-good fallback.
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string][]string{"bn-publisher": {"10.1.0.1/32"}}, applier.got)
+	require.Equal(t, []string{"bn-publisher"}, res.Applied)
+	require.Contains(t, loadDNSCache(cachePath), "peer.example.com")
+	persisted, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	// The kernel now holds what tick 1 wrote. Then the resolver goes down and
+	// statusz answers 200 with activeEndpoints: [].
+	lister.elements["bn-publisher"] = []string{"10.1.0.1"}
+	resolver.transient = map[string]bool{"peer.example.com": true}
+	f.inbound = NetworkData{}
+
+	// Tick 2: the sets are withheld, and the fallback is left exactly as it was.
+	res, err = r.Apply(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, res.Cleared)
+	after, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+	require.Equal(t, persisted, after,
+		"an empty statusz response must not disturb the fallback the next tick reads")
+
+	// Tick 3: statusz reports the peer again, the resolver is still down.
+	f.inbound = roster
+
+	res, err = r.Apply(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, res.Cleared, "an empty response must not clear a set two ticks later either")
+	assert.Empty(t, applier.got, "the stale address still matches live, so nothing is rewritten")
+	assert.Equal(t,
+		[]NamedIssue{{Name: "peer.example.com", Policies: []string{"bn-publisher"}}},
+		res.Stale, "the peer is served stale, and the operator is told so")
+}
+
+// bn-backfill is the only set /statusz/outbound feeds, so it is withheld alone.
+func TestReconciler_Apply_EmptyOutboundLeavesBackfillUntouched(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("publisher", "10.1.0.1", "*"),
+			conn("partner", "10.2.0.1", "*"),
+			conn("restricted", "10.3.0.1", "*"),
+		}},
+		outbound: NetworkData{}, // 200, activeEndpoints: []
+	}
+	lister := quarantined()
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	assert.NotContains(t, lister.reads, "bn-backfill")
+	assert.NotContains(t, applier.got, "bn-backfill")
+	assert.Empty(t, res.Cleared)
+}
+
+// A populated payload that omits a category still clears it, on that tick.
+func TestReconciler_Apply_PopulatedPayloadStillClearsAMissingCategory(t *testing.T) {
+	f := &fakeFetcher{
+		// The block node reports its publisher and partner peers but no restricted
+		// peer: the quarantine has genuinely been lifted.
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("publisher", "10.1.0.1", "*"),
+			conn("partner", "10.2.0.1", "*"),
+		}},
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+	lister := quarantined()
+	// A live listener port too: conn() carries no local.port, so the reported
+	// inbound call desires bn-publisher_ports empty and clears it.
+	lister.elements[policy.PortsSetName("bn-publisher")] = []string{"40984"}
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	// bn-restricted is present-and-empty in the batch: that is what clears it.
+	require.Contains(t, applier.got, "bn-restricted")
+	assert.Empty(t, applier.got["bn-restricted"])
+	require.Contains(t, applier.gotPorts, "bn-publisher")
+	assert.Empty(t, applier.gotPorts["bn-publisher"])
+	// A ports set is reported by its nft set name, not its policy name.
+	assert.Equal(t, []string{"bn-publisher_ports", "bn-restricted"}, res.Cleared)
+}
+
+// A populated payload that names every owned category, matching live, changes nothing.
+func TestReconciler_Apply_PopulatedPayloadMatchingLiveChangesNothing(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("publisher", "10.1.0.1", "*"),
+			conn("partner", "10.2.0.1", "*"),
+			conn("restricted", "10.3.0.1", "*"),
+		}},
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+	applier := &fakeApplier{applied: true}
+	r := &Reconciler{fetcher: f, lister: quarantined(), applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 1, applier.calls)
+	assert.Empty(t, applier.got)
+	assert.Empty(t, applier.gotPorts)
+	assert.Empty(t, res.Applied)
+	assert.Equal(t, ownedSetNames(), res.Unchanged)
+	assert.Empty(t, res.Cleared)
+}
+
+// Lock held: nothing reached the kernel, so the pending clear is Skipped, not Cleared.
+func TestReconciler_Apply_ClearedOnlyReportedWhenActuallyWritten(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("publisher", "10.1.0.1", "*"),
+			conn("partner", "10.2.0.1", "*"),
+		}},
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+	applier := &fakeApplier{applied: false} // operator lock held
+	r := &Reconciler{fetcher: f, lister: quarantined(), applier: applier}
+
+	res, err := r.Apply(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, res.Cleared, "nothing was written, so nothing was cleared")
+	assert.Equal(t, []string{"bn-restricted"}, res.Skipped, "the pending clear is reported as skipped instead")
+}
+
+// An unreported call leaves its sets out of the desired maps entirely, so the
+// digest cannot change on their account.
+func TestReconciler_Check_UnreportedCallLeavesItsSetsOutOfDesired(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{}, // reported nothing
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+	r := &Reconciler{fetcher: f}
+
+	res, err := r.Check(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string][]string{"bn-backfill": {"10.30.5.7 . 43473"}}, res.Desired)
+	assert.Empty(t, res.DesiredPorts, "every managed-ports set rides on the inbound call")
+	assert.NotEmpty(t, res.Digest, "a digest is still produced, so the daemon's gate keeps working")
+}
+
+// nil, not a map of empty slices, so the ports sets are left alone.
+func TestDesiredPorts_UnreportedInboundWithholdsEveryManagedSet(t *testing.T) {
+	assert.Nil(t, desiredPorts(NetworkData{}))
 }
 
 // exclude returns all minus the dropped names, preserving order — a small helper
@@ -537,4 +797,6 @@ func TestReconciler_Apply_MembershipAndPortsAppliedInOneAtomicCall(t *testing.T)
 	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.1/32"}}, applier.got)
 	require.Equal(t, map[string][]string{"bn-publisher": {"40984"}}, applier.gotPorts)
 	assert.Equal(t, []string{"bn-publisher", "bn-publisher_ports"}, res.Applied)
+	assert.Empty(t, res.Skipped)
+	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher", "bn-publisher_ports"), res.Unchanged)
 }

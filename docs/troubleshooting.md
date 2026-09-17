@@ -102,13 +102,19 @@ Check in this order:
 
    - **Statusz has not answered yet** — first boot, or a reboot before the first poll. nft set
      membership is not boot-persistent, so it is rebuilt on the first successful poll.
-   - **Statusz answered `200` with nothing in it.** A successful poll that reports no endpoints
-     for a category **clears** that category's set.
+   - **Statusz reported peers, but none in this category.** A call that returns endpoints but
+     no usable one for a category **clears** that category's set, and the daemon logs it:
 
-   A poll that *fails* (statusz unreachable, or an apply error) does **not** empty anything —
-   it leaves the last-good membership in place and retries on the next tick. So an empty set
-   in steady state points at an empty statusz response, not at a connectivity problem. Check
-   the endpoint the daemon is actually polling with `--statusz-base-url`, then read it
+     ```bash
+     journalctl -u solo-provisioner-daemon -g TrafficShaperMembershipCleared
+     ```
+
+   A call that returns `200` with nothing in it (`activeEndpoints: []`) does **not** empty
+   anything — every set that call feeds is left alone. Neither does a poll that *fails*
+   (statusz unreachable, or an apply error): it leaves the last-good membership in place and
+   retries on the next tick. So an empty set in steady state points at a statusz response that
+   reports peers but not that category, not at a connectivity problem or an empty response.
+   Check the endpoint the daemon is actually polling with `--statusz-base-url`, then read it
    yourself:
 
    ```bash

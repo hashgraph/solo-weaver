@@ -92,9 +92,10 @@ var categoryBindings = map[bindingKey]categoryBinding{
 // are listener ports; an outbound connection originates from an ephemeral local
 // port ("*") and never feeds a listener-port set.
 //
-// Each mapped policy's ports set is reconciled every tick with present/absent
-// semantics: seeded present (empty) so a category the BN stops reporting clears
-// the set rather than leaving stale ports behind.
+// Each mapped policy's ports set is reconciled with present/absent semantics:
+// seeded present (empty) so a category the BN stops reporting clears the set
+// rather than leaving stale ports behind. All are fed by the single inbound call,
+// so an inbound call reporting nothing withholds them all — see desiredPorts.
 var portBindings = map[Category][]string{
 	CategoryPublisher: {"bn-publisher"},
 	CategoryPartner:   {"bn-partner-out"},
@@ -154,6 +155,9 @@ func computePortDeltas(ctx context.Context, lister elementLister, desiredPortsBy
 //
 //   - a key present with an empty (or nil) slice clears that policy's set;
 //   - a key absent from the map leaves that policy's set untouched.
+//
+// bucketizeEndpoints leaves a direction's keys absent when its statusz call
+// reported nothing.
 //
 // This is the minimal shape the diff needs.
 type categoryEndpoints map[bindingKey][]string

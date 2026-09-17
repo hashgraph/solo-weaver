@@ -89,13 +89,15 @@ type ReconcileShaperCheckResult struct {
 	AAAAOnly   []NamedIssue
 }
 
-// ReconcileShaperResult is what the daemon needs from one privileged apply:
-// the same per-category attention lists as ReconcileShaperCheckResult, read
-// back from the worker's `--output json` summary.
+// ReconcileShaperResult is what the daemon needs from one privileged apply,
+// read back from the worker's `--output json` summary: the same per-category
+// attention lists as ReconcileShaperCheckResult, plus the sets the apply
+// emptied.
 type ReconcileShaperResult struct {
 	Unresolved []NamedIssue
 	Stale      []NamedIssue
 	AAAAOnly   []NamedIssue
+	Cleared    []string
 }
 
 type Delegator interface {
@@ -280,6 +282,7 @@ func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) 
 		Unresolved []NamedIssue `json:"unresolved"`
 		Stale      []NamedIssue `json:"stale"`
 		AAAAOnly   []NamedIssue `json:"aaaa-only"`
+		Cleared    []string     `json:"cleared"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil {
 		return ReconcileShaperResult{}, &daemonkit.ProbeError{
@@ -289,7 +292,12 @@ func (d *execDelegator) ReconcileShaper(ctx context.Context, statuszURL string) 
 			Err:        err,
 		}
 	}
-	return ReconcileShaperResult{Unresolved: res.Unresolved, Stale: res.Stale, AAAAOnly: res.AAAAOnly}, nil
+	return ReconcileShaperResult{
+		Unresolved: res.Unresolved,
+		Stale:      res.Stale,
+		AAAAOnly:   res.AAAAOnly,
+		Cleared:    res.Cleared,
+	}, nil
 }
 
 // ReconcileShaperCheck execs the reconcile-shaper worker's unprivileged --check

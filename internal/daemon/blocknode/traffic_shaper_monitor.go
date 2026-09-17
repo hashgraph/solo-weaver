@@ -346,6 +346,7 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			return err
 		}
 		m.logStatuszAttentionNames("apply", statuszURL, applyRes.Unresolved, applyRes.Stale, applyRes.AAAAOnly)
+		m.logClearedSets(statuszURL, applyRes.Cleared)
 		lastDigest = digest
 		lastApply = time.Now()
 		return nil
@@ -436,6 +437,22 @@ func (m *TrafficShaperMonitor) logStatuszAttentionNames(phase, statuszURL string
 	warn("TrafficShaperStatuszNameAAAAOnly",
 		"statusz name resolved only to AAAA records — it contributes no IPv4 address to its policy set",
 		aaaaOnly)
+}
+
+// logClearedSets reports the owned sets an apply emptied. Clearing bn-restricted
+// releases a quarantined peer, and nothing else records it: same reason as
+// logStatuszAttentionNames, this is the only place it reaches a human on a
+// scheduler-driven tick.
+func (m *TrafficShaperMonitor) logClearedSets(statuszURL string, cleared []string) {
+	if len(cleared) == 0 {
+		return
+	}
+	logx.As().Warn().
+		Str("reason", "TrafficShaperMembershipCleared").
+		Str("monitor", m.Name()).
+		Str("statusz_url", statuszURL).
+		Strs("sets", cleared).
+		Msg("apply emptied these owned sets — statusz reported no usable endpoint for them this tick")
 }
 
 // minDuration returns the smaller of a and b.
