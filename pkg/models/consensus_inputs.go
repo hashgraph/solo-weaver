@@ -55,6 +55,12 @@ type ConsensusNodeInputs struct {
 	AccountId string `json:"accountId"`
 	Weight    int    `json:"weight"`
 
+	// ProvisionerDaemonEnabled deploys the Orbit in mainnet mode: the UC sidecar
+	// runs UC_MODE=mainnet and defers the execute phase to a host-level
+	// solo-provisioner-daemon. Default false = cluster-only (the in-pod UC runs
+	// execute). Sets Orbit.spec.consensus.provisionerDaemonEnabled.
+	ProvisionerDaemonEnabled bool `json:"provisionerDaemonEnabled,omitempty"`
+
 	LedgerId string `json:"ledgerId"`
 	ChainId  string `json:"chainId,omitempty"`
 
