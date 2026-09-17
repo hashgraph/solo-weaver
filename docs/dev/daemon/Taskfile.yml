@@ -247,9 +247,14 @@ tasks:
         # UC_MODE=mainnet and DEFERS the execute phase to the host daemon (the Orbit is
         # created with spec.consensus.provisionerDaemonEnabled=true from the start, so
         # the UC comes up in mainnet mode on first reconcile — no post-patch needed).
+        # --default-volume-type hostpath backs every data volume with a hostPath at
+        # the canonical /opt/hgcapp/... layout (single-host mainnet model): the daemon
+        # shares data/upgrade, and saved/state persist across the freeze-upgrade reboot.
+        # The install creates + chowns the host dirs to hedera 2000:2000.
         sudo solo-provisioner --skip-hardware-checks consensus node install --experimental \
           --namespace {{.NS}} --node-id {{.NODE_ID}} --account-id {{.ACCOUNT_ID}} --profile local \
           --provisioner-daemon \
+          --default-volume-type hostpath \
           --deployment-package-dir {{.PKG}} \
           --signing-secret node{{.NODE_ID}}-gossip-keys \
           --grpc-tls-secret node{{.NODE_ID}}-grpc-tls-keys
