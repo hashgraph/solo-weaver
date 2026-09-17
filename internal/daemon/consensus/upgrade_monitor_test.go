@@ -24,7 +24,7 @@ import (
 )
 
 var upgradeExecuteGVR = schema.GroupVersionResource{
-	Group:    "operator.solo.hedera.com",
+	Group:    "operator.solo.hiero.org",
 	Version:  "v1alpha1",
 	Resource: "networkupgradeexecutes",
 }
@@ -36,11 +36,11 @@ func newFakeUpgradeMonitor(t *testing.T, namespace string, objects ...runtime.Ob
 
 	// Register the CR's GVK so the fake client can handle watch events.
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
 		&unstructured.Unstructured{},
 	)
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
 		&unstructured.UnstructuredList{},
 	)
 
@@ -58,7 +58,7 @@ func newFakeUpgradeMonitor(t *testing.T, namespace string, objects ...runtime.Ob
 func makeExecuteCR(name, namespace, operationID, phase string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "operator.solo.hedera.com/v1alpha1",
+			"apiVersion": "operator.solo.hiero.org/v1alpha1",
 			"kind":       "NetworkUpgradeExecute",
 			"metadata": map[string]interface{}{
 				"name":      name,
@@ -311,7 +311,7 @@ func Test_UpgradeMonitor_SeedsCompletedFromList(t *testing.T) {
 func Test_isAuthError_DetectsUnauthorizedAndForbidden(t *testing.T) {
 	unauthorized := k8serrors.NewUnauthorized("token expired")
 	forbidden := k8serrors.NewForbidden(
-		schema.GroupResource{Group: "operator.solo.hedera.com", Resource: "networkupgradeexecutes"},
+		schema.GroupResource{Group: "operator.solo.hiero.org", Resource: "networkupgradeexecutes"},
 		"upgrade-execute",
 		fmt.Errorf("denied"),
 	)

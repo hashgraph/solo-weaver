@@ -85,8 +85,8 @@ func NewComponent(cfg ComponentConfig) (ComponentResult, error) {
 				KubeconfigPath: cfg.KubeconfigPath,
 				Namespace:      cfg.Orbit,
 				PodLabelSelector: fmt.Sprintf(
-					"operator.solo.hedera.com/orbit=%s,operator.solo.hedera.com/node-id=%s",
-					cfg.Orbit, cfg.NodeID,
+					"%s/orbit=%s,%s/node-id=%s",
+					operatorAPIGroup, cfg.Orbit, operatorAPIGroup, cfg.NodeID,
 				),
 			},
 			ConsensusParticipationNominal{},
