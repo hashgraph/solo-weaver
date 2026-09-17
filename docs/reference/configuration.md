@@ -76,9 +76,9 @@ over those records — it is a statement of what you want, not a fallback.
 
 **Only the settings your file actually names change.** A file is not a complete
 replacement for what is on record: leave a setting out and the running block node keeps
-its current value. A file with just a `liveSize` in it changes the live volume size and
-nothing else. And with no `--config` at all, nothing is overridden — the running block
-node's own values are used throughout.
+its current value. A file with just a `historicRetention` in it changes the retention
+window and nothing else. And with no `--config` at all, nothing is overridden — the
+running block node's own values are used throughout.
 
 For the settings the file does name:
 
@@ -90,9 +90,15 @@ For the settings the file does name:
 | `historicRetention`, `recentRetention` | the file's values are used |
 | `namespace`, `release`, `chartName` | **ignored** — see below |
 
-Two things stay out of your way. A command-line flag still beats the file, and so does a
-`SOLO_PROVISIONER_*` variable: a field you set either of those ways is left exactly as it
-would have been without the file.
+The file sits in the middle of the usual order, so two things still beat it: a
+command-line flag first, then a `SOLO_PROVISIONER_*` variable. Set a field either of
+those ways and the file's value for that one field is ignored.
+
+`install`, `upgrade`, `reconfigure` and `reset` all read the file. `uninstall` does not:
+it wipes the data directories and deletes the volumes, and pointing that at a path the
+block node never used would destroy whatever does live there and leave the real data
+behind. Redefining where the data lives while tearing the node down has no meaning
+anyway.
 
 `namespace`, `release` and `chartName` are the running release's identity. Changing them
 does not move the block node — it makes Helm address a *different* release and leave the
@@ -121,6 +127,16 @@ block node chart version cannot be changed by a reconfigure: deployed "0.30.0", 
 ```
 
 `--force` does not skip these — the answer is a different command, not a flag.
+
+Volume sizes work the same way. Growing a volume means deleting and recreating its
+PersistentVolume, which only `--purge-storage` does, so a size change without that flag
+is refused rather than reported as a success against a volume that kept its old capacity:
+
+```
+block node storage liveSize cannot be changed without --purge-storage: PVs/PVCs are not re-rendered
+  → re-run with --purge-storage to delete the existing PVs/PVCs and recreate them at the new
+    size, or drop the size from the config file to proceed at the deployed one
+```
 
 With no `--config`, nothing changes: the running release's own values keep winning over the
 built-in defaults.

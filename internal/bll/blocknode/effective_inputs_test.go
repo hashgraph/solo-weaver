@@ -334,12 +334,11 @@ blockNode:
 		"--chart-version must outrank the --config file")
 }
 
-// TestResolveEffectiveInputs_EnvSuppressesExplicitConfig verifies the promotion
-// leaves a field alone when the operator pinned it in the environment: the file
-// does not leapfrog SOLO_PROVISIONER_*, so whatever the resolver decided for that
-// field stands. Here the release is deployed, so the resolver's answer is the
-// deployed chart ref.
-func TestResolveEffectiveInputs_EnvSuppressesExplicitConfig(t *testing.T) {
+// TestResolveEffectiveInputs_EnvBeatsExplicitConfig pins the middle rung of the
+// order: SOLO_PROVISIONER_* outranks the file, and both outrank the deployed
+// release. Returning the resolver's answer here instead would hand back the
+// deployed value — a third outcome matching neither thing the operator set.
+func TestResolveEffectiveInputs_EnvBeatsExplicitConfig(t *testing.T) {
 	t.Setenv("SOLO_PROVISIONER_BLOCKNODE_CHART", "oci://env.example.com/block-node")
 	withConfigFile(t, `
 blockNode:
@@ -354,8 +353,82 @@ blockNode:
 	)
 	require.NoError(t, err)
 
-	assert.Equal(t, "oci://example.com/block-node", eff.Custom.Chart,
-		"a field pinned via SOLO_PROVISIONER_* must not be overridden by the --config file")
+	assert.Equal(t, "oci://env.example.com/block-node", eff.Custom.Chart,
+		"SOLO_PROVISIONER_* must outrank both the --config file and the deployed release")
+}
+
+// TestResolveEffectiveInputs_UninstallIgnoresExplicitConfig pins the scope
+// boundary of the promotion. uninstall clears the directories the effective
+// storage names and deletes the PVs without going through planStorage, so
+// honouring a file here would point the wipe at a tree the block node never
+// used: the live data would survive and whatever did live at the declared path
+// would not.
+func TestResolveEffectiveInputs_UninstallIgnoresExplicitConfig(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  storage:
+    basePath: /srv/elsewhere
+`)
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "/mnt/fast-storage", eff.Custom.Storage.BasePath,
+		"uninstall must wipe the deployed paths, never a path the config file names")
+}
+
+// TestResolveEffectiveInputs_ResetHonoursExplicitConfig is the other side of that
+// boundary. reset goes through planStorage, which purges at the deployed paths
+// and refuses a path change without --purge-storage, so a file is free to move
+// storage the one way --purge-storage is there to allow.
+func TestResolveEffectiveInputs_ResetHonoursExplicitConfig(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  storage:
+    basePath: /mnt/new-storage
+`)
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionReset, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "/mnt/new-storage", eff.Custom.Storage.BasePath,
+		"reset --purge-storage must be able to recreate storage where the config file says")
+}
+
+// TestResolveEffectiveInputs_ExplicitConfigPromotesEveryStorageField covers the
+// storage fields BlockNodeStorage.IsEmpty() does not look at. Gating the cascade
+// on that predicate dropped a file declaring only one of them, which is the
+// silent-no-op this change exists to remove.
+func TestResolveEffectiveInputs_ExplicitConfigPromotesEveryStorageField(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  storage:
+    pluginsSize: 20Gi
+`)
+
+	st := deployedShapingBlockNodeState()
+	st.Storage.PluginsSize = "5Gi"
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, st),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "20Gi", eff.Custom.Storage.PluginsSize,
+		"a field outside IsEmpty()'s seven must still be promoted over the deployed release")
 }
 
 // TestResolveEffectiveInputs_IdentityFieldsStayLockedToDeployedRelease guards the

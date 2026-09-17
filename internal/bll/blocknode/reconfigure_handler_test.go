@@ -508,3 +508,89 @@ func TestReconfigure_MatchingChartVersionProceeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, wb)
 }
+
+// deployedBlockNodeStateWithStatus models a release Helm still knows about but
+// that is not deployed — a failed or half-applied upgrade. The reality checker
+// fills ReleaseInfo for these too, so the guards have to look at Status.
+func deployedBlockNodeStateWithStatus(basePath, version string, status release.Status) state.State {
+	st := deployedBlockNodeStateAtVersion(basePath, version)
+	st.BlockNodeState.ReleaseInfo.Status = status
+	return st
+}
+
+// TestReconfigure_FailedReleaseSkipsChartGuards covers the interaction between
+// the guards and the state tier. setStateSources drops the state and reality
+// tiers for any status other than deployed, so the effective chart version falls
+// back to the compiled-in default while ReleaseInfo still reports the version
+// Helm has on record. Comparing the two would abort `reconfigure --force` — the
+// remedy the not-installed precondition in this same function points at.
+func TestReconfigure_FailedReleaseSkipsChartGuards(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.41.0" // deps.BLOCK_NODE_VERSION, not the release's
+	inputs.Common.Force = true
+
+	wb, err := h.BuildWorkflow(
+		deployedBlockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
+
+	require.NoError(t, err, "a failed release must stay reconfigurable with --force")
+	require.NotNil(t, wb)
+}
+
+// deployedBlockNodeStateWithLiveSize records a bound live PV at the given size,
+// the way the reality checker reads capacity back off the PV.
+func deployedBlockNodeStateWithLiveSize(basePath, liveSize string) state.State {
+	st := deployedBlockNodeState(basePath)
+	st.BlockNodeState.Storage.LiveSize = liveSize
+	return st
+}
+
+// TestReconfigure_RejectsStorageSizeChange pins the guard on storage sizes. Only
+// the recreate path re-renders PVs/PVCs, so on every other branch a new size
+// would be carried all the way to a successful report while the PVC kept its old
+// capacity. The guard lives in planStorage, so reset and upgrade inherit it.
+func TestReconfigure_RejectsStorageSizeChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Storage.LiveSize = "500Gi"
+
+	_, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "200Gi"), inputs)
+
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument),
+		"a rejected config value must classify as IllegalArgument, got %v", err)
+	assert.Contains(t, err.Error(), "liveSize")
+	assertResolutionMentions(t, err, "--purge-storage")
+}
+
+// TestReconfigure_PurgeStorageAllowsSizeChange is the escape hatch the guard's
+// resolution names: --purge-storage deletes and recreates the PVs, so it is the
+// one branch that can act on a new size.
+func TestReconfigure_PurgeStorageAllowsSizeChange(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputsWithFlags("/mnt/fast-storage", false, true)
+	inputs.Custom.Storage.LiveSize = "500Gi"
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "200Gi"), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}
+
+// TestReconfigure_EquivalentStorageSizeProceeds keeps the guard off spellings
+// that mean the same capacity: a PV reports what it was created with, so a file
+// saying 20Gi against a PV recorded as 20480Mi is not a change.
+func TestReconfigure_EquivalentStorageSizeProceeds(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.Storage.LiveSize = "20Gi"
+
+	wb, err := h.BuildWorkflow(deployedBlockNodeStateWithLiveSize("/mnt/fast-storage", "20480Mi"), inputs)
+
+	require.NoError(t, err)
+	require.NotNil(t, wb)
+}

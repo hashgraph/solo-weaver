@@ -193,16 +193,19 @@ rather than in the selectors, because only the BLL can tell the two cases apart 
 `config.File()` reports the path `config.Initialize` loaded, empty when there was
 none.
 
-The promotion is **narrow**: it moves the config file above the deployed release and
-changes nothing else.  Per field, with `--config` supplied:
+The promotion is **narrow**: it slots the config file between the env tier and the
+deployed release and changes nothing else.  Per field, with `--config` supplied:
 
 ```
-field set by flag or SOLO_PROVISIONER_*  →  promotion skipped; the selector's own
-                                            order stands unchanged
-field declared only in the file          →  file wins over the deployed release
-field the file omits                     →  selector's answer, unchanged, i.e. the
-                                            deployed release when there is one
+field set by a flag              →  resolver's answer, unchanged; the selectors already
+                                    rank user input first wherever it can win
+field set by SOLO_PROVISIONER_*  →  env wins over the file and the deployed release
+field declared only in the file  →  file wins over the deployed release
+field the file omits             →  resolver's answer, unchanged, i.e. the deployed
+                                    release when there is one
 ```
+
+Effective order: `flag > SOLO_PROVISIONER_* > --config file > deployed release > defaults`.
 
 The last row is load-bearing, not incidental.  `config.Initialize` zeroes
 `globalConfig` before unmarshalling, so a key absent from the file arrives as `""`,
@@ -211,18 +214,31 @@ partial config file would blank every field it failed to mention —
 `TestResolveEffectiveInputs_ConfigFileOmissionsFallBackToDeployedState` fails in
 exactly that way if it is removed.
 
-`preferConfigFile` implements the scalar half.  Note that the flag/env case is a
-**suppression, not a promotion**: it does not lift flag or env above the deployed
-release.  For `chartRef` and `chartVersion` the selectors still rank a deployed
-release ahead of both, so `SOLO_PROVISIONER_BLOCKNODE_CHART` on a deployed node wins
-nothing — it only stops the file from taking effect on that field.  Env and flag
-regain their documented positions (`UserInput > Env > Config`) once nothing is
-deployed, which is where those selectors consult them at all.
+`preferConfigFile` implements the scalar half.  It returns the env value directly
+rather than deferring to the selector, because for `chartRef` and `chartVersion` the
+selectors rank a deployed release ahead of env: deferring would hand back the deployed
+value, an answer matching neither the file nor the variable the operator set.  A flag
+does defer, since the selectors already rank user input first everywhere it can win.
 
 Storage is a per-field merge rather than a winner, so the cascade is rebuilt as
 `user input → file → resolved`.  That also keeps `MergeFrom`'s base-path mode intact —
 a file-supplied `BasePath` suppresses the individual hostPaths the reality checker
-read off the PVs.
+read off the PVs.  The cascade is deliberately *not* gated on
+`BlockNodeStorage.IsEmpty()`: that predicate inspects seven of the thirteen fields, so
+gating on it would drop a file declaring only, say, `pluginsSize`.  `MergeFrom` is
+already a no-op for an all-empty source, so no gate is needed.
+
+`storageResolver` never consults `StrategyEnv`, so `SOLO_PROVISIONER_BLOCKNODE_STORAGE_*`
+does not reach the cascade at all and the file wins over it.  That predates this
+promotion and is tracked separately.
+
+`uninstall` is the one action not promoted — see `promotesConfigFile`.  It clears the
+directories the effective storage names and deletes the PVs without going through
+`planStorage`, so a file naming a different `basePath` would point the wipe at a tree
+the block node never used: the live data would survive and whatever did live at the
+declared path would not.  `reset` *is* promoted, because `planStorage` gives it the same
+path guard the other provisioning actions have and its purge always runs at the deployed
+paths.
 
 Release identity (`namespace`, `releaseName`, `chartName`) is deliberately excluded.
 Redeclaring it does not reconfigure the running release; it points Helm at a second
@@ -236,7 +252,18 @@ rejects an effective version *or* chart ref that differs from the deployed relea
 and points at `upgrade`.  Neither guard is `--force`-bypassable: without them a
 config file would be a way to downgrade a release past the check `upgrade` exists to
 enforce, or to switch charts underneath a running release without even the warning
-`upgrade` emits.
+`upgrade` emits.  Both guards are scoped to `release.StatusDeployed`: the reality
+checker fills `ReleaseInfo` for a failed or superseded release too, while
+`setStateSources` drops the state tier for those, so an ungated comparison would abort
+the `reconfigure --force` that the not-installed precondition points at as the remedy.
+
+Promoted storage *sizes* need one more guard, and it belongs in `planStorage` alongside
+the path check rather than in any one handler.  Sizes only reach the cluster through
+`CreatePersistentVolumes`, which only the recreate path runs; everywhere else a new size
+would be carried to a successful report while the PVC kept its capacity.  Putting it
+there covers `reset`, `reconfigure` and `upgrade` from one place.  `storageSizesChanged`
+compares the two as Kubernetes quantities, so `20Gi` against a PV recorded as `20480Mi`
+is not a change.
 
 That warning is worth noting on its own.  `upgrade_handler.go` has always logged one
 when the deployed chart ref differs from the requested one, but it could not fire,
