@@ -94,6 +94,10 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 				},
 				Spec: operatorv1alpha1.OrbitSpec{
 					Consensus: operatorv1alpha1.OrbitConsensus{
+						// When true, the UC sidecar runs UC_MODE=mainnet and defers the
+						// execute phase to the host solo-provisioner-daemon; false (default)
+						// is cluster-only (the in-pod UC runs execute).
+						ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 						Genesis: operatorv1alpha1.OrbitGenesis{
 							AddressBook: operatorv1alpha1.OrbitAddressBook{
 								LedgerId: inputs.LedgerId,
