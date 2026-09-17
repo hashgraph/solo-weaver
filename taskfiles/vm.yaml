@@ -631,7 +631,7 @@ tasks:
           set -e
           echo 'Installing git, curl, rsync, and build tools...'
           sudo apt-get update -qq
-          sudo apt-get install -y git curl rsync jq build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
+          sudo apt-get install -y git curl rsync jq xxd build-essential binutils binutils-aarch64-linux-gnu binutils-gold gcc libc6-dev
         
           # Install Task
           if ! command -v task >/dev/null 2>&1; then
