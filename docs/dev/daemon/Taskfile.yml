@@ -59,8 +59,7 @@ vars:
   BASE_VERSION: "0.74.0"
   UPGRADE_VERSION: "0.74.2"
 
-  # Orbit namespace where the CN + NetworkUpgradeExecute CRs live. Matches beacon's
-  # config (haproxy-node0 in solo-orbit) and TC-42.
+  # Orbit namespace where the CN + NetworkUpgradeExecute CRs live.
   NS: '{{.NS | default "hiero-network-1"}}'
   # Operator namespace (where `kube operator install` deploys + reads its pull secret).
   OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
@@ -97,15 +96,21 @@ vars:
   PKG_SRC: "{{.WEAVER_ROOT}}/test/data/build-v{{.BASE_VERSION}}"
   PKG: "/mnt/solo-weaver/test/data/build-v{{.BASE_VERSION}}"
 
-  # beacon binary: built on the host from solo-operator (BEACON_SRC), copied into the
-  # weaver checkout's bin/ + synced; the in-VM upload/freeze tasks run BEACON.
-  BEACON_SRC: "{{.SOLO_OPERATOR_DIR}}/bin/beacon"
-  BEACON: /mnt/solo-weaver/bin/beacon
+  # beacon binaries: cross-compiled on the host from solo-operator (build:beacon:all
+  # -> bin/beacon-linux-{amd64,arm64}), copied into the weaver checkout's bin/ +
+  # synced; the in-VM upload/freeze tasks run BEACON. BEACON resolves to the Linux
+  # binary for the machine the task runs on — `uname -m` (aarch64/x86_64 in the VM)
+  # mapped to the Go arch suffix, same as daemon:install's arch handling.
+  BEACON_SRC_DIR: "{{.SOLO_OPERATOR_DIR}}/bin"
+  BEACON:
+    sh: echo /mnt/solo-weaver/bin/beacon-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
   BEACON_HOME: /tmp/beacon-solo
   CONFIG: "{{.BEACON_HOME}}/config.yaml"
 
-  # Node HAPI gRPC endpoint exposed to the host by the port-forward.
-  PF_SVC: haproxy-node0
+  # Node HAPI gRPC endpoint exposed to the host by the port-forward. The daemon/CN
+  # install path has no haproxy; the operator exposes node<N>'s HAPI as the service
+  # <namespace>-consensus-<node-id> (e.g. hiero-network-1-consensus-0).
+  PF_SVC: '{{.NS}}-consensus-{{.NODE_ID}}'
   PORT: "50211"
   # How far out (minutes) to schedule the upgrade freeze.
   FREEZE_DELAY_MIN: "3"
@@ -372,18 +377,22 @@ tasks:
         echo "  in the VM (after vm:sync): PKG={{.PKG}}  ZIP={{.ZIP}}"
 
   beacon:build:
-    desc: "Host: build bin/beacon in the solo-operator checkout and stage it into the weaver bin/ (synced into the VM). Alt: the ghcr beacon image, docs/beacon README §B"
+    desc: "Host: cross-compile beacon (linux amd64+arm64) in the solo-operator checkout and stage both into the weaver bin/ (synced into the VM). Alt: the ghcr beacon image, docs/beacon README §B"
     status:
-      # Idempotent: skip when beacon is already staged. Remove bin/beacon to rebuild.
-      - test -x "{{.WEAVER_ROOT}}/bin/beacon"
+      # Idempotent: skip when both linux beacons are staged. Remove them to rebuild.
+      - test -x "{{.WEAVER_ROOT}}/bin/beacon-linux-amd64"
+      - test -x "{{.WEAVER_ROOT}}/bin/beacon-linux-arm64"
     cmds:
       - |
         set -e
         cd {{.SOLO_OPERATOR_DIR}}
-        task build:beacon      # -> {{.BEACON_SRC}}
+        task build:beacon:all      # -> {{.BEACON_SRC_DIR}}/beacon-linux-{amd64,arm64}
         mkdir -p "{{.WEAVER_ROOT}}/bin"
-        cp -f "{{.BEACON_SRC}}" "{{.WEAVER_ROOT}}/bin/beacon"
-        ls -l "{{.WEAVER_ROOT}}/bin/beacon"
+        cp -f "{{.BEACON_SRC_DIR}}/beacon-linux-amd64" "{{.BEACON_SRC_DIR}}/beacon-linux-arm64" "{{.WEAVER_ROOT}}/bin/"
+        # Drop the stale host-arch beacon so the exec-format-error binary can't be
+        # picked up or synced into the VM.
+        rm -f "{{.WEAVER_ROOT}}/bin/beacon"
+        ls -l "{{.WEAVER_ROOT}}/bin/"beacon-linux-*
 
   sync:
     desc: "Host: rsync the weaver checkout (incl. the staged zips/package/beacon) into the VM's /mnt/solo-weaver (runs the root vm:sync)"
