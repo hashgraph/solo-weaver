@@ -30,7 +30,7 @@ func resetStepIDs(t *testing.T, inputs models.BlockNodeInputs) []string {
 	return ids
 }
 
-// TestResetBlockNode_LeaveScaledDown pins both halves of --scale-up on the reset
+// TestResetBlockNode_LeaveScaledDown pins both halves of --no-scale-up on the reset
 // workflow. The zero value has to keep the scale-up steps: BlockNodeInputs is
 // built in several places that never set LeaveScaledDown, and an inverted default
 // would silently leave operators with a stopped node.

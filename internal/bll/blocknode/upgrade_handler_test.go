@@ -89,7 +89,7 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 	}, ids)
 }
 
-// TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --scale-up=false on both
+// TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both
 // upgrade branches. The scale-down has to follow the chart upgrade, which
 // re-asserts the chart's replica default.
 func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {

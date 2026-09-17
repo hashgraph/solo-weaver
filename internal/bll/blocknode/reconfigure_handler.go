@@ -146,7 +146,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		}
 	}
 
-	// --scale-up=false must be the last word: the branches it can reach all end in
+	// --no-scale-up must be the last word: the branches it can reach all end in
 	// a helm upgrade, which re-asserts the chart's replica default.
 	if ins.LeaveScaledDown {
 		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))

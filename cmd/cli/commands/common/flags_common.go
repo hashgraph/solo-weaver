@@ -201,18 +201,16 @@ func FlagNoRestart() FlagDefinition[bool] {
 	}
 }
 
-// FlagScaleUp is registered on the block node subcommands that stop the pod to
-// do their work (reset, reconfigure, upgrade). It defaults to true so --help
-// documents the scale-back-up that those commands have always performed; the
-// useful form is the explicit --scale-up=false.
-func FlagScaleUp() FlagDefinition[bool] {
+// FlagNoScaleUp is registered on the block node subcommands that stop the pod to
+// do their work (reset, reconfigure, upgrade).
+func FlagNoScaleUp() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
-		Name:      "scale-up",
+		Name:      "no-scale-up",
 		ShortName: "",
-		Description: "Scale the block node StatefulSet back up when the operation completes; " +
-			"pass --scale-up=false to leave it at 0 replicas. On reconfigure and upgrade the pod " +
-			"still starts and becomes ready during the Helm upgrade before it is scaled back down",
-		Default: true,
+		Description: "Leave the block node StatefulSet at 0 replicas when the operation completes " +
+			"instead of scaling it back up. On reconfigure and upgrade the pod still starts and " +
+			"becomes ready during the Helm upgrade before it is scaled back down",
+		Default: false,
 	}
 }
 

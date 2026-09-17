@@ -180,7 +180,7 @@ func init() {
 	common.FlagValuesFile().SetVarP(reconfigureCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(reconfigureCmd, &flagNoReuseValues, false)
 	common.FlagNoRestart().SetVar(reconfigureCmd, &flagNoRestart, false)
-	common.FlagScaleUp().SetVar(reconfigureCmd, &flagScaleUp, false)
+	common.FlagNoScaleUp().SetVar(reconfigureCmd, &flagNoScaleUp, false)
 	common.RegisterHostFirewallFlags(reconfigureCmd)
 	common.RegisterTrafficShapingFlags(reconfigureCmd)
 	common.RegisterEgressFlags(reconfigureCmd, &flagEgressInterface, &flagLinkRate)

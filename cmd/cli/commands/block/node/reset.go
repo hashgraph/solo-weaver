@@ -12,11 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// flagScaleUp is shared by reset, reconfigure and upgrade. It is initialised to
-// true rather than left at Go's zero value because prepareBlocknodeInputs is
-// shared with install and check, which do not register the flag and would
-// otherwise report a block node that ends up scaled down.
-var flagScaleUp = true
+// flagNoScaleUp is shared by reset, reconfigure and upgrade. prepareBlocknodeInputs
+// is also used by install and check, which do not register the flag; the zero value
+// is the long-standing scale-back-up behaviour, so they are unaffected.
+var flagNoScaleUp bool
 
 var resetCmd = &cobra.Command{
 	Use:   "reset",
@@ -30,8 +29,11 @@ This command will:
 4. Scale the StatefulSet back up to restart the pod
 5. Wait for the block node to become ready
 
-Pass --scale-up=false to stop after step 3, leaving the StatefulSet at 0 replicas
-so the storage tree can be inspected or seeded before the node starts again.
+Pass --no-scale-up to stop after step 3, leaving the StatefulSet at 0 replicas so
+the storage tree can be inspected or seeded before the node starts again. Bring the
+node back up with 'kubectl scale statefulset <name> -n <namespace> --replicas=1', or
+with a plain reconfigure or upgrade. Re-running reset also starts the node, but it
+clears the storage directories first and so discards anything staged there.
 
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -76,5 +78,5 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 }
 
 func init() {
-	common.FlagScaleUp().SetVar(resetCmd, &flagScaleUp, false)
+	common.FlagNoScaleUp().SetVar(resetCmd, &flagNoScaleUp, false)
 }

@@ -70,7 +70,7 @@ type BlockNodeInputs struct {
 	PurgeStorage bool // When true, also delete PVCs/PVs (implies ResetStorage)
 	NoRestart    bool // When true, skip the rollout-restart step after reconfigure
 	// LeaveScaledDown ends the operation with the StatefulSet at 0 replicas
-	// instead of scaling it back up (from --scale-up=false). Negative polarity so
+	// instead of scaling it back up (from --no-scale-up). Negative polarity so
 	// the zero value is the long-standing behaviour — a caller that never sets it
 	// gets a running node. Only reset keeps the pod down throughout: reconfigure
 	// and upgrade run `helm upgrade` with Wait=true, so the pod starts and becomes

@@ -284,7 +284,7 @@ func TestBuildWorkflow_NotInstalled_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "block node is not installed")
 }
 
-// TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown pins --scale-up=false
+// TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown pins --no-scale-up
 // across every reconfigure branch. The scale-down must be last: each branch ends
 // in a helm upgrade, which re-asserts the chart's replica default and would undo
 // a scale-down placed any earlier.

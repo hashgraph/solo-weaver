@@ -117,7 +117,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	}
 	stepList = append(stepList, steps.UpgradeBlockNode(ins))
 
-	// --scale-up=false must be the last word: the helm upgrade above re-asserts
+	// --no-scale-up must be the last word: the helm upgrade above re-asserts
 	// the chart's replica default.
 	if ins.LeaveScaledDown {
 		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))

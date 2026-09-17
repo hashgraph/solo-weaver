@@ -548,7 +548,7 @@ func PurgeBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilde
 
 // ScaleDownBlockNodeAfterUpgrade returns the step that leaves the block node
 // StatefulSet at 0 replicas once a reconfigure/upgrade has finished, honouring
-// --scale-up=false. It must run after UpgradeBlockNode: `helm upgrade` re-asserts
+// --no-scale-up. It must run after UpgradeBlockNode: `helm upgrade` re-asserts
 // the chart's replica default, so a scale-down placed any earlier is undone.
 //
 // Like DeleteBlockNodePersistentVolumes this is a thin public facade over the
