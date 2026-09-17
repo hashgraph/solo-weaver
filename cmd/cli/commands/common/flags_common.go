@@ -201,6 +201,19 @@ func FlagNoRestart() FlagDefinition[bool] {
 	}
 }
 
+// FlagNoScaleUp is registered on the block node subcommands that stop the pod to
+// do their work (reset, reconfigure, upgrade).
+func FlagNoScaleUp() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:      "no-scale-up",
+		ShortName: "",
+		Description: "Leave the block node StatefulSet at 0 replicas when the operation completes " +
+			"instead of scaling it back up. On reconfigure and upgrade the pod still starts and " +
+			"becomes ready during the Helm upgrade before it is scaled back down",
+		Default: false,
+	}
+}
+
 // FlagSkipHardwareChecks is a hidden persistent flag registered on the root command.
 // When set, it skips CPU, memory, and storage validation in NewNodeSafetyCheckWorkflow
 // (see internal/workflows/preflight.go). Privilege, user, and host profile checks

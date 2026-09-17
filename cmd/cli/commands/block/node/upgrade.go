@@ -112,6 +112,7 @@ var (
 func init() {
 	upgradeCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagWithStorageReset().SetVarP(upgradeCmd, &flagWithReset, false)
+	common.FlagNoScaleUp().SetVar(upgradeCmd, &flagNoScaleUp, false)
 	common.FlagValuesFile().SetVarP(upgradeCmd, &flagValuesFile, false)
 	common.FlagNoReuseValues().SetVarP(upgradeCmd, &flagNoReuseValues, false)
 	common.FlagHelmTimeout().SetVarP(upgradeCmd, &flagHelmTimeout, false)

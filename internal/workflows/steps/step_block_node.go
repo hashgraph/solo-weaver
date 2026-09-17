@@ -29,6 +29,7 @@ const (
 	ResetBlockNodeStepId             = "reset-block-node"
 	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
 	ScaleDownBlockNodeStepId         = "scale-down-block-node"
+	ScaleDownAfterUpgradeStepId      = "scale-down-block-node-after-upgrade"
 	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
 	ScaleUpBlockNodeStepId           = "scale-up-block-node"
 	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
@@ -479,22 +480,26 @@ func newBlockNodeManagerProvider(inputs models.BlockNodeInputs) func() (*blockno
 // purgeBlockNodeStorageSteps returns the steps to scale down, wait for termination, and clear storage
 func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, error)) []automa.Builder {
 	return []automa.Builder{
-		scaleDownBlockNode(managerProvider),
+		scaleDownBlockNode(managerProvider, ScaleDownBlockNodeStepId),
 		waitForBlockNodeTerminated(managerProvider),
 		clearBlockNodeStorage(managerProvider),
 	}
 }
 
-// ResetBlockNode resets the block node by clearing all storage and restarting the pod
+// ResetBlockNode resets the block node by clearing all storage and, unless
+// inputs.LeaveScaledDown is set, restarting the pod and waiting for it to be ready.
 func ResetBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
-	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(
-		append(purgeBlockNodeStorageSteps(managerProvider),
+	stepList := purgeBlockNodeStorageSteps(managerProvider)
+	if !inputs.LeaveScaledDown {
+		stepList = append(stepList,
 			scaleUpBlockNode(managerProvider),
 			waitForBlockNode(managerProvider),
-		)...,
-	).
+		)
+	}
+
+	return automa.NewWorkflowBuilder().WithId(ResetBlockNodeStepId).Steps(stepList...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Resetting Block Node")
 			return ctx, nil
@@ -541,9 +546,25 @@ func PurgeBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilde
 		})
 }
 
-// scaleDownBlockNode scales down the block node StatefulSet to 0 replicas
-func scaleDownBlockNode(getManager func() (*blocknode.Manager, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(ScaleDownBlockNodeStepId).
+// ScaleDownBlockNodeAfterUpgrade returns the step that leaves the block node
+// StatefulSet at 0 replicas once a reconfigure/upgrade has finished, honouring
+// --no-scale-up. It must run after UpgradeBlockNode: `helm upgrade` re-asserts
+// the chart's replica default, so a scale-down placed any earlier is undone.
+//
+// Like DeleteBlockNodePersistentVolumes this is a thin public facade over the
+// package-private helper, which already carries its own notify hooks. It takes a
+// distinct step id because the purge prefix contributes a scale-down to the same
+// workflow and two steps sharing an id collide.
+func ScaleDownBlockNodeAfterUpgrade(inputs models.BlockNodeInputs) automa.Builder {
+	return scaleDownBlockNode(newBlockNodeManagerProvider(inputs), ScaleDownAfterUpgradeStepId)
+}
+
+// scaleDownBlockNode scales down the block node StatefulSet to 0 replicas.
+// stepId is a parameter because a reconfigure/upgrade that ends at 0 replicas
+// contributes two scale-downs to one workflow — one in the purge prefix, one
+// after the Helm upgrade.
+func scaleDownBlockNode(getManager func() (*blocknode.Manager, error), stepId string) automa.Builder {
+	return automa.NewStepBuilder().WithId(stepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
@@ -705,7 +726,7 @@ func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 // purgeBlockNodeStorageSteps for the data-clearing path.
 func restartBlockNodeSteps(managerProvider func() (*blocknode.Manager, error)) []automa.Builder {
 	return []automa.Builder{
-		scaleDownBlockNode(managerProvider),
+		scaleDownBlockNode(managerProvider, ScaleDownBlockNodeStepId),
 		waitForBlockNodeTerminated(managerProvider),
 		scaleUpBlockNode(managerProvider),
 		waitForBlockNode(managerProvider),

@@ -316,6 +316,7 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ResetStorage:        flagWithReset || flagPurgeStorage,
 			PurgeStorage:        flagPurgeStorage,
 			NoRestart:           flagNoRestart,
+			LeaveScaledDown:     flagNoScaleUp,
 			SkipHardwareChecks:  parentFlags.SkipHardwareChecks,
 			LoadBalancerEnabled: flagLoadBalancerEnabled,
 			HistoricRetention:   flagHistoricRetention,

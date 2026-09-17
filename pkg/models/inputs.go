@@ -57,18 +57,25 @@ const (
 )
 
 type BlockNodeInputs struct {
-	Profile             string
-	Namespace           string
-	Release             string // Helm release name
-	Chart               string // Helm chart reference: OCI, URL, or repo/chart
-	ChartName           string
-	ChartVersion        string
-	Storage             BlockNodeStorage
-	ValuesFile          string
-	ReuseValues         bool
-	ResetStorage        bool
-	PurgeStorage        bool // When true, also delete PVCs/PVs (implies ResetStorage)
-	NoRestart           bool // When true, skip the rollout-restart step after reconfigure
+	Profile      string
+	Namespace    string
+	Release      string // Helm release name
+	Chart        string // Helm chart reference: OCI, URL, or repo/chart
+	ChartName    string
+	ChartVersion string
+	Storage      BlockNodeStorage
+	ValuesFile   string
+	ReuseValues  bool
+	ResetStorage bool
+	PurgeStorage bool // When true, also delete PVCs/PVs (implies ResetStorage)
+	NoRestart    bool // When true, skip the rollout-restart step after reconfigure
+	// LeaveScaledDown ends the operation with the StatefulSet at 0 replicas
+	// instead of scaling it back up (from --no-scale-up). Negative polarity so
+	// the zero value is the long-standing behaviour — a caller that never sets it
+	// gets a running node. Only reset keeps the pod down throughout: reconfigure
+	// and upgrade run `helm upgrade` with Wait=true, so the pod starts and becomes
+	// ready before the trailing scale-down lands.
+	LeaveScaledDown     bool
 	SkipHardwareChecks  bool
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
 	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)

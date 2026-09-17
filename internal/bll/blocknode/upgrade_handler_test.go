@@ -88,3 +88,49 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 		steps.UpgradeBlockNodeStepId,
 	}, ids)
 }
+
+// TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both
+// upgrade branches. The scale-down has to follow the chart upgrade, which
+// re-asserts the chart's replica default.
+func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+
+	for _, tc := range []struct {
+		name         string
+		resetStorage bool
+		want         []string
+	}{
+		{
+			name:         "plain_upgrade",
+			resetStorage: false,
+			want: []string{
+				steps.NetworkFirewallCreateStepId,
+				steps.UpgradeBlockNodeStepId,
+				steps.ScaleDownAfterUpgradeStepId,
+			},
+		},
+		{
+			name:         "with_reset",
+			resetStorage: true,
+			want: []string{
+				steps.NetworkFirewallCreateStepId,
+				steps.PurgeBlockNodeStorageStepId,
+				steps.UpgradeBlockNodeStepId,
+				steps.ScaleDownAfterUpgradeStepId,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := upgradeInputs()
+			inputs.Custom.ResetStorage = tc.resetStorage
+			inputs.Custom.LeaveScaledDown = true
+
+			// Traffic shaping disabled keeps the network prefix to the single
+			// self-gating firewall step, so the assertion stays about the tail.
+			wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, workflowStepIDs(t, wb))
+		})
+	}
+}

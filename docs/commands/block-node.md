@@ -330,12 +330,17 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 # Upgrade and wipe storage in one go
 sudo solo-provisioner block node upgrade --profile=mainnet \
   --chart-version=0.24.0 --with-reset
+
+# Wipe storage and leave the node stopped
+sudo solo-provisioner block node upgrade --profile=mainnet \
+  --chart-version=0.24.0 --with-reset --no-scale-up
 ```
 
 | Flag | What it does | Default |
 |---|---|---|
 | `--no-reuse-values` | Do not reuse the previous release's values | `false` |
 | `--with-reset` | Wipe block node data directories. PVs and PVCs are kept | `false` |
+| `--no-scale-up` | Leave the StatefulSet at 0 replicas when the upgrade completes instead of scaling it back up | `false` |
 | `--timeout` | Helm operation budget as a Go duration. Rolls back on overrun | `5m0s` |
 
 > **Upgrade never flips a feature switch.** It does not expose `--firewall-enabled` or
@@ -364,6 +369,10 @@ sudo solo-provisioner block node reconfigure --profile=mainnet --traffic-shaping
 # Tear down a host firewall that was previously enabled
 sudo solo-provisioner block node reconfigure --profile=mainnet --firewall-enabled=false
 
+# Re-apply configuration but leave the node stopped
+sudo solo-provisioner block node reconfigure --profile=mainnet \
+  --values=/path/to/values.yaml --no-scale-up
+
 # Point the daemon at a port-forwarded BN and slow its polling
 sudo solo-provisioner block node reconfigure --profile=mainnet \
   --statusz-base-url=http://127.0.0.1:8080 --statusz-poll-interval=10s
@@ -375,6 +384,7 @@ sudo solo-provisioner block node reconfigure --profile=mainnet \
 | `--no-restart` | Skip the rollout-restart of the block node pod | `false` |
 | `--with-reset` | Wipe data directories. PVs and PVCs are kept | `false` |
 | `--purge-storage` | Delete PVs and PVCs as well as wiping data. Implies `--with-reset` | `false` |
+| `--no-scale-up` | Leave the StatefulSet at 0 replicas when the reconfigure completes, and skip the rollout-restart | `false` |
 | `--firewall-enabled` | Turn the host firewall on or off. Same sub-flags as `install` | current state |
 | `--traffic-shaping-enabled` | Turn the traffic-shaping bundle on or off. Same sub-flags as `install` | persisted state |
 | `--statusz-base-url` | Override the statusz endpoint. Omitting it preserves what is on disk | preserved |
@@ -408,7 +418,14 @@ prompt for a feature that is currently on:
 
 ```bash
 sudo solo-provisioner block node reset --profile=mainnet
+
+# Wipe storage and leave the node stopped
+sudo solo-provisioner block node reset --profile=mainnet --no-scale-up
 ```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--no-scale-up` | Stop after step 3, leaving the StatefulSet at 0 replicas once the storage is cleared | `false` |
 
 What happens, in order:
 
@@ -423,6 +440,30 @@ What happens, in order:
 > **This deletes all block data.** There is no undo. Think twice on `mainnet`.
 
 To reset and change version at the same time, use `upgrade --with-reset` instead.
+
+### Leaving the node stopped
+
+`--no-scale-up` ends the command with the StatefulSet at 0 replicas, so you can
+inspect or seed the empty storage tree before the node starts writing to it again.
+
+Bring the node back up with any of:
+
+```bash
+kubectl scale statefulset <name> -n <namespace> --replicas=1
+sudo solo-provisioner block node reconfigure --profile=mainnet
+sudo solo-provisioner block node upgrade --profile=mainnet --chart-version=<next>
+```
+
+> **Do not use `reset` to restart the node.** It clears the storage directories before
+> scaling up, so anything you staged during the stop is discarded.
+
+The flag is one-shot — nothing is recorded on disk. The next `reconfigure` or `upgrade`
+starts the node again unless you pass `--no-scale-up` to that command too.
+
+> **Only `reset` keeps the pod down for the whole operation.** `reconfigure` and
+> `upgrade` run `helm upgrade` with `--wait`, so on those two the pod starts and becomes
+> ready before the scale-down lands. If the node must never touch the wiped directories,
+> use `reset --no-scale-up`.
 
 ---
 
