@@ -14,7 +14,7 @@ execute phase. We then verify the daemon's handshake.
 
 The substrate is the daemon's **real install path** — `solo-provisioner kube
 cluster install` + `kube operator install` (real CRDs) — **not** kind. Every step
-is wrapped as a task in [`Taskfile.yml`](Taskfile.yml); run `task -d docs/daemon`
+is wrapped as a task in [`Taskfile.yml`](Taskfile.yml); run `task -d docs/dev/daemon`
 to print the ordered runbook. The VM build/bootstrap/secrets/registry-login tasks
 are reused from `taskfiles/uat.yaml` (`uat:*`), not duplicated.
 
@@ -94,48 +94,48 @@ Version map (matches solo-operator docs/beacon): deployed **0.74.0**, upgrade to
 
 ## Quick path
 
+*Override the solo-operator location with `SOLO_OPERATOR_DIR=/path`, the orbit with
+`NS=...` (default `solo-orbit`), or the node with `NODE_ID=...` (default `0`).*
+
 Run everything **inside a Linux VM** (see the repo `CLAUDE.md` VM notes). From the
-repo root, `task -d docs/daemon <name>`. Two tasks are long-running and each want
+repo root, `task -d docs/dev/daemon <name>`. Two tasks are long-running and each want
 their **own terminal**: `daemon:logs` and `port-forward`.
 
 ```
 # deployment packages (host — needs a solo-operator checkout)
-task -d docs/daemon zip             # build staging/build-v0.74.0 + v0.74.2 zips, print H
-task -d docs/daemon package         # unzip the v0.74.0 base package into test/data (--deployment-package-dir)
+task -d docs/dev/daemon zip             # build staging/build-v0.74.0 + v0.74.2 zips, print H
+task -d docs/dev/daemon package         # unzip the v0.74.0 base package into test/data (--deployment-package-dir)
 
 # substrate — the daemon's real install path (single-node k8s)
-task -d docs/daemon rebuild         # build CLI + daemon on the VM + self-install (uat:rebuild)
-task -d docs/daemon cluster         # ghcr login + kube cluster install + orbit ns + hedera user + upgrade dir
-task -d docs/daemon secrets         # gossip/gRPC + pull secrets (uat:secrets)
-task -d docs/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
+task -d docs/dev/daemon rebuild         # build CLI + daemon on the VM + self-install (uat:rebuild)
+task -d docs/dev/daemon cluster         # ghcr login + kube cluster install + orbit ns + hedera user + upgrade dir
+task -d docs/dev/daemon secrets         # gossip/gRPC + pull secrets (uat:secrets)
+task -d docs/dev/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
 
 # a REAL v0.74.0 consensus network, in DAEMON-DELEGATED mode
-task -d docs/daemon network         # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
+task -d docs/dev/daemon network         # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
 
 # install + run the host daemon (the execute-phase performer)
-task -d docs/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
-task -d docs/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
+task -d docs/dev/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
+task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
 
 # drive the upgrade with beacon
-task -d docs/daemon beacon:build    # build bin/beacon in the solo-operator checkout
-task -d docs/daemon config          # write beacon config.yaml + 0.0.2 payer key
-task -d docs/daemon port-forward    # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
-task -d docs/daemon upload          # upload v0.74.2 into special file 0.0.150 (verify with H)
-task -d docs/daemon prepare         # freeze prepare (pinned to H)
-task -d docs/daemon freeze          # freeze upgrade (~3 min out) — network freezes, daemon executes
+task -d docs/dev/daemon beacon:build    # build bin/beacon in the solo-operator checkout
+task -d docs/dev/daemon config          # write beacon config.yaml + 0.0.2 payer key
+task -d docs/dev/daemon port-forward    # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
+task -d docs/dev/daemon upload          # upload v0.74.2 into special file 0.0.150 (verify with H)
+task -d docs/dev/daemon prepare         # freeze prepare (pinned to H)
+task -d docs/dev/daemon freeze          # freeze upgrade (~3 min out) — network freezes, daemon executes
 
 # observe + verify the daemon execute handshake
-task -d docs/daemon watch           # watch NetworkUpgradeExecute advance
-task -d docs/daemon verify          # assert the handshake + config CRs Valid
-task -d docs/daemon version         # beacon network version -> 0.74.2
+task -d docs/dev/daemon watch           # watch NetworkUpgradeExecute advance
+task -d docs/dev/daemon verify          # assert the handshake + config CRs Valid
+task -d docs/dev/daemon version         # beacon network version -> 0.74.2
 
 # clean up
-task -d docs/daemon reset           # daemon + cluster uninstall, restore upgrade dir
-task -d docs/daemon teardown        # + uat:teardown
+task -d docs/dev/daemon reset           # daemon + cluster uninstall, restore upgrade dir
+task -d docs/dev/daemon teardown        # + uat:teardown
 ```
-
-Override the solo-operator location with `SOLO_OPERATOR_DIR=/path`, the orbit with
-`NS=...` (default `solo-orbit`), or the node with `NODE_ID=...` (default `0`).
 
 ## Manual step reference
 
@@ -161,7 +161,7 @@ release and would fail with resolution hints.
 
 ## Verify
 
-After the freeze fires, `task -d docs/daemon verify` runs these checks (namespace = `$NS`):
+After the freeze fires, `task -d docs/dev/daemon verify` runs these checks (namespace = `$NS`):
 
 ```bash
 # phase advanced to PendingNodeUpgrade

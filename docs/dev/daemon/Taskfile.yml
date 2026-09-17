@@ -17,7 +17,7 @@
 # Two steps are long-running and MUST each get their own terminal — `operator`
 # is implicit (the daemon watches; the operator runs in-cluster) but the
 # `daemon:logs` tail and the beacon `port-forward` each want their own terminal.
-# Run `task -d docs/daemon` (or `cd docs/daemon && task`) to print the ordered runbook.
+# Run `task -d docs/dev/daemon` (or `cd docs/dev/daemon && task`) to print the ordered runbook.
 #
 # beacon needs a solo-operator checkout (SOLO_OPERATOR_DIR) for `bin/beacon` and
 # the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip); solo-operator is
@@ -29,30 +29,30 @@ version: '3'
 # uat:registry:login:ghcr). The root Taskfile declares this dotenv too, but an
 # INCLUDED taskfile may not carry a dotenv — so the root Taskfile itself can't be
 # included here; we include taskfiles/uat.yaml directly (below) and load .env here.
-dotenv: ['../../.env']
+dotenv: ['../../../.env']
 
 includes:
   # The repo root already flattens taskfiles/uat.yaml into itself, so its tasks are
   # named `uat:*`. We include the same file directly and `flatten: true` keeps those
   # names (`uat:rebuild`, `uat:secrets`, `uat:teardown`, `uat:registry:login:ghcr`)
   # callable verbatim; they don't collide with this file's un-prefixed tasks.
-  # `dir: ../..` runs the reused tasks in the repo-root context, so their shelled-out
+  # `dir: ../../..` runs the reused tasks in the repo-root context, so their shelled-out
   # `task build:cli` (which resolves via the root Taskfile), arch detection, and
   # /mnt/solo-weaver paths all work.
   uat:
-    taskfile: ../../taskfiles/uat.yaml
-    dir: ../..
+    taskfile: ../../../taskfiles/uat.yaml
+    dir: ../../..
     flatten: true
 
 vars:
-  # Absolute weaver repo root (this Taskfile lives in docs/daemon), so host-side tasks
+  # Absolute weaver repo root (this Taskfile lives in docs/dev/daemon), so host-side tasks
   # resolve regardless of where `task` is invoked.
   WEAVER_ROOT:
-    sh: cd ../.. && pwd
+    sh: cd ../../.. && pwd
   # Path to a solo-operator checkout at v0.7.0+ (provides bin/beacon and the test/dev
   # staging zips). Defaults to a sibling checkout beside solo-weaver (the standard
   # go-import layout, .../github.com/hashgraph/solo-operator); override with
-  # `task -d docs/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
+  # `task -d docs/dev/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
   SOLO_OPERATOR_DIR: '{{.SOLO_OPERATOR_DIR | default (printf "%s/../solo-operator" .WEAVER_ROOT)}}'
 
   # Version map — mirrors solo-operator docs/beacon. beacon uploads the UPGRADE zip.
@@ -114,38 +114,38 @@ tasks:
         solo-provisioner-daemon CN-upgrade e2e — run IN A LINUX VM, in order:
 
           # ── deployment packages (host: needs a solo-operator checkout) ──
-          T1  task -d docs/daemon zip            # build staging/build-v0.74.0 + v0.74.2 zips, print H
-          T2  task -d docs/daemon package        # unzip the v0.74.0 base package into test/data (for --deployment-package-dir)
+          T1  task -d docs/dev/daemon zip            # build staging/build-v0.74.0 + v0.74.2 zips, print H
+          T2  task -d docs/dev/daemon package        # unzip the v0.74.0 base package into test/data (for --deployment-package-dir)
 
           # ── substrate: the daemon's real install path (single-node k8s) ──
-          T3  task -d docs/daemon rebuild        # build CLI+daemon on the VM + self-install
-          T4  task -d docs/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
-          T5  task -d docs/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
-          T6  task -d docs/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
+          T3  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
+          T4  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
+          T5  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
+          T6  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
 
           # ── a REAL v0.74.0 consensus network in DAEMON-DELEGATED mode ──
-          T7  task -d docs/daemon network        # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
+          T7  task -d docs/dev/daemon network        # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
 
           # ── install + run the host daemon (execute phase performer) ──
-          T8  task -d docs/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
-          T9  task -d docs/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
+          T8  task -d docs/dev/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
+          T9  task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
 
           # ── drive the upgrade with beacon ──
-          T10 task -d docs/daemon beacon:build   # build bin/beacon in the solo-operator checkout
-          T11 task -d docs/daemon config         # write beacon config.yaml + 0.0.2 payer key
-          T12 task -d docs/daemon port-forward   # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
-          T13 task -d docs/daemon upload         # upload the v0.74.2 package into special file 0.0.150
-          T14 task -d docs/daemon prepare        # freeze prepare (staged, pinned to H)
-          T15 task -d docs/daemon freeze         # freeze upgrade (~3 min out) — network freezes, daemon executes
+          T10 task -d docs/dev/daemon beacon:build   # build bin/beacon in the solo-operator checkout
+          T11 task -d docs/dev/daemon config         # write beacon config.yaml + 0.0.2 payer key
+          T12 task -d docs/dev/daemon port-forward   # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
+          T13 task -d docs/dev/daemon upload         # upload the v0.74.2 package into special file 0.0.150
+          T14 task -d docs/dev/daemon prepare        # freeze prepare (staged, pinned to H)
+          T15 task -d docs/dev/daemon freeze         # freeze upgrade (~3 min out) — network freezes, daemon executes
 
           # ── observe + verify the daemon execute handshake ──
-          T16 task -d docs/daemon watch          # watch NetworkUpgradeExecute advance + tail the daemon log
-          T17 task -d docs/daemon verify         # assert ConfigCRsApplied/DaemonResult + config CRs Valid
-          T18 task -d docs/daemon version        # beacon network version -> 0.74.2
+          T16 task -d docs/dev/daemon watch          # watch NetworkUpgradeExecute advance + tail the daemon log
+          T17 task -d docs/dev/daemon verify         # assert ConfigCRsApplied/DaemonResult + config CRs Valid
+          T18 task -d docs/dev/daemon version        # beacon network version -> 0.74.2
 
           # ── clean up ──
-          T19 task -d docs/daemon reset          # daemon + cluster uninstall, restore upgrade dir
-          T20 task -d docs/daemon teardown       # reuses uat:teardown
+          T19 task -d docs/dev/daemon reset          # daemon + cluster uninstall, restore upgrade dir
+          T20 task -d docs/dev/daemon teardown       # reuses uat:teardown
 
         daemon:logs (T9) and port-forward (T12) are long-running — each in its own terminal.
         EOF
@@ -304,7 +304,7 @@ tasks:
     cmds:
       - |
         if [ ! -f "{{.ZIP}}" ]; then
-          echo "!! upgrade zip not found: {{.ZIP}} — run 'task -d docs/daemon zip' first" >&2
+          echo "!! upgrade zip not found: {{.ZIP}} — run 'task -d docs/dev/daemon zip' first" >&2
           exit 1
         fi
         echo "ZIP={{.ZIP}}"
@@ -317,7 +317,7 @@ tasks:
         set -e
         BASE_ZIP="{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.BASE_VERSION}}.zip"
         if [ ! -f "$BASE_ZIP" ]; then
-          echo "!! base zip not found: $BASE_ZIP — run 'task -d docs/daemon zip' first" >&2
+          echo "!! base zip not found: $BASE_ZIP — run 'task -d docs/dev/daemon zip' first" >&2
           exit 1
         fi
         mkdir -p "{{.PKG_SRC}}"
@@ -370,9 +370,9 @@ tasks:
     desc: "Upload the v{{.UPGRADE_VERSION}} package into special file 0.0.150 (verify-before-write with H)"
     preconditions:
       - sh: 'test -f "{{.ZIP}}"'
-        msg: "upgrade zip not found: {{.ZIP}} — run 'task -d docs/daemon zip'"
+        msg: "upgrade zip not found: {{.ZIP}} — run 'task -d docs/dev/daemon zip'"
       - sh: 'test -f "{{.CONFIG}}"'
-        msg: "beacon config not found: {{.CONFIG}} — run 'task -d docs/daemon config'"
+        msg: "beacon config not found: {{.CONFIG}} — run 'task -d docs/dev/daemon config'"
     cmds:
       - '{{.BEACON}} -c {{.CONFIG}} file upload --zip "{{.ZIP}}" --expect-hash "{{.H}}"'
       - '{{.BEACON}} -c {{.CONFIG}} file info'          # SHA-384 read-back must equal H
@@ -401,7 +401,7 @@ tasks:
     desc: "Watch the NetworkUpgradeExecute CR advance (ReadyForProvisionerDaemon -> PendingNodeUpgrade) and tail the daemon log"
     cmds:
       - |
-        echo "▶ Watching NetworkUpgradeExecute in {{.NS}} (Ctrl-C to stop, then run 'task -d docs/daemon verify')"
+        echo "▶ Watching NetworkUpgradeExecute in {{.NS}} (Ctrl-C to stop, then run 'task -d docs/dev/daemon verify')"
         kubectl -n {{.NS}} get networkupgradeexecute -w
 
   verify:
