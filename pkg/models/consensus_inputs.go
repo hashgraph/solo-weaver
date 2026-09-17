@@ -12,9 +12,12 @@ import (
 // Consensus-node container defaults. Used as flag defaults and as the fallback
 // when an input field is left empty. The Java heap must be set explicitly; without
 // it the JVM defaults MaxHeapSize to 25% of the memory limit, which stalls the node
-// on startup. Heap + direct memory must fit under the memory limit: these defaults
-// are a lean single/local-node baseline (1g heap + 512m direct fit under 2Gi);
-// production networks should raise them via flags.
+// on startup. The memory limit must cover heap + direct memory PLUS the JVM's native
+// footprint (metaspace, thread stacks, GC/JIT code cache, netty buffers), which a
+// consensus node consumes heavily — a 1g-heap/512m-direct node still exceeds a 2Gi
+// limit once warmed up and gets OOMKilled. These defaults are a single/local-node
+// baseline (2g heap + 512m direct + native fit under 4Gi); production networks
+// should raise them via flags.
 const (
 	// ConsensusDefaultNamespace is the default namespace / Orbit name for a
 	// consensus deployment (sourced from pkg/deps alongside the other install-plan
@@ -23,12 +26,12 @@ const (
 
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
-	ConsensusDefaultJavaHeapMax   = "1g"
+	ConsensusDefaultJavaHeapMax   = "2g"
 	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=512m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
 	ConsensusDefaultCPULimit      = "2"
 	ConsensusDefaultCPURequest    = "250m"
-	ConsensusDefaultMemoryLimit   = "2Gi"
-	ConsensusDefaultMemoryRequest = "1Gi"
+	ConsensusDefaultMemoryLimit   = "4Gi"
+	ConsensusDefaultMemoryRequest = "2Gi"
 
 	// UC (Update Coordinator) sidecar image. The operator provides NO built-in
 	// default for it, so the capsule must declare it explicitly or the operator
