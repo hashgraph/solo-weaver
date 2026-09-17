@@ -109,11 +109,23 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// enabled, is handled post-workflow in the CLI layer.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
 
+	plan, err := planStorage(currentState, ins)
+	if err != nil {
+		return nil, err
+	}
+
 	stepList := networkSteps
 	workflowId := "block-node-upgrade"
-	if ins.ResetStorage {
+	switch {
+	case plan.recreate:
+		workflowId = "block-node-upgrade-purge-storage"
+		stepList = append(stepList,
+			steps.PurgeBlockNodeStorage(plan.purgeIns),
+			steps.RecreateBlockNodeStorage(ins),
+		)
+	case ins.ResetStorage:
 		workflowId = "block-node-upgrade-with-reset"
-		stepList = append(stepList, steps.PurgeBlockNodeStorage(ins))
+		stepList = append(stepList, steps.PurgeBlockNodeStorage(plan.purgeIns))
 	}
 	stepList = append(stepList, steps.UpgradeBlockNode(ins))
 

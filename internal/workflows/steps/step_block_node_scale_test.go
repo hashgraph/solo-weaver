@@ -14,10 +14,10 @@ import (
 // resetStepIDs builds the reset workflow for the given inputs and returns its
 // child step IDs. Building does not touch the cluster — the manager provider is
 // lazy and only resolves inside Execute.
-func resetStepIDs(t *testing.T, inputs models.BlockNodeInputs) []string {
+func resetStepIDs(t *testing.T, deployedStorage models.BlockNodeStorage, inputs models.BlockNodeInputs) []string {
 	t.Helper()
 
-	stp, err := ResetBlockNode(inputs).Build()
+	stp, err := ResetBlockNode(deployedStorage, inputs).Build()
 	require.NoError(t, err)
 
 	wf, ok := stp.(automa.Workflow)
@@ -48,7 +48,7 @@ func TestResetBlockNode_LeaveScaledDown(t *testing.T) {
 			ClearBlockNodeStorageStepId,
 			ScaleUpBlockNodeStepId,
 			WaitForBlockNodeStepId,
-		}, resetStepIDs(t, inputs))
+		}, resetStepIDs(t, inputs.Storage, inputs))
 	})
 
 	t.Run("LeaveScaledDown stops after clearing storage", func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestResetBlockNode_LeaveScaledDown(t *testing.T) {
 			ScaleDownBlockNodeStepId,
 			WaitForBlockNodeTerminatedStepId,
 			ClearBlockNodeStorageStepId,
-		}, resetStepIDs(t, down))
+		}, resetStepIDs(t, inputs.Storage, down))
 	})
 }
 
@@ -76,4 +76,41 @@ func TestScaleDownBlockNodeAfterUpgrade_DistinctStepId(t *testing.T) {
 
 	assert.Equal(t, ScaleDownAfterUpgradeStepId, stp.Id())
 	assert.NotEqual(t, ScaleDownBlockNodeStepId, ScaleDownAfterUpgradeStepId)
+}
+
+// TestResetBlockNode_PurgeStorage pins where the PV/PVC recreation lands in the
+// reset workflow: after the deployed directories are cleared and before the pod
+// comes back, so the StatefulSet only ever sees volumes bound to the requested
+// paths.
+func TestResetBlockNode_PurgeStorage(t *testing.T) {
+	deployed := models.BlockNodeStorage{BasePath: "/mnt/storage"}
+	inputs := models.BlockNodeInputs{
+		Namespace:    "block-node-ns",
+		Release:      "block-node",
+		Storage:      models.BlockNodeStorage{BasePath: "/mnt/new"},
+		PurgeStorage: true,
+	}
+
+	t.Run("recreates storage before scaling up", func(t *testing.T) {
+		assert.Equal(t, []string{
+			ScaleDownBlockNodeStepId,
+			WaitForBlockNodeTerminatedStepId,
+			ClearBlockNodeStorageStepId,
+			RecreateBlockNodeStorageStepId,
+			ScaleUpBlockNodeStepId,
+			WaitForBlockNodeStepId,
+		}, resetStepIDs(t, deployed, inputs))
+	})
+
+	t.Run("LeaveScaledDown still recreates storage", func(t *testing.T) {
+		down := inputs
+		down.LeaveScaledDown = true
+
+		assert.Equal(t, []string{
+			ScaleDownBlockNodeStepId,
+			WaitForBlockNodeTerminatedStepId,
+			ClearBlockNodeStorageStepId,
+			RecreateBlockNodeStorageStepId,
+		}, resetStepIDs(t, deployed, down))
+	})
 }

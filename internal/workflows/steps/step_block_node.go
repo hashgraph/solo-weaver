@@ -488,10 +488,23 @@ func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, erro
 
 // ResetBlockNode resets the block node by clearing all storage and, unless
 // inputs.LeaveScaledDown is set, restarting the pod and waiting for it to be ready.
-func ResetBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
+//
+// deployedStorage is the storage configuration the block node is currently
+// running with; the directories are cleared there rather than at
+// inputs.Storage, which is where the operator wants them next. The two differ
+// only under inputs.PurgeStorage, the one flag that can move a block node to new
+// paths — a local PV's hostPath is immutable, so the PVs/PVCs are deleted and
+// recreated between clearing the old directories and starting the pod again.
+func ResetBlockNode(deployedStorage models.BlockNodeStorage, inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
+	deployedIns := inputs
+	deployedIns.Storage = deployedStorage
+
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
-	stepList := purgeBlockNodeStorageSteps(managerProvider)
+	stepList := purgeBlockNodeStorageSteps(newBlockNodeManagerProvider(deployedIns))
+	if inputs.PurgeStorage {
+		stepList = append(stepList, RecreateBlockNodeStorage(inputs))
+	}
 	if !inputs.LeaveScaledDown {
 		stepList = append(stepList,
 			scaleUpBlockNode(managerProvider),

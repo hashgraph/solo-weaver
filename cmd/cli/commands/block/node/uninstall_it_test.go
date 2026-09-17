@@ -14,8 +14,8 @@ import (
 )
 
 // TestPurgeStorageFlag_Registration confirms which block-node subcommands accept
-// --purge-storage. The flag is intentionally only available on `uninstall` and
-// `reconfigure`; `reset` and `upgrade` keep K8s objects by design.
+// --purge-storage: the four that already own the storage they are about to
+// clear. `install` and `check` have no deployed volumes to delete.
 func TestPurgeStorageFlag_Registration(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -24,8 +24,10 @@ func TestPurgeStorageFlag_Registration(t *testing.T) {
 	}{
 		{name: "uninstall_has_purge_storage", cmd: uninstallCmd, expected: true},
 		{name: "reconfigure_has_purge_storage", cmd: reconfigureCmd, expected: true},
-		{name: "upgrade_does_not_have_purge_storage", cmd: upgradeCmd, expected: false},
-		{name: "reset_does_not_have_purge_storage", cmd: resetCmd, expected: false},
+		{name: "upgrade_has_purge_storage", cmd: upgradeCmd, expected: true},
+		{name: "reset_has_purge_storage", cmd: resetCmd, expected: true},
+		{name: "install_does_not_have_purge_storage", cmd: installCmd, expected: false},
+		{name: "check_does_not_have_purge_storage", cmd: checkCmd, expected: false},
 	}
 
 	for _, tc := range cases {

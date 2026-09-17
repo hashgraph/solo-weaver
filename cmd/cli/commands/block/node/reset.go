@@ -35,6 +35,10 @@ node back up with 'kubectl scale statefulset <name> -n <namespace> --replicas=1'
 with a plain reconfigure or upgrade. Re-running reset also starts the node, but it
 clears the storage directories first and so discards anything staged there.
 
+Pass --purge-storage to delete the PersistentVolumes and PersistentVolumeClaims
+after step 3 and recreate them before step 4. A local PV's hostPath is immutable,
+so this is what moving the block node to new storage paths requires.
+
 WARNING: This operation is destructive and cannot be undone. All block data will be lost.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		inputs, cv, err := prepareBlocknodeInputs(cmd, args)
@@ -78,5 +82,6 @@ WARNING: This operation is destructive and cannot be undone. All block data will
 }
 
 func init() {
+	common.FlagPurgeStorage().SetVarP(resetCmd, &flagPurgeStorage, false)
 	common.FlagNoScaleUp().SetVar(resetCmd, &flagNoScaleUp, false)
 }

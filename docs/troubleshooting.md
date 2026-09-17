@@ -33,7 +33,10 @@ sudo solo-provisioner block node install --profile=mainnet --base-path=/mnt/stor
 ```
 
 To change a storage path on an existing install you also need `--purge-storage` — a local PV's
-`hostPath.path` is immutable. See
+`hostPath.path` is immutable, so the PV/PVCs are deleted and recreated at the new paths. It is
+accepted by `reconfigure` (re-applies chart values at the current version), `upgrade` (same move
+plus a version bump) and `reset` (no Helm operation at all). Without it, a path change is
+rejected. See
 [`reconfigure`](commands/block-node.md#reconfigure--change-settings-without-changing-the-version).
 
 ### Helm chart problems

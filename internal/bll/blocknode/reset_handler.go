@@ -47,8 +47,18 @@ func (h *ResetHandler) BuildWorkflow(
 				"block node first, or pass --force to continue")
 	}
 
-	wb := automa.NewWorkflowBuilder().WithId("block-node-reset").
-		Steps(steps.ResetBlockNode(inputs.Custom))
+	plan, err := planStorage(currentState, inputs.Custom)
+	if err != nil {
+		return nil, err
+	}
+
+	workflowId := "block-node-reset"
+	if plan.recreate {
+		workflowId = "block-node-reset-purge-storage"
+	}
+
+	wb := automa.NewWorkflowBuilder().WithId(workflowId).
+		Steps(steps.ResetBlockNode(plan.purgeIns.Storage, inputs.Custom))
 	return wb, nil
 }
 

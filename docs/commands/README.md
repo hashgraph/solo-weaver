@@ -33,9 +33,9 @@ sudo ./solo-provisioner install
 # BLOCK NODE
 sudo solo-provisioner block node check       --profile=<profile>
 sudo solo-provisioner block node install     --profile=<profile> [--values=<file>] [--plugin-preset=<preset>]
-sudo solo-provisioner block node upgrade     --profile=<profile> [--values=<file>] [--with-reset]
+sudo solo-provisioner block node upgrade     --profile=<profile> [--values=<file>] [--with-reset|--purge-storage]
 sudo solo-provisioner block node reconfigure --profile=<profile> [--values=<file>] [--no-restart]
-sudo solo-provisioner block node reset       --profile=<profile>
+sudo solo-provisioner block node reset       --profile=<profile> [--purge-storage]
 sudo solo-provisioner block node uninstall   --profile=<profile> [--with-reset|--purge-storage]
 sudo solo-provisioner block node reconcile-shaper --statusz-url=<url> [--check]
 sudo solo-provisioner block node tc-attach   --veth=<iface> [--detach]

@@ -300,28 +300,136 @@ func resolveBlocknodeEffectiveInputs(
 	return &effectiveInputs, nil
 }
 
-// storagePathsChanged returns true when the requested storage configuration differs
-// from the currently deployed one. Both sides go through ResolveStoragePaths so
-// base-path expansion and sanitization are applied consistently before comparing.
+// resolveStoragePathsByName canonicalizes a storage configuration for the given
+// chart version and returns the three core paths plus the applicable optional
+// paths keyed by storage name. Naming the optional paths is what makes them
+// comparable across an upgrade: the applicable set is version-dependent, so the
+// positional slice ResolveStoragePaths returns lines up only when both sides are
+// resolved at the same version.
+func resolveStoragePathsByName(
+	storage models.BlockNodeStorage,
+	chartVersion string,
+) (core [3]string, optional map[string]string, err error) {
+	archive, live, log, optPaths, err := bnpkg.ResolveStoragePaths(storage, chartVersion)
+	if err != nil {
+		return core, nil, err
+	}
+
+	applicable := bnpkg.GetApplicableOptionalStorages(chartVersion)
+	optional = make(map[string]string, len(optPaths))
+	for i, path := range optPaths {
+		if i < len(applicable) {
+			optional[applicable[i].Name] = path
+		}
+	}
+
+	return [3]string{archive, live, log}, optional, nil
+}
+
+// storagePathsChanged returns true when the requested storage configuration moves
+// a directory the block node is already using. Each side is canonicalized at its
+// own chart version, because an upgrade resolves the deployed configuration at
+// the version that produced it, not the one being installed.
+//
+// Only optional storages applicable to both versions are compared. One that
+// appears or retires across the version boundary has no deployed path to move,
+// and comparing it against an unrelated storage's path would report a move that
+// is not happening.
+//
 // This is pure path math — no Manager / cluster client is constructed.
-func storagePathsChanged(deployed models.BlockNodeStorage, requested models.BlockNodeInputs) (bool, error) {
-	dArchive, dLive, dLog, dOpt, err := bnpkg.ResolveStoragePaths(deployed, requested.ChartVersion)
+func storagePathsChanged(
+	deployed models.BlockNodeStorage,
+	deployedChartVersion string,
+	requested models.BlockNodeInputs,
+) (bool, error) {
+	deployedCore, deployedOptional, err := resolveStoragePathsByName(deployed, deployedChartVersion)
 	if err != nil {
 		return false, err
 	}
 
-	rArchive, rLive, rLog, rOpt, err := bnpkg.ResolveStoragePaths(requested.Storage, requested.ChartVersion)
+	requestedCore, requestedOptional, err := resolveStoragePathsByName(requested.Storage, requested.ChartVersion)
 	if err != nil {
 		return false, err
 	}
 
-	if dArchive != rArchive || dLive != rLive || dLog != rLog {
+	if deployedCore != requestedCore {
 		return true, nil
 	}
-	for i := range rOpt {
-		if i >= len(dOpt) || dOpt[i] != rOpt[i] {
+
+	for name, requestedPath := range requestedOptional {
+		deployedPath, applicableToBoth := deployedOptional[name]
+		if applicableToBoth && deployedPath != requestedPath {
 			return true, nil
 		}
 	}
+
 	return false, nil
+}
+
+// storagePlan says how an operation that clears block-node storage must treat
+// the volumes involved: which paths to wipe, and whether the PVs/PVCs have to be
+// deleted and recreated.
+type storagePlan struct {
+	// purgeIns is the effective inputs with Storage replaced by the deployed
+	// configuration, so the purge steps clear the directories that exist on disk
+	// rather than the ones being requested. Namespace and release are identical
+	// in both, leaving the scale-down / wait steps unaffected.
+	purgeIns models.BlockNodeInputs
+
+	// recreate deletes the PVs/PVCs and creates them again at the requested
+	// paths. Only --purge-storage sets it: a local PV's hostPath is immutable, so
+	// there is no other way to move a block node to new paths.
+	recreate bool
+}
+
+// planStorage resolves the storage plan shared by every block-node operation
+// that stops the pod to clear storage — reset, reconfigure and upgrade. It
+// rejects a storage path change that arrives without --purge-storage, because
+// the existing PVs/PVCs cannot be mutated in place and wiping the requested
+// paths would leave the deployed data orphaned on disk.
+//
+// A block node that is not deployed has nothing on disk to reason about and is
+// only reachable with --force, so the comparison is skipped and the requested
+// paths are used as-is.
+func planStorage(currentState state.State, ins models.BlockNodeInputs) (storagePlan, error) {
+	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+		return storagePlan{purgeIns: ins, recreate: ins.PurgeStorage}, nil
+	}
+
+	deployed := currentState.BlockNodeState.Storage
+	deployedChartVersion := currentState.BlockNodeState.ReleaseInfo.ChartVersion
+
+	// The purge steps have to describe the deployed block node completely: its
+	// storage config AND the chart version that config was written for, since the
+	// directories to clear are derived from both (Manager.ResetStorage →
+	// GetStoragePaths). Carrying the requested version here would ask the deployed
+	// record for a storage the new version adds and it has never had.
+	purgeIns := ins
+	purgeIns.Storage = deployed
+	if deployedChartVersion != "" {
+		purgeIns.ChartVersion = deployedChartVersion
+	}
+
+	if ins.PurgeStorage {
+		return storagePlan{purgeIns: purgeIns, recreate: true}, nil
+	}
+
+	changed, err := storagePathsChanged(deployed, purgeIns.ChartVersion, ins)
+	if err != nil {
+		// An incomplete deployed record — no base path and a missing individual
+		// path — cannot be canonicalized, so there is nothing to compare and no
+		// basis for rejecting the operation. Fall back to the requested paths and
+		// let the operation proceed rather than failing on path math.
+		logx.As().Debug().Err(err).
+			Msg("could not compare block node storage paths; proceeding with the requested paths")
+		return storagePlan{purgeIns: ins, recreate: false}, nil
+	}
+	if changed {
+		return storagePlan{}, errorx.IllegalArgument.New(
+			"storage paths have changed; PVs/PVCs cannot be updated without clearing existing data").
+			WithProperty(models.ErrPropertyResolution,
+				"re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths")
+	}
+
+	return storagePlan{purgeIns: purgeIns, recreate: false}, nil
 }
