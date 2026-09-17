@@ -9,29 +9,30 @@ import (
 )
 
 var (
-	flagNamespace        string
-	flagNodeId           int64
-	flagAccountId        string
-	flagWeight           int
-	flagLedgerId         string
-	flagChainId          string
-	flagImageRepo        string
-	flagImageTag         string
-	flagUCImageRepo      string
-	flagUCImageTag       string
-	flagDeploymentPkgDir string
-	flagGrpcTlsSecret    string
-	flagSigningSecret    string
-	flagImagePullSecret  string
-	flagProfile          string
-	flagContainerName    string
-	flagJavaHeapMin      string
-	flagJavaHeapMax      string
-	flagJavaOpts         string
-	flagCPULimit         string
-	flagCPURequest       string
-	flagMemoryLimit      string
-	flagMemoryRequest    string
+	flagNamespace         string
+	flagNodeId            int64
+	flagAccountId         string
+	flagWeight            int
+	flagLedgerId          string
+	flagChainId           string
+	flagImageRepo         string
+	flagImageTag          string
+	flagUCImageRepo       string
+	flagUCImageTag        string
+	flagDeploymentPkgDir  string
+	flagGrpcTlsSecret     string
+	flagSigningSecret     string
+	flagImagePullSecret   string
+	flagProfile           string
+	flagContainerName     string
+	flagJavaHeapMin       string
+	flagJavaHeapMax       string
+	flagJavaOpts          string
+	flagCPULimit          string
+	flagCPURequest        string
+	flagMemoryLimit       string
+	flagMemoryRequest     string
+	flagProvisionerDaemon bool
 
 	// Volume backing configuration.
 	flagDefaultVolumeType      string
@@ -81,6 +82,7 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagCPURequest, "cpu-request", models.ConsensusDefaultCPURequest, "Consensus-node CPU request (e.g. 250m)")
 	nodeCmd.PersistentFlags().StringVar(&flagMemoryLimit, "memory-limit", models.ConsensusDefaultMemoryLimit, "Consensus-node memory limit (e.g. 5Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagMemoryRequest, "memory-request", models.ConsensusDefaultMemoryRequest, "Consensus-node memory request (e.g. 1Gi)")
+	nodeCmd.PersistentFlags().BoolVar(&flagProvisionerDaemon, "provisioner-daemon", false, "Deploy the Orbit in mainnet mode: the UC sidecar defers the execute phase to a host-level solo-provisioner-daemon (Orbit.spec.consensus.provisionerDaemonEnabled). Default false = cluster-only (the in-pod UC runs execute)")
 
 	// Volume backing. Each data volume (upgrade/logs/stats/saved/state/blocks/records/
 	// events) can be emptyDir, hostPath, or a PVC. --default-* set fallbacks; --volume
