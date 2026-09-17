@@ -108,6 +108,16 @@ var installCmd = &cobra.Command{
 		if verr != nil {
 			return verr
 		}
+		// In provisioner-daemon (mainnet) mode the upgrade dir must be a hostPath
+		// shared with the host solo-provisioner-daemon (it reads <upgrade>/current
+		// during the execute phase). Default it to hostPath unless the operator set
+		// the upgrade volume's backing explicitly.
+		if flagProvisionerDaemon {
+			if up := volCfg.Volumes[models.ConsensusVolumeUpgrade]; up.Type == "" {
+				up.Type = models.VolumeBackingHostPath
+				volCfg.SetVolume(models.ConsensusVolumeUpgrade, up)
+			}
+		}
 
 		inputs := models.UserInputs[models.ConsensusNodeInputs]{
 			Common: models.CommonInputs{
