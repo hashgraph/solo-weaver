@@ -76,18 +76,27 @@ on daemon self-upgrade, #500). Keep the upgrade package **config-only** for a cl
   (`node<N>-gossip-keys`) and gRPC TLS secret (`node<N>-grpc-tls-keys`) in the orbit
   namespace, plus a pull secret for private images. The `secrets` task creates these
   from the sample manifests (reuses `uat:secrets`).
-- **solo-operator checkout at v0.7.0+** (`SOLO_OPERATOR_DIR`) for `bin/beacon` and
-  the deployment zips (`test/dev/staging/build-v0.74.0.zip` + `build-v0.74.2.zip`).
-  These are NOT solo-provisioner artifacts — build them with `test/dev`
-  (`task setup && task build`); the `zip` task does this.
-- **Base deployment package unzipped into `test/data/`.** `consensus node install`
-  reads the network's image tags / ledger / chain id from an *unzipped* package
-  directory. The `package` task unzips the base zip into the weaver checkout (so the
-  VM sees it under `/mnt/solo-weaver`). Manually, that is:
+- **A solo-operator checkout at v0.7.0+ on the host** (`SOLO_OPERATOR_DIR`, defaults
+  to a sibling of solo-weaver) for `beacon` and the deployment zips — the `prep` task
+  git-clones it there if it is missing (needs `GITHUB_USER`/`GITHUB_ACCESS_TOKEN` in
+  the root `.env`; check out the ref that carries `beacon`/`test/dev` if the default
+  branch does not). solo-operator is **not** mounted in the VM, so its artifacts are
+  built on the host and rsynced in: the **`prep` task**
+  (`clone` → `zip` → `package` → `beacon:build` → `sync`) builds
+  `test/dev/staging/build-v0.74.{0,2}.zip` + `bin/beacon`, stages the unzipped base
+  package and the upgrade zip into the weaver checkout's `test/data/` and `beacon`
+  into `bin/`, then runs `vm:sync`. The in-VM tasks then read everything under
+  `/mnt/solo-weaver`. `consensus node install` needs the base package *unzipped* (it
+  reads image tags / ledger / chain id from a directory); `beacon upload` takes the
+  upgrade *zip*. Manually, the staging is:
 
   ```bash
+  # on the host, from the weaver checkout
   mkdir -p test/data/build-v0.74.0
   unzip -o "$SOLO_OPERATOR_DIR/test/dev/staging/build-v0.74.0.zip" -d test/data/build-v0.74.0
+  cp "$SOLO_OPERATOR_DIR/test/dev/staging/build-v0.74.2.zip" test/data/
+  cp "$SOLO_OPERATOR_DIR/bin/beacon" bin/beacon
+  task vm:sync
   ```
 
 Version map (matches solo-operator docs/beacon): deployed **0.74.0**, upgrade to **0.74.2**.
@@ -97,15 +106,17 @@ Version map (matches solo-operator docs/beacon): deployed **0.74.0**, upgrade to
 *Override the solo-operator location with `SOLO_OPERATOR_DIR=/path`, the orbit with
 `NS=...` (default `solo-orbit`), or the node with `NODE_ID=...` (default `0`).*
 
-Run everything **inside a Linux VM** (see the repo `CLAUDE.md` VM notes). From the
-repo root, `task -d docs/dev/daemon <name>`. Two tasks are long-running and each want
-their **own terminal**: `daemon:logs` and `port-forward`.
+solo-operator is **not** mounted in the VM, so its artifacts (the deployment zips
+and `beacon`) are built on the **host** and rsynced into the VM by `vm:sync`. Do
+that once up front, then run the rest **inside the VM**. Two in-VM tasks are
+long-running and each want their **own terminal**: `daemon:logs` and `port-forward`.
 
 ```
-# deployment packages (host — needs a solo-operator checkout)
-task -d docs/dev/daemon zip             # build staging/build-v0.74.0 + v0.74.2 zips, print H
-task -d docs/dev/daemon package         # unzip the v0.74.0 base package into test/data (--deployment-package-dir)
+# ── ON THE HOST (dev machine), once ──
+task -d docs/dev/daemon prep            # clone solo-operator (if needed) + build zips + beacon, stage into test/data + bin, and vm:sync
+                                        #   (= clone + zip + package + beacon:build + sync). Re-run after rebuilding the zips.
 
+# ── INSIDE THE VM, from the repo root: task -d docs/dev/daemon <name> ──
 # substrate — the daemon's real install path (single-node k8s)
 task -d docs/dev/daemon rebuild         # build CLI + daemon on the VM + self-install (uat:rebuild)
 task -d docs/dev/daemon cluster         # ghcr login + kube cluster install + orbit ns + hedera user + upgrade dir
@@ -113,14 +124,13 @@ task -d docs/dev/daemon secrets         # gossip/gRPC + pull secrets (uat:secret
 task -d docs/dev/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
 
 # a REAL v0.74.0 consensus network, in DAEMON-DELEGATED mode
-task -d docs/dev/daemon network         # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
+task -d docs/dev/daemon network         # consensus node install --provisioner-daemon + genesis
 
 # install + run the host daemon (the execute-phase performer)
 task -d docs/dev/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
 task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
 
-# drive the upgrade with beacon
-task -d docs/dev/daemon beacon:build    # build bin/beacon in the solo-operator checkout
+# drive the upgrade with beacon (synced from the host prep)
 task -d docs/dev/daemon config          # write beacon config.yaml + 0.0.2 payer key
 task -d docs/dev/daemon port-forward    # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
 task -d docs/dev/daemon upload          # upload v0.74.2 into special file 0.0.150 (verify with H)
@@ -143,16 +153,20 @@ Each task wraps a real command; the notable ones:
 
 | Task | What it runs (essence) |
 |---|---|
+| `prep` (host) | `clone` → `zip` → `package` → `beacon:build` → `sync`; the whole host-side artifact prep in one command |
+| `clone` (host) | `git clone` solo-operator into `SOLO_OPERATOR_DIR` if absent (PAT via env-only git config; no-op when already checked out) |
+| `zip` (host) | `cd $SOLO_OPERATOR_DIR/test/dev && task setup && task build` — the base + upgrade zips |
+| `package` (host) | `unzip` the base zip into `test/data/build-v0.74.0` + copy the upgrade zip into `test/data/` |
+| `beacon:build` (host) | `task build:beacon` in solo-operator, then copy `bin/beacon` into the weaver checkout |
+| `sync` (host) | runs the root `vm:sync` — rsyncs the weaver checkout (incl. staged zips/package/beacon) into `/mnt/solo-weaver` |
 | `rebuild` | `uat:rebuild` — `task build:cli` (builds daemon too, stamps its digest) + self-install |
 | `cluster` | `uat:registry:login:ghcr` + `kube cluster install --non-interactive` + create orbit ns + `hedera` user/group + upgrade staging dir (owned `hedera:hedera`, mode `0775`, `weaver` in the `hedera` group) |
 | `secrets` | `uat:secrets NS=<orbit> NODE=node<id>` — pull secret in operator + orbit ns, plus `node<id>-gossip-keys` / `node<id>-grpc-tls-keys` |
 | `operator` | `kube operator install --non-interactive`; checks the `networkupgradeexecutes` CRD is registered |
-| `package` | host: `unzip` the v0.74.0 base zip into `test/data/build-v0.74.0` (visible in the VM at `/mnt/solo-weaver`) |
 | `network` | `consensus node install --experimental --provisioner-daemon --deployment-package-dir <pkg> …` (creates the Orbit in mainnet/daemon-delegated mode), then `consensus network genesis --experimental` |
-| `daemon:install` | `daemon service install --components consensus-node --cn-node-id <id> --cn-orbit <ns> --daemon-bin <built>` (`--cn-namespace` is a hidden alias for `--cn-orbit`); then `kubectl auth can-i` checks |
-| `zip` | `cd $SOLO_OPERATOR_DIR/test/dev && task setup && task build`; prints `H` (SHA-384 of the upgrade zip) |
+| `daemon:install` | precondition: the local daemon build exists under `/mnt/solo-weaver/bin`; then `daemon service install --components consensus-node --cn-node-id <id> --cn-orbit <ns> --daemon-bin <built>` (`--cn-namespace` is a hidden alias for `--cn-orbit`) + `kubectl auth can-i` checks |
 | `config` | writes `/tmp/beacon-solo/config.yaml` + the 0.0.2 payer PEM |
-| `upload`/`prepare`/`freeze` | `beacon file upload/info`, `beacon freeze prepare/upgrade` — all pinned to `H` |
+| `upload`/`prepare`/`freeze` | `beacon file upload/info`, `beacon freeze prepare/upgrade` (`{{.BEACON}}` from `/mnt/solo-weaver/bin`) — all pinned to `H` |
 
 The daemon binary consumed by `daemon:install` is the dev build at
 `/mnt/solo-weaver/bin/solo-provisioner-daemon-linux-<arch>` (passed with

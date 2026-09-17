@@ -4,7 +4,7 @@
 #
 # Validates the daemon's HIP-1496 execute phase of a config-only consensus-node
 # software upgrade, driven for real by solo-operator's `beacon` (HAPI control
-# plane). A REAL v0.74.0 single-node consensus network is deployed on a single-node
+# plane). A v0.74.0 single-node consensus network is deployed on a single-node
 # k8s cluster (the daemon's own install path: `kube cluster install` +
 # `kube operator install`, NOT kind). beacon then uploads the v0.74.2 package,
 # freezes the network, and the host daemon performs the execute phase; we verify
@@ -61,33 +61,46 @@ vars:
 
   # Orbit namespace where the CN + NetworkUpgradeExecute CRs live. Matches beacon's
   # config (haproxy-node0 in solo-orbit) and TC-42.
-  NS: '{{.NS | default "solo-orbit"}}'
+  NS: '{{.NS | default "hiero-network-1"}}'
   # Operator namespace (where `kube operator install` deploys + reads its pull secret).
   OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
 
   # The consensus node under test.
   NODE_ID: '{{.NODE_ID | default "0"}}'
+  
+  # The consensus node account id (0.0.3) — the v0.74.0 genesis has node0 account 0.0.3, which is the default payer for beacon's config.yaml.
+  ACCOUNT_ID: '{{.ACCOUNT_ID | default "0.0.3"}}'  # node0 account in the v0.74.0 genesis
 
   # Daemon upgrade staging dir — daemon reads the extracted package here; the CN pod
   # extracts special file 0.0.150 into the same path (shared on a single host).
   UPGRADE_DIR: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
 
-  # The upgrade package zip beacon uploads, and its coupling hash H (SHA-384).
-  # Recomputed from the zip on every task run; empty until `task zip` has produced it.
-  ZIP: "{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.UPGRADE_VERSION}}.zip"
+  # Artifact flow: solo-operator is HOST-only (not mounted in the VM), so the host
+  # `prep` task builds the zips + beacon and stages them into the weaver checkout's
+  # test/data + bin, then `vm:sync` rsyncs the whole tree into the VM. The VM tasks
+  # then read everything under /mnt/solo-weaver. *_SRC = host staging path; the bare
+  # var = the VM-visible (synced) path the in-VM tasks use.
+  STAGING: "{{.SOLO_OPERATOR_DIR}}/test/dev/staging"       # host: solo-operator zip output
+
+  # Upgrade zip beacon uploads. Staged into test/data (host) then synced; the VM
+  # `upload` task reads the synced copy. H (SHA-384) is the coupling hash the whole
+  # chain pins; computed from the VM copy, so it resolves once `prep`+`vm:sync` ran.
+  ZIP_SRC: "{{.STAGING}}/build-v{{.UPGRADE_VERSION}}.zip"
+  ZIP: "/mnt/solo-weaver/test/data/build-v{{.UPGRADE_VERSION}}.zip"
   H:
     sh: >-
-      shasum -a 384 "{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.UPGRADE_VERSION}}.zip" 2>/dev/null
+      shasum -a 384 "/mnt/solo-weaver/test/data/build-v{{.UPGRADE_VERSION}}.zip" 2>/dev/null
       | awk '{print $1}'
-  # The base-version deployment package, UNZIPPED into the weaver checkout so it is
-  # visible in the VM at /mnt/solo-weaver. `task package` unzips it here from the
-  # solo-operator base zip. PKG_SRC is the host path (weaver checkout); PKG is the
-  # same location as seen inside the VM (used by `consensus node install`).
+
+  # Base-version deployment package, UNZIPPED into test/data (host) then synced.
+  # PKG_SRC = host path; PKG = VM path used by `consensus node install`.
   PKG_SRC: "{{.WEAVER_ROOT}}/test/data/build-v{{.BASE_VERSION}}"
   PKG: "/mnt/solo-weaver/test/data/build-v{{.BASE_VERSION}}"
 
-  # beacon binary + its network context (config.yaml + keys/ live under BEACON_HOME).
-  BEACON: "{{.SOLO_OPERATOR_DIR}}/bin/beacon"
+  # beacon binary: built on the host from solo-operator (BEACON_SRC), copied into the
+  # weaver checkout's bin/ + synced; the in-VM upload/freeze tasks run BEACON.
+  BEACON_SRC: "{{.SOLO_OPERATOR_DIR}}/bin/beacon"
+  BEACON: /mnt/solo-weaver/bin/beacon
   BEACON_HOME: /tmp/beacon-solo
   CONFIG: "{{.BEACON_HOME}}/config.yaml"
 
@@ -111,43 +124,44 @@ tasks:
     cmds:
       - |
         cat <<'EOF'
-        solo-provisioner-daemon CN-upgrade e2e — run IN A LINUX VM, in order:
+        solo-provisioner-daemon CN-upgrade e2e.
 
-          # ── deployment packages (host: needs a solo-operator checkout) ──
-          T1  task -d docs/dev/daemon zip            # build staging/build-v0.74.0 + v0.74.2 zips, print H
-          T2  task -d docs/dev/daemon package        # unzip the v0.74.0 base package into test/data (for --deployment-package-dir)
+        ── ON THE HOST (dev machine, once) — solo-operator is not mounted in the VM ──
+          H1  task -d docs/dev/daemon prep           # build zips + beacon, stage into test/data + bin, and vm:sync into the VM
+                                                     #   (= zip + package + beacon:build + sync)
 
-          # ── substrate: the daemon's real install path (single-node k8s) ──
-          T3  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
-          T4  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
-          T5  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
-          T6  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
+        ── INSIDE THE LINUX VM, in order ──
+          # substrate: the daemon's real install path (single-node k8s)
+          T1  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
+          T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
+          T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
+          T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
 
-          # ── a REAL v0.74.0 consensus network in DAEMON-DELEGATED mode ──
-          T7  task -d docs/dev/daemon network        # consensus node install + Orbit provisionerDaemonEnabled=true + genesis
+          #  deploy v0.74.0 consensus network in DAEMON-DELEGATED mode
+          T5  task -d docs/dev/daemon network        # consensus node install --provisioner-daemon + genesis
 
-          # ── install + run the host daemon (execute phase performer) ──
-          T8  task -d docs/dev/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
-          T9  task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
+          # install + run the host daemon (execute phase performer)
+          T6  task -d docs/dev/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
+          T7  task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
 
-          # ── drive the upgrade with beacon ──
-          T10 task -d docs/dev/daemon beacon:build   # build bin/beacon in the solo-operator checkout
-          T11 task -d docs/dev/daemon config         # write beacon config.yaml + 0.0.2 payer key
-          T12 task -d docs/dev/daemon port-forward   # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
-          T13 task -d docs/dev/daemon upload         # upload the v0.74.2 package into special file 0.0.150
-          T14 task -d docs/dev/daemon prepare        # freeze prepare (staged, pinned to H)
-          T15 task -d docs/dev/daemon freeze         # freeze upgrade (~3 min out) — network freezes, daemon executes
+          # drive the upgrade with beacon (all synced from the host prep)
+          T8  task -d docs/dev/daemon config         # write beacon config.yaml + 0.0.2 payer key
+          T9  task -d docs/dev/daemon port-forward    # node0 HAPI :50211 — LEAVE RUNNING in its own terminal
+          T10 task -d docs/dev/daemon upload         # upload the v0.74.2 package into special file 0.0.150
+          T11 task -d docs/dev/daemon prepare        # freeze prepare (pinned to H)
+          T12 task -d docs/dev/daemon freeze         # freeze upgrade (~3 min out) — network freezes, daemon executes
 
-          # ── observe + verify the daemon execute handshake ──
-          T16 task -d docs/dev/daemon watch          # watch NetworkUpgradeExecute advance + tail the daemon log
-          T17 task -d docs/dev/daemon verify         # assert ConfigCRsApplied/DaemonResult + config CRs Valid
-          T18 task -d docs/dev/daemon version        # beacon network version -> 0.74.2
+          # observe + verify the daemon execute handshake
+          T13 task -d docs/dev/daemon watch          # watch NetworkUpgradeExecute advance
+          T14 task -d docs/dev/daemon verify         # assert ConfigCRsApplied/DaemonResult + config CRs Valid
+          T15 task -d docs/dev/daemon version        # beacon network version -> 0.74.2
 
-          # ── clean up ──
-          T19 task -d docs/dev/daemon reset          # daemon + cluster uninstall, restore upgrade dir
-          T20 task -d docs/dev/daemon teardown       # reuses uat:teardown
+          # clean up
+          T16 task -d docs/dev/daemon reset          # daemon + cluster uninstall, restore upgrade dir
+          T17 task -d docs/dev/daemon teardown       # reuses uat:teardown
 
-        daemon:logs (T9) and port-forward (T12) are long-running — each in its own terminal.
+        daemon:logs (T7) and port-forward (T9) are long-running — each in its own terminal.
+        Re-run 'task -d docs/dev/daemon prep' on the host whenever you rebuild the zips/beacon.
         EOF
 
   # ── 1. build the binaries on the VM ───────────────────────────────────────────
@@ -212,7 +226,7 @@ tasks:
         sudo kubectl -n {{.OPERATOR_NS}} get pods
         sudo kubectl get crd networkupgradeexecutes.{{.API_GROUP}}
 
-  # ── 5. a REAL v0.74.0 consensus network ──────────────────────────────────────
+  # ── 5. deploy v0.74.0 consensus network in DAEMON-DELEGATED mode ──────────────────────────────────────
   network:
     desc: "Inside VM: deploy consensus node{{.NODE_ID}} (v{{.BASE_VERSION}}) from the extracted package + generate genesis"
     cmds:
@@ -229,7 +243,7 @@ tasks:
         # created with spec.consensus.provisionerDaemonEnabled=true from the start, so
         # the UC comes up in mainnet mode on first reconcile — no post-patch needed).
         sudo solo-provisioner --skip-hardware-checks consensus node install --experimental \
-          --namespace {{.NS}} --node-id {{.NODE_ID}} --profile local \
+          --namespace {{.NS}} --node-id {{.NODE_ID}} --account-id {{.ACCOUNT_ID}} --profile local \
           --provisioner-daemon \
           --deployment-package-dir {{.PKG}} \
           --signing-secret node{{.NODE_ID}}-gossip-keys \
@@ -247,6 +261,9 @@ tasks:
   # ── 6. install + run the host daemon ──────────────────────────────────────────
   daemon:install:
     desc: "Inside VM: install the solo-provisioner-daemon for consensus-node (provisions daemon-cn RBAC + scoped kubeconfig) and start it"
+    preconditions:
+      - sh: 'test -x /mnt/solo-weaver/bin/solo-provisioner-daemon-linux-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")'
+        msg: "local daemon build not found under /mnt/solo-weaver/bin — run 'task -d docs/dev/daemon rebuild' first (it builds CLI+daemon on the VM and self-installs)."
     cmds:
       - |
         set -e
@@ -287,52 +304,106 @@ tasks:
     cmds:
       - sudo solo-provisioner daemon service check
 
-  # ── 7. upgrade package + beacon (needs the solo-operator checkout) ────────────
+  # ── 7. HOST PREP (run on the DEV MACHINE, not the VM) ─────────────────────────
+  # solo-operator is not mounted in the VM, so build its artifacts on the host, stage
+  # them into the weaver checkout (test/data + bin), and vm:sync into the VM. `prep`
+  # chains all of it; run it once at the beginning.
+  prep:
+    desc: "Host: clone solo-operator (if needed), build zips + beacon, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
+    cmds:
+      - task: clone
+      - task: zip
+      - task: package
+      - task: beacon:build
+      - task: sync
+
+  clone:
+    desc: "Host: git clone solo-operator into SOLO_OPERATOR_DIR if not already checked out (uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env)"
+    status:
+      # Skip the clone when the checkout already exists.
+      - test -d "{{.SOLO_OPERATOR_DIR}}/.git"
+    cmds:
+      - |
+        set -e
+        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
+        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)}"
+        echo "▶ solo-operator not found at {{.SOLO_OPERATOR_DIR}} — cloning"
+        # Inject the PAT via env-only git config (insteadOf), so the token is never
+        # written into the cloned repo's remote URL. Clones the default branch; check
+        # out a matching ref if `task build:beacon` / test/dev are on another branch.
+        GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf" \
+        GIT_CONFIG_VALUE_0="https://github.com/" \
+        git clone https://github.com/hashgraph/solo-operator.git "{{.SOLO_OPERATOR_DIR}}"
+        echo "✓ cloned solo-operator to {{.SOLO_OPERATOR_DIR}}"
+
   zip:
-    desc: "Build the v{{.BASE_VERSION}}+v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree and print H"
+    desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"
+    status:
+      # Idempotent: skip when both zips are already built. Remove them (or the
+      # staging dir) to force a rebuild.
+      - test -f "{{.STAGING}}/build-v{{.BASE_VERSION}}.zip"
+      - test -f "{{.ZIP_SRC}}"
     cmds:
       - |
         set -e
         cd {{.SOLO_OPERATOR_DIR}}/test/dev
         task setup            # downloads the base+upgrade zips (needs internet)
         task build            # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
-      - task: print-hash
-
-  print-hash:
-    desc: "Print the upgrade zip path and its SHA-384 (H)"
-    silent: true
-    cmds:
-      - |
-        if [ ! -f "{{.ZIP}}" ]; then
-          echo "!! upgrade zip not found: {{.ZIP}} — run 'task -d docs/dev/daemon zip' first" >&2
-          exit 1
-        fi
-        echo "ZIP={{.ZIP}}"
-        echo "H={{.H}}"
 
   package:
-    desc: "Host: unzip the base-version (v{{.BASE_VERSION}}) deployment package into the weaver checkout (test/data) for `consensus node install --deployment-package-dir`"
+    desc: "Host: stage the base package (unzipped) + the upgrade zip into the weaver checkout's test/data (synced into the VM by `vm:sync`)"
     cmds:
       - |
         set -e
-        BASE_ZIP="{{.SOLO_OPERATOR_DIR}}/test/dev/staging/build-v{{.BASE_VERSION}}.zip"
-        if [ ! -f "$BASE_ZIP" ]; then
-          echo "!! base zip not found: $BASE_ZIP — run 'task -d docs/dev/daemon zip' first" >&2
-          exit 1
-        fi
-        mkdir -p "{{.PKG_SRC}}"
+        BASE_ZIP="{{.STAGING}}/build-v{{.BASE_VERSION}}.zip"
+        for z in "$BASE_ZIP" "{{.ZIP_SRC}}"; do
+          if [ ! -f "$z" ]; then
+            echo "!! zip not found: $z — run 'task -d docs/dev/daemon zip' first" >&2
+            exit 1
+          fi
+        done
+        mkdir -p "{{.WEAVER_ROOT}}/test/data" "{{.PKG_SRC}}"
+        # Base package UNZIPPED — `consensus node install` reads a directory.
         unzip -o "$BASE_ZIP" -d "{{.PKG_SRC}}"
-        echo "✓ unzipped v{{.BASE_VERSION}} package to {{.PKG_SRC}}"
-        echo "  (visible in the VM at {{.PKG}} via the /mnt/solo-weaver mount)"
+        # Upgrade package as a ZIP — beacon uploads the .zip.
+        cp -f "{{.ZIP_SRC}}" "{{.WEAVER_ROOT}}/test/data/build-v{{.UPGRADE_VERSION}}.zip"
+        echo "✓ staged base package -> {{.PKG_SRC}} and upgrade zip -> test/data/"
+        echo "  in the VM (after vm:sync): PKG={{.PKG}}  ZIP={{.ZIP}}"
 
   beacon:build:
-    desc: "Build bin/beacon in the solo-operator checkout (alt: ghcr.io/hashgraph/solo-operator/beacon:0.7.0 image — see docs/beacon README §B)"
+    desc: "Host: build bin/beacon in the solo-operator checkout and stage it into the weaver bin/ (synced into the VM). Alt: the ghcr beacon image, docs/beacon README §B"
+    status:
+      # Idempotent: skip when beacon is already staged. Remove bin/beacon to rebuild.
+      - test -x "{{.WEAVER_ROOT}}/bin/beacon"
     cmds:
       - |
         set -e
         cd {{.SOLO_OPERATOR_DIR}}
-        task build:beacon      # -> {{.BEACON}}
-        ls -l {{.BEACON}}
+        task build:beacon      # -> {{.BEACON_SRC}}
+        mkdir -p "{{.WEAVER_ROOT}}/bin"
+        cp -f "{{.BEACON_SRC}}" "{{.WEAVER_ROOT}}/bin/beacon"
+        ls -l "{{.WEAVER_ROOT}}/bin/beacon"
+
+  sync:
+    desc: "Host: rsync the weaver checkout (incl. the staged zips/package/beacon) into the VM's /mnt/solo-weaver (runs the root vm:sync)"
+    cmds:
+      # vm:sync is idempotent w.r.t. the VM: its deps only ensure the VM exists
+      # (vm:ensure-exists is a no-op when it already does) and start it (a no-op when
+      # already running) before rsyncing. It never resets/recreates a running VM.
+      - task -d {{.WEAVER_ROOT}} vm:sync
+
+  print-hash:
+    desc: "Inside VM: print the synced upgrade zip path and its SHA-384 (H)"
+    silent: true
+    cmds:
+      - |
+        if [ ! -f "{{.ZIP}}" ]; then
+          echo "!! upgrade zip not found in the VM: {{.ZIP}} — run 'prep' on the host (or 'vm:sync')" >&2
+          exit 1
+        fi
+        echo "ZIP={{.ZIP}}"
+        echo "H={{.H}}"
 
   config:
     desc: "Write {{.BEACON_HOME}} config.yaml + the 0.0.2 payer key (copied from solo-operator docs/beacon)"
