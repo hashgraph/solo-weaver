@@ -177,6 +177,77 @@ Winning strategy = highest-priority source that contributed a non-empty struct.
 
 ---
 
+### Explicit-config promotion in the BLL
+
+The selectors above hand the deployed release (`StrategyReality` / `StrategyState`)
+priority over `StrategyConfig` for `chartRef`, `chartVersion` (outside an upgrade)
+and `storage`.  That is correct for a bare invocation: `pkg/config.globalConfig` is
+pre-populated with the `deps.*` constants, so `StrategyConfig` is non-empty even
+when no `--config` was passed, and promoting it would reset a running release to
+the compiled-in chart version on every command.
+
+When the operator *did* pass `--config`, that file is a desired-state declaration
+and must outrank the deployed release.  `resolveBlocknodeEffectiveInputs`
+(`internal/bll/blocknode/helpers.go`) applies that promotion after resolution
+rather than in the selectors, because only the BLL can tell the two cases apart —
+`config.File()` reports the path `config.Initialize` loaded, empty when there was
+none.
+
+The promotion is **narrow**: it moves the config file above the deployed release and
+changes nothing else.  Per field, with `--config` supplied:
+
+```
+field set by flag or SOLO_PROVISIONER_*  →  promotion skipped; the selector's own
+                                            order stands unchanged
+field declared only in the file          →  file wins over the deployed release
+field the file omits                     →  selector's answer, unchanged, i.e. the
+                                            deployed release when there is one
+```
+
+The last row is load-bearing, not incidental.  `config.Initialize` zeroes
+`globalConfig` before unmarshalling, so a key absent from the file arrives as `""`,
+which `preferConfigFile` reads as "the file said nothing".  Drop that guard and a
+partial config file would blank every field it failed to mention —
+`TestResolveEffectiveInputs_ConfigFileOmissionsFallBackToDeployedState` fails in
+exactly that way if it is removed.
+
+`preferConfigFile` implements the scalar half.  Note that the flag/env case is a
+**suppression, not a promotion**: it does not lift flag or env above the deployed
+release.  For `chartRef` and `chartVersion` the selectors still rank a deployed
+release ahead of both, so `SOLO_PROVISIONER_BLOCKNODE_CHART` on a deployed node wins
+nothing — it only stops the file from taking effect on that field.  Env and flag
+regain their documented positions (`UserInput > Env > Config`) once nothing is
+deployed, which is where those selectors consult them at all.
+
+Storage is a per-field merge rather than a winner, so the cascade is rebuilt as
+`user input → file → resolved`.  That also keeps `MergeFrom`'s base-path mode intact —
+a file-supplied `BasePath` suppresses the individual hostPaths the reality checker
+read off the PVs.
+
+Release identity (`namespace`, `releaseName`, `chartName`) is deliberately excluded.
+Redeclaring it does not reconfigure the running release; it points Helm at a second
+one and orphans the first.  Retention needs no promotion — `retentionResolver`
+already ranks `StrategyConfig` above the deployed release.
+
+Promoting `chartVersion` and `chartRef` makes them reachable on every action,
+including `reconfigure` — which re-applies values at the deployed chart and version
+and runs none of `upgrade`'s checks.  `ReconfigureHandler.BuildWorkflow` therefore
+rejects an effective version *or* chart ref that differs from the deployed release
+and points at `upgrade`.  Neither guard is `--force`-bypassable: without them a
+config file would be a way to downgrade a release past the check `upgrade` exists to
+enforce, or to switch charts underneath a running release without even the warning
+`upgrade` emits.
+
+That warning is worth noting on its own.  `upgrade_handler.go` has always logged one
+when the deployed chart ref differs from the requested one, but it could not fire,
+for a reason that has nothing to do with resolution: `reality.blockNodeChecker`
+rebuilt `BlockNodeState` from the Helm release and blanked `ReleaseInfo.ChartRef`,
+because Helm does not record it.  Every `currentState` reaching a handler after a
+refresh therefore reported no deployed chart, and both the warning and the
+reconfigure guard above were dead branches.  The checker now carries the persisted
+ref across a refresh, alongside `TrafficShapingDisabled` and `Shaping`, which are
+weaver-only records in the same class.
+
 ## `BlockNodeRuntimeResolver`
 
 The concrete resolver that owns all per-field `*EffectiveValue[T]` instances
@@ -313,6 +384,10 @@ Default set?       ──yes──►  Default wins
      ▼
                              Zero value (empty string / zero struct)
 ```
+
+For block-node `chartRef` / `chartVersion` / `storage` this walk is the input to one
+further step, not the final answer — see [Explicit-config promotion in the
+BLL](#explicit-config-promotion-in-the-bll).
 
 ---
 

@@ -418,6 +418,13 @@ prompt for a feature that is currently on:
 > passed to `reconfigure`, `upgrade` or `reset` without it is rejected with a clear error,
 > whether or not `--with-reset` is also set.
 
+> **Changing the chart or the version needs `upgrade`.** Neither has a flag here, but a
+> `--config` file naming a `blockNode.version` or `blockNode.chart` other than the
+> deployed one is rejected rather than applied — `reconfigure` re-applies values at the
+> running chart and version and checks neither move for safety. `--force` does not skip
+> these; use [`upgrade`](#upgrade--move-to-a-new-chart-version), which enforces
+> no-downgrade and warns on a chart switch.
+
 ---
 
 ## `reset` — wipe storage, keep the release

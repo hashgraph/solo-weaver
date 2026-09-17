@@ -4,7 +4,7 @@ Flags on this page work on every `solo-provisioner` command.
 
 | Flag | Short | What it does | Default |
 |---|---|---|---|
-| `--config` | `-c` | Path to config file. See [Configuration](configuration.md). | none |
+| `--config` | `-c` | Path to config file. On an already-installed block node the file's `blockNode` settings override what is recorded for the running release. See [Configuration](configuration.md). | none |
 | `--output` | `-o` | Output format: `text` or `json`. | `text` |
 | `--log-level` | — | Log level: `debug`, `info`, `warn`, `error`. | from config file |
 | `--force` | `-y` | Force an override, or skip a confirmation prompt. | `false` |

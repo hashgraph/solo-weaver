@@ -4,6 +4,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -193,5 +194,37 @@ func TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue(t *testing.T) {
 	}
 	if len(got.InClusterPorts) != 0 {
 		t.Errorf("InClusterPorts: expected cleared (empty), got %v", got.InClusterPorts)
+	}
+}
+
+// TestFile_ReportsExplicitlyLoadedPath covers the gate the block-node BLL relies
+// on to tell an operator-authored config file from the compiled-in deps defaults:
+// both look identical through Get(), so File() is the only way to distinguish them.
+func TestFile_ReportsExplicitlyLoadedPath(t *testing.T) {
+	if err := Initialize(""); err != nil {
+		t.Fatalf("Initialize(\"\") failed: %v", err)
+	}
+	if got := File(); got != "" {
+		t.Fatalf("File() with no --config: expected %q, got %q", "", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("blockNode:\n  version: \"0.26.0\"\n"), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	if err := Initialize(path); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	if got := File(); got != path {
+		t.Fatalf("File() after Initialize: expected %q, got %q", path, got)
+	}
+
+	// A subsequent bare run must not keep reporting the previous path.
+	if err := Initialize(""); err != nil {
+		t.Fatalf("Initialize(\"\") failed: %v", err)
+	}
+	if got := File(); got != "" {
+		t.Fatalf("File() after Initialize(\"\"): expected %q, got %q", "", got)
 	}
 }

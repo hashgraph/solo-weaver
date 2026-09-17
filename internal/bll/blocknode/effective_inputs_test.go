@@ -6,11 +6,14 @@ package blocknode
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -196,4 +199,247 @@ func TestResolveEffectiveInputs_ExplicitTrafficShapingWins(t *testing.T) {
 	require.Contains(t, eff.Custom.ShapeOverrides, "partner",
 		"--shape supplied on this run must reach the tc steps")
 	assert.Equal(t, "300mbit", eff.Custom.ShapeOverrides["partner"].Rate)
+}
+
+// withConfigFile writes body to a temp config.yaml and loads it through
+// config.Initialize, so config.File() reports a real path for the duration of the
+// test. The previous global config is restored on cleanup: pkg/config keeps it in
+// a package var, so a leaked config file would bleed into sibling tests.
+func withConfigFile(t *testing.T, body string) {
+	t.Helper()
+
+	saved := config.Get()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	require.NoError(t, config.Initialize(path))
+
+	t.Cleanup(func() {
+		require.NoError(t, config.Initialize(""))
+		require.NoError(t, config.Set(&saved))
+	})
+}
+
+// newDeployedRuntime builds a resolver over a deployed release, wired the way
+// cmd/cli/commands/block/node/init.go wires it: config from the file (or the
+// compiled-in defaults when none was loaded), then defaults, then env.
+//
+// The reality checker returns the same deployed state, so if a selector is ever
+// changed to consult StrategyReality where it consults StrategyState today, these
+// tests keep describing a deployed release rather than quietly falling through to
+// the not-deployed branch. resolveBlocknodeEffectiveInputs does not call
+// RefreshState itself — the handler does, before it — so nothing here populates
+// StrategyReality; this only keeps the fixture honest about what it models.
+func newDeployedRuntime(t *testing.T, st state.BlockNodeState) *rsl.BlockNodeRuntimeResolver {
+	t.Helper()
+
+	checker := &fakeBlockNodeChecker{st: st}
+	r, err := rsl.NewBlockNodeRuntimeResolver(config.Get(), st, checker, 10*time.Minute)
+	require.NoError(t, err)
+
+	runtime := r.(*rsl.BlockNodeRuntimeResolver)
+	runtime.WithDefaults(config.DefaultsConfig())
+	runtime.WithEnv(config.EnvConfig())
+	return runtime
+}
+
+// TestResolveEffectiveInputs_ExplicitConfigBeatsDeployedState pins the rule that
+// an operator-supplied --config file outranks the deployed release. The RSL
+// selectors lock chart ref, chart version and storage to that release, so without
+// this promotion a file declaring different values is silently dropped and the
+// release is re-applied with whatever state.yaml recorded.
+func TestResolveEffectiveInputs_ExplicitConfigBeatsDeployedState(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  chart: oci://registry.example.com/hiero/block-node
+  version: 0.40.0
+  storage:
+    liveSize: 500Gi
+`)
+
+	runtime := newDeployedRuntime(t, deployedShapingBlockNodeState())
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		runtime,
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "oci://registry.example.com/hiero/block-node", eff.Custom.Chart,
+		"chart declared in an explicit --config file must beat the deployed release")
+	assert.Equal(t, "0.40.0", eff.Custom.ChartVersion,
+		"chart version declared in an explicit --config file must beat the deployed release")
+	assert.Equal(t, "500Gi", eff.Custom.Storage.LiveSize,
+		"storage size declared in an explicit --config file must beat the deployed release")
+	assert.Equal(t, "/mnt/fast-storage", eff.Custom.Storage.BasePath,
+		"fields the file leaves out must still come from the deployed release")
+}
+
+// TestResolveEffectiveInputs_ExplicitConfigBasePathReplacesDeployedPaths pins the
+// base-path half of the storage merge. The reality checker reads the individual
+// hostPaths back off the PVs, so merging the deployed storage in after a
+// file-supplied BasePath would leave both set and the old paths would win at
+// render time. MergeFrom's base-path mode is what prevents that.
+func TestResolveEffectiveInputs_ExplicitConfigBasePathReplacesDeployedPaths(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  storage:
+    basePath: /mnt/new-storage
+`)
+
+	st := deployedShapingBlockNodeState()
+	st.Storage = models.BlockNodeStorage{
+		ArchivePath: "/mnt/fast-storage/archive",
+		LivePath:    "/mnt/fast-storage/live",
+		LogPath:     "/mnt/fast-storage/logs",
+	}
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, st),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "/mnt/new-storage", eff.Custom.Storage.BasePath)
+	assert.Empty(t, eff.Custom.Storage.ArchivePath,
+		"deployed hostPaths must not be merged back in on top of a file-supplied basePath")
+	assert.Empty(t, eff.Custom.Storage.LivePath)
+	assert.Empty(t, eff.Custom.Storage.LogPath)
+}
+
+// TestResolveEffectiveInputs_FlagBeatsExplicitConfig verifies the promotion does
+// not overshoot: --chart-version still outranks the file it was passed alongside.
+func TestResolveEffectiveInputs_FlagBeatsExplicitConfig(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  version: 0.40.0
+`)
+
+	inputs := models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{ChartVersion: "0.41.0"},
+	}
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode},
+		inputs,
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.41.0", eff.Custom.ChartVersion,
+		"--chart-version must outrank the --config file")
+}
+
+// TestResolveEffectiveInputs_EnvSuppressesExplicitConfig verifies the promotion
+// leaves a field alone when the operator pinned it in the environment: the file
+// does not leapfrog SOLO_PROVISIONER_*, so whatever the resolver decided for that
+// field stands. Here the release is deployed, so the resolver's answer is the
+// deployed chart ref.
+func TestResolveEffectiveInputs_EnvSuppressesExplicitConfig(t *testing.T) {
+	t.Setenv("SOLO_PROVISIONER_BLOCKNODE_CHART", "oci://env.example.com/block-node")
+	withConfigFile(t, `
+blockNode:
+  chart: oci://file.example.com/block-node
+`)
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "oci://example.com/block-node", eff.Custom.Chart,
+		"a field pinned via SOLO_PROVISIONER_* must not be overridden by the --config file")
+}
+
+// TestResolveEffectiveInputs_IdentityFieldsStayLockedToDeployedRelease guards the
+// scope boundary of the config promotion. Namespace, release name and chart name
+// are not reconfigurable: pointing them somewhere else makes Helm address a second
+// release and orphan the running one, so a config file must not be able to.
+func TestResolveEffectiveInputs_IdentityFieldsStayLockedToDeployedRelease(t *testing.T) {
+	withConfigFile(t, `
+blockNode:
+  namespace: other-ns
+  release: other-release
+  chartName: other-chart
+`)
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "block-node", eff.Custom.Namespace)
+	assert.Equal(t, "block-node", eff.Custom.Release)
+	assert.Equal(t, "block-node", eff.Custom.ChartName)
+}
+
+// TestResolveEffectiveInputs_WithoutConfigFileDeployedStateStillWins is the
+// regression guard that makes the whole change safe. pkg/config pre-populates
+// globalConfig with the deps constants, so the config tier is non-empty even with
+// no --config; promoting it unconditionally would reset a deployed release to the
+// compiled-in chart version on every invocation.
+func TestResolveEffectiveInputs_WithoutConfigFileDeployedStateStillWins(t *testing.T) {
+	require.Empty(t, config.File(), "this test must run with no --config loaded")
+
+	st := deployedShapingBlockNodeState()
+	st.ReleaseInfo.ChartVersion = "0.37.1"
+	st.ReleaseInfo.ChartRef = "oci://example.com/block-node"
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, st),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.37.1", eff.Custom.ChartVersion)
+	assert.Equal(t, "oci://example.com/block-node", eff.Custom.Chart)
+	assert.Equal(t, "/mnt/fast-storage", eff.Custom.Storage.BasePath)
+}
+
+// TestResolveEffectiveInputs_ConfigFileOmissionsFallBackToDeployedState pins the
+// other half of the promotion contract: --config promotes only the fields the
+// file actually declares. A key the file leaves out must still resolve to the
+// deployed release, not to a compiled-in default.
+//
+// This is not incidental. config.Initialize zeroes globalConfig before
+// unmarshalling, so an omitted key arrives as "" — which is exactly what
+// preferConfigFile treats as "the file said nothing, keep the resolver's answer".
+// Were that guard ever dropped, passing a partial config file would silently
+// reset every field it did not mention.
+func TestResolveEffectiveInputs_ConfigFileOmissionsFallBackToDeployedState(t *testing.T) {
+	// Declares storage sizing only: no chart, no version, no base path.
+	withConfigFile(t, `
+blockNode:
+  storage:
+    liveSize: 500Gi
+`)
+
+	eff, err := resolveBlocknodeEffectiveInputs(
+		newDeployedRuntime(t, deployedShapingBlockNodeState()),
+		models.Intent{Action: models.ActionReconfigure, Target: models.TargetBlockNode},
+		models.UserInputs[models.BlockNodeInputs]{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, "oci://example.com/block-node", eff.Custom.Chart,
+		"a chart the config file does not declare must stay at the deployed value")
+	assert.Equal(t, "0.37.1", eff.Custom.ChartVersion,
+		"a version the config file does not declare must stay at the deployed value")
+	assert.Equal(t, "/mnt/fast-storage", eff.Custom.Storage.BasePath,
+		"a storage field the config file does not declare must stay at the deployed value")
+	assert.Equal(t, "500Gi", eff.Custom.Storage.LiveSize,
+		"the one field the file did declare must still be promoted")
 }

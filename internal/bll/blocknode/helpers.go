@@ -254,6 +254,46 @@ func resolveBlocknodeEffectiveInputs(
 			Msg("Applied persisted traffic-shaping content as fallback for unset inputs")
 	}
 
+	// An operator who passed --config is declaring desired state, so that file
+	// outranks whatever the resolver read back from the deployed release. The RSL
+	// selectors cannot express this on their own: with no --config the config tier
+	// still holds the compiled-in deps constants (see pkg/config.globalConfig), and
+	// promoting those over the deployed release would reset the running chart
+	// version and storage layout on every invocation.
+	//
+	// Release identity — namespace, release name, chart name — is deliberately left
+	// out. Redeclaring it does not reconfigure the running release; it points Helm
+	// at a second one and orphans the first.
+	chartRef := effChartRepo.Get().Val()
+	chartVersion := effChartVersion.Get().Val()
+	storage := effStorage.Get().Val()
+	if configFile := config.File(); configFile != "" {
+		fileCfg := config.Get().BlockNode
+		envCfg := config.EnvConfig().BlockNode
+
+		chartRef = preferConfigFile(chartRef, fileCfg.Chart, inputs.Custom.Chart, envCfg.Chart)
+		chartVersion = preferConfigFile(chartVersion, fileCfg.ChartVersion, inputs.Custom.ChartVersion, envCfg.ChartVersion)
+
+		// Storage is a per-field merge rather than a winner, so rebuild the cascade
+		// with the file slotted above the deployed release. MergeFrom only fills
+		// gaps, so applying it flags → file → resolved yields that precedence, and
+		// it keeps base-path mode intact: once BasePath is set the individual paths
+		// the reality checker read off the PVs are not merged back in.
+		if !fileCfg.Storage.IsEmpty() {
+			merged := inputs.Custom.Storage
+			merged.MergeFrom(fileCfg.Storage)
+			merged.MergeFrom(storage)
+			storage = merged
+		}
+
+		logx.As().Debug().
+			Str("configFile", configFile).
+			Str("chartRef", chartRef).
+			Str("chartVersion", chartVersion).
+			Any("storage", storage).
+			Msg("Applied explicit config file over deployed block node state")
+	}
+
 	effectiveInputs := models.UserInputs[models.BlockNodeInputs]{
 		Common: inputs.Common,
 		Custom: models.BlockNodeInputs{
@@ -262,9 +302,9 @@ func resolveBlocknodeEffectiveInputs(
 			Release:           effReleaseName.Get().Val(),
 			Namespace:         effNamespace.Get().Val(),
 			ChartName:         effChartName.Get().Val(),
-			Chart:             effChartRepo.Get().Val(),
-			ChartVersion:      effChartVersion.Get().Val(),
-			Storage:           effStorage.Get().Val(),
+			Chart:             chartRef,
+			ChartVersion:      chartVersion,
+			Storage:           storage,
 			HistoricRetention: effHistoricRetention.Get().Val(),
 			RecentRetention:   effRecentRetention.Get().Val(),
 			// Passed through from user input (no resolution)
@@ -432,4 +472,21 @@ func planStorage(currentState state.State, ins models.BlockNodeInputs) (storageP
 	}
 
 	return storagePlan{purgeIns: purgeIns, recreate: false}, nil
+}
+
+// preferConfigFile picks the value an explicitly supplied --config file declared
+// for a field, falling back to resolved (the resolver's answer, which for a
+// deployed release is the value read off the cluster).
+//
+// A flag or a SOLO_PROVISIONER_* value on the same field suppresses the file
+// entirely: resolved is returned untouched, so that field keeps whatever order
+// its selector already applied. This is a suppression, not a promotion of flag
+// and env above the deployed release — for chartRef and chartVersion the
+// selectors still lock a deployed release ahead of both, so an env var on a
+// deployed field wins nothing; it only stops the file from taking effect.
+func preferConfigFile(resolved, file, flag, env string) string {
+	if file == "" || flag != "" || env != "" {
+		return resolved
+	}
+	return file
 }

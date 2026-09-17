@@ -19,6 +19,10 @@ import (
 // import cycle: pkg/config is imported by many packages that pkg/software
 // also reaches into transitively (e.g. internal/proxy).
 
+// configFile is the path Initialize read the configuration from; empty when no
+// --config was supplied. See File.
+var configFile string
+
 var globalConfig = models.Config{
 	Profile: "",
 	Log: logx.LoggingConfig{
@@ -66,6 +70,7 @@ var globalConfig = models.Config{
 // Returns:
 //   - An error if the configuration cannot be loaded.
 func Initialize(path string) error {
+	configFile = ""
 	if path != "" {
 		globalConfig = models.Config{}
 		viper.Reset()
@@ -85,9 +90,22 @@ func Initialize(path string) error {
 				WithProperty(errorx.PropertyPayload(), path)
 		}
 
+		configFile = path
 	}
 
 	return nil
+}
+
+// File returns the path Initialize loaded the configuration from, or "" when the
+// caller passed no --config and globalConfig therefore still holds the
+// compiled-in deps defaults above.
+//
+// Callers use this to distinguish an operator-authored config file from those
+// defaults. The distinction matters because the two are indistinguishable in
+// Get(): both surface as a populated models.Config, so any rule of the form
+// "the config file outranks X" would otherwise let a deps constant outrank X too.
+func File() string {
+	return configFile
 }
 
 // Get returns the loaded configuration.

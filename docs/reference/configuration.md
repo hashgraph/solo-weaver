@@ -68,6 +68,63 @@ proxy:
   containerRegistryProxy: "localhost:5050"
 ```
 
+### Re-declaring an installed block node
+
+The provisioner records the running block node's chart, version and storage layout so it
+can re-apply them without you re-typing anything. When you pass `--config`, the file wins
+over those records — it is a statement of what you want, not a fallback.
+
+**Only the settings your file actually names change.** A file is not a complete
+replacement for what is on record: leave a setting out and the running block node keeps
+its current value. A file with just a `liveSize` in it changes the live volume size and
+nothing else. And with no `--config` at all, nothing is overridden — the running block
+node's own values are used throughout.
+
+For the settings the file does name:
+
+| `blockNode` setting | On an installed block node |
+|---|---|
+| `chart` | the file's value is used on `install` and `upgrade`; `reconfigure` refuses a change |
+| `version` | the file's value is used on `install` and `upgrade`; `reconfigure` refuses a change |
+| `storage.*` | the file's values are used, field by field |
+| `historicRetention`, `recentRetention` | the file's values are used |
+| `namespace`, `release`, `chartName` | **ignored** — see below |
+
+Two things stay out of your way. A command-line flag still beats the file, and so does a
+`SOLO_PROVISIONER_*` variable: a field you set either of those ways is left exactly as it
+would have been without the file.
+
+`namespace`, `release` and `chartName` are the running release's identity. Changing them
+does not move the block node — it makes Helm address a *different* release and leave the
+running one behind — so the file cannot change them once the block node is installed. To
+move a block node to a new namespace or release name, uninstall and install again.
+
+A change that the cluster cannot absorb in place is still refused rather than applied. In
+particular, changing `storage.basePath` or any individual path under it means the existing
+PersistentVolumes have to be deleted and recreated, so `block node reconfigure` stops and
+asks for `--purge-storage`:
+
+```
+storage paths have changed; PVs/PVCs cannot be updated without clearing existing data
+  → re-run with --purge-storage to delete existing PVs/PVCs and recreate them at the new paths
+```
+
+`reconfigure` re-applies your values at the chart and version the block node is already
+running, and checks neither a version move nor a chart switch for safety. So if your file
+names a `version` or a `chart` other than the deployed one, it stops and sends you to
+`upgrade`, which does check:
+
+```
+block node chart version cannot be changed by a reconfigure: deployed "0.30.0", requested "0.31.0"
+  → use 'solo-provisioner block node upgrade' to move to a different chart version, or drop
+    blockNode.version from the config file to reconfigure at the deployed version
+```
+
+`--force` does not skip these — the answer is a different command, not a flag.
+
+With no `--config`, nothing changes: the running release's own values keep winning over the
+built-in defaults.
+
 ## Environment variables
 
 Environment variables override config-file values. **They only take effect when you also pass
