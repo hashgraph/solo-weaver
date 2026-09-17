@@ -42,15 +42,17 @@ const (
 	// maxConfigFileSize caps a config file — CRs are stored in etcd (~1.5MiB/object).
 	maxConfigFileSize = 1 << 20 // 1 MiB
 
+	operatorAPIGroup = "operator.solo.hiero.org"
+
 	// configCRGroup / configCRVersion are the ConsensusConfig CR API coordinates.
 	// Mirror the operator's api/v1alpha1 GroupVersion (matches networkUpgradeExecuteGVR).
-	configCRGroup   = "operator.solo.hedera.com"
+	configCRGroup   = operatorAPIGroup
 	configCRVersion = "v1alpha1"
 
 	// labelOperationID / annotationCreatedBy mirror the operator's label + annotation
 	// keys exactly (api/v1alpha1 LabelOperationID; internal/uc created-by annotation).
-	labelOperationID    = "operator.solo.hiero.org/operation-id"
-	annotationCreatedBy = "operator.solo.hiero.org/created-by"
+	labelOperationID    = operatorAPIGroup + "/operation-id"
+	annotationCreatedBy = operatorAPIGroup + "/created-by"
 	createdByDaemon     = "provisioner-daemon"
 
 	// configCRPollInterval is the cadence for polling config CRs toward Valid=True.

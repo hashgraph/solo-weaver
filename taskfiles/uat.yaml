@@ -656,12 +656,11 @@ tasks:
 
         echo -e '\n▶ Step 4: Verify CRDs are installed'
         for CRD in \
-          consensuscapsules.operator.solo.hedera.com \
-          envoyproxies.operator.solo.hedera.com \
-          haproxycapsules.operator.solo.hedera.com \
-          helmcapsules.operator.solo.hedera.com \
-          networkoperations.operator.solo.hedera.com \
-          orbits.operator.solo.hedera.com; do
+          consensuscapsules.operator.solo.hiero.org \
+          envoyproxies.operator.solo.hiero.org \
+          haproxycapsules.operator.solo.hiero.org \
+          helmcapsules.operator.solo.hiero.org \
+          orbits.operator.solo.hiero.org; do
           kubectl get crd "$CRD" > /dev/null 2>&1 || { echo "FAIL: CRD $CRD not found"; exit 1; }
           echo "   $CRD ✓"
         done

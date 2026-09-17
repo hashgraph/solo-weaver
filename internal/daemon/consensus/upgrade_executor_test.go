@@ -42,11 +42,11 @@ func newFakeDynamicClient(t *testing.T, objects ...runtime.Object) *fake.FakeDyn
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
 		&unstructured.Unstructured{},
 	)
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
 		&unstructured.UnstructuredList{},
 	)
 	return fake.NewSimpleDynamicClient(scheme, objects...)
@@ -54,7 +54,7 @@ func newFakeDynamicClient(t *testing.T, objects ...runtime.Object) *fake.FakeDyn
 
 func newExecuteCR(name, operationID, phase string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "operator.solo.hedera.com/v1alpha1",
+		"apiVersion": "operator.solo.hiero.org/v1alpha1",
 		"kind":       "NetworkUpgradeExecute",
 		"metadata":   map[string]interface{}{"name": name, "namespace": testNS},
 		"spec":       map[string]interface{}{"operationId": operationID, "orbit": testNS},
@@ -338,10 +338,10 @@ func newExecuteAndConfigFakeClient(t *testing.T, autoValid bool, objects ...runt
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecute"},
 		&unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(
-		schema.GroupVersionKind{Group: "operator.solo.hedera.com", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
+		schema.GroupVersionKind{Group: "operator.solo.hiero.org", Version: "v1alpha1", Kind: "NetworkUpgradeExecuteList"},
 		&unstructured.UnstructuredList{})
 	listKinds := map[schema.GroupVersionResource]string{}
 	for _, e := range configFileKinds {
