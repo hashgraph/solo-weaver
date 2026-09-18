@@ -119,6 +119,17 @@ vars:
   BEACON_HOME: /tmp/beacon-solo
   CONFIG: "{{.BEACON_HOME}}/config.yaml"
 
+  # solo-operator manager binary: cross-compiled on the host (operator:build ->
+  # bin/manager-linux-{amd64,arm64}), copied into the weaver bin/ + synced. Used by
+  # `operator:local` to run the operator OUT of cluster (the alternative to installing
+  # the released chart in-cluster via `operator`). MANAGER resolves to the Linux binary
+  # for the machine the task runs on — `uname -m` in the VM — same scheme as BEACON.
+  MANAGER:
+    sh: echo /mnt/solo-weaver/bin/manager-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+  # In-cluster operator Deployment scaled to 0 by operator:local so the local binary
+  # is the sole reconciler; scaled back by operator:restore.
+  OPERATOR_DEPLOY: '{{.OPERATOR_DEPLOY | default "solo-operator-controller-manager"}}'
+
   # Node HAPI gRPC endpoint exposed to the host by the port-forward. The daemon/CN
   # install path has no haproxy; the operator exposes node<N>'s HAPI as the service
   # <namespace>-consensus-<node-id> (e.g. hiero-network-1-consensus-0).
@@ -144,8 +155,8 @@ tasks:
         solo-provisioner-daemon CN-upgrade e2e.
 
         ── ON THE HOST (dev machine, once) — solo-operator is not mounted in the VM ──
-          H1  task -d docs/dev/daemon prep           # build zips + beacon, stage into test/data + bin, and vm:sync into the VM
-                                                     #   (= zip + package + beacon:build + sync)
+          H1  task -d docs/dev/daemon prep           # build zips + beacon + operator manager binary, stage into test/data + bin, and vm:sync into the VM
+                                                     #   (= zip + package + beacon:build + operator:build + sync)
 
         ── INSIDE THE LINUX VM, in order ──
           # substrate: the daemon's real install path (single-node k8s)
@@ -153,6 +164,11 @@ tasks:
           T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
           T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
           T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
+              #  ── how to run solo-operator (pick one) ──
+              #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
+              #  B) local binary out-of-cluster: `operator:local` (own terminal) — scales the
+              #     in-cluster one to 0 and runs bin/manager; `operator:restore` when done.
+              #     Iterate: on the host `operator:sync` (rebuild+vm:sync), then re-run operator:local.
 
           #  deploy v0.74.0 consensus network in DAEMON-DELEGATED mode
           T5  task -d docs/dev/daemon network        # consensus node install --provisioner-daemon + genesis
@@ -234,7 +250,7 @@ tasks:
 
   # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
   operator:
-    desc: "Inside VM: install the solo-operator (v0.7.0 chart + CRDs incl. networkupgradeexecutes)"
+    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.7.0 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
     cmds:
       - |
         set -e
@@ -242,6 +258,46 @@ tasks:
         sudo solo-provisioner kube operator install --non-interactive
         sudo kubectl -n {{.OPERATOR_NS}} get pods
         sudo kubectl get crd networkupgradeexecutes.{{.API_GROUP}}
+
+  operator:local:
+    desc: "Inside VM: run the LOCAL solo-operator manager binary OUT of cluster (Choice B). Scales the in-cluster operator to 0 first so the local process is the sole reconciler. Foreground — LEAVE RUNNING in its own terminal; run `operator:restore` when done. Needs the chart installed once (via `operator`) for the CRDs/RBAC, and the binary synced (`prep`, or `operator:build`+`sync`)."
+    preconditions:
+      - sh: 'test -x {{.MANAGER}}'
+        msg: "manager binary not found at {{.MANAGER}} — build+sync it on the host: task -d docs/dev/daemon operator:build sync"
+      - sh: 'kubectl get crd networkupgradeexecutes.{{.API_GROUP}} >/dev/null 2>&1'
+        msg: "solo-operator CRDs not installed — run 'task -d docs/dev/daemon operator' first (it installs the chart CRDs + released operator); operator:local then scales that operator to 0 and runs the local binary."
+    cmds:
+      - |
+        set -e
+        # Scale the released in-cluster operator to 0 if present (it may be absent when
+        # running the local binary from a fresh cluster — CRDs still come from the chart).
+        if kubectl -n {{.OPERATOR_NS}} get deploy/{{.OPERATOR_DEPLOY}} >/dev/null 2>&1; then
+          echo "▶ scaling in-cluster operator {{.OPERATOR_NS}}/{{.OPERATOR_DEPLOY}} to 0 (local binary becomes the sole reconciler)"
+          kubectl -n {{.OPERATOR_NS}} scale deploy/{{.OPERATOR_DEPLOY}} --replicas=0 --timeout=60s
+        else
+          echo "▶ no in-cluster operator deployment {{.OPERATOR_NS}}/{{.OPERATOR_DEPLOY}} — nothing to scale down"
+        fi
+        echo "▶ running {{.MANAGER}} against the local cluster (Ctrl-C to stop, then run operator:restore)"
+        # Admin kubeconfig → full RBAC. Leader election off (single instance); metrics
+        # disabled; the released chart's other flags mirrored so behaviour matches in-cluster.
+        KUBECONFIG=$HOME/.kube/config {{.MANAGER}} \
+          --log-level=info \
+          --registry-order=Random \
+          --node-active-timeout=10m \
+          --node-active-alert-interval=5m \
+          --health-probe-bind-address=:8081 \
+          --metrics-bind-address=0
+
+  operator:restore:
+    desc: "Inside VM: scale the in-cluster solo-operator back to 1 (undo operator:local)"
+    cmds:
+      - kubectl -n {{.OPERATOR_NS}} scale deploy/{{.OPERATOR_DEPLOY}} --replicas=1
+
+  operator:sync:
+    desc: "Host: quick loop — rebuild the operator manager binary and sync it into the VM (then re-run `operator:local` inside the VM)"
+    cmds:
+      - task: operator:build
+      - task: sync
 
   # ── 5. deploy v0.74.0 consensus network in DAEMON-DELEGATED mode ──────────────────────────────────────
   network:
@@ -335,12 +391,13 @@ tasks:
   # them into the weaver checkout (test/data + bin), and vm:sync into the VM. `prep`
   # chains all of it; run it once at the beginning.
   prep:
-    desc: "Host: clone solo-operator (if needed), build zips + beacon, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
+    desc: "Host: clone solo-operator (if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
       - task: zip
       - task: package
       - task: beacon:build
+      - task: operator:build
       - task: sync
 
   clone:
@@ -420,6 +477,22 @@ tasks:
         # picked up or synced into the VM.
         rm -f "{{.WEAVER_ROOT}}/bin/beacon"
         ls -l "{{.WEAVER_ROOT}}/bin/"beacon-linux-*
+
+  operator:build:
+    desc: "Host: cross-compile the solo-operator manager (linux amd64+arm64) in the solo-operator checkout and stage both into the weaver bin/ (synced into the VM), for running the operator OUT of cluster via `operator:local`."
+    # No status guard: the operator binary is what you actively iterate on, so always
+    # rebuild (go build is incremental — cheap when nothing changed).
+    cmds:
+      - |
+        set -e
+        cd {{.SOLO_OPERATOR_DIR}}
+        task build:binary:all      # -> bin/manager-linux-{amd64,arm64}
+        mkdir -p "{{.WEAVER_ROOT}}/bin"
+        cp -f "{{.SOLO_OPERATOR_DIR}}/bin/manager-linux-amd64" "{{.SOLO_OPERATOR_DIR}}/bin/manager-linux-arm64" "{{.WEAVER_ROOT}}/bin/"
+        # Drop any stale host-arch manager so the exec-format-error binary can't be
+        # picked up or synced into the VM.
+        rm -f "{{.WEAVER_ROOT}}/bin/manager"
+        ls -l "{{.WEAVER_ROOT}}/bin/"manager-linux-*
 
   sync:
     desc: "Host: rsync the weaver checkout (incl. the staged zips/package/beacon) into the VM's /mnt/solo-weaver (runs the root vm:sync)"
