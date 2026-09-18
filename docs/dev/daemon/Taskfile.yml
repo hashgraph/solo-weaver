@@ -136,7 +136,7 @@ vars:
   PF_SVC: '{{.NS}}-consensus-{{.NODE_ID}}'
   PORT: "50211"
   # How far out (minutes) to schedule the upgrade freeze.
-  FREEZE_DELAY_MIN: "3"
+  FREEZE_DELAY_MIN: "1"
 
   # Well-known 0.0.2 genesis key (its public key matches the network-genesis
   # bootstrap.genesisPublicKey). Copied verbatim from solo-operator docs/beacon.
@@ -166,7 +166,9 @@ tasks:
           T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
               #  ── how to run solo-operator (pick one) ──
               #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
-              #  B) local binary out-of-cluster: `operator:local` (own terminal) — scales the
+              #  B) local binary out-of-cluster: run T5 (network) with the released operator
+              #     UP (its install preflights operator replicas), THEN after T5+genesis switch
+              #     to `operator:local` (own terminal) for the upgrade phase — it scales the
               #     in-cluster one to 0 and runs bin/manager; `operator:restore` when done.
               #     Iterate: on the host `operator:sync` (rebuild+vm:sync), then re-run operator:local.
 
@@ -260,7 +262,7 @@ tasks:
         sudo kubectl get crd networkupgradeexecutes.{{.API_GROUP}}
 
   operator:local:
-    desc: "Inside VM: run the LOCAL solo-operator manager binary OUT of cluster (Choice B). Scales the in-cluster operator to 0 first so the local process is the sole reconciler. Foreground — LEAVE RUNNING in its own terminal; run `operator:restore` when done. Needs the chart installed once (via `operator`) for the CRDs/RBAC, and the binary synced (`prep`, or `operator:build`+`sync`)."
+    desc: "Inside VM: run the LOCAL solo-operator manager binary OUT of cluster (Choice B). Scales the in-cluster operator to 0 so the local process is the sole reconciler. Foreground — LEAVE RUNNING in its own terminal; run `operator:restore` when done. Prereqs: chart installed once (via `operator`) for CRDs/RBAC, and the binary synced (`prep`, or `operator:build`+`sync`). ORDERING: `consensus node install` (network) preflights the in-cluster operator's replicas, so deploy the network with the released operator UP first, then switch to operator:local for the upgrade phase (where the fix lives)."
     preconditions:
       - sh: 'test -x {{.MANAGER}}'
         msg: "manager binary not found at {{.MANAGER}} — build+sync it on the host: task -d docs/dev/daemon operator:build sync"
