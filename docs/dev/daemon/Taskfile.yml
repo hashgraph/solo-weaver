@@ -305,9 +305,13 @@ tasks:
         sudo solo-provisioner daemon service check || true
 
   daemon:logs:
-    desc: "Inside VM: tail the daemon journal (LEAVE RUNNING in its own terminal)"
+    desc: "Inside VM: tail the daemon log file (LEAVE RUNNING in its own terminal)"
     cmds:
-      - journalctl -u solo-provisioner-daemon.service -f
+      # The daemon logs to a file via lumberjack, NOT journald — `journalctl -u ...`
+      # shows nothing for the provisioner user (needs sudo / systemd-journal group).
+      # -F follows across lumberjack's log rotation. For service start/crash output,
+      # use: sudo journalctl -u solo-provisioner-daemon.service -e
+      - tail -F /opt/solo/weaver/logs/solo-provisioner-daemon.log
 
   daemon:check:
     desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
