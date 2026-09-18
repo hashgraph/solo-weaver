@@ -90,6 +90,8 @@ func (h *InstallHandler) BuildWorkflow(
 			// verifies the binary exists, not the user account. This step is
 			// idempotent and safe to repeat on up-to-date installations.
 			steps.EnsureWeaverOwnerStep(),
+			// Warn (never block) on non-local storage, before the long install runs.
+			steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion),
 			// Static network plane (host firewall + weaver policy persistence +
 			// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
 			// The host firewall is owned by the block-node workflow (not the generic
@@ -106,6 +108,8 @@ func (h *InstallHandler) BuildWorkflow(
 			// before the preflight check validates it. Older binaries did not
 			// create this account during self-install.
 			steps.EnsureWeaverOwnerStep(),
+			// Warn (never block) on non-local storage, before the long install runs.
+			steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion),
 			// Block node install owns its workload-sized preflight (block provider,
 			// profile, plugin preset) plus system setup, then stands up Kubernetes.
 			// InstallClusterWorkflow is intentionally not reused here: it validates

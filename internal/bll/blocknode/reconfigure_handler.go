@@ -107,6 +107,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// tear a feature down when it is turned off. See networkPlaneSteps.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
 
+	// Warn (never block) when a storage path is not on local block storage.
+	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion)}, networkSteps...)
+
 	plan, err := planStorage(currentState, ins)
 	if err != nil {
 		return nil, err
