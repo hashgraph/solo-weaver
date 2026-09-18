@@ -109,6 +109,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// enabled, is handled post-workflow in the CLI layer.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
 
+	// Warn (never block) when a storage path is not on local block storage.
+	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion)}, networkSteps...)
+
 	plan, err := planStorage(currentState, ins)
 	if err != nil {
 		return nil, err

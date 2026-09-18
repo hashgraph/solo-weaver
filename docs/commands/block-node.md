@@ -80,6 +80,39 @@ It checks:
 - Required dependencies
 - Network connectivity
 - Storage availability
+- The storage media backing each block-node storage path, warning when a path is
+  not on local block storage (NFS, a FUSE object store, tmpfs/overlay, a local
+  filesystem on a network block device, or a local filesystem on an iSCSI,
+  Fibre Channel or NVMe over Fabrics LUN). The block node scans every stored
+  block at startup, so non-local archive storage can push that scan past the
+  liveness timeout. This is a warning only - it never fails the check.
+
+The media check inspects the paths `install` would use: the storage flags
+(`--base-path`, `--archive-path`, ...) if you pass them, otherwise the config
+file, otherwise the defaults. Pass the same storage flags you will pass to
+`install` so the check looks at the right mounts. On a machine with a deployed
+block node it inspects the deployed paths.
+
+The run summary lists the filesystem and mount point behind every storage path,
+so the backing media is visible on a healthy machine too:
+
+```text
+  Storage media:
+    live: ext4 over iSCSI on /mnt/lun0 (not local block storage)
+    archive: fuse.s3fs on /mnt/s3 (not local block storage)
+    log: xfs on /opt/hedera/blocknode
+  Warnings:
+    ! /mnt/lun0 (live) is on ext4 over iSCSI, not local block storage; the block node scans every stored block at startup and may exceed its liveness timeout
+    ! /mnt/s3 (archive) is on fuse.s3fs, not local block storage; the block node scans every stored block at startup and may exceed its liveness timeout
+```
+
+A LUN reached over iSCSI, Fibre Channel or NVMe over Fabrics carries an ordinary
+local filesystem on an ordinary `sd*` or `nvme*` device, so it is identified from
+the fabric of the controller behind it, and the line names that fabric alongside
+the filesystem (`ext4 over iSCSI`, `xfs over NVMe/TCP`).
+
+When the paths or the mount table cannot be read, the block says
+`not determined: <reason> (see the log)` rather than going silent.
 
 | Flag | What it does | Default |
 |---|---|---|
