@@ -11,6 +11,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
+	"github.com/automa-saga/version"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -89,9 +90,23 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name: inputs.OrbitName,
+					// Record the installed provisioner versions on the Orbit. The
+					// operator's execute reconciler compares these against an upgrade
+					// package's declared provisioner versions (infrastructure-versions.yaml)
+					// to decide whether infra-level work (a full pod scale-down) is needed.
+					// The CLI and daemon co-release at the same version, so stamp both from
+					// the running binary's version; the daemon refreshes its own on self-upgrade.
+					Annotations: map[string]string{
+						operatorv1alpha1.AnnotationProvisionerCLIVersion:    version.Version,
+						operatorv1alpha1.AnnotationProvisionerDaemonVersion: version.Version,
+					},
 				},
 				Spec: operatorv1alpha1.OrbitSpec{
 					Consensus: operatorv1alpha1.OrbitConsensus{
+						// When true, the UC sidecar runs UC_MODE=mainnet and defers the
+						// execute phase to the host solo-provisioner-daemon; false (default)
+						// is cluster-only (the in-pod UC runs execute).
+						ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 						Genesis: operatorv1alpha1.OrbitGenesis{
 							AddressBook: operatorv1alpha1.OrbitAddressBook{
 								LedgerId: inputs.LedgerId,

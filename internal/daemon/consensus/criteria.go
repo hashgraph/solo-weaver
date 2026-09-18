@@ -86,7 +86,7 @@ type NoPodRestarts struct {
 	// PodLabelSelector is the label selector used to identify the CN pod managed by
 	// this daemon instance. The selector must match exactly the pods that belong to
 	// this node's ConsensusCapsule StatefulSet.
-	// Example: "operator.solo.hedera.com/orbit=mainnet-00,operator.solo.hedera.com/node-id=0.0.3"
+	// Example: "operator.solo.hiero.org/orbit=mainnet-00,operator.solo.hiero.org/node-id=0.0.3"
 	PodLabelSelector string
 
 	// client is an optional pre-built Kubernetes client. When set (test injection),

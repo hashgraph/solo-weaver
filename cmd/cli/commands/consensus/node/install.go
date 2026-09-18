@@ -108,6 +108,16 @@ var installCmd = &cobra.Command{
 		if verr != nil {
 			return verr
 		}
+		// In provisioner-daemon (mainnet) mode the upgrade dir must be a hostPath
+		// shared with the host solo-provisioner-daemon (it reads <upgrade>/current
+		// during the execute phase). Default it to hostPath unless the operator set
+		// the upgrade volume's backing explicitly.
+		if flagProvisionerDaemon {
+			if up := volCfg.Volumes[models.ConsensusVolumeUpgrade]; up.Type == "" {
+				up.Type = models.VolumeBackingHostPath
+				volCfg.SetVolume(models.ConsensusVolumeUpgrade, up)
+			}
+		}
 
 		inputs := models.UserInputs[models.ConsensusNodeInputs]{
 			Common: models.CommonInputs{
@@ -116,33 +126,34 @@ var installCmd = &cobra.Command{
 				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
-				Namespace:            flagNamespace,
-				NodeId:               flagNodeId,
-				AccountId:            flagAccountId,
-				Weight:               flagWeight,
-				LedgerId:             flagLedgerId,
-				ChainId:              flagChainId,
-				ConsensusImageRepo:   flagImageRepo,
-				ConsensusImageTag:    flagImageTag,
-				UCImageRepo:          flagUCImageRepo,
-				UCImageTag:           flagUCImageTag,
-				DeploymentPackageDir: flagDeploymentPkgDir,
-				GrpcTlsSecret:        flagGrpcTlsSecret,
-				SigningSecret:        flagSigningSecret,
-				ImagePullSecret:      flagImagePullSecret,
-				Profile:              flagProfile,
-				SkipHardwareChecks:   skipHardwareChecks,
-				ContainerName:        flagContainerName,
-				JavaHeapMin:          flagJavaHeapMin,
-				JavaHeapMax:          flagJavaHeapMax,
-				JavaOpts:             flagJavaOpts,
-				CPULimit:             flagCPULimit,
-				CPURequest:           flagCPURequest,
-				MemoryLimit:          flagMemoryLimit,
-				MemoryRequest:        flagMemoryRequest,
-				Volumes:              volCfg,
-				HostPathUID:          flagHostPathUID,
-				HostPathGID:          flagHostPathGID,
+				Namespace:                flagNamespace,
+				ProvisionerDaemonEnabled: flagProvisionerDaemon,
+				NodeId:                   flagNodeId,
+				AccountId:                flagAccountId,
+				Weight:                   flagWeight,
+				LedgerId:                 flagLedgerId,
+				ChainId:                  flagChainId,
+				ConsensusImageRepo:       flagImageRepo,
+				ConsensusImageTag:        flagImageTag,
+				UCImageRepo:              flagUCImageRepo,
+				UCImageTag:               flagUCImageTag,
+				DeploymentPackageDir:     flagDeploymentPkgDir,
+				GrpcTlsSecret:            flagGrpcTlsSecret,
+				SigningSecret:            flagSigningSecret,
+				ImagePullSecret:          flagImagePullSecret,
+				Profile:                  flagProfile,
+				SkipHardwareChecks:       skipHardwareChecks,
+				ContainerName:            flagContainerName,
+				JavaHeapMin:              flagJavaHeapMin,
+				JavaHeapMax:              flagJavaHeapMax,
+				JavaOpts:                 flagJavaOpts,
+				CPULimit:                 flagCPULimit,
+				CPURequest:               flagCPURequest,
+				MemoryLimit:              flagMemoryLimit,
+				MemoryRequest:            flagMemoryRequest,
+				Volumes:                  volCfg,
+				HostPathUID:              flagHostPathUID,
+				HostPathGID:              flagHostPathGID,
 			},
 		}
 
