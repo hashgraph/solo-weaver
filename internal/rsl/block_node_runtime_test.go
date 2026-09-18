@@ -986,3 +986,38 @@ func TestStorageResolver_ConfigPartial_DefaultFillsRemainingGaps(t *testing.T) {
 	// Winning strategy is Config because that was the highest-priority non-empty source.
 	assert.Equal(t, StrategyConfig, st.Strategy())
 }
+
+// ── Contract relied on by `block node check` ─────────────────────────────────
+
+// Pins why `block node check` must seed an intent: without one the chart-version
+// resolver errors rather than returning a default.
+func TestChartVersion_RequiresIntent(t *testing.T) {
+	r := newTestResolver(fullConfig(), state.NewBlockNodeState())
+
+	_, err := r.ChartVersion()
+	require.Error(t, err, "chart version must not resolve without an intent")
+
+	r.WithIntent(installIntent)
+	cv, err := r.ChartVersion()
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", cv.Get().Val())
+}
+
+// Covers the seeding `block node check` performs: with nothing deployed, the
+// operator's flags must beat config for both fields.
+func TestStorageAndChartVersion_UserInputWinsOnNotDeployed(t *testing.T) {
+	r := newTestResolver(fullConfig(), state.NewBlockNodeState())
+
+	r.WithIntent(installIntent).WithUserInputs(models.BlockNodeInputs{
+		ChartVersion: "0.37.0",
+		Storage:      models.BlockNodeStorage{BasePath: "/mnt/user-storage"},
+	})
+
+	st, err := r.Storage()
+	require.NoError(t, err)
+	assert.Equal(t, "/mnt/user-storage", st.Get().Val().BasePath)
+
+	cv, err := r.ChartVersion()
+	require.NoError(t, err)
+	assert.Equal(t, "0.37.0", cv.Get().Val())
+}
