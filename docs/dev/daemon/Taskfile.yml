@@ -59,6 +59,18 @@ vars:
   BASE_VERSION: "0.74.0"
   UPGRADE_VERSION: "0.74.2"
 
+  # Provisioner daemon/CLI version declared in the upgrade package's
+  # manifests/infrastructure-versions.yaml (passed to solo-operator's test/dev build).
+  # It MUST equal what the binary reports (version.Version, stamped from the build's
+  # VERSION ldflag → the Orbit's provisioner-*-version annotations) so the operator's
+  # requiresInfraAccess compares like-for-like. It therefore tracks the SAME VERSION
+  # knob used to build the binaries: build the CLI/daemon with `VERSION=X` (uat:rebuild
+  # forwards it) and this declares X too; both default to 0.0.0 for a plain dev build.
+  # Override PROVISIONER_VERSION explicitly only to force an infra-access mismatch
+  # (e.g. PROVISIONER_VERSION=0.33.0). NOTE: the zip task is idempotent — remove
+  # staging/*.zip to rebuild after changing the version.
+  PROVISIONER_VERSION: '{{.PROVISIONER_VERSION | default .VERSION | default "0.0.0"}}'
+
   # Orbit namespace where the CN + NetworkUpgradeExecute CRs live.
   NS: '{{.NS | default "hiero-network-1"}}'
   # Operator namespace (where `kube operator install` deploys + reads its pull secret).
@@ -363,7 +375,13 @@ tasks:
         set -e
         cd {{.SOLO_OPERATOR_DIR}}/test/dev
         task setup            # downloads the base+upgrade zips (needs internet)
-        task build            # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
+        # Declare the provisioner version in each package's infrastructure-versions.yaml
+        # so the UC populates NetworkUpgradeExecute.spec.provisioner (drives the operator's
+        # requiresInfraAccess). Sourced from PROVISIONER_VERSION (defaults to the dev
+        # build's 0.0.0) rather than hardcoded in solo-operator's Taskfile.
+        task build \
+          PROVISIONER_DAEMON_VERSION={{.PROVISIONER_VERSION}} \
+          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}}   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
 
   package:
     desc: "Host: stage the base package (unzipped) + the upgrade zip into the weaver checkout's test/data (synced into the VM by `vm:sync`)"
