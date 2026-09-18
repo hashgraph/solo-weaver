@@ -24,6 +24,7 @@ type Handlers struct {
 	reconfigure *ReconfigureHandler
 	reset       *ResetHandler
 	uninstall   *UninstallHandler
+	runtime     *rsl.BlockNodeRuntimeResolver
 }
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
@@ -87,9 +88,17 @@ func NewHandlerFactory(
 		reconfigure: reconfigureHandler,
 		reset:       resetHandler,
 		uninstall:   uninstallHandler,
+		runtime:     bnr,
 	}
 
 	return h, nil
+}
+
+// Runtime returns the concrete block-node resolver the handlers were built on.
+// `block node check` reads Storage() and ChartVersion() from it, which the
+// generic rsl.Resolver interface does not expose.
+func (h *Handlers) Runtime() *rsl.BlockNodeRuntimeResolver {
+	return h.runtime
 }
 
 // ForAction returns the appropriate IntentHandler for the given action, or an error if the action is unsupported.
