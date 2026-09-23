@@ -46,6 +46,7 @@ var (
 	flagAll       bool
 	flagProto     string
 	flagICMPEcho  bool
+	flagCheck     bool
 
 	// Per-block flags that predate --name, retained so every invocation that
 	// worked before still works and the interactive install flow is unchanged.

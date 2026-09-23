@@ -425,6 +425,38 @@ func TestManager_CreateIsCreateIfMissing(t *testing.T) {
 	require.Equal(t, 2, applyCount)
 }
 
+// TestManager_Validate pins #1180: Validate dry-runs the table through the
+// same checks Create/Apply would, and never writes the config, the nft
+// artifact, or restarts the service — success and rejection alike. It also
+// pins the review fix that followed: the nft dry-run must stage its document
+// in a scratch directory, not beside nftPath, so --check never requires (or
+// creates) the production directory.
+func TestManager_Validate(t *testing.T) {
+	r := &fakeRunner{}
+	applyCount := 0
+	m, nftPath := newTestManager(t, r, &applyCount)
+	ctx := context.Background()
+
+	require.NoError(t, m.Validate(ctx, sampleTable()))
+	require.Equal(t, 0, applyCount)
+	require.NoFileExists(t, nftPath)
+	require.Len(t, r.checked, 1, "Validate must dry-run the rendered document through nft")
+	require.Contains(t, r.checked[0], "add table inet weaver-host-firewall")
+
+	// nftPath's own directory (created by newTestManager for the config/nft
+	// artifacts) must stay empty: nothing was staged there.
+	entries, err := os.ReadDir(filepath.Dir(nftPath))
+	require.NoError(t, err)
+	require.Empty(t, entries, "Validate must not write anything under nftPath's directory")
+
+	// nft rejecting the render surfaces as Validate's error, and still writes
+	// nothing.
+	r.checkErr = errors.New("conflicting intervals specified")
+	require.Error(t, m.Validate(ctx, sampleTable()))
+	require.Equal(t, 0, applyCount)
+	require.NoFileExists(t, nftPath)
+}
+
 func TestManager_AddRemoveSet(t *testing.T) {
 	r := &fakeRunner{}
 	applyCount := 0
