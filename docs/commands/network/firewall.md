@@ -61,6 +61,7 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 | `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated (`mgmt.ports`) | `22` |
 | `--pod-cidr` | Pod CIDR allowed to reach the in-cluster ports | auto-detected |
 | `--from-file` | Render the whole table from a YAML config. Mutually exclusive with the flags above | none |
+| `--check` | Validate the table (structure, domain-name resolution, `nft -c -f`) and stop — no config or nft artifact is written, the firewall service is not restarted, `--force` is ignored | `false` |
 | `--force` | Re-render even if the table exists (global flag, `-y`) | `false` |
 
 > **Omitting `--mgmt-cidrs` leaves the management rule with an empty source set under a
@@ -161,6 +162,16 @@ allow:
 ```bash
 sudo solo-provisioner network firewall create --from-file rules.yaml --force
 ```
+
+**Validate a file before applying it:**
+
+```bash
+sudo solo-provisioner network firewall create --from-file rules.yaml --check
+```
+
+`--check` runs the same structure, resolution and `nft -c -f` checks a real apply would, and
+stops there — no config or nft artifact is written and the firewall service is not restarted.
+Useful in CI, or on a host whose current firewall you don't want to touch yet.
 
 ### Allow-rule fields
 

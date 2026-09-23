@@ -131,6 +131,30 @@ func (m *Manager) Apply(ctx context.Context, t *Table) error {
 	return m.withLock(func() error { return m.applyAndPersist(ctx, t, applyOpts{}) })
 }
 
+// Validate runs every check Create/Apply would run before writing anything —
+// structural validation, FQDN resolution, the fail-open and incomplete-rule
+// warnings, and a dry-run through `nft -c -f` — and stops there. No config, no
+// nft artifact, no DNS cache, no refresh timer, no service restart, and no
+// write anywhere under the manager's configured paths: unlike check, the
+// dry-run below stages its document in a throwaway temp directory rather than
+// beside nftPath, so this never requires (or creates) the production
+// directory. It is what `network firewall create --check` calls, and what an
+// operator or a CI job can use to know whether a `--from-file` config would
+// apply cleanly without touching the host's live firewall.
+//
+// Not routed through withLock: nothing here reads or writes any of the shared
+// on-disk state the lock protects.
+func (m *Manager) Validate(ctx context.Context, t *Table) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	ra, err := m.resolveAndRender(ctx, t, applyOpts{})
+	if err != nil {
+		return err
+	}
+	return m.checkInScratch(ctx, ra.block)
+}
+
 // CreateRule declares a named allow rule, so a rule can be brought into
 // existence without a config file. It is create-if-missing like Create: a name
 // that already exists is left alone and reported as unchanged unless force is
@@ -525,28 +549,26 @@ func (m *Manager) artifactsMatch(block, cfg string) bool {
 	return err == nil && string(onDiskCfg) == cfg
 }
 
-// applyAndPersist dry-runs the rendered ruleset, then atomically rewrites the
-// declarative config and the nft artifact, then restarts the systemd service via
-// DBus so the kernel picks up the new rules. The rendered file contains the
-// idempotent scoped-replace prefix, so it is safe for both the boot-time oneshot
-// and live re-applies.
-//
-// The dry run comes first, and nothing is written unless it passes. The unit has
-// no ExecStop, so a ruleset nft refuses leaves the live table untouched and the
-// failure looks harmless — but persisting first would have made that document
-// the boot artifact, and the host would come up with no weaver firewall at all
-// (#1002). Validating up front means a rejected ruleset never reaches disk.
-//
-// Past the dry run, the config is written before the nft artifact: it is what
-// the next mutation loads, so a crash between the two writes leaves the
-// operator's intent recorded and the kernel merely stale, which the next apply
-// fixes. The reverse order would lose the intent while leaving the ruleset live,
-// and there would be nothing left to re-derive it from.
-//
-// The DNS resolution cache is written last, and only past the point where
-// nothing can refuse: resolution runs first, so writing it there would let a
-// refusal restart the addrGracePeriod window for addresses the kernel never saw.
-func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts) error {
+// renderedApply is what evaluating a table produces before anything is
+// persisted: the FQDN-expanded table actually rendered, the rendered nft
+// document, the marshaled declarative config (recording the names the
+// operator wrote, not their expansions), the resolution that produced them,
+// and whether that resolution wants a refresh timer. Shared by applyAndPersist
+// (which persists it) and Validate (which only checks it).
+type renderedApply struct {
+	rt               *Table
+	block            string
+	cfg              []byte
+	res              *resolution
+	wantRefreshTimer bool
+}
+
+// resolveAndRender runs every check applyAndPersist and Validate need before
+// anything is written or dry-run: FQDN resolution, the fail-open and
+// incomplete-rule warnings, and rendering both the nft document and the
+// declarative config. It performs no I/O of its own beyond resolution — no
+// nft check, no writes.
+func (m *Manager) resolveAndRender(ctx context.Context, t *Table, opts applyOpts) (renderedApply, error) {
 	// Resolve first, then render a copy: the YAML below must record the names the
 	// operator wrote, while the nft document must carry only literals.
 	res := m.resolveFQDNs(ctx, t)
@@ -570,10 +592,10 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 	// it: for a rule that fails open, an unresolved name grants access rather
 	// than withdrawing it, so there is no path on which warning is enough.
 	if err := checkFailOpenRules(t, res.missing); err != nil {
-		return err
+		return renderedApply{}, err
 	}
 	if len(res.missing) > 0 && !opts.tolerateUnresolved {
-		return errx.Decorate(
+		return renderedApply{}, errx.Decorate(
 			errorx.IllegalArgument.New(
 				"cannot resolve %v, and no previously-resolved addresses are on record for them. "+
 					"Nothing was changed", res.missing),
@@ -588,18 +610,18 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 
 	rt, err := t.expandFQDNs(res.byName)
 	if err != nil {
-		return err
+		return renderedApply{}, err
 	}
 	before, after := t.rules(), rt.rules()
 	for i := range before {
 		if err := checkResolvedRule(before[i], after[i], res.missing); err != nil {
-			return err
+			return renderedApply{}, err
 		}
 	}
 
 	block, err := rt.Render()
 	if err != nil {
-		return err
+		return renderedApply{}, err
 	}
 
 	// Declaring a rule before populating it is supported, so this is not an
@@ -625,43 +647,73 @@ func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts)
 
 	cfg, err := FileConfigFromTable(t).Marshal()
 	if err != nil {
+		return renderedApply{}, err
+	}
+
+	return renderedApply{rt: rt, block: block, cfg: cfg, res: res, wantRefreshTimer: wantRefreshTimer}, nil
+}
+
+// applyAndPersist dry-runs the rendered ruleset, then atomically rewrites the
+// declarative config and the nft artifact, then restarts the systemd service via
+// DBus so the kernel picks up the new rules. The rendered file contains the
+// idempotent scoped-replace prefix, so it is safe for both the boot-time oneshot
+// and live re-applies.
+//
+// The dry run comes first, and nothing is written unless it passes. The unit has
+// no ExecStop, so a ruleset nft refuses leaves the live table untouched and the
+// failure looks harmless — but persisting first would have made that document
+// the boot artifact, and the host would come up with no weaver firewall at all
+// (#1002). Validating up front means a rejected ruleset never reaches disk.
+//
+// Past the dry run, the config is written before the nft artifact: it is what
+// the next mutation loads, so a crash between the two writes leaves the
+// operator's intent recorded and the kernel merely stale, which the next apply
+// fixes. The reverse order would lose the intent while leaving the ruleset live,
+// and there would be nothing left to re-derive it from.
+//
+// The DNS resolution cache is written last, and only past the point where
+// nothing can refuse: resolution runs first, so writing it there would let a
+// refusal restart the addrGracePeriod window for addresses the kernel never saw.
+func (m *Manager) applyAndPersist(ctx context.Context, t *Table, opts applyOpts) error {
+	ra, err := m.resolveAndRender(ctx, t, opts)
+	if err != nil {
 		return err
 	}
 
-	if opts.skipIfUnchanged && m.artifactsMatch(block, string(cfg)) {
+	if opts.skipIfUnchanged && m.artifactsMatch(ra.block, string(ra.cfg)) {
 		logx.As().Debug().Msg("host firewall artifacts already match the rendered table; nothing to apply")
 		// Still persisted: the artifacts already match, but the pass has re-stamped
 		// every address, and skipping the write would freeze the on-disk stamps at
 		// the last rendering change until they expired.
-		m.persistDNSCache(res)
+		m.persistDNSCache(ra.res)
 		// Still converge the timer: this is the path the timer's own runs take,
 		// so it is the only chance to notice the units were removed by hand.
-		return m.syncRefreshTimer(ctx, wantRefreshTimer)
+		return m.syncRefreshTimer(ctx, ra.wantRefreshTimer)
 	}
 
-	if err := m.check(ctx, block); err != nil {
+	if err := m.check(ctx, ra.block); err != nil {
 		return err
 	}
 
 	m.retainPreviousConfig()
 
-	if err := atomicWriteFile(m.configPath, string(cfg), 0o600); err != nil {
+	if err := atomicWriteFile(m.configPath, string(ra.cfg), 0o600); err != nil {
 		return err
 	}
 
-	if err := atomicWriteFile(m.nftPath, block, 0o644); err != nil {
+	if err := atomicWriteFile(m.nftPath, ra.block, 0o644); err != nil {
 		return err
 	}
 
 	// The first point past which nothing can refuse. Ahead of the timer and the
 	// restart: those are post-commit, and failing one must not leave the cache out
 	// of step with artifacts that did land.
-	m.persistDNSCache(res)
+	m.persistDNSCache(ra.res)
 
 	// After the artifacts, before the kernel: the timer only ever re-runs what is
 	// already on disk, so installing it against a config that was never written
 	// would schedule a refresh of the wrong table.
-	if err := m.syncRefreshTimer(ctx, wantRefreshTimer); err != nil {
+	if err := m.syncRefreshTimer(ctx, ra.wantRefreshTimer); err != nil {
 		return err
 	}
 
@@ -729,7 +781,34 @@ func (m *Manager) check(ctx context.Context, block string) error {
 		return errorx.ExternalError.Wrap(err, "failed to create directory %s", dir)
 	}
 
-	staged, err := os.CreateTemp(dir, ".network-weaver-host-firewall-*.nft.check")
+	if err := m.stageAndCheck(ctx, dir, block); err != nil {
+		return errorx.Decorate(err, "the host firewall ruleset was not applied and nothing was written to %s or %s", m.configPath, m.nftPath)
+	}
+	return nil
+}
+
+// checkInScratch dry-runs a rendered ruleset through nft the same way check
+// does, but stages the document in a throwaway temp directory instead of
+// beside nftPath. Used by Validate, which must never require write access to
+// (or create) the production directory just to answer whether a config is
+// valid.
+func (m *Manager) checkInScratch(ctx context.Context, block string) error {
+	dir, err := os.MkdirTemp("", "solo-provisioner-firewall-check-*")
+	if err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to create a scratch directory to validate the rendered ruleset")
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	if err := m.stageAndCheck(ctx, dir, block); err != nil {
+		return errorx.Decorate(err, "the rendered ruleset was rejected")
+	}
+	return nil
+}
+
+// stageAndCheck writes block to a new temp file inside dir and dry-runs it
+// through nft via the Runner. The caller owns creating dir and cleaning it up.
+func (m *Manager) stageAndCheck(ctx context.Context, dir, block string) error {
+	staged, err := os.CreateTemp(dir, "*.nft.check")
 	if err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to create temp file in %s", dir)
 	}
@@ -744,10 +823,7 @@ func (m *Manager) check(ctx context.Context, block string) error {
 		return errorx.ExternalError.Wrap(err, "failed to close temp file %s", name)
 	}
 
-	if err := m.runner.Check(ctx, name); err != nil {
-		return errorx.Decorate(err, "the host firewall ruleset was not applied and nothing was written to %s or %s", m.configPath, m.nftPath)
-	}
-	return nil
+	return m.runner.Check(ctx, name)
 }
 
 // load returns the currently-configured table. The declarative config is the

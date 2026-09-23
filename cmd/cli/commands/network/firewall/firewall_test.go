@@ -48,7 +48,7 @@ func TestFirewallCmd_Structure(t *testing.T) {
 }
 
 func TestCreateCmd_Flags(t *testing.T) {
-	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "mgmt-ports", "pod-cidr", "from-file"} {
+	for _, name := range []string{"mgmt-cidrs", "blocked-cidrs", "in-cluster-ports", "mgmt-ports", "pod-cidr", "from-file", "check"} {
 		require.NotNil(t, createCmd.Flags().Lookup(name), "create is missing --%s", name)
 	}
 	// Defaults must match the firewall package defaults.
@@ -227,6 +227,39 @@ func TestCreateCmd_MgmtPortsAcceptsMultipleValues(t *testing.T) {
 	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--mgmt-ports", "22,2222"))
 	doc := readFile(t, nftPath)
 	require.Contains(t, doc, "set mgmt_ports { type inet_service; flags interval; auto-merge; elements = { 22, 2222 }; }")
+}
+
+// TestCreateCmd_Check pins #1180: --check validates the table the way a real
+// apply would, and never writes the config, the nft artifact, or restarts the
+// service — success and rejection alike.
+func TestCreateCmd_Check(t *testing.T) {
+	nftPath, configPath := stubManager(t)
+
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "10.0.0.0/8", "--check"))
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, configPath)
+
+	// A table that fails structural validation is still rejected under --check,
+	// and still writes nothing.
+	require.Error(t, run(t, "create", "--blocked-cidrs", "not-a-cidr", "--check"))
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, configPath)
+
+	// --force is inert under --check: create.go returns before Force is even
+	// read, so combining the two must behave exactly like --check alone.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`version: 1
+mgmt:
+  cidrs: ["10.0.0.0/8"]
+blocked:
+  cidrs: []
+in_cluster:
+  cidrs: []
+`), 0o600))
+	require.NoError(t, run(t, "create", "--from-file", path, "--check", "--force"))
+	require.NoFileExists(t, nftPath)
+	require.NoFileExists(t, configPath)
 }
 
 // TestCreateAllowRuleCmd is the end-to-end shape #1009 exists to deliver: a

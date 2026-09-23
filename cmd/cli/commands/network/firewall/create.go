@@ -35,11 +35,22 @@ var createCmd = &cobra.Command{
 		"mgmt and blocked — a block left out would fall back to a weaver default the file never stated, which for " +
 		"mgmt is an empty allowlist under the default-drop policy. To disable a reserved block, give it an empty " +
 		"address list (`in_cluster: {cidrs: []}`); omitting `in_cluster.cidrs` instead means \"auto-detect this " +
-		"node's pod CIDR\".",
+		"node's pod CIDR\".\n\n" +
+		"--check validates the table the same way a real apply would (structure, FQDN resolution, `nft -c -f`) " +
+		"and stops there: no config or nft artifact is written, the firewall service is not restarted, and " +
+		"--force is ignored.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		t, err := buildTable(cmd)
 		if err != nil {
 			return err
+		}
+
+		if flagCheck {
+			if err := newManager().Validate(cmd.Context(), t); err != nil {
+				return err
+			}
+			logx.As().Info().Msg("inet weaver-host-firewall configuration is valid; nothing was applied")
+			return nil
 		}
 
 		force, err := common.FlagForce().Value(cmd, args)
@@ -142,6 +153,7 @@ func init() {
 	createCmd.Flags().IntSliceVar(&flagMgmtPorts, "mgmt-ports", []int{fw.DefaultSSHPort}, "Management/SSH TCP port(s) accepted from the allowlist (comma-separated or repeated)")
 	createCmd.Flags().StringSliceVar(&flagPodCIDR, "pod-cidr", nil, "Pod CIDR(s) allowed to reach the in-cluster host-service ports; may be IPv4 and/or IPv6 (comma-separated or repeated). Default: auto-detected from the local node's .spec.podCIDR; the rule is omitted if no cluster is reachable")
 	createCmd.Flags().StringVar(&flagFromFile, "from-file", "", "Declarative YAML config to render the whole table from; mutually exclusive with the individual flags")
+	createCmd.Flags().BoolVar(&flagCheck, "check", false, "Validate the table (structure, domain-name resolution, `nft -c -f`) and stop — no config or nft artifact is written, the firewall service is not restarted, --force is ignored")
 
 	// A file states the whole table, so mixing it with a flag that states part of
 	// one would leave the precedence between them to guesswork.
