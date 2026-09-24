@@ -60,7 +60,7 @@ func TestUpgrade_TrafficShapingEnabled_ReAssertsPlane(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, []string{
+	assert.Equal(t, withMediaCheck(
 		steps.NetworkFirewallCreateStepId,
 		steps.NetworkPolicyCreateStepId,
 		steps.NftWeaverPersistStepId,
@@ -69,7 +69,7 @@ func TestUpgrade_TrafficShapingEnabled_ReAssertsPlane(t *testing.T) {
 		steps.BlockNodeDaemonConfigStepId,
 		steps.RestartDaemonServiceStepId,
 		steps.UpgradeBlockNodeStepId,
-	}, ids)
+	), ids)
 }
 
 // TestUpgrade_TrafficShapingDisabled_NoTeardown verifies that upgrading a block
@@ -83,10 +83,10 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, []string{
+	assert.Equal(t, withMediaCheck(
 		steps.NetworkFirewallCreateStepId,
 		steps.UpgradeBlockNodeStepId,
-	}, ids)
+	), ids)
 }
 
 // TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both
@@ -130,7 +130,7 @@ func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 			wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
 			require.NoError(t, err)
 
-			assert.Equal(t, tc.want, workflowStepIDs(t, wb))
+			assert.Equal(t, withMediaCheck(tc.want...), workflowStepIDs(t, wb))
 		})
 	}
 }
@@ -151,12 +151,12 @@ func TestUpgrade_PurgeStorage_RecreatesBeforeChartUpgrade(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "block-node-upgrade-purge-storage", wb.Id())
-	assert.Equal(t, []string{
+	assert.Equal(t, withMediaCheck(
 		steps.NetworkFirewallCreateStepId,
 		steps.PurgeBlockNodeStorageStepId,
 		steps.RecreateBlockNodeStorageStepId,
 		steps.UpgradeBlockNodeStepId,
-	}, workflowStepIDs(t, wb))
+	), workflowStepIDs(t, wb))
 }
 
 // TestUpgrade_PathChangeWithoutPurgeIsRejected covers both non-purge branches.
@@ -226,7 +226,7 @@ func TestUpgrade_UnchangedPathsKeepExistingWorkflowIds(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.workflowId, wb.Id())
-			assert.Equal(t, tc.want, workflowStepIDs(t, wb))
+			assert.Equal(t, withMediaCheck(tc.want...), workflowStepIDs(t, wb))
 		})
 	}
 }
