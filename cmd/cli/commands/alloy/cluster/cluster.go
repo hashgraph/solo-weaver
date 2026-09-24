@@ -17,6 +17,7 @@ var (
 	flagProfile            string
 	flagMonitorBlockNode   bool
 	flagClusterName        string
+	flagEnvironment        string
 	flagClusterSecretStore string
 
 	// Legacy single-remote flags (deprecated, use --add-prometheus-remote and --add-loki-remote instead)
@@ -52,6 +53,7 @@ func init() {
 	// Core configuration flags
 	common.FlagProfile().SetVarP(clusterCmd, &flagProfile, false)
 	common.FlagClusterName().SetVarP(clusterCmd, &flagClusterName, false)
+	common.FlagAlloyEnvironment().SetVarP(clusterCmd, &flagEnvironment, false)
 	common.FlagMonitorBlockNode().SetVarP(clusterCmd, &flagMonitorBlockNode, false)
 
 	// Deprecated: kept for backward compatibility but hidden

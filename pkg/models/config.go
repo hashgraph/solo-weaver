@@ -6,9 +6,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 
 	"github.com/hashgraph/solo-weaver/internal/alloy/labels"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
 )
@@ -369,6 +371,7 @@ type ESOSecretDataEntry struct {
 type AlloyConfig struct {
 	MonitorBlockNode       bool                `yaml:"monitorBlockNode" json:"monitorBlockNode"`
 	ClusterName            string              `yaml:"clusterName" json:"clusterName"`
+	Environment            string              `yaml:"environment" json:"environment"`                       // "environment" label override; empty falls back to the deployment profile
 	ClusterSecretStoreName string              `yaml:"clusterSecretStoreName" json:"clusterSecretStoreName"` // Name of the ClusterSecretStore for ESO
 	PrometheusRemotes      []AlloyRemoteConfig `yaml:"prometheusRemotes" json:"prometheusRemotes"`
 	LokiRemotes            []AlloyRemoteConfig `yaml:"lokiRemotes" json:"lokiRemotes"`
@@ -429,6 +432,15 @@ func (c *AlloyConfig) Validate() error {
 	if c.ClusterName != "" {
 		if err := sanity.ValidateDNSName(c.ClusterName); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid cluster name: %s", c.ClusterName)
+		}
+	}
+
+	// Validate environment if provided — free-form name, same charset as the cluster name
+	if c.Environment != "" {
+		if err := sanity.ValidateDNSName(c.Environment); err != nil {
+			// Shadows the hostname hint from ValidateDNSName
+			return errx.Decorate(errorx.IllegalArgument.Wrap(err, "invalid environment: %s", c.Environment),
+				reasons.InvalidArgument, "Use letters, digits, dots and hyphens, e.g. staging or qa-eu.1.")
 		}
 	}
 

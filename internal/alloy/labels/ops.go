@@ -21,7 +21,7 @@ func (OpsProfile) Name() string { return "ops" }
 //
 // Labels added (from LabelInput):
 //   - cluster        = ClusterName
-//   - environment    = DeployProfile
+//   - environment    = Environment (--environment, else the deployment profile)
 //   - instance       = ClusterName (human-readable override of the scrape IP:port)
 //   - instance_type  = alphabetic prefix of first cluster name segment (e.g. "lfh")
 //   - inventory_name = full cluster name (for DevOps inventory systems)
@@ -40,8 +40,8 @@ func (OpsProfile) Labels(input LabelInput) map[string]string {
 		labels["instance"] = input.ClusterName
 	}
 
-	if input.DeployProfile != "" {
-		labels["environment"] = input.DeployProfile
+	if input.Environment != "" {
+		labels["environment"] = input.Environment
 	}
 
 	if input.MachineIP != "" {
@@ -58,7 +58,7 @@ func (OpsProfile) Labels(input LabelInput) map[string]string {
 //
 // Note: The "cluster" label is not included here because it is attached via
 // CustomRules generated from the resolved label profile (see OpsProfile.Labels).
-// Similarly, the "environment" label is provided by deployProfile rather than
+// Similarly, the "environment" label is provided by LabelInput.Environment rather than
 // being derived from the cluster name.
 func ParseClusterName(clusterName string) map[string]string {
 	labels := make(map[string]string)

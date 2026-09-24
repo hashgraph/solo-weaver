@@ -5,6 +5,7 @@ package alloy
 
 import (
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/joomcode/errorx"
@@ -46,11 +47,12 @@ type ConfigBuilder struct {
 	prometheusRemotes []Remote
 	lokiRemotes       []Remote
 	monitorBlockNode  bool
-	deployProfile     string // stored for per-remote label resolution
+	environment       string // "environment" label value for per-remote label resolution
 	machineIP         string // host IP for the "ip" label (best-effort)
 }
 
 // NewConfigBuilder creates a new ConfigBuilder from the application config.
+// cfg.Environment, when set, overrides deployProfile as the "environment" label.
 // Returns an error if cluster name cannot be determined (neither provided nor hostname available).
 func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuilder, error) {
 	cb := &ConfigBuilder{
@@ -73,8 +75,11 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 	// Build Loki remotes
 	cb.lokiRemotes = buildLokiRemotes(cfg)
 
-	// Store deployProfile for per-remote label resolution
-	cb.deployProfile = deployProfile
+	// Explicit environment wins; otherwise fall back to the deployment profile
+	cb.environment = cfg.Environment
+	if cb.environment == "" {
+		cb.environment = deployProfile
+	}
 
 	// Resolve machine IP for the "ip" label (best-effort, non-fatal)
 	if ip, err := network.GetMachineIP(); err == nil {
@@ -87,9 +92,9 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 // newLabelInput constructs a LabelInput from the builder's fields.
 func (cb *ConfigBuilder) newLabelInput() labels.LabelInput {
 	return labels.LabelInput{
-		ClusterName:   cb.clusterName,
-		DeployProfile: cb.deployProfile,
-		MachineIP:     cb.machineIP,
+		ClusterName: cb.clusterName,
+		Environment: cb.environment,
+		MachineIP:   cb.machineIP,
 	}
 }
 
@@ -135,6 +140,17 @@ func (cb *ConfigBuilder) LokiForwardTo() string {
 		receivers = append(receivers, "loki.write."+r.Name+".receiver")
 	}
 	return strings.Join(receivers, ", ")
+}
+
+// EmitsEnvironmentLabel reports whether any remote's label profile carries cfg.Environment.
+func EmitsEnvironmentLabel(cfg models.AlloyConfig) bool {
+	input := labels.LabelInput{Environment: cfg.Environment}
+	for _, r := range slices.Concat(cfg.PrometheusRemotes, cfg.LokiRemotes) {
+		if _, ok := labels.Resolve(r.LabelProfile, input)["environment"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // ToTemplateRemotes converts internal remotes to template remotes.

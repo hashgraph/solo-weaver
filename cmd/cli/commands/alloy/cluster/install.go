@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
@@ -87,6 +88,7 @@ Examples:
 		alloyOverrides := models.AlloyConfig{
 			MonitorBlockNode:       flagMonitorBlockNode,
 			ClusterName:            flagClusterName,
+			Environment:            flagEnvironment,
 			ClusterSecretStoreName: flagClusterSecretStore,
 			PrometheusRemotes:      prometheusRemotes,
 			LokiRemotes:            lokiRemotes,
@@ -104,11 +106,21 @@ Examples:
 
 		config.OverrideAlloyConfig(alloyOverrides)
 
+		alloyCfg := config.Get().Alloy
+
+		// A --config value skipped the flag validation above; this command never validates the file
+		if flagEnvironment == "" {
+			if err := (&models.AlloyConfig{Environment: alloyCfg.Environment}).Validate(); err != nil {
+				return errorx.IllegalArgument.Wrap(err, "invalid configuration")
+			}
+		}
+
 		l := logx.As()
 		l.Debug().
 			Strs("args", args).
 			Bool("monitorBlockNode", flagMonitorBlockNode).
 			Str("clusterName", flagClusterName).
+			Str("environment", alloyCfg.Environment).
 			Int("prometheusRemotes", len(prometheusRemotes)).
 			Int("lokiRemotes", len(lokiRemotes)).
 			Msg("Installing Alloy observability stack")
@@ -116,6 +128,11 @@ Examples:
 		// Warn about deprecated flags
 		if hasLegacyFlags {
 			l.Warn().Msg("--prometheus-url, --prometheus-username, --loki-url, and --loki-username flags are deprecated; please use --add-prometheus-remote and --add-loki-remote instead")
+		}
+
+		if alloyCfg.Environment != "" && !alloy.EmitsEnvironmentLabel(alloyCfg) {
+			l.Warn().Str("environment", alloyCfg.Environment).
+				Msg("environment has no effect: no remote uses labelProfile=ops")
 		}
 
 		execMode, err := common.GetExecutionMode(flagContinueOnError, flagStopOnError, flagRollbackOnError)
