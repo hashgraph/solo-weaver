@@ -5,6 +5,8 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/automa-saga/automa"
@@ -13,6 +15,7 @@ import (
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
@@ -26,6 +29,7 @@ import (
 const (
 	EnsureOrbitStepId            = "ensure-orbit"
 	EnsureConfigCRsStepId        = "ensure-config-crs"
+	EnsureHostPathsStepId        = "ensure-consensus-host-paths"
 	CreateConsensusCapsuleStepId = "create-consensus-capsule"
 	ReportCapsuleStatusStepId    = "report-consensus-capsule-status"
 )
@@ -441,6 +445,11 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				},
 			}
 
+			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
+			if err := applyConsensusVolumes(capsule, inputs); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
 			if inputs.GrpcTlsSecret != "" || inputs.SigningSecret != "" {
 				sr := &operatorv1alpha1.ConsensusSecretResources{}
 				if inputs.GrpcTlsSecret != "" {
@@ -624,4 +633,210 @@ func buildConsensusResources(inputs models.ConsensusNodeInputs) (*corev1.Resourc
 		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpuLimit, corev1.ResourceMemory: memLimit},
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpuRequest, corev1.ResourceMemory: memRequest},
 	}, nil
+}
+
+// applyConsensusVolumes resolves each data volume's backing from inputs.Volumes and
+// sets the capsule's hostPath overrides (PodProperties.Volumes) and PVC specs
+// (PersistentVolumeClaims). emptyDir-backed volumes are left to the operator default.
+func applyConsensusVolumes(capsule *operatorv1alpha1.ConsensusCapsule, inputs models.ConsensusNodeInputs) error {
+	var podVols *operatorv1alpha1.ConsensusPodVolumes
+	var pvc *operatorv1alpha1.ConsensusPVCConfig
+	dirOrCreate := corev1.HostPathDirectoryOrCreate
+
+	for _, name := range models.ConsensusVolumeNames() {
+		spec, err := inputs.Volumes.EffectiveSpec(name)
+		if err != nil {
+			return errx.Decorate(
+				errorx.IllegalArgument.Wrap(err, "resolve volume %q", name),
+				reasons.InvalidArgument,
+				"Fix the --volume / --volumes-file entry for this volume")
+		}
+		switch spec.Type {
+		case models.VolumeBackingEmptyDir:
+			// operator default — nothing to set.
+		case models.VolumeBackingHostPath:
+			if podVols == nil {
+				podVols = &operatorv1alpha1.ConsensusPodVolumes{}
+			}
+			setHostPathVolume(podVols, name, &corev1.Volume{
+				Name: name,
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{Path: spec.Path, Type: &dirOrCreate},
+				},
+			})
+		case models.VolumeBackingPVC:
+			if pvc == nil {
+				pvc = &operatorv1alpha1.ConsensusPVCConfig{}
+			}
+			q, err := resource.ParseQuantity(spec.Size)
+			if err != nil {
+				return errx.Decorate(
+					errorx.IllegalArgument.Wrap(err, "invalid size %q for volume %q", spec.Size, name),
+					reasons.InvalidArgument,
+					"Provide a valid Kubernetes quantity (e.g. 100Gi, 500Gi)")
+			}
+			ps := &corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.PersistentVolumeAccessMode(spec.AccessMode)},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceStorage: q},
+				},
+			}
+			if spec.StorageClass != "" {
+				sc := spec.StorageClass
+				ps.StorageClassName = &sc
+			}
+			setPVCSpec(pvc, name, ps)
+		}
+	}
+	if podVols != nil {
+		capsule.Spec.PodProperties.Volumes = podVols
+	}
+	if pvc != nil {
+		capsule.Spec.PersistentVolumeClaims = pvc
+	}
+	return nil
+}
+
+// setHostPathVolume assigns a hostPath override to the named field. `state` has no
+// dedicated field, so it rides AdditionalVolumes (the operator replaces the built-in
+// "state" volume by name). Names must equal the operator's VolumeType* identifiers.
+func setHostPathVolume(v *operatorv1alpha1.ConsensusPodVolumes, name string, vol *corev1.Volume) {
+	switch name {
+	case models.ConsensusVolumeUpgrade:
+		v.Upgrade = vol
+	case models.ConsensusVolumeLogs:
+		v.Logs = vol
+	case models.ConsensusVolumeStats:
+		v.Stats = vol
+	case models.ConsensusVolumeSaved:
+		v.Saved = vol
+	case models.ConsensusVolumeState:
+		v.AdditionalVolumes = append(v.AdditionalVolumes, *vol)
+	case models.ConsensusVolumeBlocks, models.ConsensusVolumeRecords, models.ConsensusVolumeEvents:
+		if v.Streams == nil {
+			v.Streams = &operatorv1alpha1.ConsensusStreamVolumes{}
+		}
+		switch name {
+		case models.ConsensusVolumeBlocks:
+			v.Streams.Block = vol
+		case models.ConsensusVolumeRecords:
+			v.Streams.Record = vol
+		case models.ConsensusVolumeEvents:
+			v.Streams.Events = vol
+		}
+	}
+}
+
+// setPVCSpec assigns a PVC spec to the named field.
+func setPVCSpec(c *operatorv1alpha1.ConsensusPVCConfig, name string, ps *corev1.PersistentVolumeClaimSpec) {
+	switch name {
+	case models.ConsensusVolumeUpgrade:
+		c.Upgrade = ps
+	case models.ConsensusVolumeLogs:
+		c.Logs = ps
+	case models.ConsensusVolumeStats:
+		c.Stats = ps
+	case models.ConsensusVolumeSaved:
+		c.Saved = ps
+	case models.ConsensusVolumeState:
+		c.State = ps
+	case models.ConsensusVolumeBlocks, models.ConsensusVolumeRecords, models.ConsensusVolumeEvents:
+		if c.Streams == nil {
+			c.Streams = &operatorv1alpha1.ConsensusPVCStreams{}
+		}
+		switch name {
+		case models.ConsensusVolumeBlocks:
+			c.Streams.Block = ps
+		case models.ConsensusVolumeRecords:
+			c.Streams.Record = ps
+		case models.ConsensusVolumeEvents:
+			c.Streams.Events = ps
+		}
+	}
+}
+
+// hostPathVolume pairs a hostpath-backed volume with its host directory.
+type hostPathVolume struct {
+	Name string
+	Path string
+}
+
+// hostPathBackedVolumes returns every volume resolved to a hostPath backing (with its
+// host dir) so the caller can create/chown the dirs. Empty when none are hostPath.
+func hostPathBackedVolumes(inputs models.ConsensusNodeInputs) ([]hostPathVolume, error) {
+	var out []hostPathVolume
+	for _, name := range models.ConsensusVolumeNames() {
+		spec, err := inputs.Volumes.EffectiveSpec(name)
+		if err != nil {
+			return nil, err
+		}
+		if spec.Type == models.VolumeBackingHostPath {
+			out = append(out, hostPathVolume{Name: name, Path: spec.Path})
+		}
+	}
+	return out, nil
+}
+
+// ConsensusHasHostPathVolumes reports whether any data volume resolves to a hostPath
+// backing, so the install schedules EnsureConsensusHostPaths on this host.
+func ConsensusHasHostPathVolumes(inputs models.ConsensusNodeInputs) bool {
+	hp, err := hostPathBackedVolumes(inputs)
+	return err == nil && len(hp) > 0
+}
+
+// EnsureConsensusHostPaths creates + chowns the hostPath directories for
+// hostpath-backed volumes to the hedera uid/gid, so the consensus pod (uid 2000) can
+// write them — kubelet applies no fsGroup ownership to hostPath. Runs before the
+// capsule; chown needs root (fails with an actionable hint otherwise).
+func EnsureConsensusHostPaths(inputs models.ConsensusNodeInputs) automa.Builder {
+	// Fall back to the canonical hedera user/group (pkg/config, the single source of
+	// "2000"). Hedera*Id() are strings; parse to int — the trusted constant can't fail.
+	hederaUID, _ := strconv.Atoi(config.HederaUserId())
+	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
+	uid := intOrDefault(inputs.HostPathUID, hederaUID)
+	gid := intOrDefault(inputs.HostPathGID, hederaGID)
+	return automa.NewStepBuilder().WithId(EnsureHostPathsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			vols, err := hostPathBackedVolumes(inputs)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalArgument.Wrap(err, "resolve host-path volumes"),
+					reasons.InvalidArgument,
+					"Fix the --volume / --volumes-file entries")))
+			}
+			for _, v := range vols {
+				if err := os.MkdirAll(v.Path, 0o755); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.ExternalError.Wrap(err, "create host dir %s for the %s volume", v.Path, v.Name),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Run the install as root on the node's host, or pre-create %s", v.Path))))
+				}
+				if err := os.Chown(v.Path, uid, gid); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.ExternalError.Wrap(err, "chown host dir %s to %d:%d for the %s volume", v.Path, uid, gid, v.Name),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("chown needs root — run the install with sudo, or manually: sudo chown %d:%d %s", uid, gid, v.Path))))
+				}
+				logx.As().Info().Str("volume", v.Name).Str("path", v.Path).Int("uid", uid).Int("gid", gid).Msg("ensured consensus host path")
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Ensuring consensus node host directories")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to ensure consensus host directories")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus host directories ready")
+		})
+}
+
+// intOrDefault returns def when v is non-positive.
+func intOrDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
 }
