@@ -18,6 +18,15 @@ func FlagClusterName() FlagDefinition[string] {
 	}
 }
 
+func FlagAlloyEnvironment() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "environment",
+		ShortName:   "",
+		Description: "Environment label for the ops label profile; defaults to --profile",
+		Default:     "",
+	}
+}
+
 func FlagMonitorBlockNode() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "monitor-block-node",

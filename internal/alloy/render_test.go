@@ -3,6 +3,7 @@
 package alloy
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -234,6 +235,94 @@ func TestRenderModularConfigs_WithOpsLabelProfile_AllModules(t *testing.T) {
 		assert.Contains(t, content, `target_label = "inventory_name"`, "module %s should contain inventory_name", moduleName)
 		// ops profile should override instance with the human-readable cluster name
 		assert.Contains(t, content, `target_label = "instance"`, "module %s should contain instance rule", moduleName)
+	}
+}
+
+func TestNewConfigBuilder_EnvironmentOverridesProfile(t *testing.T) {
+	tests := []struct {
+		name          string
+		environment   string
+		deployProfile string
+		want          string
+	}{
+		{name: "override wins over profile", environment: "staging", deployProfile: "local", want: "staging"},
+		{name: "falls back to profile", environment: "", deployProfile: "previewnet", want: "previewnet"},
+		{name: "override without profile", environment: "qa", deployProfile: "", want: "qa"},
+		{name: "neither set", environment: "", deployProfile: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Neutral cluster name so the label can't come from the name
+			cfg := models.AlloyConfig{ClusterName: "lfh02-node", Environment: tt.environment}
+			cb, err := NewConfigBuilder(cfg, tt.deployProfile)
+			require.NoError(t, err)
+
+			// eng profile never emits environment, even with an override
+			_, ok := cb.ResolvedLabels("eng")["environment"]
+			assert.False(t, ok)
+
+			got, ok := cb.ResolvedLabels("ops")["environment"]
+			if tt.want == "" {
+				assert.False(t, ok, "environment label should be absent")
+				return
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRenderModularConfigs_EnvironmentOverride(t *testing.T) {
+	cfg := models.AlloyConfig{
+		ClusterName:      "lfh02-node",
+		Environment:      "staging",
+		MonitorBlockNode: true,
+		PrometheusRemotes: []models.AlloyRemoteConfig{
+			{Name: "cloud", URL: "http://prom:9090/api/v1/write", Username: "user", LabelProfile: "ops"},
+		},
+		LokiRemotes: []models.AlloyRemoteConfig{
+			{Name: "cloud", URL: "http://loki:3100/loki/api/v1/push", Username: "user", LabelProfile: "ops"},
+		},
+	}
+
+	cb, err := NewConfigBuilder(cfg, "previewnet")
+	require.NoError(t, err)
+	modules, err := RenderModularConfigs(cb)
+	require.NoError(t, err)
+
+	rule := "target_label = \"environment\"\n    replacement  = %q"
+	checked := 0
+	for _, m := range modules {
+		if !strings.Contains(m.Content, `target_label = "environment"`) {
+			continue
+		}
+		checked++
+		assert.Contains(t, m.Content, fmt.Sprintf(rule, "staging"), "module %s", m.Name)
+		assert.NotContains(t, m.Content, fmt.Sprintf(rule, "previewnet"), "module %s", m.Name)
+	}
+	assert.NotZero(t, checked, "no module rendered an environment rule")
+}
+
+func TestEmitsEnvironmentLabel(t *testing.T) {
+	ops := []models.AlloyRemoteConfig{{Name: "p", URL: "https://p", LabelProfile: "ops"}}
+	eng := []models.AlloyRemoteConfig{{Name: "p", URL: "https://p"}}
+
+	tests := []struct {
+		name string
+		cfg  models.AlloyConfig
+		want bool
+	}{
+		{name: "ops prometheus remote", cfg: models.AlloyConfig{Environment: "staging", PrometheusRemotes: ops}, want: true},
+		{name: "ops loki remote", cfg: models.AlloyConfig{Environment: "staging", LokiRemotes: ops}, want: true},
+		{name: "eng remotes only", cfg: models.AlloyConfig{Environment: "staging", PrometheusRemotes: eng, LokiRemotes: eng}, want: false},
+		{name: "no remotes", cfg: models.AlloyConfig{Environment: "staging"}, want: false},
+		{name: "no environment", cfg: models.AlloyConfig{PrometheusRemotes: ops}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, EmitsEnvironmentLabel(tt.cfg))
+		})
 	}
 }
 

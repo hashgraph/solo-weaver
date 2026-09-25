@@ -85,9 +85,9 @@ func TestExtractAlphaPrefix(t *testing.T) {
 func TestOpsProfile_Labels(t *testing.T) {
 	t.Run("returns all labels including cluster, instance, inventory_name, and ip", func(t *testing.T) {
 		result := OpsProfile{}.Labels(LabelInput{
-			ClusterName:   "lfh02-previewnet-blocknode",
-			DeployProfile: "previewnet",
-			MachineIP:     "10.0.0.1",
+			ClusterName: "lfh02-previewnet-blocknode",
+			Environment: "previewnet",
+			MachineIP:   "10.0.0.1",
 		})
 		assert.Equal(t, map[string]string{
 			"cluster":        "lfh02-previewnet-blocknode",
@@ -99,11 +99,11 @@ func TestOpsProfile_Labels(t *testing.T) {
 		}, result)
 	})
 
-	t.Run("environment derived from deploy profile", func(t *testing.T) {
+	t.Run("environment label set from Environment", func(t *testing.T) {
 		result := OpsProfile{}.Labels(LabelInput{
-			ClusterName:   "mycluster",
-			DeployProfile: "mainnet",
-			MachineIP:     "192.168.1.100",
+			ClusterName: "mycluster",
+			Environment: "mainnet",
+			MachineIP:   "192.168.1.100",
 		})
 		assert.Equal(t, map[string]string{
 			"cluster":        "mycluster",
@@ -117,8 +117,8 @@ func TestOpsProfile_Labels(t *testing.T) {
 
 	t.Run("instance mirrors cluster name for human-readable dashboards", func(t *testing.T) {
 		result := OpsProfile{}.Labels(LabelInput{
-			ClusterName:   "lfh00-testnet",
-			DeployProfile: "testnet",
+			ClusterName: "lfh00-testnet",
+			Environment: "testnet",
 		})
 		assert.Equal(t, "lfh00-testnet", result["instance"])
 		assert.Equal(t, result["inventory_name"], result["instance"])
@@ -131,8 +131,8 @@ func TestOpsProfile_Labels(t *testing.T) {
 
 	t.Run("ip label omitted when machineIP is empty", func(t *testing.T) {
 		result := OpsProfile{}.Labels(LabelInput{
-			ClusterName:   "lfh02-previewnet-blocknode",
-			DeployProfile: "previewnet",
+			ClusterName: "lfh02-previewnet-blocknode",
+			Environment: "previewnet",
 		})
 		assert.NotContains(t, result, "ip")
 		assert.Equal(t, "lfh02-previewnet-blocknode", result["cluster"])

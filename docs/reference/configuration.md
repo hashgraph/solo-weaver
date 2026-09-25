@@ -44,6 +44,7 @@ blockNode:
 alloy:
   monitorBlockNode: true
   clusterName: "mainnet-block-01"
+  environment: ""         # optional; ops "environment" label, defaults to profile
   prometheusRemotes:
     - name: "primary"
       url: "https://prometheus.example.com/api/v1/write"

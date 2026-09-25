@@ -47,20 +47,20 @@ func TestResolve(t *testing.T) {
 	Register(testProfile{name: "ops"})
 
 	t.Run("empty profile uses default profile", func(t *testing.T) {
-		assert.NotNil(t, Resolve("", LabelInput{ClusterName: "cluster1", DeployProfile: "prod"}))
+		assert.NotNil(t, Resolve("", LabelInput{ClusterName: "cluster1", Environment: "prod"}))
 	})
 
 	t.Run("unknown profile returns nil", func(t *testing.T) {
-		assert.Nil(t, Resolve("unknown", LabelInput{ClusterName: "cluster1", DeployProfile: "prod"}))
+		assert.Nil(t, Resolve("unknown", LabelInput{ClusterName: "cluster1", Environment: "prod"}))
 	})
 
 	t.Run("known profile delegates to Labels()", func(t *testing.T) {
-		result := Resolve("ops", LabelInput{ClusterName: "my-cluster", DeployProfile: "prod"})
+		result := Resolve("ops", LabelInput{ClusterName: "my-cluster", Environment: "prod"})
 		assert.Equal(t, map[string]string{"profile": "ops", "cluster": "my-cluster"}, result)
 	})
 
 	t.Run("case-insensitive lookup", func(t *testing.T) {
-		result := Resolve("Ops", LabelInput{ClusterName: "my-cluster", DeployProfile: "prod"})
+		result := Resolve("Ops", LabelInput{ClusterName: "my-cluster", Environment: "prod"})
 		assert.NotNil(t, result)
 	})
 }
