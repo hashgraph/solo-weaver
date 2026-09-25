@@ -20,8 +20,9 @@
 # Run `task -d docs/dev/daemon` (or `cd docs/dev/daemon && task`) to print the ordered runbook.
 #
 # beacon needs a solo-operator checkout (SOLO_OPERATOR_DIR) for `bin/beacon` and
-# the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip); solo-operator is
-# pinned to v0.7.0 (deps.SOLO_OPERATOR_VERSION), which includes the #1323 alignment.
+# the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip). `prep` builds those
+# from an up-to-date main checkout; the in-cluster chart/image is the released
+# v0.7.1 (deps.SOLO_OPERATOR_VERSION), which includes the #1323 alignment.
 
 version: '3'
 
@@ -163,7 +164,7 @@ tasks:
           T1  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
           T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
           T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
-          T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.0 operator + CRDs)
+          T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.1 operator + CRDs)
               #  ── how to run solo-operator (pick one) ──
               #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
               #  B) local binary out-of-cluster: run T5 (network) with the released operator
@@ -252,7 +253,7 @@ tasks:
 
   # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
   operator:
-    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.7.0 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
+    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.7.1 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
     cmds:
       - |
         set -e
@@ -393,7 +394,7 @@ tasks:
   # them into the weaver checkout (test/data + bin), and vm:sync into the VM. `prep`
   # chains all of it; run it once at the beginning.
   prep:
-    desc: "Host: clone solo-operator (if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
+    desc: "Host: ensure solo-operator is checked out on an up-to-date main (clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
       - task: zip
@@ -403,24 +404,34 @@ tasks:
       - task: sync
 
   clone:
-    desc: "Host: git clone solo-operator into SOLO_OPERATOR_DIR if not already checked out (uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env)"
-    status:
-      # Skip the clone when the checkout already exists.
-      - test -d "{{.SOLO_OPERATOR_DIR}}/.git"
+    desc: "Host: ensure a solo-operator checkout at SOLO_OPERATOR_DIR on an up-to-date main — clone it if absent, otherwise fetch + checkout main + fast-forward. beacon/manager are built from this source, so the e2e must run against main unless you deliberately switch afterwards. Refuses to touch a dirty tree. Uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env."
     cmds:
       - |
         set -e
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)}"
-        echo "▶ solo-operator not found at {{.SOLO_OPERATOR_DIR}} — cloning"
-        # Inject the PAT via env-only git config (insteadOf), so the token is never
-        # written into the cloned repo's remote URL. Clones the default branch; check
-        # out a matching ref if `task build:beacon` / test/dev are on another branch.
-        GIT_CONFIG_COUNT=1 \
-        GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf" \
-        GIT_CONFIG_VALUE_0="https://github.com/" \
-        git clone https://github.com/hashgraph/solo-operator.git "{{.SOLO_OPERATOR_DIR}}"
-        echo "✓ cloned solo-operator to {{.SOLO_OPERATOR_DIR}}"
+        DIR="{{.SOLO_OPERATOR_DIR}}"
+        # Inject the PAT via env-only git config (insteadOf) for clone/fetch/pull, so the
+        # token is never written into the checkout's remote URL or ~/.gitconfig.
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_VALUE_0="https://github.com/"
+        if [ ! -d "$DIR/.git" ]; then
+          echo "▶ solo-operator not found at $DIR — cloning"
+          git clone https://github.com/hashgraph/solo-operator.git "$DIR"
+        fi
+        # Ensure the checkout is on an up-to-date main. Refuse to clobber a work-in-progress
+        # operator change (e.g. a fix under test via operator:local) — a dirty tree aborts
+        # with a clear message rather than being silently switched or reset.
+        if [ -n "$(git -C "$DIR" status --porcelain)" ]; then
+          echo "!! $DIR has uncommitted changes — commit/stash them (or switch it to main yourself) before running prep" >&2
+          exit 1
+        fi
+        echo "▶ solo-operator: fetch + checkout main + fast-forward"
+        git -C "$DIR" fetch origin
+        git -C "$DIR" checkout main
+        git -C "$DIR" pull --ff-only origin main
+        echo "✓ solo-operator on main at $(git -C "$DIR" rev-parse --short HEAD)"
 
   zip:
     desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"

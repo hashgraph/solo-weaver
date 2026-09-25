@@ -104,12 +104,15 @@ Version map (matches solo-operator docs/beacon): deployed **0.74.0**, upgrade to
 ## Quick path
 
 *Override the solo-operator location with `SOLO_OPERATOR_DIR=/path`, the orbit with
-`NS=...` (default `solo-orbit`), or the node with `NODE_ID=...` (default `0`).*
+`NS=...` (default `hiero-network-1`), or the node with `NODE_ID=...` (default `0`).*
 
 solo-operator is **not** mounted in the VM, so its artifacts (the deployment zips
 and `beacon`) are built on the **host** and rsynced into the VM by `vm:sync`. Do
 that once up front, then run the rest **inside the VM**. Two in-VM tasks are
 long-running and each want their **own terminal**: `daemon:logs` and `port-forward`.
+
+
+*Ensure the UTM VM has enough memory and CPU resources (8GB RAM + 2 cores)*
 
 ```
 # ── ON THE HOST (dev machine), once ──
