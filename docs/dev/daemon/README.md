@@ -127,7 +127,7 @@ task -d docs/dev/daemon secrets         # gossip/gRPC + pull secrets (uat:secret
 task -d docs/dev/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
 
 # a REAL v0.74.0 consensus network, in DAEMON-DELEGATED mode
-task -d docs/dev/daemon network         # consensus node install --provisioner-daemon + genesis
+task -d docs/dev/daemon consensus # consensus node install --provisioner-daemon + genesis
 
 # install + run the host daemon (the execute-phase performer)
 task -d docs/dev/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
@@ -140,7 +140,7 @@ task -d docs/dev/daemon upload          # upload v0.74.2 into special file 0.0.1
 task -d docs/dev/daemon prepare         # freeze prepare (pinned to H)
 task -d docs/dev/daemon freeze          # freeze upgrade (~3 min out) — network freezes, daemon executes
 
-# observe + verify the daemon execute handshake
+# commands to observe + verify the daemon execute handshake
 task -d docs/dev/daemon watch           # watch NetworkUpgradeExecute advance
 task -d docs/dev/daemon verify          # assert the handshake + config CRs Valid
 task -d docs/dev/daemon version         # beacon network version -> 0.74.2

@@ -317,6 +317,7 @@ tasks:
       - task: vm:start
       - task: vm:configure:ssh
       - task: proxy:install-ca-cert
+      - task: vm:configure:tools
       - task: vm:alloy:start
       - cmd: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -325,6 +326,7 @@ tasks:
           echo "Configured:"
           echo "  ✅ SSH access with passwordless login"
           echo "  ✅ MITM proxy with CA certificate"
+          echo "  ✅ Development tools (git, Go, Task, xxd, build tools)"
           echo "  ✅ Docker installed and configured"
           echo "  ✅ Alloy stack (Prometheus, Loki, Grafana)"
           echo ""

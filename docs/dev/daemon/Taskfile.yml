@@ -174,7 +174,7 @@ tasks:
               #     Iterate: on the host `operator:sync` (rebuild+vm:sync), then re-run operator:local.
 
           #  deploy v0.74.0 consensus network in DAEMON-DELEGATED mode
-          T5  task -d docs/dev/daemon network        # consensus node install --provisioner-daemon + genesis
+          T5  task -d docs/dev/daemon consensus # consensus node install --provisioner-daemon + genesis
 
           # install + run the host daemon (execute phase performer)
           T6  task -d docs/dev/daemon daemon:install # daemon service install (daemon-cn RBAC + scoped kubeconfig)
@@ -303,7 +303,7 @@ tasks:
       - task: sync
 
   # ── 5. deploy v0.74.0 consensus network in DAEMON-DELEGATED mode ──────────────────────────────────────
-  network:
+  consensus:
     desc: "Inside VM: deploy consensus node{{.NODE_ID}} (v{{.BASE_VERSION}}) from the extracted package + generate genesis"
     cmds:
       - |
@@ -598,7 +598,7 @@ tasks:
         kubectl -n {{.NS}} get networkupgradeexecute -w
 
   verify:
-    desc: "Assert the daemon execute handshake landed: ConfigCRsApplied=True, DaemonResult=True, phase PendingNodeUpgrade, config CRs Valid"
+    desc: "Assert the daemon execute handshake landed (ConfigCRsApplied=True, DaemonResult=True, phase PendingNodeUpgrade, config CRs Valid) and confirm the live Services version is {{.UPGRADE_VERSION}}. Needs the port-forward (T9) up for the version check."
     cmds:
       - |
         set -e
@@ -621,6 +621,10 @@ tasks:
         sudo ls /opt/solo/weaver/*/consensus-$OP.jsonl 2>/dev/null || echo "  (event log not found — check the daemon log)"
         # infrastructure-versions.yaml is placed only if the package ships one (config-only = absent).
         sudo ls -l /opt/solo/weaver/config/infrastructure-versions.yaml 2>/dev/null || echo "  (no infrastructure-versions.yaml — expected for a config-only upgrade)"
+      # The node reboots onto the new software AFTER the daemon handshake, so the live
+      # version is the final confirmation the whole upgrade landed. Reuses the `version`
+      # task (needs the port-forward from T9 running in its own terminal).
+      - task: version
 
   version:
     desc: "Confirm the live Services version (expect {{.UPGRADE_VERSION}} after the pod restarts on the new software)"
