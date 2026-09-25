@@ -232,17 +232,26 @@ func finalizeWorkflowReport(report *automa.Report) error {
 // printJSONSummary writes one compact JSON object summarising the workflow run
 // to stdout. It bypasses logx, whose --output json events go to stderr.
 func printJSONSummary(report *automa.Report, duration time.Duration, reportPath string) {
+	// Hoisted so automation reads warnings without walking the report tree.
+	// Always an array, never null, so consumers can range over it unconditionally.
+	warnings := ui.CollectWarnings(report)
+	if warnings == nil {
+		warnings = []string{}
+	}
+
 	summary := struct {
 		Type       string         `json:"type"`
 		Status     string         `json:"status"`
 		DurationMS int64          `json:"duration_ms"`
 		ReportPath string         `json:"report_path"`
+		Warnings   []string       `json:"warnings"`
 		Report     *automa.Report `json:"report"`
 	}{
 		Type:       "summary",
 		Status:     report.Status.String(),
 		DurationMS: duration.Milliseconds(),
 		ReportPath: reportPath,
+		Warnings:   warnings,
 		Report:     report,
 	}
 

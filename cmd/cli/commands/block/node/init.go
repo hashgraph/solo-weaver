@@ -204,6 +204,26 @@ func validateBlockNodeFlags(cmd *cobra.Command) error {
 	return nil
 }
 
+// storageFromFlags collects the storage flags into one value. Shared with
+// `check` so a new flag reaches both call sites.
+func storageFromFlags() models.BlockNodeStorage {
+	return models.BlockNodeStorage{
+		BasePath:             flagBasePath,
+		ArchivePath:          flagArchivePath,
+		ArchiveSize:          flagArchiveSize,
+		LivePath:             flagLivePath,
+		LiveSize:             flagLiveSize,
+		LogPath:              flagLogPath,
+		LogSize:              flagLogSize,
+		VerificationPath:     flagVerificationPath,
+		VerificationSize:     flagVerificationSize,
+		PluginsPath:          flagPluginsPath,
+		PluginsSize:          flagPluginsSize,
+		ApplicationStatePath: flagApplicationStatePath,
+		ApplicationStateSize: flagApplicationStateSize,
+	}
+}
+
 // prepareBlocknodeInputs prepares and validates user inputs from command flags.
 // When running interactively (TTY, no --force, no --non-interactive), it presents
 // huh prompts for any required flags that were not supplied on the command line.
@@ -291,25 +311,11 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			ExecutionOptions: *execOpts,
 		},
 		Custom: models.BlockNodeInputs{
-			Namespace:    flagNamespace,
-			Release:      flagReleaseName,
-			Chart:        flagChartRepo,
-			ChartVersion: flagChartVersion,
-			Storage: models.BlockNodeStorage{
-				BasePath:             flagBasePath,
-				ArchivePath:          flagArchivePath,
-				ArchiveSize:          flagArchiveSize,
-				LivePath:             flagLivePath,
-				LiveSize:             flagLiveSize,
-				LogPath:              flagLogPath,
-				LogSize:              flagLogSize,
-				VerificationPath:     flagVerificationPath,
-				VerificationSize:     flagVerificationSize,
-				PluginsPath:          flagPluginsPath,
-				PluginsSize:          flagPluginsSize,
-				ApplicationStatePath: flagApplicationStatePath,
-				ApplicationStateSize: flagApplicationStateSize,
-			},
+			Namespace:           flagNamespace,
+			Release:             flagReleaseName,
+			Chart:               flagChartRepo,
+			ChartVersion:        flagChartVersion,
+			Storage:             storageFromFlags(),
 			Profile:             parentFlags.Profile,
 			ValuesFile:          validatedValuesFile,
 			ReuseValues:         !flagNoReuseValues,

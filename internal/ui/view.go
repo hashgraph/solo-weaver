@@ -12,6 +12,7 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/muesli/termenv"
 )
 
@@ -28,9 +29,11 @@ var (
 	errorDetailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	subDetailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // greyed out
 
-	summaryPassedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	summaryFailedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	summaryLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	summaryPassedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+	summaryFailedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	summaryLabelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	summaryWarningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	summaryDetailStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 	sectionHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 )
@@ -314,9 +317,72 @@ func RenderSummaryTable(report *automa.Report, totalDuration time.Duration, repo
 	if daemonLogPath != "" {
 		b.WriteString(fmt.Sprintf("  %s %s\n", summaryLabelStyle.Render("Daemon log:"), daemonLogPath))
 	}
+
+	// The backing media of every storage path, so `block node check` answers
+	// "what is each path on?" on the console, not only in the saved report.
+	if media := collectStorageMedia(report); len(media) > 0 {
+		b.WriteString(fmt.Sprintf("  %s\n", summaryLabelStyle.Render("Storage media:")))
+		for _, m := range media {
+			b.WriteString(fmt.Sprintf("    %s\n", summaryDetailStyle.Render(m)))
+		}
+	}
+
+	// Warnings come last so they are the final thing on screen. With neither
+	// block recorded this table renders as before; every command shares it.
+	if warnings := CollectWarnings(report); len(warnings) > 0 {
+		b.WriteString(fmt.Sprintf("  %s\n", summaryWarningStyle.Render("Warnings:")))
+		for _, w := range warnings {
+			b.WriteString(fmt.Sprintf("    %s %s\n", summaryWarningStyle.Render("!"), w))
+		}
+	}
+
 	b.WriteString("  ─────────────────────────────────────────────────\n")
 
 	return b.String()
+}
+
+// CollectWarnings walks a report tree and returns every operator-facing warning
+// under models.ReportMetaWarning, in execution order and de-duplicated. A step's
+// newline-separated warnings each become their own entry.
+func CollectWarnings(report *automa.Report) []string {
+	return collectMetaLines(report, models.ReportMetaWarning)
+}
+
+// collectStorageMedia returns the storage media lines, one per volume, in the
+// order the steps recorded them.
+func collectStorageMedia(report *automa.Report) []string {
+	return collectMetaLines(report, models.ReportMetaStorageMedia)
+}
+
+// collectMetaLines walks a report tree and returns the newline-separated lines
+// recorded under key, in execution order and de-duplicated.
+func collectMetaLines(report *automa.Report, key string) []string {
+	var lines []string
+	seen := map[string]struct{}{}
+
+	var walk func(r *automa.Report)
+	walk = func(r *automa.Report) {
+		if r == nil {
+			return
+		}
+		for _, line := range strings.Split(r.Metadata[key], "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if _, dup := seen[line]; dup {
+				continue
+			}
+			seen[line] = struct{}{}
+			lines = append(lines, line)
+		}
+		for _, sr := range r.StepReports {
+			walk(sr)
+		}
+	}
+	walk(report)
+
+	return lines
 }
 
 func formatDuration(d time.Duration) string {
