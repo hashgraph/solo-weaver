@@ -42,13 +42,14 @@ const (
 
 	// ConsensusDefaultPVCAccessMode is the fallback PVC access mode.
 	ConsensusDefaultPVCAccessMode = "ReadWriteOnce"
-
-	// Default uid/gid owning hostPath directories — the hedera user the operator runs
-	// the pod as. kubelet applies no fsGroup ownership to hostPath volumes, so the
-	// host dirs must be chowned to this or the node cannot write them.
-	ConsensusDefaultHostPathUID = 2000
-	ConsensusDefaultHostPathGID = 2000
 )
+
+// The uid/gid owning the consensus node's hostPath directories is the canonical
+// hedera user/group (config.HederaUserId/GroupId, "2000") — kubelet applies no
+// fsGroup ownership to hostPath volumes, so the host dirs must be chowned to it.
+// It lives in pkg/config (identity, not domain data); the CLI flag default and the
+// chown step read it there (pkg/config imports pkg/models, so models can't import
+// config — the value is consumed at those edges, not duplicated here).
 
 // consensusVolumeNames is the fixed set of data volumes, in a stable order.
 var consensusVolumeNames = []string{

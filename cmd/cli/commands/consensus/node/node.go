@@ -3,7 +3,10 @@
 package node
 
 import (
+	"strconv"
+
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -87,8 +90,13 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes (empty = ReadWriteOnce)")
 	nodeCmd.PersistentFlags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
 	nodeCmd.PersistentFlags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
-	nodeCmd.PersistentFlags().IntVar(&flagHostPathUID, "hostpath-uid", models.ConsensusDefaultHostPathUID, "Owner UID for hostPath volume dirs (the hedera user the pod runs as)")
-	nodeCmd.PersistentFlags().IntVar(&flagHostPathGID, "hostpath-gid", models.ConsensusDefaultHostPathGID, "Owner GID for hostPath volume dirs (the hedera group the pod runs as)")
+	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
+	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
+	// value is the trusted "2000" constant, so the error can't fire).
+	hederaUID, _ := strconv.Atoi(config.HederaUserId())
+	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
+	nodeCmd.PersistentFlags().IntVar(&flagHostPathUID, "hostpath-uid", hederaUID, "Owner UID for hostPath volume dirs (the hedera user the pod runs as)")
+	nodeCmd.PersistentFlags().IntVar(&flagHostPathGID, "hostpath-gid", hederaGID, "Owner GID for hostPath volume dirs (the hedera group the pod runs as)")
 
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
 	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)

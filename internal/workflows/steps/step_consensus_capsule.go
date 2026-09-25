@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/automa-saga/automa"
@@ -14,6 +15,7 @@ import (
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
@@ -787,8 +789,12 @@ func ConsensusHasHostPathVolumes(inputs models.ConsensusNodeInputs) bool {
 // write them — kubelet applies no fsGroup ownership to hostPath. Runs before the
 // capsule; chown needs root (fails with an actionable hint otherwise).
 func EnsureConsensusHostPaths(inputs models.ConsensusNodeInputs) automa.Builder {
-	uid := intOrDefault(inputs.HostPathUID, models.ConsensusDefaultHostPathUID)
-	gid := intOrDefault(inputs.HostPathGID, models.ConsensusDefaultHostPathGID)
+	// Fall back to the canonical hedera user/group (pkg/config, the single source of
+	// "2000"). Hedera*Id() are strings; parse to int — the trusted constant can't fail.
+	hederaUID, _ := strconv.Atoi(config.HederaUserId())
+	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
+	uid := intOrDefault(inputs.HostPathUID, hederaUID)
+	gid := intOrDefault(inputs.HostPathGID, hederaGID)
 	return automa.NewStepBuilder().WithId(EnsureHostPathsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			vols, err := hostPathBackedVolumes(inputs)

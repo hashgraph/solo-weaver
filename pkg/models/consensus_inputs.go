@@ -96,8 +96,8 @@ type ConsensusNodeInputs struct {
 	Volumes ConsensusVolumeConfig `json:"volumes,omitempty"`
 
 	// HostPathUID/HostPathGID own the hostPath directories created for hostpath-backed
-	// volumes. Default to ConsensusDefaultHostPathUID/GID (hedera 2000:2000); non-positive
-	// values fall back to the defaults.
+	// volumes. Non-positive values fall back to the canonical hedera user/group
+	// (config.HederaUserId/GroupId, 2000:2000), resolved by the chown step.
 	HostPathUID int `json:"hostPathUid,omitempty"`
 	HostPathGID int `json:"hostPathGid,omitempty"`
 
