@@ -87,7 +87,7 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDefaultVolumeType, "default-volume-type", "", "Default backing for all data volumes: emptydir|hostpath|pvc (empty = emptydir)")
 	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCSize, "default-pvc-size", "", "Default PVC size for pvc-backed volumes when size= is omitted (empty = per-volume default)")
 	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCStorageClass, "default-pvc-storage-class", "", "Default StorageClass for pvc-backed volumes (empty = cluster default)")
-	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes (empty = ReadWriteOnce)")
+	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
 	nodeCmd.PersistentFlags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
 	nodeCmd.PersistentFlags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
 	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the

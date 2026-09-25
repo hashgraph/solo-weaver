@@ -33,6 +33,36 @@ const (
 	VolumeBackingPVC      = "pvc"
 )
 
+// PVC access modes valid for a consensus node. A CN pod is a single writer, so
+// only the single-writer modes are sound:
+//   - ReadWriteOnce: universal; supported by every provisioner.
+//   - ReadWriteOncePod: strictly stronger (single pod, not just single node), but
+//     requires k8s >=1.29 and a CSI driver that advertises it.
+//
+// ReadWriteMany (many writers) is pointless for a single pod, and ReadOnlyMany
+// makes the node crash on its first write to state/saved/streams — both are
+// rejected up front so a mistyped or unsound access mode fails at the CLI rather
+// than leaving a Pending PVC or a crash-looping pod. Whether the chosen mode is
+// actually satisfiable against the target StorageClass is cluster-specific and
+// surfaces at bind time; weaver cannot pre-validate that.
+const (
+	AccessModeReadWriteOnce    = "ReadWriteOnce"
+	AccessModeReadWriteOncePod = "ReadWriteOncePod"
+)
+
+// consensusPVCAccessModes is the allowed set, in a stable order for error messages.
+var consensusPVCAccessModes = []string{AccessModeReadWriteOnce, AccessModeReadWriteOncePod}
+
+// IsValidCNAccessMode reports whether mode is a PVC access mode a consensus node
+// may use (the single-writer subset).
+func IsValidCNAccessMode(mode string) bool {
+	switch mode {
+	case AccessModeReadWriteOnce, AccessModeReadWriteOncePod:
+		return true
+	}
+	return false
+}
+
 // Consensus volume defaults.
 const (
 	// ConsensusDefaultVolumeBacking is the fallback backing when neither a per-volume
@@ -41,7 +71,7 @@ const (
 	ConsensusDefaultVolumeBacking = VolumeBackingEmptyDir
 
 	// ConsensusDefaultPVCAccessMode is the fallback PVC access mode.
-	ConsensusDefaultPVCAccessMode = "ReadWriteOnce"
+	ConsensusDefaultPVCAccessMode = AccessModeReadWriteOnce
 )
 
 // The uid/gid owning the consensus node's hostPath directories is the canonical
@@ -187,6 +217,11 @@ func ParseVolumeArg(arg string) (string, ConsensusVolumeSpec, error) {
 		return "", spec, errorx.IllegalArgument.New(
 			"invalid --volume %q: unknown type %q (allowed: emptydir, hostpath, pvc)", arg, spec.Type)
 	}
+	if spec.AccessMode != "" && !IsValidCNAccessMode(spec.AccessMode) {
+		return "", spec, errorx.IllegalArgument.New(
+			"invalid --volume %q: unsupported accessMode %q — a consensus node is a single-writer pod (allowed: %s)",
+			arg, spec.AccessMode, strings.Join(consensusPVCAccessModes, ", "))
+	}
 	return name, spec, nil
 }
 
@@ -224,6 +259,11 @@ func LoadVolumeConfigYAML(data []byte) (ConsensusVolumeConfig, error) {
 		return ConsensusVolumeConfig{}, errorx.IllegalFormat.New(
 			"volumes file: defaults.type %q is invalid (allowed: emptydir, hostpath, pvc)", cfg.Defaults.Type)
 	}
+	if cfg.Defaults.AccessMode != "" && !IsValidCNAccessMode(cfg.Defaults.AccessMode) {
+		return ConsensusVolumeConfig{}, errorx.IllegalFormat.New(
+			"volumes file: defaults.pvc.accessMode %q is unsupported — a consensus node is a single-writer pod (allowed: %s)",
+			cfg.Defaults.AccessMode, strings.Join(consensusPVCAccessModes, ", "))
+	}
 	names := make([]string, 0, len(f.Volumes))
 	for name := range f.Volumes {
 		names = append(names, name)
@@ -238,6 +278,11 @@ func LoadVolumeConfigYAML(data []byte) (ConsensusVolumeConfig, error) {
 		if spec.Type != "" && !IsValidVolumeBacking(spec.Type) {
 			return ConsensusVolumeConfig{}, errorx.IllegalFormat.New(
 				"volumes file: volume %q has invalid type %q (allowed: emptydir, hostpath, pvc)", name, spec.Type)
+		}
+		if spec.AccessMode != "" && !IsValidCNAccessMode(spec.AccessMode) {
+			return ConsensusVolumeConfig{}, errorx.IllegalFormat.New(
+				"volumes file: volume %q has unsupported accessMode %q — a consensus node is a single-writer pod (allowed: %s)",
+				name, spec.AccessMode, strings.Join(consensusPVCAccessModes, ", "))
 		}
 		cfg.Volumes[name] = spec
 	}
@@ -302,6 +347,11 @@ func (c ConsensusVolumeConfig) EffectiveSpec(name string) (ConsensusVolumeSpec, 
 		out.Size = firstNonEmpty(spec.Size, c.Defaults.PVCSize, consensusDefaultPVCSize[name])
 		out.StorageClass = firstNonEmpty(spec.StorageClass, c.Defaults.StorageClass) // "" = cluster default
 		out.AccessMode = firstNonEmpty(spec.AccessMode, c.Defaults.AccessMode, ConsensusDefaultPVCAccessMode)
+		if !IsValidCNAccessMode(out.AccessMode) {
+			return ConsensusVolumeSpec{}, errorx.IllegalArgument.New(
+				"volume %q has unsupported PVC accessMode %q — a consensus node is a single-writer pod (allowed: %s)",
+				name, out.AccessMode, strings.Join(consensusPVCAccessModes, ", "))
+		}
 	default:
 		return ConsensusVolumeSpec{}, errorx.IllegalArgument.New(
 			"volume %q has invalid backing %q", name, t)

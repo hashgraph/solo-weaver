@@ -29,12 +29,21 @@ func TestParseVolumeArg(t *testing.T) {
 		assert.Equal(t, ConsensusVolumeUpgrade, name)
 		assert.Equal(t, "/mnt/up", spec.Path)
 	})
+	t.Run("RWOP accessMode accepted", func(t *testing.T) {
+		_, spec, err := ParseVolumeArg("name=saved,type=pvc,accessMode=ReadWriteOncePod")
+		require.NoError(t, err)
+		assert.Equal(t, AccessModeReadWriteOncePod, spec.AccessMode)
+	})
 	errCases := map[string]string{
-		"missing name":   "type=pvc,size=1Gi",
-		"unknown key":    "name=saved,sizee=1Gi",
-		"unknown volume": "name=bogus,type=pvc",
-		"unknown type":   "name=saved,type=nfs",
-		"no equals":      "name=saved,pvc",
+		"missing name":         "type=pvc,size=1Gi",
+		"unknown key":          "name=saved,sizee=1Gi",
+		"unknown volume":       "name=bogus,type=pvc",
+		"unknown type":         "name=saved,type=nfs",
+		"no equals":            "name=saved,pvc",
+		"RWX accessMode":       "name=saved,type=pvc,accessMode=ReadWriteMany",
+		"ROX accessMode":       "name=saved,type=pvc,accessMode=ReadOnlyMany",
+		"typo accessMode":      "name=saved,type=pvc,accessMode=RWO",
+		"lowercase accessMode": "name=saved,type=pvc,accessMode=readwriteonce",
 	}
 	for label, arg := range errCases {
 		t.Run("error: "+label, func(t *testing.T) {
@@ -111,6 +120,37 @@ func TestEffectiveSpec_KeyValidation(t *testing.T) {
 	})
 }
 
+func TestEffectiveSpec_AccessMode(t *testing.T) {
+	t.Run("RWOP is accepted", func(t *testing.T) {
+		cfg := ConsensusVolumeConfig{Volumes: map[string]ConsensusVolumeSpec{
+			ConsensusVolumeSaved: {Type: VolumeBackingPVC, AccessMode: AccessModeReadWriteOncePod},
+		}}
+		spec, err := cfg.EffectiveSpec(ConsensusVolumeSaved)
+		require.NoError(t, err)
+		assert.Equal(t, AccessModeReadWriteOncePod, spec.AccessMode)
+	})
+	t.Run("per-volume RWX is rejected", func(t *testing.T) {
+		cfg := ConsensusVolumeConfig{Volumes: map[string]ConsensusVolumeSpec{
+			ConsensusVolumeSaved: {Type: VolumeBackingPVC, AccessMode: "ReadWriteMany"},
+		}}
+		_, err := cfg.EffectiveSpec(ConsensusVolumeSaved)
+		assert.Error(t, err)
+	})
+	t.Run("global default ROX is rejected", func(t *testing.T) {
+		cfg := ConsensusVolumeConfig{Defaults: ConsensusVolumeDefaults{Type: VolumeBackingPVC, AccessMode: "ReadOnlyMany"}}
+		_, err := cfg.EffectiveSpec(ConsensusVolumeSaved)
+		assert.Error(t, err)
+	})
+	t.Run("accessMode is not validated for non-pvc backings", func(t *testing.T) {
+		// A stray global default accessMode is harmless when the volume is emptydir:
+		// EffectiveSpec never reads it, so it must not error.
+		cfg := ConsensusVolumeConfig{Defaults: ConsensusVolumeDefaults{AccessMode: "ReadWriteMany"}}
+		spec, err := cfg.EffectiveSpec(ConsensusVolumeSaved)
+		require.NoError(t, err)
+		assert.Equal(t, VolumeBackingEmptyDir, spec.Type)
+	})
+}
+
 func TestSetVolume_MergesKeys(t *testing.T) {
 	var cfg ConsensusVolumeConfig
 	cfg.SetVolume(ConsensusVolumeSaved, ConsensusVolumeSpec{Type: VolumeBackingPVC, Size: "500Gi", StorageClass: "fast-ssd"})
@@ -162,6 +202,14 @@ volumes:
 	})
 	t.Run("invalid default type rejected", func(t *testing.T) {
 		_, err := LoadVolumeConfigYAML([]byte("defaults:\n  type: nfs\n"))
+		assert.Error(t, err)
+	})
+	t.Run("invalid default accessMode rejected", func(t *testing.T) {
+		_, err := LoadVolumeConfigYAML([]byte("defaults:\n  type: pvc\n  pvc:\n    accessMode: ReadWriteMany\n"))
+		assert.Error(t, err)
+	})
+	t.Run("invalid per-volume accessMode rejected", func(t *testing.T) {
+		_, err := LoadVolumeConfigYAML([]byte("volumes:\n  saved: { type: pvc, accessMode: ReadOnlyMany }\n"))
 		assert.Error(t, err)
 	})
 }
