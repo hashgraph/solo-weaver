@@ -168,6 +168,7 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, workflows.NewNetworkNftUnitMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewNetworkShaperUnitMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewShellCompletionMigration())
+	migration.Register(migration.ScopeStartup, workflows.NewSysctlNetworkTuningMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
