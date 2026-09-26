@@ -5,6 +5,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -634,6 +635,86 @@ func (c *Client) GetSecretKeys(ctx context.Context, namespace, name string) ([]s
 		keys = append(keys, k)
 	}
 	return keys, nil
+}
+
+// secretsGVR is the GroupVersionResource for core v1 Secrets.
+var secretsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}
+
+// ApplySecret creates or updates an Opaque Secret via Server-Side Apply, keeping
+// the key bytes in memory (no temp file). The named data values are stored
+// base64-encoded under .data. fieldManager "solo-weaver" owns the fields it sets,
+// matching ApplyManifest; force resolves ownership conflicts in weaver's favor.
+func (c *Client) ApplySecret(ctx context.Context, namespace, name string, data map[string][]byte, labels map[string]string) error {
+	encoded := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		encoded[k] = base64.StdEncoding.EncodeToString(v)
+	}
+
+	metadata := map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+	}
+	if len(labels) > 0 {
+		lbls := make(map[string]interface{}, len(labels))
+		for k, v := range labels {
+			lbls[k] = v
+		}
+		metadata["labels"] = lbls
+	}
+
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   metadata,
+		"type":       "Opaque",
+		"data":       encoded,
+	}}
+
+	payload, err := obj.MarshalJSON()
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "marshal Secret %s/%s for server-side apply", namespace, name)
+	}
+
+	force := true
+	dr := c.Dyn.Resource(secretsGVR).Namespace(namespace)
+	if _, err := dr.Patch(ctx, name, types.ApplyPatchType, payload, metav1.PatchOptions{
+		FieldManager: "solo-weaver",
+		Force:        &force,
+	}); err != nil {
+		if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+			return errorx.ExternalError.Wrap(err, "apply Secret %s/%s", namespace, name)
+		}
+		return errorx.InternalError.Wrap(err, "apply Secret %s/%s", namespace, name)
+	}
+	return nil
+}
+
+// GetSecretData returns a Secret's decoded data values. The second result is
+// false (with no error) when the Secret does not exist.
+func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map[string][]byte, bool, error) {
+	dr := c.Dyn.Resource(secretsGVR).Namespace(namespace)
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, errorx.InternalError.Wrap(err, "get Secret %s/%s", namespace, name)
+	}
+
+	data, _, _ := unstructured.NestedMap(obj.Object, "data")
+	out := make(map[string][]byte, len(data))
+	for k, v := range data {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false, errorx.IllegalState.New("Secret %s/%s data key %q is not a string", namespace, name, k)
+		}
+		decoded, derr := base64.StdEncoding.DecodeString(s)
+		if derr != nil {
+			return nil, false, errorx.IllegalState.Wrap(derr, "decode Secret %s/%s data key %q", namespace, name, k)
+		}
+		out[k] = decoded
+	}
+	return out, true, nil
 }
 
 // =====================

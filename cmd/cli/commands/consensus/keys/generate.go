@@ -117,7 +117,7 @@ func warnSkipped(keysDir string, skipped cnkeys.Selectors) {
 	}{{skipped.Gossip, "gossip"}, {skipped.Grpc, "grpc"}, {skipped.Admin, "admin"}} {
 		if k.on {
 			logx.As().Warn().Str("keysDir", keysDir).Str("keyType", k.name).
-				Msg("key material already exists; keeping it (pass --force to regenerate)")
+				Msg("Keeping existing key material (pass --force to regenerate)")
 		}
 	}
 }
