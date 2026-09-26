@@ -117,3 +117,95 @@ so `keys import` maps a generated folder to secrets one-to-one:
 Private key files are written with `0600` permissions. No combined artifacts
 file is written — the join inputs are these files plus the gRPC certificate hash
 printed at generation time.
+
+### `consensus keys import`
+
+Read the selected key material from a folder and create the per-node
+Kubernetes secrets the solo-operator consumes. `--node-id` is required — it
+selects which per-node secrets to write.
+
+Each secret is named by the key's own date and fingerprint:
+
+| Secret | Name |
+|---|---|
+| gossip signing key and certificate | `node<N>-gossip-keys-<date>-<fp8>` |
+| gRPC TLS key and certificate | `node<N>-grpc-tls-keys-<date>-<fp8>` |
+| admin public key | `node<N>-admin-pubkey-<fp8>` |
+
+`<date>` is the certificate's `Not before` date (UTC, `YYYYMMDD`), so it never
+depends on when the import ran: importing the same folder again, for example after
+a cluster reset, gives the same names. `<fp8>` is the first 8 hex characters of the
+SHA-384 of the PEM-encoded certificate (or of the raw admin public key, which has no date).
+Different key material therefore gets a different name, and importing new keys (a
+rotation) creates new secrets next to the live ones instead of replacing them. Each
+secret also carries labels (`solo.hiero.org/node`, `solo.hiero.org/key-type`,
+`solo.hiero.org/cert-fingerprint`) and annotations with the full SHA-384 and the
+certificate expiry, so the secrets can be listed and matched to a roster entry. Use
+`--label` to add your own labels, for example a reference to an external system.
+When a secret's content is already up to date, `import --label` changes only its
+labels; the key data is never sent again, so it cannot be overwritten.
+
+The admin key is **not generated** by solo-provisioner. Create it in an external
+wallet, then save its **public** key as hex in `admin.pub` inside `--keys-dir`
+(32 bytes for Ed25519, or the 33-byte compressed form for secp256k1). Only that
+public key is imported; the private key never reaches the provisioner or the
+cluster. With no selector flag, the admin secret is created only when `admin.pub`
+exists; pass `--admin` to make it required. The admin secret holds the public key
+as **raw bytes**, which is what the solo-operator reads; `admin.pub` itself is hex
+text, so `import` decodes it and `export` writes it back as hex. The gossip signing secret
+Re-importing identical material is idempotent. A secret of the same name whose
+content was edited by hand is refused unless `--force` is passed.
+
+```bash
+# Create the secrets for node 0 from a generated folder (add admin.pub first
+# to include the admin public key):
+sudo solo-provisioner consensus keys import --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node-keys
+
+# Only refresh the gRPC TLS secret:
+sudo solo-provisioner consensus keys import --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node-keys --tls
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Node key folder to import from (required for `--source folder`) | — |
+| `--source` | Key material source: `folder` (vault-backed import is tracked separately) | `folder` |
+| `--secret-suffix` | Replace the certificate date in the secret names (for example `v0.75.6`); lowercase letters, digits, `-` and `.` | certificate date |
+| `--label` | Extra label for every secret, as `key=value` (repeatable), for example `example.com/external-ref=ticket-42` or `app.kubernetes.io/version=v0.75.6`. Kubernetes label syntax applies, and weaver's own labels cannot be used | — |
+| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand); re-importing identical material is idempotent without it | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which secrets to create | gossip and gRPC, plus admin when `admin.pub` exists |
+
+`--namespace` (the orbit name) and `--node-id` are inherited from `consensus
+node`; `--node-id` is **required** here.
+
+### `consensus keys export`
+
+Read the selected per-node secrets from the cluster and write their contents to a
+folder — a backup, or to move a node's material between namespaces. The admin
+secret holds only the public key, so the admin **private** key cannot be
+recovered from the cluster; it stays in your wallet.
+
+```bash
+sudo solo-provisioner consensus keys export --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node0-backup
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Node key folder to export into (required) | — |
+| `--fingerprint` | Pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
+| `--secret-suffix` | Pick the secrets imported with this suffix or date | — |
+| `--force` | Overwrite existing files whose content differs (identical files are left as-is) | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which secrets to export | all when none given |
+
+Export reads the secret's data and checks it against the secret's name and
+fingerprint label; a secret that was renamed or edited is refused. When a node has
+more than one generation of a key type, pass `--fingerprint` or `--secret-suffix` to
+choose one; otherwise the command lists the candidates and stops.
+
+Export is idempotent: identical files are left untouched, and a file that holds
+different content is refused unless `--force` is passed.
+
+`--namespace` and `--node-id` are inherited from `consensus node`; `--node-id` is
+**required** here.
