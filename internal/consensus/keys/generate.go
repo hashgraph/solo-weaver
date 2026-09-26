@@ -24,27 +24,33 @@ const (
 	FileGossipCert    = "s-public.pem"
 	FileGrpcKey       = "hedera.key"
 	FileGrpcCert      = "hedera.crt"
+	// FileAdminPublic is the node admin public key (hex). It is never generated
+	// here: the operator creates the admin key in an external wallet and drops
+	// the public key into the key folder for `keys import`.
+	FileAdminPublic = "admin.pub"
 )
 
-// Selectors chooses which key types to generate. A zero Selectors (all false) is
-// treated as "all" by NormalizeSelectors.
+// Selectors chooses which key types a command applies to. A zero Selectors (all
+// false) is treated as "all" by NormalizeSelectors. Admin only ever means the
+// admin PUBLIC key: generation ignores it, import/export/verify/inspect use it.
 type Selectors struct {
 	Gossip bool
 	Grpc   bool
+	Admin  bool
 }
 
 // NormalizeSelectors returns s unchanged if any selector is set, otherwise a
-// Selectors with both enabled ("no selector flags" means "generate all").
+// Selectors with all three enabled ("no selector flags" means "all").
 func NormalizeSelectors(s Selectors) Selectors {
-	if !s.Gossip && !s.Grpc {
-		return Selectors{Gossip: true, Grpc: true}
+	if !s.Any() {
+		return Selectors{Gossip: true, Grpc: true, Admin: true}
 	}
 	return s
 }
 
 // Any reports whether at least one key type is selected.
 func (s Selectors) Any() bool {
-	return s.Gossip || s.Grpc
+	return s.Gossip || s.Grpc || s.Admin
 }
 
 // Minus returns the types set in s but not in other.
@@ -52,11 +58,13 @@ func (s Selectors) Minus(other Selectors) Selectors {
 	return Selectors{
 		Gossip: s.Gossip && !other.Gossip,
 		Grpc:   s.Grpc && !other.Grpc,
+		Admin:  s.Admin && !other.Admin,
 	}
 }
 
-// ExistingSelectors reports which key types already have material in dir, keyed
-// off each type's private marker file. Used to make generation idempotent.
+// ExistingSelectors reports which generated key types already have material in
+// dir, keyed off each type's private marker file. Used to make generation
+// idempotent; the admin key is never generated, so it is not reported.
 func ExistingSelectors(dir string) Selectors {
 	exists := func(name string) bool {
 		_, err := os.Stat(filepath.Join(dir, name))

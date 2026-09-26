@@ -16,7 +16,7 @@ import (
 
 func TestNormalizeSelectors(t *testing.T) {
 	// Empty -> all.
-	assert.Equal(t, Selectors{Gossip: true, Grpc: true}, NormalizeSelectors(Selectors{}))
+	assert.Equal(t, Selectors{Gossip: true, Grpc: true, Admin: true}, NormalizeSelectors(Selectors{}))
 	// Any set -> unchanged.
 	assert.Equal(t, Selectors{Grpc: true}, NormalizeSelectors(Selectors{Grpc: true}))
 }
