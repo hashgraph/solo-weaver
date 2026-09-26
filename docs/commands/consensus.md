@@ -194,3 +194,31 @@ sudo solo-provisioner consensus keys verify --experimental \
 
 `--keys-dir` and `--from-cluster` are mutually exclusive; `--from-cluster` requires
 the inherited `--namespace` and `--node-id`.
+
+### `consensus keys init`
+
+One-shot convenience for a node whose id is already known (genesis / known
+assignment): generate the key material into `--keys-dir`, then create the per-node
+secrets from it. Equivalent to `keys generate` followed by `keys import --node-id
+N`, reusing the same code paths.
+
+For a DAB **join** the node-id is not known until the network assigns it, so use
+`keys generate` (node-id-free) then `keys import` separately instead.
+
+```bash
+sudo solo-provisioner consensus keys init --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./keys/node0
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Directory for this node's generated key material (required); make it node-specific | — |
+| `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN | — |
+| `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
+| `--admin-algo` | Admin key algorithm: `ed25519` or `ecdsa` (secp256k1) | `ed25519` |
+| `--force` | Overwrite the gossip signing secret if it already exists (changes the node's network identity) | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which key types to create | all when none given |
+
+`--namespace` and `--node-id` are inherited from `consensus keys`; `--node-id` is
+**required** here. The admin private key stays in `--keys-dir` (operator custody);
+only the public key is pushed to Kubernetes.
