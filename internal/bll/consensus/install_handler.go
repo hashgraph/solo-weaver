@@ -70,6 +70,15 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	custom.LedgerId = h.runtime.LedgerId().Get().Val()
 	custom.ChainId = h.runtime.ChainId().Get().Val()
 
+	// Attach the manifest's multi-registry source unless the user explicitly pinned
+	// the image via --image-repo/--image-tag (which would contradict a candidate
+	// list). Reality/State are not a suppression signal — keying on them would flip
+	// the CR between source and single on re-runs.
+	custom.ImagePinned = inputs.Custom.ConsensusImageRepo != "" || inputs.Custom.ConsensusImageTag != ""
+	if !custom.ImagePinned {
+		custom.ConsensusImageSource = h.runtime.ConsensusImageSource()
+	}
+
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
 
