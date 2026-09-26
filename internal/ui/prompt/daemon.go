@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	daemon "github.com/hashgraph/solo-weaver/internal/daemon"
+	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 )
@@ -101,12 +102,16 @@ func promptForComponents(rawComponents *string) (ComponentSet, error) {
 // ── Private per-field prompt builders ────────────────────────────────────────
 
 func daemonNodeIDInputPrompt(eff string, target *string) InputPrompt {
+	const defaultNodeID = "0"
+	if eff == "" {
+		eff = defaultNodeID
+	}
 	return InputPrompt{
 		FlagName:       "cn-node-id",
 		Title:          "Consensus Node ID",
 		Description:    `Numeric identifier for this consensus node (e.g. "0", "1", "2")`,
-		Placeholder:    "0",
-		EffectiveValue: eff,
+		Placeholder:    defaultNodeID,
+		EffectiveValue: eff, // pre-filled so Enter accepts it
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
@@ -118,12 +123,15 @@ func daemonNodeIDInputPrompt(eff string, target *string) InputPrompt {
 }
 
 func daemonCNOrbitInputPrompt(eff string, target *string) InputPrompt {
+	if eff == "" {
+		eff = models.ConsensusDefaultNamespace
+	}
 	return InputPrompt{
 		FlagName:       "cn-orbit",
 		Title:          "Consensus Node Orbit Namespace",
 		Description:    "Kubernetes namespace where consensus-node NetworkUpgradeExecute CRs are watched",
-		Placeholder:    "hedera-network",
-		EffectiveValue: eff,
+		Placeholder:    models.ConsensusDefaultNamespace,
+		EffectiveValue: eff, // pre-filled so Enter accepts it
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
@@ -157,12 +165,15 @@ func daemonCNUpgradeDirInputPrompt(eff string, target *string) InputPrompt {
 }
 
 func daemonBNOrbitInputPrompt(eff string, target *string) InputPrompt {
+	if eff == "" {
+		eff = deps.BLOCK_NODE_NAMESPACE
+	}
 	return InputPrompt{
 		FlagName:       "bn-orbit",
 		Title:          "Block Node Orbit Namespace",
 		Description:    "Kubernetes namespace for the block-node component",
-		Placeholder:    "hedera-block-node",
-		EffectiveValue: eff,
+		Placeholder:    deps.BLOCK_NODE_NAMESPACE,
+		EffectiveValue: eff, // pre-filled so Enter accepts it
 		Target:         target,
 		Validate: func(s string) error {
 			if s == "" {
