@@ -106,3 +106,60 @@ so `keys import` maps a generated folder to secrets one-to-one:
 Private key files are written with `0600` permissions. No combined artifacts
 file is written — the join inputs are these files plus the gRPC certificate hash
 printed at generation time.
+
+### `consensus keys import`
+
+Read the selected key material from a folder and create the three per-node
+Kubernetes secrets the solo-operator consumes: `node<N>-gossip-keys`,
+`node<N>-grpc-tls-keys`, and `node<N>-admin-pubkey`. `--node-id` is required — it
+selects which per-node secrets to write.
+
+Only the admin **public** key (`admin.pub`) is imported; the admin private key
+(`admin.key`) is never read or pushed to the cluster. The gossip signing secret
+is the node's network identity, so overwriting it with different material requires `--force` (re-importing identical material is idempotent) —
+passed.
+
+```bash
+# Create all three secrets for node 0 from a generated folder:
+sudo solo-provisioner consensus keys import --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node-keys
+
+# Only refresh the gRPC TLS secret:
+sudo solo-provisioner consensus keys import --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node-keys --tls
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Node key folder to import from (required for `--source folder`) | — |
+| `--source` | Key material source: `folder` (vault-backed import is tracked separately) | `folder` |
+| `--force` | Overwrite the gossip signing secret when its material differs (changes the node's network identity); re-importing identical material is idempotent without it | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which secrets to create | all when none given |
+
+`--namespace` (the orbit name) and `--node-id` are inherited from `consensus
+node`; `--node-id` is **required** here.
+
+### `consensus keys export`
+
+Read the selected per-node secrets from the cluster and write their contents to a
+folder — a backup, or to move a node's material between namespaces. The admin
+secret holds only the public key, so the admin **private** key cannot be
+recovered from the cluster; keep the off-cluster `admin.key` from `keys generate`
+safe.
+
+```bash
+sudo solo-provisioner consensus keys export --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node0-backup
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Node key folder to export into (required) | — |
+| `--force` | Overwrite existing files whose content differs (identical files are left as-is) | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which secrets to export | all when none given |
+
+Export is idempotent: identical files are left untouched, and a file that holds
+different content is refused unless `--force` is passed.
+
+`--namespace` and `--node-id` are inherited from `consensus node`; `--node-id` is
+**required** here.
