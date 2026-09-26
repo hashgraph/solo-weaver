@@ -49,6 +49,23 @@ const (
 	ConsensusDefaultImagePullSecret = deps.CONSENSUS_NODE_IMAGE_PULL_SECRET
 )
 
+// ImageRepositoryRef is one candidate registry for a container image.
+type ImageRepositoryRef struct {
+	Repository string `json:"repository"`
+	ImageName  string `json:"imageName"`
+	ImageTag   string `json:"imageTag"`
+}
+
+// ImageSource is the multi-registry image source resolved from the deployment
+// manifest, mapped onto the operator's SoftwareVersionSource. LayerHashes is the
+// per-platform ("linux/amd64") shared set every candidate must match; only
+// deterministic images (shared hashes across registries) are representable, so a
+// nil ImageSource means "keep the single SoftwareVersion".
+type ImageSource struct {
+	Repositories []ImageRepositoryRef `json:"repositories"`
+	LayerHashes  map[string][]string  `json:"layerHashes"`
+}
+
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
 // via the solo-operator's ConsensusCapsule CRD.
 type ConsensusNodeInputs struct {
@@ -69,6 +86,17 @@ type ConsensusNodeInputs struct {
 
 	ConsensusImageRepo string `json:"consensusImageRepo"`
 	ConsensusImageTag  string `json:"consensusImageTag"`
+
+	// ConsensusImageSource is the multi-registry image source for the consensus-node
+	// container, resolved from the manifest by the BLL (not a CLI flag). When set,
+	// the capsule step adds a SoftwareVersionSource alongside SoftwareVersion.
+	ConsensusImageSource *ImageSource `json:"-"`
+
+	// ImagePinned is set by the BLL when the user explicitly pinned the image via
+	// --image-repo/--image-tag. It tells the capsule step not to preserve a
+	// SoftwareVersionSource already on the live CR — an explicit pin means "run
+	// exactly this single image".
+	ImagePinned bool `json:"-"`
 
 	// UC sidecar image (repository is the full "registry/path/name"). Empty falls
 	// back to ConsensusDefaultUCImageRepo/Tag. The operator has no default UC image.
