@@ -210,6 +210,7 @@ tasks:
     desc: "Inside VM: incrementally rebuild the CLI + daemon for this VM's arch and self-install (reuses uat:rebuild)"
     cmds:
       - task: uat:rebuild
+      - sudo rm -rf /opt/hgcapp/services-hedera/HapiApp2.0/data || true # delete any old state files
 
   # ── 2. cluster substrate + orbit + hedera user + upgrade staging dir ──────────
   cluster:
