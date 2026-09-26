@@ -245,3 +245,36 @@ the inherited `--namespace` and `--node-id`. In the cluster, each secret is chec
 against its name and fingerprint label (a renamed or edited secret fails), and when a
 node has several generations of a key type the failing line lists them so you can
 choose with `--fingerprint` or `--secret-suffix`.
+
+### `consensus keys init`
+
+One-shot convenience for a node whose id is already known (genesis / known
+assignment): generate the key material into `--keys-dir`, then create the per-node
+secrets from it. Equivalent to `keys generate` followed by `keys import --node-id
+N`, reusing the same code paths.
+
+For a DAB **join** the node-id is not known until the network assigns it, so use
+`keys generate` (node-id-free) then `keys import` separately instead.
+
+```bash
+sudo solo-provisioner consensus keys init --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./keys/node0
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Directory for this node's generated key material (required); make it node-specific | — |
+| `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN | — |
+| `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
+| `--admin-algo` | Admin key algorithm: `ed25519` or `ecdsa` (secp256k1) | `ed25519` |
+| `--grpc-cn` | Common name (subject and issuer) of the gRPC TLS certificate | `localhost` |
+| `--grpc-org` | Organization (subject and issuer O) of the gRPC TLS certificate | omitted |
+| `--grpc-dns` | Extra fully qualified DNS SAN for the gRPC TLS certificate, added to `localhost` (repeatable) | — |
+| `--grpc-ip` | Extra IP SAN for the gRPC TLS certificate, added to `127.0.0.1` and `::1` (repeatable) | — |
+| `--grpc-validity-days` | gRPC TLS certificate lifetime in days (1-36500) | 100 years |
+| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand) | `false` |
+| `--gossip` / `--tls` / `--admin` | Select which key types to create | all when none given |
+
+`--namespace` and `--node-id` are inherited from `consensus keys`; `--node-id` is
+**required** here. The admin private key stays in `--keys-dir` (operator custody);
+only the public key is pushed to Kubernetes.
