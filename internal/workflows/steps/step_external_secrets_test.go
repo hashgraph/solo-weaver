@@ -16,6 +16,7 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func Test_installESOChart_FreshInstall(t *testing.T) {
@@ -100,12 +101,15 @@ func Test_uninstallESOChart_Uninstalls(t *testing.T) {
 	require.NoError(t, err)
 
 	hm := helm.NewMockManager(ctrl)
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-	uninstalled, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(hm, spec)
 	require.NoError(t, err)
-	assert.True(t, uninstalled)
+	require.NotNil(t, rel)
+	assert.Equal(t, spec.Release, rel.Name)
 }
 
 func Test_uninstallESOChart_Idempotent(t *testing.T) {
@@ -116,12 +120,209 @@ func Test_uninstallESOChart_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	hm := helm.NewMockManager(ctrl)
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
-	// No UninstallChart expectation: not-installed must skip.
+	hm.EXPECT().List(spec.Namespace, false).Return(nil, nil)
+	// No UninstallChart expectation: an empty namespace must skip.
 
-	uninstalled, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(hm, spec)
 	require.NoError(t, err)
-	assert.False(t, uninstalled)
+	assert.Nil(t, rel)
+}
+
+// A release in any non-deployed state is still a release to clear.
+func Test_uninstallESOChart_StalledRelease(t *testing.T) {
+	for _, status := range []release.Status{
+		release.StatusFailed,
+		release.StatusPendingInstall,
+		release.StatusPendingUpgrade,
+		release.StatusPendingRollback,
+		release.StatusUninstalling,
+		release.StatusUninstalled,
+		release.StatusSuperseded,
+		release.StatusUnknown,
+	} {
+		t.Run(status.String(), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			spec, err := resolveCatalogChart("external-secrets")
+			require.NoError(t, err)
+
+			hm := helm.NewMockManager(ctrl)
+			hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+				esoRelease(spec.Release, spec.Namespace, esoChartName, status),
+			}, nil)
+			hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+			rel, err := uninstallESOChart(hm, spec)
+			require.NoError(t, err)
+			require.NotNil(t, rel)
+			assert.Equal(t, spec.Release, rel.Name)
+		})
+	}
+}
+
+// An ESO installed under a name the catalog does not know: UninstallChart must
+// get the release's own name, not spec.Release.
+func Test_uninstallESOChart_ForeignReleaseName(t *testing.T) {
+	for _, status := range []release.Status{release.StatusDeployed, release.StatusFailed} {
+		t.Run(status.String(), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			spec, err := resolveCatalogChart("external-secrets")
+			require.NoError(t, err)
+
+			hm := helm.NewMockManager(ctrl)
+			hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+				esoRelease("my-eso", spec.Namespace, esoChartName, status),
+			}, nil)
+			hm.EXPECT().UninstallChart("my-eso", spec.Namespace).Return(nil)
+
+			rel, err := uninstallESOChart(hm, spec)
+			require.NoError(t, err)
+			require.NotNil(t, rel)
+			assert.Equal(t, "my-eso", rel.Name)
+		})
+	}
+}
+
+// A chart that is not ESO is left alone even when it holds the catalog release name.
+func Test_uninstallESOChart_ForeignChartAtReleaseName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, "dummy", release.StatusDeployed),
+	}, nil)
+	// No UninstallChart expectation: it is not ESO, so it is not ours to remove.
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	assert.Nil(t, rel)
+}
+
+func Test_uninstallESOChart_IgnoresUnrelatedChart(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease("grafana", spec.Namespace, "grafana", release.StatusDeployed),
+	}, nil)
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	assert.Nil(t, rel)
+}
+
+// isESORelease's fallback: with chart metadata gone, only the catalog release
+// name counts as ESO.
+func Test_uninstallESOChart_MissingChartMetadata(t *testing.T) {
+	t.Run("catalog name is treated as ESO", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		spec, err := resolveCatalogChart("external-secrets")
+		require.NoError(t, err)
+
+		hm := helm.NewMockManager(ctrl)
+		hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+			{Name: spec.Release, Namespace: spec.Namespace, Info: &release.Info{Status: release.StatusFailed}},
+		}, nil)
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+		rel, err := uninstallESOChart(hm, spec)
+		require.NoError(t, err)
+		require.NotNil(t, rel)
+	})
+
+	t.Run("another name is not", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		spec, err := resolveCatalogChart("external-secrets")
+		require.NoError(t, err)
+
+		hm := helm.NewMockManager(ctrl)
+		hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+			{Name: "grafana", Namespace: spec.Namespace, Info: &release.Info{Status: release.StatusFailed}},
+		}, nil)
+
+		rel, err := uninstallESOChart(hm, spec)
+		require.NoError(t, err)
+		assert.Nil(t, rel)
+	})
+}
+
+func Test_uninstallESOChart_SkipsNilRelease(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		nil,
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	require.NotNil(t, rel)
+}
+
+func Test_uninstallESOChart_TwoESOReleases_PrefersCatalogName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease("my-eso", spec.Namespace, esoChartName, release.StatusFailed),
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	require.NotNil(t, rel)
+	assert.Equal(t, spec.Release, rel.Name)
+}
+
+func Test_uninstallESOChart_TwoESOReleases_Ambiguous(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease("my-eso", spec.Namespace, esoChartName, release.StatusFailed),
+		esoRelease("argo-eso", spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+	// No UninstallChart expectation: the command must not guess.
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.Error(t, err)
+	assert.Nil(t, rel)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalState))
+	assert.ErrorContains(t, err, "my-eso, argo-eso")
+
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Contains(t, hints, "  helm uninstall <release> -n external-secrets")
 }
 
 func Test_uninstallESOChart_NamespaceOverride(t *testing.T) {
@@ -134,29 +335,32 @@ func Test_uninstallESOChart_NamespaceOverride(t *testing.T) {
 	spec.Namespace = customNS
 
 	hm := helm.NewMockManager(ctrl)
-	hm.EXPECT().IsInstalled(spec.Release, customNS).Return(true, nil)
+	hm.EXPECT().List(customNS, false).Return([]*release.Release{
+		esoRelease(spec.Release, customNS, esoChartName, release.StatusDeployed),
+	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, customNS).Return(nil)
 
-	uninstalled, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(hm, spec)
 	require.NoError(t, err)
-	assert.True(t, uninstalled)
+	require.NotNil(t, rel)
+	assert.Equal(t, customNS, rel.Namespace)
 }
 
-func Test_uninstallESOChart_IsInstalledError(t *testing.T) {
+func Test_uninstallESOChart_ListError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	spec, err := resolveCatalogChart("external-secrets")
 	require.NoError(t, err)
 
-	wantErr := errors.New("is-installed boom")
 	hm := helm.NewMockManager(ctrl)
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, wantErr)
-	// No UninstallChart expectation: the IsInstalled error must short-circuit.
+	hm.EXPECT().List(spec.Namespace, false).Return(nil, errors.New("list boom"))
+	// No UninstallChart expectation: the List error must short-circuit.
 
-	uninstalled, err := uninstallESOChart(hm, spec)
-	require.ErrorIs(t, err, wantErr)
-	assert.False(t, uninstalled)
+	rel, err := uninstallESOChart(hm, spec)
+	require.Error(t, err)
+	assert.Nil(t, rel)
+	assert.ErrorContains(t, err, "list boom")
 }
 
 func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
@@ -166,14 +370,88 @@ func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
 	spec, err := resolveCatalogChart("external-secrets")
 	require.NoError(t, err)
 
-	wantErr := errors.New("uninstall boom")
 	hm := helm.NewMockManager(ctrl)
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
-	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(wantErr)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+	}, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(errors.New("uninstall boom"))
 
-	uninstalled, err := uninstallESOChart(hm, spec)
-	require.ErrorIs(t, err, wantErr)
-	assert.False(t, uninstalled)
+	rel, err := uninstallESOChart(hm, spec)
+	require.Error(t, err)
+	assert.Nil(t, rel)
+	assert.ErrorContains(t, err, "uninstall boom")
+}
+
+// Every error leaving uninstallESOChart reaches a StepFailureReport, so each
+// carries a reason and actionable hints. See docs/dev/error-handling.md.
+func Test_uninstallESOChart_ErrorsAreDecorated(t *testing.T) {
+	tests := []struct {
+		name       string
+		expect     func(hm *helm.MockManager, spec *helmChartSpec)
+		wantReason errx.Reason
+		wantNS     *errorx.Type
+		wantHint   string
+	}{
+		{
+			name: "list failure",
+			expect: func(hm *helm.MockManager, spec *helmChartSpec) {
+				hm.EXPECT().List(spec.Namespace, false).Return(nil, errors.New("boom"))
+			},
+			wantReason: reasons.PreconditionNotMet,
+			wantNS:     errorx.ExternalError,
+			wantHint:   "Verify the cluster is reachable: kubectl cluster-info",
+		},
+		{
+			name: "ambiguous ESO releases",
+			expect: func(hm *helm.MockManager, spec *helmChartSpec) {
+				hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+					esoRelease("a-eso", spec.Namespace, esoChartName, release.StatusDeployed),
+					esoRelease("b-eso", spec.Namespace, esoChartName, release.StatusFailed),
+				}, nil)
+			},
+			wantReason: reasons.PreconditionNotMet,
+			wantNS:     errorx.IllegalState,
+			wantHint:   "  helm uninstall <release> -n external-secrets",
+		},
+		{
+			name: "uninstall failure",
+			expect: func(hm *helm.MockManager, spec *helmChartSpec) {
+				hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+					esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
+				}, nil)
+				hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(errors.New("boom"))
+			},
+			wantReason: reasons.PreconditionNotMet,
+			wantNS:     errorx.ExternalError,
+			wantHint:   "  helm uninstall external-secrets -n external-secrets",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			spec, err := resolveCatalogChart("external-secrets")
+			require.NoError(t, err)
+
+			hm := helm.NewMockManager(ctrl)
+			tt.expect(hm, spec)
+
+			_, err = uninstallESOChart(hm, spec)
+			require.Error(t, err)
+
+			assert.True(t, errorx.IsOfType(err, tt.wantNS), "errorx namespace")
+
+			reason, ok := errx.ReasonOf(err)
+			require.True(t, ok, "reason attached")
+			assert.Equal(t, tt.wantReason, reason)
+
+			hints, ok := errx.Hints(err)
+			require.True(t, ok, "hints attached")
+			assert.Contains(t, hints, tt.wantHint)
+		})
+	}
 }
 
 func Test_checkClusterReachable_Reachable(t *testing.T) {
@@ -261,7 +539,7 @@ func Test_checkESOSingleton_DeployedInAnotherNamespace(t *testing.T) {
 	assert.Contains(t, err.Error(), `"eso-old"`, "the message must name the occupied namespace")
 	hints, ok := errx.Hints(err)
 	require.True(t, ok)
-	assert.Contains(t, hints, "  helm uninstall eso -n eso-old")
+	assert.Contains(t, hints, "  sudo solo-provisioner eso operator uninstall --namespace eso-old")
 }
 
 // A stalled release is invisible to IsInstalled, so installESOChart would treat
@@ -282,8 +560,8 @@ func Test_checkESOSingleton_StalledInTargetNamespace(t *testing.T) {
 	require.Error(t, err)
 	hints, ok := errx.Hints(err)
 	require.True(t, ok)
-	// helm, not "eso operator uninstall": that command skips a non-deployed release.
-	assert.Contains(t, hints, "  helm uninstall external-secrets -n external-secrets")
+	// The CLI clears a stalled release, so the hint names it rather than raw helm.
+	assert.Contains(t, hints, "  sudo solo-provisioner eso operator uninstall --namespace external-secrets")
 }
 
 // Chart name is authoritative, so an unrelated chart that happens to be named
@@ -342,7 +620,7 @@ func Test_checkESOSingleton_DeployedInTargetNamespaceUnderAnotherName(t *testing
 	assert.Contains(t, err.Error(), `"my-eso"`, "the message must name the existing release")
 	hints, ok := errx.Hints(err)
 	require.True(t, ok)
-	assert.Contains(t, hints, "  helm uninstall my-eso -n external-secrets")
+	assert.Contains(t, hints, "  sudo solo-provisioner eso operator uninstall --namespace external-secrets")
 }
 
 // IsInstalled matches on release name alone, so a foreign chart holding that name
@@ -364,6 +642,7 @@ func Test_checkESOSingleton_ForeignChartUnderReleaseName(t *testing.T) {
 	assert.Contains(t, err.Error(), `"some-other-chart"`, "the message must name the conflicting chart")
 	hints, ok := errx.Hints(err)
 	require.True(t, ok)
+	// Stays raw helm: "eso operator uninstall" removes only ESO releases.
 	assert.Contains(t, hints, "  helm uninstall external-secrets -n external-secrets")
 }
 

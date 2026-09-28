@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -13,7 +14,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
-	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -141,9 +141,8 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 		)
 	}
 
-	// Every hint below names raw "helm uninstall": "eso operator uninstall" is
-	// keyed to the catalog release name and to deployed-only IsInstalled, so it
-	// silently skips each of these releases.
+	// The foreign-chart case hints raw "helm uninstall": "eso operator uninstall"
+	// removes only ESO releases.
 	for _, rel := range releases {
 		if rel == nil {
 			continue
@@ -158,7 +157,7 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 					rel.Name, rel.Namespace),
 				reasons.PreconditionNotMet,
 				"Use the existing installation, or remove it first:",
-				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+				fmt.Sprintf("  sudo solo-provisioner eso operator uninstall --namespace %s", rel.Namespace),
 			)
 
 		case !isESORelease(rel, spec) && atTarget:
@@ -180,7 +179,7 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 					rel.Name, rel.Namespace, releaseStatus(rel)),
 				reasons.PreconditionNotMet,
 				"Remove the stalled release, then retry:",
-				fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+				fmt.Sprintf("  sudo solo-provisioner eso operator uninstall --namespace %s", rel.Namespace),
 			)
 		}
 	}
@@ -344,21 +343,103 @@ func installExternalSecrets(spec *helmChartSpec) automa.Builder {
 		})
 }
 
-// uninstallESOChart runs the idempotent ESO Helm uninstall and reports whether it
-// uninstalled (false = not installed). Extracted from the step so it can be
-// unit-tested with a mock helm.Manager.
-func uninstallESOChart(hm helm.Manager, spec *helmChartSpec) (bool, error) {
-	isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+// resolveESORelease reports the ESO release occupying spec.Namespace, or nil when
+// that namespace holds none. List is used rather than IsInstalled or GetRelease:
+// both key on spec.Release, which the catalog fixes, and IsInstalled counts only
+// deployed releases. The search never leaves spec.Namespace — uninstalling ESO
+// deletes cluster-scoped CRDs.
+func resolveESORelease(hm helm.Manager, spec *helmChartSpec) (*release.Release, error) {
+	releases, err := hm.List(spec.Namespace, false)
 	if err != nil {
-		return false, err
+		return nil, errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to list Helm releases in namespace %q", spec.Namespace),
+			reasons.PreconditionNotMet,
+			"Verify the cluster is reachable: kubectl cluster-info",
+		)
 	}
-	if !isInstalled {
-		return false, nil
+
+	// squatter holds the catalog release name but is not ESO. It cannot also be a
+	// candidate: isESORelease's name fallback classifies that case as ESO.
+	var candidates []*release.Release
+	var squatter *release.Release
+	for _, rel := range releases {
+		if rel == nil {
+			continue
+		}
+		switch {
+		case isESORelease(rel, spec):
+			candidates = append(candidates, rel)
+		case rel.Name == spec.Release:
+			squatter = rel
+		}
 	}
-	if err := hm.UninstallChart(spec.Release, spec.Namespace); err != nil {
-		return false, err
+
+	switch len(candidates) {
+	case 0:
+		if squatter != nil {
+			// Not ESO, so not ours to remove.
+			logx.As().Warn().
+				Str("release", squatter.Name).
+				Str("namespace", squatter.Namespace).
+				Str("chart", chartName(squatter)).
+				Msg("Release holding the External Secrets Operator release name is a different chart, leaving it alone")
+		}
+		return nil, nil
+
+	case 1:
+		return candidates[0], nil
+
+	default:
+		// Two live ESO releases collide on namespaced resources, but a half-torn-down
+		// one can linger. Prefer the catalog name; otherwise the operator must choose.
+		for _, rel := range candidates {
+			if rel.Name == spec.Release {
+				return rel, nil
+			}
+		}
+		return nil, errx.Decorate(
+			errorx.IllegalState.New(
+				"namespace %q holds %d External Secrets Operator releases (%s); cannot choose one to uninstall",
+				spec.Namespace, len(candidates), strings.Join(releaseNames(candidates), ", ")),
+			reasons.PreconditionNotMet,
+			"Remove the one you want by name:",
+			fmt.Sprintf("  helm uninstall <release> -n %s", spec.Namespace),
+		)
 	}
-	return true, nil
+}
+
+// releaseNames lists rels by name, for an error message.
+func releaseNames(rels []*release.Release) []string {
+	names := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		names = append(names, rel.Name)
+	}
+	return names
+}
+
+// uninstallESOChart removes the ESO release occupying spec.Namespace and reports
+// which one it removed; a nil release with a nil error means the namespace held
+// none. Extracted from the step so it can be unit-tested with a mock helm.Manager.
+func uninstallESOChart(hm helm.Manager, spec *helmChartSpec) (*release.Release, error) {
+	rel, err := resolveESORelease(hm, spec)
+	if err != nil || rel == nil {
+		return nil, err
+	}
+
+	// rel.Name, not spec.Release: the release found here may carry any name.
+	if err := hm.UninstallChart(rel.Name, rel.Namespace); err != nil {
+		return nil, errx.Decorate(
+			errorx.ExternalError.Wrap(err,
+				"failed to uninstall External Secrets Operator release %q in namespace %q",
+				rel.Name, rel.Namespace),
+			reasons.PreconditionNotMet,
+			"Check the release state:",
+			fmt.Sprintf("  helm list -n %s", rel.Namespace),
+			"Remove it manually if needed:",
+			fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+		)
+	}
+	return rel, nil
 }
 
 func uninstallExternalSecrets(spec *helmChartSpec) automa.Builder {
@@ -367,30 +448,33 @@ func uninstallExternalSecrets(spec *helmChartSpec) automa.Builder {
 			l := logx.As()
 			hm, err := newHelmManager()
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.InternalError.Wrap(err, "failed to initialise Helm manager").
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Check the solo-provisioner logs for details: /opt/solo/weaver/logs/solo-provisioner.log",
-						})))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.InternalError.Wrap(err, "failed to initialise Helm manager"),
+					reasons.Internal,
+				)))
 			}
 
-			uninstalled, err := uninstallESOChart(hm, spec)
+			// Already decorated at each failure site; re-wrapping would overwrite it.
+			rel, err := uninstallESOChart(hm, spec)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.ExternalError.Wrap(err, "failed to uninstall External Secrets Operator release %q in namespace %q", spec.Release, spec.Namespace).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Verify the cluster is reachable: kubectl cluster-info",
-							fmt.Sprintf("Check the release state: helm list -n %s", spec.Namespace),
-							fmt.Sprintf("Remove it manually if needed: helm uninstall %s -n %s", spec.Release, spec.Namespace),
-						})))
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if !uninstalled {
+			if rel == nil {
 				l.Info().Msg("External Secrets Operator is not installed, skipping uninstallation")
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"uninstalled": "true"}))
+			l.Info().
+				Str("release", rel.Name).
+				Str("namespace", rel.Namespace).
+				Str("priorStatus", string(releaseStatus(rel))).
+				Msg("Uninstalled External Secrets Operator release")
+
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
+				"uninstalled": "true",
+				"release":     rel.Name,
+			}))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Uninstalling External Secrets Operator")
