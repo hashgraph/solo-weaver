@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,55 +112,29 @@ func newLogFileWriter(cfg logx.LoggingConfig) io.Writer {
 	}
 }
 
-// callerSegments is how many trailing path segments the caller field keeps,
-// matching logx's own caller field (e.g. "internal/ui/logging.go:42").
-const callerSegments = 3
-
-func init() {
-	zerolog.CallerMarshalFunc = shortCaller
-}
-
-// shortCaller trims file to its last callerSegments path segments.
-func shortCaller(_ uintptr, file string, line int) string {
-	segments := 0
-	for i := len(file) - 1; i >= 0; i-- {
-		if file[i] == '/' {
-			segments++
-			if segments == callerSegments {
-				file = file[i+1:]
-				break
-			}
-		}
-	}
-	return file + ":" + strconv.Itoa(line)
-}
-
-// newBaseLogger builds the CLI's replacement for the logx logger on w. logx's
-// caller hook is unexported, so the caller comes from zerolog's own Caller();
-// UTC needs nothing here because logx.Initialize sets zerolog's global
-// TimestampFunc.
-func newBaseLogger(w io.Writer, cfg logx.LoggingConfig) zerolog.Logger {
-	ctx := zerolog.New(w).With().
+// newBaseLogger builds the CLI's replacement for the logx logger on w. It must
+// run after logx.Initialize: CallerHook reads the caller and package settings
+// from it, and it sets zerolog's global TimestampFunc for UTC.
+func newBaseLogger(w io.Writer) zerolog.Logger {
+	return zerolog.New(w).With().
 		Timestamp().
 		Int("pid", os.Getpid()).
-		Str("version", version.Get().Version)
-	if cfg.IncludeCaller {
-		ctx = ctx.Caller()
-	}
-	return ctx.Logger()
+		Str("version", version.Get().Version).
+		Logger().
+		Hook(logx.CallerHook())
 }
 
 // newFileOnlyLogger creates a zerolog.Logger that writes only to the log file
 // (no ConsoleWriter). Used by SuppressConsoleLogging. With file logging
 // disabled events are discarded — the TUI owns the console in this mode.
 func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	return newBaseLogger(newLogFileWriter(cfg), cfg)
+	return newBaseLogger(newLogFileWriter(cfg))
 }
 
 // newJSONConsoleLogger creates a zerolog.Logger that writes NDJSON to stderr and
 // the rolling log file, leaving stdout for the command's own JSON.
 func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	return newBaseLogger(zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg)), cfg)
+	return newBaseLogger(zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg)))
 }
 
 // newStderrConsoleLogger creates a zerolog.Logger that writes the
@@ -179,7 +152,7 @@ func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 // exists so piped, non-interactive runs of long workflows still show progress;
 // dropping the lines would blind them.
 func newStderrConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	return newBaseLogger(zerolog.MultiLevelWriter(newStderrConsoleWriter(cfg), newLogFileWriter(cfg)), cfg)
+	return newBaseLogger(zerolog.MultiLevelWriter(newStderrConsoleWriter(cfg), newLogFileWriter(cfg)))
 }
 
 // newStderrConsoleWriter returns the human-readable stderr writer. It renders

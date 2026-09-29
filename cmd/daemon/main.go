@@ -11,7 +11,9 @@ import (
 	"path"
 	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/automa-saga/version"
 	"github.com/google/uuid"
@@ -221,6 +223,12 @@ func initConfig(ctx context.Context) {
 	}
 
 	installLogContext()
+
+	// Workflow reports take their times from automa's clock; keep them in the
+	// same zone as the log lines.
+	if logConfig.UTC {
+		automa.SetClock(func() time.Time { return time.Now().UTC() })
+	}
 
 	activateProxy(ctx)
 }

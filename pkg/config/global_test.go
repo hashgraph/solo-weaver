@@ -280,3 +280,22 @@ func TestInitialize_LogUTCAndCallerDefaults(t *testing.T) {
 		})
 	}
 }
+
+// The remaining logx format fields decode from the config file like the rest.
+func TestInitialize_LogPackageAndCallerLength(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("log:\n  includePackage: true\n  callerFieldLength: 1\n"), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	if err := Initialize(path); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	log := Get().Log
+	if !log.IncludePackage {
+		t.Fatalf("IncludePackage: expected true")
+	}
+	if log.CallerFieldLength != 1 {
+		t.Fatalf("CallerFieldLength: expected 1, got %d", log.CallerFieldLength)
+	}
+}

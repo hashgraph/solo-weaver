@@ -370,9 +370,9 @@ func (h *testableHook) run(level zerolog.Level, message string) {
 	h.onSend(detail)
 }
 
-// useLogFormat applies cfg's UTC setting the way the CLI does (through
-// logx.Initialize, which owns zerolog's TimestampFunc) and pins the local zone
-// to a non-UTC offset so a UTC timestamp is distinguishable on any host.
+// useLogFormat applies cfg's format settings the way the CLI does, through
+// logx.Initialize (the builders read them back from logx), and pins the local
+// zone to a non-UTC offset so a UTC timestamp is distinguishable on any host.
 func useLogFormat(t *testing.T, cfg logx.LoggingConfig) {
 	t.Helper()
 	origLocal := time.Local
@@ -381,7 +381,14 @@ func useLogFormat(t *testing.T, cfg logx.LoggingConfig) {
 		time.Local = origLocal
 		_ = logx.Initialize(logx.LoggingConfig{Level: "debug", ConsoleLogging: true})
 	})
-	require.NoError(t, logx.Initialize(logx.LoggingConfig{Level: "info", ConsoleLogging: true, UTC: cfg.UTC}))
+	require.NoError(t, logx.Initialize(logx.LoggingConfig{
+		Level:             "info",
+		ConsoleLogging:    true,
+		UTC:               cfg.UTC,
+		IncludeCaller:     cfg.IncludeCaller,
+		IncludePackage:    cfg.IncludePackage,
+		CallerFieldLength: cfg.CallerFieldLength,
+	}))
 }
 
 // buildLoggers constructs all three CLI loggers with their console halves sent
@@ -476,17 +483,29 @@ func TestNewStderrConsoleLogger_RendersUTCAndCaller(t *testing.T) {
 	assert.Regexp(t, `internal/ui/logging_test\.go:\d+`, out)
 }
 
-func TestShortCaller(t *testing.T) {
-	cases := []struct {
-		file string
-		want string
-	}{
-		{"/home/u/src/solo-weaver/internal/ui/logging.go", "internal/ui/logging.go:7"},
-		{"internal/ui/logging.go", "internal/ui/logging.go:7"},
-		{"ui/logging.go", "ui/logging.go:7"},
-		{"logging.go", "logging.go:7"},
+// Package and caller-length settings reach the CLI loggers through logx.
+func TestLoggers_PackageAndCallerLengthFromLogx(t *testing.T) {
+	cfg := logx.LoggingConfig{
+		FileLogging: true, Filename: "test.log", MaxSize: 1,
+		IncludeCaller: true, IncludePackage: true, CallerFieldLength: 1,
 	}
-	for _, tc := range cases {
-		assert.Equal(t, tc.want, shortCaller(0, tc.file, 7), tc.file)
+	useLogFormat(t, cfg)
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	for name := range buildLoggers(t, cfg, devNull) {
+		t.Run(name, func(t *testing.T) {
+			c := cfg
+			c.Directory = t.TempDir()
+			logger := buildLoggers(t, c, devNull)[name]
+
+			logger.Info().Msg("hello")
+
+			m := readLogFileLine(t, filepath.Join(c.Directory, c.Filename))
+			assert.Regexp(t, `^logging_test\.go:\d+$`, m["caller"])
+			assert.Equal(t, "github.com/hashgraph/solo-weaver/internal/ui", m["package"])
+		})
 	}
 }
