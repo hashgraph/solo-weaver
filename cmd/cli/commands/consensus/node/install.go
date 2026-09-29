@@ -110,6 +110,12 @@ var installCmd = &cobra.Command{
 				"Use a bare NAME to apply one secret to all registries, or HOST=NAME per registry (e.g. ghcr.io=ghcr-creds)")
 		}
 
+		registryStrategy, rserr := models.NormalizeRegistrySelectionStrategy(flagRegistryStrategy)
+		if rserr != nil {
+			return errx.Decorate(rserr, reasons.InvalidArgument,
+				"Pass --registry-selection-strategy Random or Sequential (or omit it to use the operator default)")
+		}
+
 		volCfg, verr := resolveVolumeConfig()
 		if verr != nil {
 			return verr
@@ -132,34 +138,35 @@ var installCmd = &cobra.Command{
 				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
-				Namespace:                flagNamespace,
-				ProvisionerDaemonEnabled: flagProvisionerDaemon,
-				NodeId:                   flagNodeId,
-				AccountId:                flagAccountId,
-				Weight:                   flagWeight,
-				LedgerId:                 flagLedgerId,
-				ChainId:                  flagChainId,
-				ConsensusImageRepo:       flagImageRepo,
-				ConsensusImageTag:        flagImageTag,
-				UCImageRepo:              flagUCImageRepo,
-				UCImageTag:               flagUCImageTag,
-				DeploymentPackageDir:     flagDeploymentPkgDir,
-				GrpcTlsSecret:            flagGrpcTlsSecret,
-				SigningSecret:            flagSigningSecret,
-				ImagePullSecrets:         pullSecrets,
-				Profile:                  flagProfile,
-				SkipHardwareChecks:       skipHardwareChecks,
-				ContainerName:            flagContainerName,
-				JavaHeapMin:              flagJavaHeapMin,
-				JavaHeapMax:              flagJavaHeapMax,
-				JavaOpts:                 flagJavaOpts,
-				CPULimit:                 flagCPULimit,
-				CPURequest:               flagCPURequest,
-				MemoryLimit:              flagMemoryLimit,
-				MemoryRequest:            flagMemoryRequest,
-				Volumes:                  volCfg,
-				HostPathUID:              flagHostPathUID,
-				HostPathGID:              flagHostPathGID,
+				Namespace:                 flagNamespace,
+				ProvisionerDaemonEnabled:  flagProvisionerDaemon,
+				NodeId:                    flagNodeId,
+				AccountId:                 flagAccountId,
+				Weight:                    flagWeight,
+				LedgerId:                  flagLedgerId,
+				ChainId:                   flagChainId,
+				ConsensusImageRepo:        flagImageRepo,
+				ConsensusImageTag:         flagImageTag,
+				UCImageRepo:               flagUCImageRepo,
+				UCImageTag:                flagUCImageTag,
+				DeploymentPackageDir:      flagDeploymentPkgDir,
+				GrpcTlsSecret:             flagGrpcTlsSecret,
+				SigningSecret:             flagSigningSecret,
+				ImagePullSecrets:          pullSecrets,
+				RegistrySelectionStrategy: registryStrategy,
+				Profile:                   flagProfile,
+				SkipHardwareChecks:        skipHardwareChecks,
+				ContainerName:             flagContainerName,
+				JavaHeapMin:               flagJavaHeapMin,
+				JavaHeapMax:               flagJavaHeapMax,
+				JavaOpts:                  flagJavaOpts,
+				CPULimit:                  flagCPULimit,
+				CPURequest:                flagCPURequest,
+				MemoryLimit:               flagMemoryLimit,
+				MemoryRequest:             flagMemoryRequest,
+				Volumes:                   volCfg,
+				HostPathUID:               flagHostPathUID,
+				HostPathGID:               flagHostPathGID,
 			},
 		}
 

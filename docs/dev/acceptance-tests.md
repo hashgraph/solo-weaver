@@ -475,6 +475,11 @@ Expected (both F1 and F2):
   and sets that container's `ImagePullSecrets`; the operator (>= v0.6.0) threads
   them onto the pods and their SAs. Registries come from the manifest — a `HOST=`
   that matches no manifest registry is rejected.
+- `--registry-selection-strategy` (`Random` or `Sequential`) sets the emitted
+  `SoftwareVersionSource.SelectionStrategy`, overriding the operator's
+  `--registry-order` default. Empty leaves it unset. It only has effect when the
+  manifest yields multiple registries. Use `Sequential` to force order-based
+  probing (primary first) for a deterministic failover test.
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.
