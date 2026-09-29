@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -100,6 +102,12 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
 
+	// Registries come from the manifest, so a --image-pull-secret HOST=NAME with an
+	// unknown host is a typo. Fail fast. The secret itself is picked by host later.
+	if err := validateConsensusPullSecretHosts(custom); err != nil {
+		return nil, err
+	}
+
 	// Apply namespace=orbit convention
 	custom.OrbitName = custom.Namespace
 
@@ -111,6 +119,44 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		Msg("Resolved effective consensus node inputs")
 
 	return &resolved, nil
+}
+
+// validateConsensusPullSecretHosts rejects a --image-pull-secret HOST=NAME whose
+// host is not a registry used by this deployment. The CLI supplies credentials,
+// never registries, so an unknown host means a typo. Known hosts are the
+// multi-registry source (or the single consensus image) plus the UC image.
+func validateConsensusPullSecretHosts(c *models.ConsensusNodeInputs) error {
+	ucRepo := c.UCImageRepo
+	if ucRepo == "" {
+		ucRepo = models.ConsensusDefaultUCImageRepo
+	}
+
+	known := map[string]struct{}{
+		models.RegistryHost(c.ConsensusImageRepo): {},
+		models.RegistryHost(ucRepo):               {},
+	}
+	if c.ConsensusImageSource != nil {
+		for _, r := range c.ConsensusImageSource.Repositories {
+			known[models.RegistryHost(r.Repository)] = struct{}{}
+		}
+	}
+
+	for _, h := range c.ImagePullSecrets.Hosts() {
+		if _, ok := known[h]; ok {
+			continue
+		}
+		knownList := make([]string, 0, len(known))
+		for k := range known {
+			knownList = append(knownList, k)
+		}
+		sort.Strings(knownList)
+		return errx.Decorate(
+			errorx.IllegalArgument.New("--image-pull-secret host %q does not match any registry in the deployment", h),
+			reasons.InvalidArgument,
+			fmt.Sprintf("Known registry hosts: %s", strings.Join(knownList, ", ")),
+			"Check the HOST in --image-pull-secret HOST=NAME (registries come from the manifest)")
+	}
+	return nil
 }
 
 // BuildWorkflow constructs the install workflow from resolved inputs.
