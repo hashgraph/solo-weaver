@@ -481,6 +481,50 @@ func TestBuildSoftwareVersionSource(t *testing.T) {
 	assert.Equal(t, "regcred", src.ImageRepositories[0].ImagePullSecrets[0].Name)
 }
 
+// TestBuildSoftwareVersionSource_MultiRegistrySecrets checks the secret wiring for
+// a source with several registries: only one host is mapped, so its secret must
+// land on that repo alone and the other repo must stay secret-free. The
+// coordinates are solo-operator 0.7.3, which ships the same image (index digest
+// sha256:0c3ce3ca...) on both registries, so the shared layer hashes are valid.
+func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
+	src := &models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{
+			// Mapped host: gets the secret.
+			{Repository: "ghcr.io/hashgraph/solo-operator", ImageName: "solo-operator", ImageTag: "0.7.3"},
+			// Unmapped host: no secret.
+			{Repository: "artifacts.hashgraph.io/solo-operator-docker-release-local", ImageName: "solo-operator", ImageTag: "0.7.3"},
+		},
+		// Real layer hashes for 0.7.3 (first two layers per platform).
+		LayerHashes: map[string][]string{
+			"linux/amd64": {
+				"sha256:1c317bff3f3e33a6b7a13902b0ef7e0e700629354685f95643921e136031253b",
+				"sha256:2cc7ee286bf3a9e6af5f71756d7fc8e22e23ce65fec9047d774511ffcef79fa8",
+			},
+			"linux/arm64": {
+				"sha256:ff1b1d6ec9ee394d02ddd22a2a44618da9813780d28b83c5859eaf67a4f9fd05",
+				"sha256:401d177fd1e8a1e0d7a48139788d026e9a2e919ccb122bedd110ac7cf351f53e",
+			},
+		},
+	}
+	// Map only the private host; the public host is left unmapped.
+	sel := models.PullSecretSelector{ByHost: map[string]string{"ghcr.io": "private-registry-creds"}}
+
+	out := buildSoftwareVersionSource(src, sel)
+	require.NotNil(t, out)
+	require.Len(t, out.ImageRepositories, 2)
+
+	// Private registry (ghcr.io) carries the pull secret.
+	require.Len(t, out.ImageRepositories[0].ImagePullSecrets, 1)
+	assert.Equal(t, "private-registry-creds", out.ImageRepositories[0].ImagePullSecrets[0].Name)
+	// Public registry (artifacts.hashgraph.io) carries no secret.
+	assert.Nil(t, out.ImageRepositories[1].ImagePullSecrets)
+
+	// Both platforms are verified, in sorted order.
+	require.Len(t, out.ImageVerificationSpec, 2)
+	assert.Equal(t, "amd64", out.ImageVerificationSpec[0].Architecture)
+	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
+}
+
 func TestSplitConsensusImage(t *testing.T) {
 	repo, name := splitConsensusImage("gcr.io/hedera-registry/consensus-node")
 	assert.Equal(t, "gcr.io/hedera-registry", repo)
