@@ -525,6 +525,38 @@ func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
 	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
 }
 
+// TestCreateConsensusCapsule_SelectionStrategy verifies --registry-selection-strategy
+// lands on the emitted SoftwareVersionSource (empty leaves it unset, see the
+// multi-registry test above).
+func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{
+		Namespace:                 "hiero-network-1",
+		OrbitName:                 "hiero-network-1",
+		NodeId:                    0,
+		AccountId:                 "0.0.3",
+		Weight:                    500,
+		ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:         "0.74.2",
+		RegistrySelectionStrategy: models.RegistrySelectionSequential,
+		ConsensusImageSource: &models.ImageSource{
+			Repositories: []models.ImageRepositoryRef{
+				{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+				{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+			},
+			LayerHashes: map[string][]string{"linux/amd64": {"sha256:aaa"}},
+		},
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+
+	src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
+	require.NotNil(t, src)
+	assert.Equal(t, "Sequential", src.SelectionStrategy)
+}
+
 func TestSplitConsensusImage(t *testing.T) {
 	repo, name := splitConsensusImage("gcr.io/hedera-registry/consensus-node")
 	assert.Equal(t, "gcr.io/hedera-registry", repo)

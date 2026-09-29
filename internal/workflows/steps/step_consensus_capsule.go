@@ -466,9 +466,8 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			// this run carries no manifest source and the user did not pin the image,
 			// preserve any source already on the live CR — ApplyTyped is server-side
 			// apply, so omitting the field would otherwise silently drop it.
-			if src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets); src != nil {
-				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
-			} else if !inputs.ImagePinned {
+			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
+			if src == nil && !inputs.ImagePinned {
 				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
@@ -476,8 +475,14 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 						reasons.PreconditionNotMet,
 						"Verify cluster connectivity, or re-run with --deployment-package-dir so the image source is resolved from the manifest")))
 				}
-				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = existing
+				src = existing
 			}
+			// An explicit --registry-selection-strategy overrides the operator's
+			// --registry-order default on whichever source we set.
+			if src != nil && inputs.RegistrySelectionStrategy != "" {
+				src.SelectionStrategy = inputs.RegistrySelectionStrategy
+			}
+			capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
 
 			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
 			if err := applyConsensusVolumes(capsule, inputs); err != nil {

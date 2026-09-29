@@ -51,6 +51,29 @@ func TestParsePullSecretSelector(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNormalizeRegistrySelectionStrategy(t *testing.T) {
+	// Empty stays empty (operator default).
+	s, err := NormalizeRegistrySelectionStrategy("")
+	require.NoError(t, err)
+	assert.Equal(t, "", s)
+
+	// Any case canonicalizes to the operator's exact enum.
+	for _, in := range []string{"Random", "random", "  RANDOM "} {
+		s, err = NormalizeRegistrySelectionStrategy(in)
+		require.NoError(t, err)
+		assert.Equal(t, "Random", s)
+	}
+	for _, in := range []string{"Sequential", "sequential"} {
+		s, err = NormalizeRegistrySelectionStrategy(in)
+		require.NoError(t, err)
+		assert.Equal(t, "Sequential", s)
+	}
+
+	// Anything else is rejected.
+	_, err = NormalizeRegistrySelectionStrategy("first")
+	require.Error(t, err)
+}
+
 func TestRegistryHost(t *testing.T) {
 	assert.Equal(t, "ghcr.io", RegistryHost("ghcr.io/hashgraph/solo-consensus-node"))
 	assert.Equal(t, "us-docker.pkg.dev", RegistryHost("us-docker.pkg.dev/hedera-registry/consensus"))
