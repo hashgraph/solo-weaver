@@ -311,9 +311,9 @@ sudo solo-provisioner daemon service install --from-config=/path/to/daemon.yaml
 |---|---|---|
 | `--components` | Comma-separated components to enable: `consensus-node`, `block-node` | prompted |
 | `--cn-node-id` | Hedera node identifier for the consensus node, e.g. `0.0.3` | prompted |
-| `--cn-orbit` | Namespace where consensus-node `NetworkUpgradeExecute` CRs are watched | prompted |
+| `--cn-orbit` (alias `--cn-namespace`) | Namespace where consensus-node `NetworkUpgradeExecute` CRs are watched — the orbit *is* the namespace | prompted |
 | `--cn-upgrade-dir` | Consensus-node upgrade staging directory | `/opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current` |
-| `--bn-orbit` | Namespace for the block-node component *(supported in a future release)* | prompted |
+| `--bn-orbit` (alias `--bn-namespace`) | Namespace for the block-node component *(supported in a future release)* | prompted |
 | `--from-config` | Path to an existing `daemon.yaml` to copy to `/opt/solo/weaver/config/daemon.yaml` | none |
 
 **How config bootstrap works:**

@@ -41,7 +41,9 @@ tasks:
         echo "▶ Building CLI + daemon for linux/${ARCH} (incremental)"
         # build:cli depends on build:daemon and stamps its digest, so this
         # rebuilds both. No dependency on 'clean', so the Go cache is reused.
-        task build:cli GOOS=linux GOARCH=${ARCH}
+        # Forward VERSION so the binary's stamped version.Version matches whatever the
+        # deployment package declares (empty falls back to build:cli's 0.0.0 default).
+        task build:cli GOOS=linux GOARCH=${ARCH} VERSION={{.VERSION}}
       - task: uat:bootstrap
 
   uat:secrets:
@@ -656,12 +658,11 @@ tasks:
 
         echo -e '\n▶ Step 4: Verify CRDs are installed'
         for CRD in \
-          consensuscapsules.operator.solo.hedera.com \
-          envoyproxies.operator.solo.hedera.com \
-          haproxycapsules.operator.solo.hedera.com \
-          helmcapsules.operator.solo.hedera.com \
-          networkoperations.operator.solo.hedera.com \
-          orbits.operator.solo.hedera.com; do
+          consensuscapsules.operator.solo.hiero.org \
+          envoyproxies.operator.solo.hiero.org \
+          haproxycapsules.operator.solo.hiero.org \
+          helmcapsules.operator.solo.hiero.org \
+          orbits.operator.solo.hiero.org; do
           kubectl get crd "$CRD" > /dev/null 2>&1 || { echo "FAIL: CRD $CRD not found"; exit 1; }
           echo "   $CRD ✓"
         done

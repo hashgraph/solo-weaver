@@ -118,12 +118,11 @@ var clusterCRDs = []string{
 }
 
 var soloOperatorCRDs = []string{
-	"consensuscapsules.operator.solo.hedera.com",
-	"envoyproxies.operator.solo.hedera.com",
-	"haproxycapsules.operator.solo.hedera.com",
-	"helmcapsules.operator.solo.hedera.com",
-	"networkoperations.operator.solo.hedera.com",
-	"orbits.operator.solo.hedera.com",
+	"consensuscapsules." + kube.SoloOperatorGroup,
+	"envoyproxies." + kube.SoloOperatorGroup,
+	"haproxycapsules." + kube.SoloOperatorGroup,
+	"helmcapsules." + kube.SoloOperatorGroup,
+	"orbits." + kube.SoloOperatorGroup,
 }
 
 // CheckClusterHealth performs a series of checks to ensure the cluster is healthy and operational
