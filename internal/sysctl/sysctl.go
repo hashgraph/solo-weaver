@@ -74,6 +74,17 @@ func CopyConfiguration() ([]string, error) {
 	return templates.CopyTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
 }
 
+// CopyConfigurationFile copies a single named sysctl configuration file from the
+// embedded templates to the /etc/sysctl.d directory, leaving every other file in
+// the directory untouched. It returns the destination path.
+func CopyConfigurationFile(name string) (string, error) {
+	dst := path.Join(sysctlConfigDestinationDir, name)
+	if err := templates.CopyTemplateFile(path.Join(sysctlConfigSourceDir, name), dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
 // LoadAllConfiguration reloads sysctl settings from configuration files in /etc/sysctl.d and /etc/sysctl.conf.
 // It returns a list of configuration files that were used to reload sysctl settings.
 // If no configuration files are found, it will still reload sysctl settings from /etc/sysctl.conf if it exists.
@@ -230,6 +241,28 @@ func applyConfigs(files ...string) error {
 		}
 	}
 	return nil
+}
+
+// Get returns the current live value of a sysctl key.
+func Get(key string) (string, error) {
+	return sysctl.Get(key)
+}
+
+// ReadBackupValue returns the value of key recorded in a sysctl backup file
+// written by BackupSettings. ok is false when the key is not present in the
+// backup, including when the backup file itself does not exist.
+func ReadBackupValue(backupFile, key string) (string, bool, error) {
+	if _, err := os.Stat(backupFile); os.IsNotExist(err) {
+		return "", false, nil
+	}
+
+	config, err := sysctl.LoadConfig(backupFile)
+	if err != nil {
+		return "", false, err
+	}
+
+	v, ok := config[key]
+	return v, ok, nil
 }
 
 // Set updates the value of a sysctl.

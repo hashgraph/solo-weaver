@@ -24,7 +24,11 @@ var (
 )
 
 func init() {
-	networkCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "hiero-network-1", "Kubernetes namespace / Orbit name of the network")
+	networkCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", "hiero-network-1", "Kubernetes namespace / Orbit name of the network (alias: --orbit)")
+	// --orbit is a hidden alias for --namespace, bound to the same variable; keep the
+	// default identical so the alias registration does not change the initial value.
+	networkCmd.PersistentFlags().StringVar(&flagNamespace, "orbit", "hiero-network-1", "Alias for --namespace (the Orbit name)")
+	_ = networkCmd.PersistentFlags().MarkHidden("orbit")
 	networkCmd.PersistentFlags().StringVar(&flagPkgDir, "deployment-package-dir", "", "Path to an extracted HIP-1494 deployment package; its genesis-network.json is applied as the pre-built genesis (omit to discover the roster from the cluster)")
 	networkCmd.PersistentFlags().StringVar(&flagGenesisFile, "genesis-file", "", "Path to a genesis-network.json to apply verbatim; overrides the deployment package's genesis-network.json when both are set")
 	networkCmd.PersistentFlags().DurationVar(&flagReadyTimeout, "ready-timeout", 5*time.Minute, "How long to wait for the operator to generate the genesis ConfigMap (0 disables the wait)")

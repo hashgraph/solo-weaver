@@ -246,6 +246,9 @@ func OverrideAlloyConfig(overrides models.AlloyConfig) {
 	if overrides.ClusterName != "" {
 		globalConfig.Alloy.ClusterName = overrides.ClusterName
 	}
+	if overrides.Environment != "" {
+		globalConfig.Alloy.Environment = overrides.Environment
+	}
 	if overrides.ClusterSecretStoreName != "" {
 		globalConfig.Alloy.ClusterSecretStoreName = overrides.ClusterSecretStoreName
 	}

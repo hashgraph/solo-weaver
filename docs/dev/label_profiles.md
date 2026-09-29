@@ -42,7 +42,7 @@ func (SreProfile) Name() string { return "sre" }
 //
 // Labels added (from LabelInput):
 //   - cluster        = ClusterName (mandatory)
-//   - environment    = DeployProfile
+//   - environment    = Environment
 //   - instance_type  = alphabetic prefix of first cluster name segment (e.g. "lfh")
 //   - team           = "sre"
 func (SreProfile) Labels(input LabelInput) map[string]string {
@@ -50,8 +50,8 @@ func (SreProfile) Labels(input LabelInput) map[string]string {
     if input.ClusterName != "" {
         labels["cluster"] = input.ClusterName
     }
-    if input.DeployProfile != "" {
-        labels["environment"] = input.DeployProfile
+    if input.Environment != "" {
+        labels["environment"] = input.Environment
     }
     labels["team"] = "sre"
     return labels
@@ -62,7 +62,7 @@ Every profile **must** include the `cluster` label (derived from `ClusterName`).
 
 `ParseClusterName()` (in `ops.go`) extracts common base labels
 (`instance_type`) from the cluster name.
-Add `cluster` from `input.ClusterName`, `environment` from `input.DeployProfile`,
+Add `cluster` from `input.ClusterName`, `environment` from `input.Environment` (`--environment`, else the deployment profile),
 and any profile-specific labels on top.
 If your profile needs completely custom labels, skip `ParseClusterName()`
 but still include `cluster`.
@@ -82,6 +82,6 @@ labelProfile=eng|ops|sre
 ### 3. Add tests
 
 Create `sre_test.go` (or add to `ops_test.go`) verifying
-`SreProfile{}.Labels(LabelInput{ClusterName: "...", DeployProfile: "..."})` returns the expected label map.
+`SreProfile{}.Labels(LabelInput{ClusterName: "...", Environment: "..."})` returns the expected label map.
 Add validation test cases in `pkg/models/validation_test.go`
 confirming the new profile is accepted.

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -475,6 +476,29 @@ func TestAlloyConfig_Validate(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "valid_free_form_environment",
+			config:      AlloyConfig{ClusterName: "test-cluster", Environment: "staging-eu.1"},
+			expectError: false,
+		},
+		{
+			name:        "invalid_environment_with_quote",
+			config:      AlloyConfig{ClusterName: "test-cluster", Environment: `staging"`},
+			expectError: true,
+			errorMsg:    "invalid environment",
+		},
+		{
+			name:        "invalid_environment_with_newline",
+			config:      AlloyConfig{ClusterName: "test-cluster", Environment: "staging\n"},
+			expectError: true,
+			errorMsg:    "invalid environment",
+		},
+		{
+			name:        "invalid_environment_with_brace",
+			config:      AlloyConfig{ClusterName: "test-cluster", Environment: "staging}"},
+			expectError: true,
+			errorMsg:    "invalid environment",
+		},
+		{
 			name: "invalid_duplicate_prometheus_remote_names",
 			config: AlloyConfig{
 				ClusterName: "test-cluster",
@@ -708,6 +732,15 @@ func TestAlloyConfig_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAlloyConfig_Validate_EnvironmentHint(t *testing.T) {
+	err := (&AlloyConfig{Environment: `staging"`}).Validate()
+	require.Error(t, err)
+
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"Use letters, digits, dots and hyphens, e.g. staging or qa-eu.1."}, hints)
 }
 
 // TestBlockNodeInputs_RetentionValidation tests the validation of retention threshold fields.

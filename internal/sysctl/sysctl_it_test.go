@@ -93,6 +93,38 @@ func Test_BackupSysctlConfiguration_Integration(t *testing.T) {
 	require.GreaterOrEqual(t, len(strings.Split(s, "\n")), 1) // at least one config line
 }
 
+func Test_CopySysctlConfigurationFile_Integration(t *testing.T) {
+	dst, err := CopyConfigurationFile("75-network-performance.conf")
+	require.NoError(t, err)
+	require.FileExists(t, dst)
+
+	data, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "net.ipv4.tcp_keepalive_probes")
+	require.NotContains(t, string(data), "fs.file-max", "the old fs.file-max override must not be reintroduced")
+}
+
+func Test_ReadBackupValue_Integration(t *testing.T) {
+	backupFile := path.Join(t.TempDir(), "sysctl.conf")
+
+	// Missing backup file: not an error, just "not found".
+	_, ok, err := ReadBackupValue(backupFile, "fs.file-max")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	require.NoError(t, os.WriteFile(backupFile, []byte("fs.file-max = 9223372036854775807\n"), 0644))
+
+	v, ok, err := ReadBackupValue(backupFile, "fs.file-max")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "9223372036854775807", v)
+
+	// A key not present in the backup: "not found", not an error.
+	_, ok, err = ReadBackupValue(backupFile, "net.ipv4.tcp_keepalive_probes")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 func Test_PathFromKey(t *testing.T) {
 	results, err := PathFromKey("net.ipv4.ip_forward")
 	require.NoError(t, err)

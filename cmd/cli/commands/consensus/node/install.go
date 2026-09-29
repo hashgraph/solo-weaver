@@ -4,6 +4,7 @@ package node
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -103,6 +104,21 @@ var installCmd = &cobra.Command{
 			Target: models.TargetConsensusNode,
 		}
 
+		volCfg, verr := resolveVolumeConfig()
+		if verr != nil {
+			return verr
+		}
+		// In provisioner-daemon (mainnet) mode the upgrade dir must be a hostPath
+		// shared with the host solo-provisioner-daemon (it reads <upgrade>/current
+		// during the execute phase). Default it to hostPath unless the operator set
+		// the upgrade volume's backing explicitly.
+		if flagProvisionerDaemon {
+			if up := volCfg.Volumes[models.ConsensusVolumeUpgrade]; up.Type == "" {
+				up.Type = models.VolumeBackingHostPath
+				volCfg.SetVolume(models.ConsensusVolumeUpgrade, up)
+			}
+		}
+
 		inputs := models.UserInputs[models.ConsensusNodeInputs]{
 			Common: models.CommonInputs{
 				NodeType:         models.NodeTypeConsensus,
@@ -110,30 +126,34 @@ var installCmd = &cobra.Command{
 				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
-				Namespace:            flagNamespace,
-				NodeId:               flagNodeId,
-				AccountId:            flagAccountId,
-				Weight:               flagWeight,
-				LedgerId:             flagLedgerId,
-				ChainId:              flagChainId,
-				ConsensusImageRepo:   flagImageRepo,
-				ConsensusImageTag:    flagImageTag,
-				UCImageRepo:          flagUCImageRepo,
-				UCImageTag:           flagUCImageTag,
-				DeploymentPackageDir: flagDeploymentPkgDir,
-				GrpcTlsSecret:        flagGrpcTlsSecret,
-				SigningSecret:        flagSigningSecret,
-				ImagePullSecret:      flagImagePullSecret,
-				Profile:              flagProfile,
-				SkipHardwareChecks:   skipHardwareChecks,
-				ContainerName:        flagContainerName,
-				JavaHeapMin:          flagJavaHeapMin,
-				JavaHeapMax:          flagJavaHeapMax,
-				JavaOpts:             flagJavaOpts,
-				CPULimit:             flagCPULimit,
-				CPURequest:           flagCPURequest,
-				MemoryLimit:          flagMemoryLimit,
-				MemoryRequest:        flagMemoryRequest,
+				Namespace:                flagNamespace,
+				ProvisionerDaemonEnabled: flagProvisionerDaemon,
+				NodeId:                   flagNodeId,
+				AccountId:                flagAccountId,
+				Weight:                   flagWeight,
+				LedgerId:                 flagLedgerId,
+				ChainId:                  flagChainId,
+				ConsensusImageRepo:       flagImageRepo,
+				ConsensusImageTag:        flagImageTag,
+				UCImageRepo:              flagUCImageRepo,
+				UCImageTag:               flagUCImageTag,
+				DeploymentPackageDir:     flagDeploymentPkgDir,
+				GrpcTlsSecret:            flagGrpcTlsSecret,
+				SigningSecret:            flagSigningSecret,
+				ImagePullSecret:          flagImagePullSecret,
+				Profile:                  flagProfile,
+				SkipHardwareChecks:       skipHardwareChecks,
+				ContainerName:            flagContainerName,
+				JavaHeapMin:              flagJavaHeapMin,
+				JavaHeapMax:              flagJavaHeapMax,
+				JavaOpts:                 flagJavaOpts,
+				CPULimit:                 flagCPULimit,
+				CPURequest:               flagCPURequest,
+				MemoryLimit:              flagMemoryLimit,
+				MemoryRequest:            flagMemoryRequest,
+				Volumes:                  volCfg,
+				HostPathUID:              flagHostPathUID,
+				HostPathGID:              flagHostPathGID,
 			},
 		}
 
@@ -165,6 +185,61 @@ var installCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// resolveVolumeConfig builds the merged volume configuration: the --volumes-file
+// (if any) is loaded first, then CLI flags override it — global --default-* over the
+// file's defaults, and each --volume over the file's per-volume entry. It fails fast
+// if any volume cannot resolve (e.g. a key that doesn't apply to its backing).
+func resolveVolumeConfig() (models.ConsensusVolumeConfig, error) {
+	var cfg models.ConsensusVolumeConfig
+	if flagVolumesFile != "" {
+		data, err := os.ReadFile(flagVolumesFile)
+		if err != nil {
+			return cfg, errx.Decorate(
+				errorx.ExternalError.Wrap(err, "read volumes file %s", flagVolumesFile),
+				reasons.FileMissing,
+				"Check the --volumes-file path exists and is readable")
+		}
+		cfg, err = models.LoadVolumeConfigYAML(data)
+		if err != nil {
+			return cfg, errx.Decorate(err, reasons.InvalidArgument,
+				"Fix the --volumes-file YAML (defaults: and volumes: blocks)")
+		}
+	}
+	// Global defaults: CLI overrides the file.
+	if flagDefaultVolumeType != "" {
+		if !models.IsValidVolumeBacking(flagDefaultVolumeType) {
+			return cfg, errx.Decorate(
+				errorx.IllegalArgument.New("invalid --default-volume-type %q (allowed: emptydir, hostpath, pvc)", flagDefaultVolumeType),
+				reasons.InvalidArgument, "Use emptydir, hostpath, or pvc")
+		}
+		cfg.Defaults.Type = flagDefaultVolumeType
+	}
+	if flagDefaultPVCSize != "" {
+		cfg.Defaults.PVCSize = flagDefaultPVCSize
+	}
+	if flagDefaultPVCStorageClass != "" {
+		cfg.Defaults.StorageClass = flagDefaultPVCStorageClass
+	}
+	if flagDefaultPVCAccessMode != "" {
+		cfg.Defaults.AccessMode = flagDefaultPVCAccessMode
+	}
+	// Per-volume overrides (highest precedence).
+	for _, arg := range flagVolumes {
+		name, spec, err := models.ParseVolumeArg(arg)
+		if err != nil {
+			return cfg, errx.Decorate(err, reasons.InvalidArgument, "Fix the --volume argument")
+		}
+		cfg.SetVolume(name, spec)
+	}
+	// Fail fast on any volume that cannot resolve (invalid key/backing combination).
+	for _, name := range models.ConsensusVolumeNames() {
+		if _, err := cfg.EffectiveSpec(name); err != nil {
+			return cfg, errx.Decorate(err, reasons.InvalidArgument, "Fix the volume configuration")
+		}
+	}
+	return cfg, nil
 }
 
 // printConsensusInstallNextSteps writes the post-install guidance to stdout after

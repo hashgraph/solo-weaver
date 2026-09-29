@@ -197,6 +197,24 @@ func TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue(t *testing.T) {
 	}
 }
 
+func TestOverrideAlloyConfig_Environment(t *testing.T) {
+	saved := globalConfig
+	t.Cleanup(func() { globalConfig = saved })
+
+	// Config-file value survives an empty flag
+	globalConfig.Alloy = models.AlloyConfig{Environment: "staging"}
+	OverrideAlloyConfig(models.AlloyConfig{})
+	if got := Get().Alloy.Environment; got != "staging" {
+		t.Errorf("Environment: expected %q kept, got %q", "staging", got)
+	}
+
+	// Explicit flag wins over the config-file value
+	OverrideAlloyConfig(models.AlloyConfig{Environment: "qa"})
+	if got := Get().Alloy.Environment; got != "qa" {
+		t.Errorf("Environment: expected %q, got %q", "qa", got)
+	}
+}
+
 // TestFile_ReportsExplicitlyLoadedPath covers the gate the block-node BLL relies
 // on to tell an operator-authored config file from the compiled-in deps defaults:
 // both look identical through Get(), so File() is the only way to distinguish them.

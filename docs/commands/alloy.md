@@ -11,7 +11,7 @@ Both live here because you almost always set them up together.
 > `--force`, `--verbose`, `--non-interactive`.
 >
 > **`--profile`** is available on `alloy cluster`. It is optional here — it sets the
-> `environment` label for the `ops` label profile. See
+> `environment` label for the `ops` label profile, unless `--environment` is given. See
 > [Deployment profiles](../reference/deployment-profiles.md).
 
 ## How the pieces fit
@@ -79,6 +79,7 @@ sudo solo-provisioner alloy cluster install --cluster-name=mainnet-block-01
 |---|---|
 | `--cluster-name` | Cluster name used as a label on every metric and log stream |
 | `--profile`, `-p` | Deployment profile. Sets the `environment` label for the `ops` label profile. Optional — falls back to `--config` |
+| `--environment` | Environment label for the `ops` label profile; defaults to `--profile`. Free-form, e.g. `staging`, `qa`. Can also be set as `alloy.environment` in `--config` |
 | `--monitor-block-node` | Turn on block-node-specific monitoring |
 | `--add-prometheus-remote` | Add a Prometheus remote. Repeatable. See [remote format](#remote-format) |
 | `--add-loki-remote` | Add a Loki remote. Repeatable |
@@ -181,13 +182,29 @@ With `--cluster-name=lfh02-previewnet-blocknode` and `--profile=previewnet`, `op
 | Label | Value | Where it comes from |
 |---|---|---|
 | `cluster` | `lfh02-previewnet-blocknode` | `--cluster-name`. Always set |
-| `environment` | `previewnet` | `--profile` |
+| `environment` | `previewnet` | `--environment` if set, else `alloy.environment` in `--config`, else `--profile` |
 | `instance` | `lfh02-previewnet-blocknode` | Full cluster name. Overrides the auto-scraped `IP:port` |
 | `instance_type` | `lfh` | Alphabetic prefix of the first segment of the cluster name |
 | `inventory_name` | `lfh02-previewnet-blocknode` | Full cluster name |
 | `ip` | `<ip>` | Optional. Set when an IP label is available for the node |
 
 Each remote carries its own `labelProfile`. Omitting it means `eng`.
+
+### Environments outside the deployment profiles
+
+`--profile` only accepts the five deployment profiles. For any other environment name
+(`staging`, `qa`, a tenant name), set the label directly with `--environment`. It accepts
+letters, digits, `-` and `.`, and only affects remotes using `labelProfile=ops`:
+
+```bash
+sudo solo-provisioner alloy cluster install \
+  --cluster-name=lfh05-staging-blocknode \
+  --environment=staging \
+  --add-prometheus-remote=name=primary,url=https://prom.example.com/api/v1/write,username=user1,labelProfile=ops
+```
+
+This emits `environment="staging"`. The label is not remembered between runs — pass
+`--environment` again (or set `alloy.environment` in `--config`) on every reinstall.
 
 More detail: [`docs/dev/label_profiles.md`](../dev/label_profiles.md).
 

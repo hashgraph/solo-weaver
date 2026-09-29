@@ -12,9 +12,9 @@ import (
 // LabelInput holds all runtime data sources available for label resolution.
 // Each profile's Labels method picks only the fields it needs.
 type LabelInput struct {
-	ClusterName   string // cluster name (e.g. "lfh02-previewnet-blocknode")
-	DeployProfile string // deployment profile / environment (e.g. "previewnet")
-	MachineIP     string // host's primary IP address (may be empty if unavailable)
+	ClusterName string // cluster name (e.g. "lfh02-previewnet-blocknode")
+	Environment string // environment label; --environment, else the deployment profile (e.g. "previewnet")
+	MachineIP   string // host's primary IP address (may be empty if unavailable)
 }
 
 // Profiler defines the contract for a label profile.

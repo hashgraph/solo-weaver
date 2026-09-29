@@ -12,9 +12,12 @@ import (
 // Consensus-node container defaults. Used as flag defaults and as the fallback
 // when an input field is left empty. The Java heap must be set explicitly; without
 // it the JVM defaults MaxHeapSize to 25% of the memory limit, which stalls the node
-// on startup. Heap + direct memory must fit under the memory limit: these defaults
-// are a lean single/local-node baseline (1g heap + 512m direct fit under 2Gi);
-// production networks should raise them via flags.
+// on startup. The memory limit must cover heap + direct memory PLUS the JVM's native
+// footprint (metaspace, thread stacks, GC/JIT code cache, netty buffers), which a
+// consensus node consumes heavily — a 1g-heap/512m-direct node still exceeds a 2Gi
+// limit once warmed up and gets OOMKilled. These defaults are a single/local-node
+// baseline (2g heap + 512m direct + native fit under 4Gi); production networks
+// should raise them via flags.
 const (
 	// ConsensusDefaultNamespace is the default namespace / Orbit name for a
 	// consensus deployment (sourced from pkg/deps alongside the other install-plan
@@ -23,12 +26,12 @@ const (
 
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
-	ConsensusDefaultJavaHeapMax   = "1g"
+	ConsensusDefaultJavaHeapMax   = "2g"
 	ConsensusDefaultJavaOpts      = "-XX:+UseG1GC -XX:MaxDirectMemorySize=512m --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true"
 	ConsensusDefaultCPULimit      = "2"
 	ConsensusDefaultCPURequest    = "250m"
-	ConsensusDefaultMemoryLimit   = "2Gi"
-	ConsensusDefaultMemoryRequest = "1Gi"
+	ConsensusDefaultMemoryLimit   = "4Gi"
+	ConsensusDefaultMemoryRequest = "2Gi"
 
 	// UC (Update Coordinator) sidecar image. The operator provides NO built-in
 	// default for it, so the capsule must declare it explicitly or the operator
@@ -54,6 +57,12 @@ type ConsensusNodeInputs struct {
 	NodeId    int64  `json:"nodeId"`
 	AccountId string `json:"accountId"`
 	Weight    int    `json:"weight"`
+
+	// ProvisionerDaemonEnabled deploys the Orbit in mainnet mode: the UC sidecar
+	// runs UC_MODE=mainnet and defers the execute phase to a host-level
+	// solo-provisioner-daemon. Default false = cluster-only (the in-pod UC runs
+	// execute). Sets Orbit.spec.consensus.provisionerDaemonEnabled.
+	ProvisionerDaemonEnabled bool `json:"provisionerDaemonEnabled,omitempty"`
 
 	LedgerId string `json:"ledgerId"`
 	ChainId  string `json:"chainId,omitempty"`
@@ -88,6 +97,18 @@ type ConsensusNodeInputs struct {
 	CPURequest    string `json:"cpuRequest,omitempty"`
 	MemoryLimit   string `json:"memoryLimit,omitempty"`
 	MemoryRequest string `json:"memoryRequest,omitempty"`
+
+	// Volumes is the fully-merged per-volume backing configuration (emptyDir /
+	// hostPath / PVC) with global defaults. Built by the CLI from --volumes-file plus
+	// the --default-* and --volume flags. Empty = every volume emptyDir (operator
+	// default). Resolve a volume's effective backing with Volumes.EffectiveSpec.
+	Volumes ConsensusVolumeConfig `json:"volumes,omitempty"`
+
+	// HostPathUID/HostPathGID own the hostPath directories created for hostpath-backed
+	// volumes. Non-positive values fall back to the canonical hedera user/group
+	// (config.HederaUserId/GroupId, 2000:2000), resolved by the chown step.
+	HostPathUID int `json:"hostPathUid,omitempty"`
+	HostPathGID int `json:"hostPathGid,omitempty"`
 
 	// Profile is the deployment profile (local/testnet/mainnet/...) used to size
 	// the host hardware floor when this install bootstraps the cluster.
