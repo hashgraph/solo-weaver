@@ -97,6 +97,11 @@ func transportOf(dir string, depth int, visited map[string]bool) string {
 	}
 	visited[dir] = true
 
+	// rbd/nbd/drbd name no controller either; under LVM or dm-crypt only the
+	// slave's own name gives them away.
+	if t := networkDeviceTransport(filepath.Base(dir)); t != "" {
+		return t
+	}
 	if t := controllerTransport(dir); t != "" {
 		return t
 	}

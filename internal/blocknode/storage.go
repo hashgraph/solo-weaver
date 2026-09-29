@@ -530,7 +530,9 @@ const (
 
 // StoragePathsByVolume is the map form of ResolveStoragePaths, keyed by volume
 // name. A remote store such as a cloud-storage-archive bucket has no path here.
-func StoragePathsByVolume(storage models.BlockNodeStorage, chartVersion string) (map[string]string, error) {
+// managesPlugins false drops the plugins volume, which install skips for a
+// plugins-baked image (#913).
+func StoragePathsByVolume(storage models.BlockNodeStorage, chartVersion string, managesPlugins bool) (map[string]string, error) {
 	archivePath, livePath, logPath, optionalPaths, err := ResolveStoragePaths(storage, chartVersion)
 	if err != nil {
 		return nil, err
@@ -546,6 +548,9 @@ func StoragePathsByVolume(storage models.BlockNodeStorage, chartVersion string) 
 	for i, opt := range GetApplicableOptionalStorages(chartVersion) {
 		if i >= len(optionalPaths) {
 			break
+		}
+		if opt.Name == "plugins" && !managesPlugins {
+			continue
 		}
 		paths[opt.Name] = optionalPaths[i]
 	}

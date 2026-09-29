@@ -31,17 +31,30 @@ func blockNodePreflightStepIDs(t *testing.T, spec hardware.DeploymentSpec, stora
 	return ids
 }
 
-// TestNewBlockNodePreflightCheckWorkflow_AppendsStorageMediaCheckLast verifies
-// `block node check` gets the same warn-only storage media check install,
-// reconfigure and upgrade get, appended after the shared node safety checks so
-// it inspects the paths install would use once every other precondition holds.
-func TestNewBlockNodePreflightCheckWorkflow_AppendsStorageMediaCheckLast(t *testing.T) {
+// TestNewBlockNodePreflightCheckWorkflow_RunsStorageMediaCheckFirst verifies
+// `block node check` runs the warn-only storage media check before the shared
+// node safety checks: the workflow stops on the first failure, so a failed
+// hardware check must not skip the warning.
+func TestNewBlockNodePreflightCheckWorkflow_RunsStorageMediaCheckFirst(t *testing.T) {
 	ids := blockNodePreflightStepIDs(t, hardware.DeploymentSpec{}, models.BlockNodeStorage{BasePath: "/opt/hedera/blocknode"}, "0.37.0")
 
 	require.NotEmpty(t, ids)
-	assert.Equal(t, steps.CheckStorageMediaStepId, ids[len(ids)-1],
-		"storage media check must be the last step, appended after the shared node safety checks")
+	assert.Equal(t, steps.CheckStorageMediaStepId, ids[0],
+		"storage media check must run before the shared node safety checks")
 	assert.Contains(t, ids, "validate-privileges", "must still run the shared node safety checks")
+}
+
+// TestNewNodeSafetyCheckWorkflow_HasNoStorageMediaCheck verifies the shared
+// workflow used by cluster/consensus/alloy checks stays free of the block-node step.
+func TestNewNodeSafetyCheckWorkflow_HasNoStorageMediaCheck(t *testing.T) {
+	built, err := NewNodeSafetyCheckWorkflow(hardware.DeploymentSpec{NodeType: models.NodeTypeBlock}, false).Build()
+	require.NoError(t, err)
+	wf, ok := built.(automa.Workflow)
+	require.True(t, ok)
+
+	for _, s := range wf.Steps() {
+		assert.NotEqual(t, steps.CheckStorageMediaStepId, s.Id())
+	}
 }
 
 // TestNewBlockNodePreflightCheckWorkflow_ZeroStorageStillBuilds covers the

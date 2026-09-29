@@ -24,7 +24,7 @@ import (
 // error into a skip rather than propagating it.
 
 func TestBlockNodeStorageMediaStep_Id(t *testing.T) {
-	b := BlockNodeStorageMediaStep(models.BlockNodeStorage{BasePath: "/opt/hedera/blocknode"}, "0.37.0")
+	b := BlockNodeStorageMediaStep(models.BlockNodeStorage{BasePath: "/opt/hedera/blocknode"}, "0.37.0", true)
 	assert.Equal(t, CheckStorageMediaStepId, b.Id())
 }
 
@@ -34,7 +34,7 @@ func TestBlockNodeStorageMediaStep_Id(t *testing.T) {
 // must still build and run to a skip, never propagate the error out of workflow
 // construction (this step is warn-only and must never block install/upgrade).
 func TestBlockNodeStorageMediaStep_UnresolvableStorageSkipsInsteadOfFailing(t *testing.T) {
-	step, err := BlockNodeStorageMediaStep(models.BlockNodeStorage{}, "0.37.0").Build()
+	step, err := BlockNodeStorageMediaStep(models.BlockNodeStorage{}, "0.37.0", true).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())

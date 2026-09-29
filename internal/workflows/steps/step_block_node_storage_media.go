@@ -24,8 +24,9 @@ type storageClassifier func(map[string]string) ([]mountinfo.Finding, error)
 
 // BlockNodeStorageMediaStep warns when a block-node storage path is not on
 // local block storage. It's warn-only: it never fails or rolls back the workflow.
-func BlockNodeStorageMediaStep(storage models.BlockNodeStorage, chartVersion string) automa.Builder {
-	paths, err := blocknode.StoragePathsByVolume(storage, chartVersion)
+// managesPlugins mirrors install's plugins-volume decision (see StoragePathsByVolume).
+func BlockNodeStorageMediaStep(storage models.BlockNodeStorage, chartVersion string, managesPlugins bool) automa.Builder {
+	paths, err := blocknode.StoragePathsByVolume(storage, chartVersion, managesPlugins)
 	if err != nil {
 		logx.As().Warn().Err(err).
 			Msg("Skipping storage media check: storage paths could not be resolved")

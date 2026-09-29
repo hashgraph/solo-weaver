@@ -183,6 +183,35 @@ func Test_NetworkTransport_LVMOverLocalDiskStaysLocal(t *testing.T) {
 	assert.Empty(t, NetworkTransport("253:0", "/dev/mapper/vg-data"))
 }
 
+func Test_NetworkTransport_LVMOverCephRBDWalksSlaves(t *testing.T) {
+	tree := newSysfsTree(t)
+	// rbd names no controller; only the slave's own name gives it away.
+	rbd := tree.device("252:0", "devices/virtual/block/rbd0")
+	dm := tree.device("253:0", "devices/virtual/block/dm-0")
+	tree.slave(dm, "rbd0", rbd)
+
+	assert.Equal(t, "Ceph RBD", NetworkTransport("253:0", "/dev/mapper/vg-data"))
+}
+
+func Test_NetworkTransport_DmCryptOverNBDOverLVM(t *testing.T) {
+	tree := newSysfsTree(t)
+	nbd := tree.device("43:0", "devices/virtual/block/nbd0")
+	lv := tree.device("253:0", "devices/virtual/block/dm-0")
+	tree.slave(lv, "nbd0", nbd)
+	crypt := tree.device("253:1", "devices/virtual/block/dm-1")
+	tree.slave(crypt, "dm-0", lv)
+
+	assert.Equal(t, "NBD", NetworkTransport("253:1", "/dev/mapper/data-crypt"))
+}
+
+func Test_NetworkTransport_RBDMountedByUdevSymlink(t *testing.T) {
+	tree := newSysfsTree(t)
+	// /dev/rbd/<pool>/<image> hides the rbd name from the mount source.
+	tree.device("252:16", "devices/virtual/block/rbd1")
+
+	assert.Equal(t, "Ceph RBD", NetworkTransport("252:16", "/dev/rbd/pool/image"))
+}
+
 func Test_NetworkTransport_SlaveCycleTerminates(t *testing.T) {
 	tree := newSysfsTree(t)
 	a := tree.device("253:0", "devices/virtual/block/dm-0")

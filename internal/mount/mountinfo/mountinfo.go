@@ -42,9 +42,24 @@ var localFSTypes = map[string]struct{}{
 	"zfs":   {},
 }
 
-// networkDevicePrefixes are network block device names. iSCSI, Fibre Channel
-// and NVMe-oF LUNs look like plain sd*/nvme* devices; a DeviceProber catches those.
-var networkDevicePrefixes = []string{"rbd", "nbd", "drbd"}
+// networkDevices maps network block device name prefixes to their fabric. iSCSI,
+// Fibre Channel and NVMe-oF LUNs look like plain sd*/nvme* devices; a DeviceProber catches those.
+var networkDevices = []struct{ prefix, transport string }{
+	{"rbd", "Ceph RBD"},
+	{"nbd", "NBD"},
+	{"drbd", "DRBD"},
+}
+
+// networkDeviceTransport names the fabric of a network block device by its
+// kernel name, e.g. "rbd0", or "" when the name is not one.
+func networkDeviceTransport(name string) string {
+	for _, d := range networkDevices {
+		if strings.HasPrefix(name, d.prefix) {
+			return d.transport
+		}
+	}
+	return ""
+}
 
 // DeviceProber reports the network fabric carrying a block device, or "" when it
 // is local or unresolvable. Only consulted for mounts the other rules accept.
@@ -147,13 +162,7 @@ func IsLocal(e Entry) bool {
 	if _, ok := localFSTypes[e.FSType]; !ok {
 		return false
 	}
-	dev := filepath.Base(e.Source)
-	for _, prefix := range networkDevicePrefixes {
-		if strings.HasPrefix(dev, prefix) {
-			return false
-		}
-	}
-	return true
+	return networkDeviceTransport(filepath.Base(e.Source)) == ""
 }
 
 // ResolveForLookup returns the nearest existing ancestor of p with symlinks

@@ -109,7 +109,12 @@ so the backing media is visible on a healthy machine too:
 A LUN reached over iSCSI, Fibre Channel or NVMe over Fabrics carries an ordinary
 local filesystem on an ordinary `sd*` or `nvme*` device, so it is identified from
 the fabric of the controller behind it, and the line names that fabric alongside
-the filesystem (`ext4 over iSCSI`, `xfs over NVMe/TCP`).
+the filesystem (`ext4 over iSCSI`, `xfs over NVMe/TCP`). The same holds under
+LVM or dm-crypt: the check walks down to the devices underneath, so an LVM
+volume on a Ceph RBD, NBD or DRBD device reads `ext4 over Ceph RBD`.
+
+The media check runs before the other checks, so a failed hardware check does
+not hide its warning.
 
 When the paths or the mount table cannot be read, the block says
 `not determined: <reason> (see the log)` rather than going silent.

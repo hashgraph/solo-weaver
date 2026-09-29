@@ -11,7 +11,7 @@ import (
 )
 
 func TestStoragePathsByVolume_BasePathDerivesEveryLocalVolume(t *testing.T) {
-	paths, err := StoragePathsByVolume(models.BlockNodeStorage{BasePath: "/opt/hedera/blocknode"}, "0.37.0")
+	paths, err := StoragePathsByVolume(models.BlockNodeStorage{BasePath: "/opt/hedera/blocknode"}, "0.37.0", true)
 	require.NoError(t, err)
 
 	// Exactly the weaver-managed local volumes and nothing else: the RFH
@@ -28,7 +28,7 @@ func TestStoragePathsByVolume_BasePathDerivesEveryLocalVolume(t *testing.T) {
 
 func TestStoragePathsByVolume_OptionalVolumesFollowTheChartVersion(t *testing.T) {
 	// 0.30.0 still has verification and has no application-state yet.
-	paths, err := StoragePathsByVolume(models.BlockNodeStorage{BasePath: "/data"}, "0.30.0")
+	paths, err := StoragePathsByVolume(models.BlockNodeStorage{BasePath: "/data"}, "0.30.0", true)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/data/verification", paths["verification"])
@@ -41,7 +41,7 @@ func TestStoragePathsByVolume_IndividualPathsWinOverBasePath(t *testing.T) {
 		BasePath:    "/data",
 		ArchivePath: "/mnt/archive",
 		PluginsPath: "/mnt/plugins",
-	}, "0.37.0")
+	}, "0.37.0", true)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/mnt/archive", paths[VolumeArchive])
@@ -50,7 +50,16 @@ func TestStoragePathsByVolume_IndividualPathsWinOverBasePath(t *testing.T) {
 }
 
 func TestStoragePathsByVolume_IncompleteStorageIsAnError(t *testing.T) {
-	paths, err := StoragePathsByVolume(models.BlockNodeStorage{ArchivePath: "/mnt/archive"}, "0.37.0")
+	paths, err := StoragePathsByVolume(models.BlockNodeStorage{ArchivePath: "/mnt/archive"}, "0.37.0", true)
 	require.Error(t, err, "no base path and missing individual paths cannot be resolved")
 	assert.Nil(t, paths)
+}
+
+func TestStoragePathsByVolume_PluginsBakedImageDropsPluginsVolume(t *testing.T) {
+	// #913: install provisions no plugins volume for a plugins-baked image.
+	paths, err := StoragePathsByVolume(models.BlockNodeStorage{BasePath: "/data"}, "0.37.0", false)
+	require.NoError(t, err)
+
+	assert.NotContains(t, paths, "plugins")
+	assert.Equal(t, "/data/application-state", paths["application-state"])
 }

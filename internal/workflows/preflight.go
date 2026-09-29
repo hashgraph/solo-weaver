@@ -387,12 +387,18 @@ func CheckStorageStep(spec hardware.DeploymentSpec) automa.Builder {
 // NewNodeSafetyCheckWorkflow creates a safety check workflow for any node type.
 // If skipHardwareChecks is true, hardware validation steps (OS, CPU, memory, storage) are excluded.
 func NewNodeSafetyCheckWorkflow(spec hardware.DeploymentSpec, skipHardwareChecks bool) *automa.WorkflowBuilder {
-	preflightSteps := []automa.Builder{
+	return nodeSafetyCheckWorkflow(spec, skipHardwareChecks)
+}
+
+// nodeSafetyCheckWorkflow is NewNodeSafetyCheckWorkflow with leading steps that
+// run before the checks, so an earlier failure can't skip them.
+func nodeSafetyCheckWorkflow(spec hardware.DeploymentSpec, skipHardwareChecks bool, leading ...automa.Builder) *automa.WorkflowBuilder {
+	preflightSteps := append(append([]automa.Builder{}, leading...),
 		CheckPrivilegesStep(),
 		CheckWeaverUserStep(),
 		CheckHostProfileStep(spec),
 		CheckFirewallManagersStep(),
-	}
+	)
 
 	if skipHardwareChecks {
 		logx.As().Warn().Msg("Hardware validation steps (OS, CPU, memory, storage) will be skipped due to --skip-hardware-checks flag")

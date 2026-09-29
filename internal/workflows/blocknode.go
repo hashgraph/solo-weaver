@@ -16,8 +16,10 @@ func NewBlockNodePreflightCheckWorkflow(spec hardware.DeploymentSpec, storage mo
 	if spec.NodeType == "" {
 		spec.NodeType = models.NodeTypeBlock
 	}
-	// Appended here, not inside NewNodeSafetyCheckWorkflow: that's shared with
+	// Added here, not inside NewNodeSafetyCheckWorkflow: that's shared with
 	// cluster/consensus/alloy checks, none of which have storage paths to classify.
-	return NewNodeSafetyCheckWorkflow(spec, false).
-		Steps(steps.BlockNodeStorageMediaStep(storage, chartVersion))
+	// It runs first: it's warn-only, and a failed hardware check would skip it.
+	// check takes no --values, so it never sees a plugins-baked image.
+	return nodeSafetyCheckWorkflow(spec, false,
+		steps.BlockNodeStorageMediaStep(storage, chartVersion, true))
 }
