@@ -56,6 +56,13 @@ vars:
   # `task -d docs/dev/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
   SOLO_OPERATOR_DIR: '{{.SOLO_OPERATOR_DIR | default (printf "%s/../solo-operator" .WEAVER_ROOT)}}'
 
+  # solo-operator git ref that `clone`/`prep` builds from. Defaults to main for a
+  # reproducible e2e. Override to build zips/beacon/manager from an unmerged branch,
+  # e.g. `task -d docs/dev/daemon prep SOLO_OPERATOR_REF=feat/multi-registry-manifest`.
+  # A ref with an origin/<ref> upstream is fast-forwarded; a purely local branch is
+  # used as-is (no pull).
+  SOLO_OPERATOR_REF: '{{.SOLO_OPERATOR_REF | default "main"}}'
+
   # Version map — mirrors solo-operator docs/beacon. beacon uploads the UPGRADE zip.
   BASE_VERSION: "0.74.0"
   UPGRADE_VERSION: "0.74.2"
@@ -395,7 +402,7 @@ tasks:
   # them into the weaver checkout (test/data + bin), and vm:sync into the VM. `prep`
   # chains all of it; run it once at the beginning.
   prep:
-    desc: "Host: ensure solo-operator is checked out on an up-to-date main (clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
+    desc: "Host: ensure solo-operator is checked out on SOLO_OPERATOR_REF (default main; clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
       - task: zip
@@ -405,13 +412,14 @@ tasks:
       - task: sync
 
   clone:
-    desc: "Host: ensure a solo-operator checkout at SOLO_OPERATOR_DIR on an up-to-date main — clone it if absent, otherwise fetch + checkout main + fast-forward. beacon/manager are built from this source, so the e2e must run against main unless you deliberately switch afterwards. Refuses to touch a dirty tree. Uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env."
+    desc: "Host: ensure a solo-operator checkout at SOLO_OPERATOR_DIR on SOLO_OPERATOR_REF (default main) — clone it if absent, otherwise fetch + checkout the ref. A ref with an origin/<ref> upstream is fast-forwarded; a local-only branch is used as-is. beacon/manager/zips are built from this source, so set SOLO_OPERATOR_REF to build from an unmerged branch. Refuses to touch a dirty tree. Uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env."
     cmds:
       - |
         set -e
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)}"
         DIR="{{.SOLO_OPERATOR_DIR}}"
+        REF="{{.SOLO_OPERATOR_REF}}"
         # Inject the PAT via env-only git config (insteadOf) for clone/fetch/pull, so the
         # token is never written into the checkout's remote URL or ~/.gitconfig.
         export GIT_CONFIG_COUNT=1
@@ -421,18 +429,24 @@ tasks:
           echo "▶ solo-operator not found at $DIR — cloning"
           git clone https://github.com/hashgraph/solo-operator.git "$DIR"
         fi
-        # Ensure the checkout is on an up-to-date main. Refuse to clobber a work-in-progress
-        # operator change (e.g. a fix under test via operator:local) — a dirty tree aborts
-        # with a clear message rather than being silently switched or reset.
+        # Refuse to clobber a work-in-progress operator change (e.g. a fix under test via
+        # operator:local) — a dirty tree aborts with a clear message rather than being
+        # silently switched or reset.
         if [ -n "$(git -C "$DIR" status --porcelain)" ]; then
-          echo "!! $DIR has uncommitted changes — commit/stash them (or switch it to main yourself) before running prep" >&2
+          echo "!! $DIR has uncommitted changes — commit/stash them (or switch it to $REF yourself) before running prep" >&2
           exit 1
         fi
-        echo "▶ solo-operator: fetch + checkout main + fast-forward"
+        echo "▶ solo-operator: fetch + checkout $REF"
         git -C "$DIR" fetch origin
-        git -C "$DIR" checkout main
-        git -C "$DIR" pull --ff-only origin main
-        echo "✓ solo-operator on main at $(git -C "$DIR" rev-parse --short HEAD)"
+        git -C "$DIR" checkout "$REF"
+        # Fast-forward only when the ref tracks origin; a local-only branch (an unmerged
+        # change under test) has no origin/<ref> and is used as-is.
+        if git -C "$DIR" rev-parse --verify --quiet "origin/$REF" >/dev/null; then
+          git -C "$DIR" pull --ff-only origin "$REF"
+        else
+          echo "▶ $REF has no origin upstream — using the local branch as-is"
+        fi
+        echo "✓ solo-operator on $REF at $(git -C "$DIR" rev-parse --short HEAD)"
 
   zip:
     desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"
