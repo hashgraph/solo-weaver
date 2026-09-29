@@ -187,7 +187,12 @@ func finalizeWorkflowReport(report *automa.Report) error {
 	}
 
 	logCfg := ensureLogConfig()
-	timestamp := time.Now().Format("20060102_150405")
+	now := time.Now()
+	if logCfg.UTC {
+		now = now.UTC()
+		reportTimesToUTC(report)
+	}
+	timestamp := now.Format("20060102_150405")
 	reportPath := path.Join(logCfg.Directory, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	reportErr := steps.PrintWorkflowReport(report, reportPath)
 
@@ -227,6 +232,21 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		return err
 	}
 	return report.Error
+}
+
+// reportTimesToUTC converts every report time to UTC so the YAML report and
+// the JSON summary match the log lines. The instants are unchanged, only their
+// location, so durations are unaffected.
+func reportTimesToUTC(r *automa.Report) {
+	if r == nil {
+		return
+	}
+	r.StartTime = r.StartTime.UTC()
+	r.EndTime = r.EndTime.UTC()
+	for _, sr := range r.StepReports {
+		reportTimesToUTC(sr)
+	}
+	reportTimesToUTC(r.Rollback)
 }
 
 // printJSONSummary writes one compact JSON object summarising the workflow run

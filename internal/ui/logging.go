@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,28 +113,55 @@ func newLogFileWriter(cfg logx.LoggingConfig) io.Writer {
 	}
 }
 
+// callerSegments is how many trailing path segments the caller field keeps,
+// matching logx's own caller field (e.g. "internal/ui/logging.go:42").
+const callerSegments = 3
+
+func init() {
+	zerolog.CallerMarshalFunc = shortCaller
+}
+
+// shortCaller trims file to its last callerSegments path segments.
+func shortCaller(_ uintptr, file string, line int) string {
+	segments := 0
+	for i := len(file) - 1; i >= 0; i-- {
+		if file[i] == '/' {
+			segments++
+			if segments == callerSegments {
+				file = file[i+1:]
+				break
+			}
+		}
+	}
+	return file + ":" + strconv.Itoa(line)
+}
+
+// newBaseLogger builds the CLI's replacement for the logx logger on w. logx's
+// caller hook is unexported, so the caller comes from zerolog's own Caller();
+// UTC needs nothing here because logx.Initialize sets zerolog's global
+// TimestampFunc.
+func newBaseLogger(w io.Writer, cfg logx.LoggingConfig) zerolog.Logger {
+	ctx := zerolog.New(w).With().
+		Timestamp().
+		Int("pid", os.Getpid()).
+		Str("version", version.Get().Version)
+	if cfg.IncludeCaller {
+		ctx = ctx.Caller()
+	}
+	return ctx.Logger()
+}
+
 // newFileOnlyLogger creates a zerolog.Logger that writes only to the log file
 // (no ConsoleWriter). Used by SuppressConsoleLogging. With file logging
 // disabled events are discarded — the TUI owns the console in this mode.
 func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	pid := os.Getpid()
-	return zerolog.New(newLogFileWriter(cfg)).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+	return newBaseLogger(newLogFileWriter(cfg), cfg)
 }
 
 // newJSONConsoleLogger creates a zerolog.Logger that writes NDJSON to stderr and
 // the rolling log file, leaving stdout for the command's own JSON.
 func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg))
-	return zerolog.New(mw).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+	return newBaseLogger(zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg)), cfg)
 }
 
 // newStderrConsoleLogger creates a zerolog.Logger that writes the
@@ -145,28 +173,29 @@ func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 // means that redirecting a command's output to capture it, which is precisely
 // when the bytes have to be clean, is also when the log preamble joins them:
 // `show --output yaml > rules.yaml` produced a file `create --from-file` could
-// not parse (#1029).
+// not parse.
 //
 // Console output is moved rather than suppressed. The branch that uses this
 // exists so piped, non-interactive runs of long workflows still show progress;
 // dropping the lines would blind them.
 func newStderrConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	console := zerolog.ConsoleWriter{Out: os.Stderr}
+	return newBaseLogger(zerolog.MultiLevelWriter(newStderrConsoleWriter(cfg), newLogFileWriter(cfg)), cfg)
+}
 
-	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(console, newLogFileWriter(cfg))
-	return zerolog.New(mw).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+// newStderrConsoleWriter returns the human-readable stderr writer. It renders
+// the parsed timestamp itself, so UTC must be set here as well as on the field.
+func newStderrConsoleWriter(cfg logx.LoggingConfig) zerolog.ConsoleWriter {
+	console := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+	if cfg.UTC {
+		console.TimeLocation = time.UTC
+	}
+	return console
 }
 
 // SetStderrConsoleLogging replaces the global logx logger with one whose
 // human-readable console output goes to stderr, leaving stdout for the command's
-// own output. Used in unformatted (non-TTY) mode. Like its siblings it works
-// around logx.Initialize() unconditionally installing a ConsoleWriter bound to
-// os.Stdout.
+// own output. Used in unformatted (non-TTY) mode. Like its siblings it exists
+// because logx.Initialize() always writes its console sink to os.Stdout.
 func SetStderrConsoleLogging(cfg logx.LoggingConfig) {
 	logx.SetLogger(newStderrConsoleLogger(cfg))
 }
@@ -185,8 +214,8 @@ func SetJSONConsoleLogging(cfg logx.LoggingConfig) {
 // nil (called before the program exists) only the console suppression is
 // applied.
 //
-// This works around the upstream logx.Initialize() unconditionally creating a
-// ConsoleWriter regardless of the ConsoleLogging config field.
+// logx.Initialize() cannot do this itself: with ConsoleLogging false it still
+// writes raw JSON to os.Stdout.
 func SuppressConsoleLogging(cfg logx.LoggingConfig, program ...*tea.Program) {
 	logger := newFileOnlyLogger(cfg)
 

@@ -3,13 +3,16 @@
 package common
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestDeepestFailureError_NilReport verifies the nil guard.
@@ -190,4 +193,39 @@ func TestOutputIsJSON(t *testing.T) {
 
 	OutputFormat = ""
 	require.False(t, OutputIsJSON())
+}
+
+// Every time in the tree, rollback included, must serialise as UTC in both the
+// JSON summary and the YAML report.
+func TestReportTimesToUTC(t *testing.T) {
+	zone := time.FixedZone("AEST", 10*60*60)
+	start := time.Date(2026, 9, 29, 15, 0, 0, 0, zone)
+	end := start.Add(time.Minute)
+
+	child := automa.StepSuccessReport("child")
+	child.StartTime, child.EndTime = start, end
+	rollback := automa.StepSuccessReport("rollback")
+	rollback.StartTime, rollback.EndTime = start, end
+	child.Rollback = rollback
+	root := automa.StepSuccessReport("root", automa.WithStepReports(child))
+	root.StartTime, root.EndTime = start, end
+
+	reportTimesToUTC(root)
+
+	for _, r := range []*automa.Report{root, child, rollback} {
+		require.Equal(t, time.UTC, r.StartTime.Location())
+		require.Equal(t, time.UTC, r.EndTime.Location())
+		require.True(t, r.StartTime.Equal(start))
+		require.Equal(t, time.Minute, r.EndTime.Sub(r.StartTime))
+	}
+
+	j, err := json.Marshal(root)
+	require.NoError(t, err)
+	require.NotContains(t, string(j), "+10:00")
+	require.Contains(t, string(j), `"2026-09-29T05:00:00Z"`)
+
+	y, err := yaml.Marshal(root)
+	require.NoError(t, err)
+	require.NotContains(t, string(y), "+10:00")
+	require.Contains(t, string(y), "2026-09-29T05:00:00Z")
 }

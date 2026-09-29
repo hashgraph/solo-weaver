@@ -26,6 +26,8 @@ log:
   level: debug           # debug, info, warn, error
   consoleLogging: true
   fileLogging: false
+  utc: true              # timestamps in UTC (…Z); false uses the host's zone
+  includeCaller: true    # add a caller field, e.g. internal/ui/logging.go:42
 
 blockNode:
   namespace: "block-node"
@@ -202,4 +204,17 @@ or pass the flag, which needs no config file:
 
 ```bash
 sudo solo-provisioner block node install --profile=local --log-level=debug
+```
+
+## Log timestamps and caller
+
+By default every log line from the CLI and the daemon has a UTC timestamp (`2026-09-29T05:10:09Z`)
+and a `caller` field with the source file and line (`internal/ui/logging.go:42`). The workflow
+report file, its filename, and the `--output json` summary use UTC too. Turn either off for the
+CLI in the config file (the daemon does not read this file and always uses the defaults):
+
+```yaml
+log:
+  utc: false            # use the host's time zone
+  includeCaller: false  # drop the caller field
 ```

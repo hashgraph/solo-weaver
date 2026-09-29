@@ -239,10 +239,10 @@ When the TUI handler is active, `ui.SuppressConsoleLogging()` replaces
 the global zerolog logger with a **file-only** writer. A `logHook` is attached
 that forwards log messages to the TUI as greyed detail text.
 
-> **Why SuppressConsoleLogging?** The upstream `logx.Initialize()` unconditionally
-> creates a `ConsoleWriter` regardless of the `ConsoleLogging` config field.
-> `SuppressConsoleLogging()` calls `logx.SetLogger(...)` to replace the logger
-> in-place after `Initialize()` returns.
+> **Why SuppressConsoleLogging?** `logx.Initialize()` always writes its console
+> sink to stdout — human-readable with `ConsoleLogging: true`, raw JSON with
+> `false`. `SuppressConsoleLogging()` calls `logx.SetLogger(...)` to replace the
+> logger in-place after `Initialize()` returns.
 
 ### How `logx` messages flow to the terminal
 

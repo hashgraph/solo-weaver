@@ -21,6 +21,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -219,24 +220,26 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
-	// Stamp the build identity onto every log line (matching the UC / solo-operator)
-	// so operators can tell which daemon build produced a given log. build_commit is
-	// the reliable discriminator; build_version aids released builds. Done before the
-	// slog bridge below so slog lines inherit these fields too.
-	logx.SetLogger(logx.As().With().
-		Str("build_version", version.Version).
-		Str("build_commit", version.Commit).
-		Logger())
-
-	// Install the slog→logx bridge so the daemon kernel (which logs via the
-	// stdlib log/slog seam, in preparation for the pkg/daemonkit extraction)
-	// emits to the same zerolog sinks logx just configured — console, the
-	// rotating file, and journald. Must run after logx.Initialize so the
-	// bridge resolves the fully configured logger. CLI/workflows keep using
-	// logx directly.
-	slog.SetDefault(slog.New(logx.NewSlogHandler()))
+	installLogContext()
 
 	activateProxy(ctx)
+}
+
+// installLogContext stamps the build identity onto every log line (matching the
+// UC / solo-operator) and installs the slog→logx bridge. build_commit is the
+// reliable discriminator; build_version aids released builds. Must run after
+// logx.Initialize.
+//
+// The daemon kernel logs via the stdlib log/slog seam, and logx's slog bridge
+// uses its own logger rather than As(). SetGlobalContext is the only way to put
+// the build fields on both; logx.SetLogger would reach As() callers only.
+func installLogContext() {
+	logx.SetGlobalContext(func(c zerolog.Context) zerolog.Context {
+		return c.
+			Str("build_version", version.Version).
+			Str("build_commit", version.Commit)
+	})
+	slog.SetDefault(slog.New(logx.NewSlogHandler()))
 }
 
 func activateProxy(ctx context.Context) {

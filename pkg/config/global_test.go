@@ -246,3 +246,37 @@ func TestFile_ReportsExplicitlyLoadedPath(t *testing.T) {
 		t.Fatalf("File() after Initialize(\"\"): expected %q, got %q", "", got)
 	}
 }
+
+// A config file that omits the log format keys must keep UTC and caller on:
+// Initialize zeroes the rest of the config before decoding the file.
+func TestInitialize_LogUTCAndCallerDefaults(t *testing.T) {
+	cases := []struct {
+		name       string
+		yaml       string
+		wantUTC    bool
+		wantCaller bool
+	}{
+		{name: "no log section", yaml: "blockNode:\n  version: \"0.26.0\"\n", wantUTC: true, wantCaller: true},
+		{name: "log section without the keys", yaml: "log:\n  level: info\n", wantUTC: true, wantCaller: true},
+		{name: "turned off", yaml: "log:\n  utc: false\n  includeCaller: false\n", wantUTC: false, wantCaller: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatalf("write temp config: %v", err)
+			}
+			if err := Initialize(path); err != nil {
+				t.Fatalf("Initialize failed: %v", err)
+			}
+
+			log := Get().Log
+			if log.UTC != tc.wantUTC {
+				t.Fatalf("UTC: expected %v, got %v", tc.wantUTC, log.UTC)
+			}
+			if log.IncludeCaller != tc.wantCaller {
+				t.Fatalf("IncludeCaller: expected %v, got %v", tc.wantCaller, log.IncludeCaller)
+			}
+		})
+	}
+}
