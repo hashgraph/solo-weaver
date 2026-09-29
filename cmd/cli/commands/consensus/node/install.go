@@ -104,6 +104,12 @@ var installCmd = &cobra.Command{
 			Target: models.TargetConsensusNode,
 		}
 
+		pullSecrets, perr := models.ParsePullSecretSelector(flagImagePullSecret)
+		if perr != nil {
+			return errx.Decorate(perr, reasons.InvalidArgument,
+				"Use a bare NAME to apply one secret to all registries, or HOST=NAME per registry (e.g. ghcr.io=ghcr-creds)")
+		}
+
 		volCfg, verr := resolveVolumeConfig()
 		if verr != nil {
 			return verr
@@ -140,7 +146,7 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir:     flagDeploymentPkgDir,
 				GrpcTlsSecret:            flagGrpcTlsSecret,
 				SigningSecret:            flagSigningSecret,
-				ImagePullSecret:          flagImagePullSecret,
+				ImagePullSecrets:         pullSecrets,
 				Profile:                  flagProfile,
 				SkipHardwareChecks:       skipHardwareChecks,
 				ContainerName:            flagContainerName,

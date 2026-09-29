@@ -468,8 +468,13 @@ Expected (both F1 and F2):
 
 ### Notes / gotchas
 
-- `--image-pull-secret` (default `private-registry-creds`) sets `SoftwareVersion.ImagePullSecrets`
-  on the capsule; the operator (>= v0.6.0) threads it onto the pods and their SAs.
+- `--image-pull-secret` is repeatable and host-keyed. A bare `NAME` (default
+  `private-registry-creds`) applies to every registry; `HOST=NAME` (e.g.
+  `ghcr.io=ghcr-creds`) selects a secret per registry host. Each image (consensus,
+  UC, and every multi-registry candidate) resolves its own secret by registry host
+  and sets that container's `ImagePullSecrets`; the operator (>= v0.6.0) threads
+  them onto the pods and their SAs. Registries come from the manifest — a `HOST=`
+  that matches no manifest registry is rejected.
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.
