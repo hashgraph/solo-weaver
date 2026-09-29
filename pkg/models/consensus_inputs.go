@@ -4,6 +4,8 @@ package models
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
@@ -56,6 +58,83 @@ type ImageRepositoryRef struct {
 	ImageTag   string `json:"imageTag"`
 }
 
+// PullSecretSelector picks a pull-secret name by registry host. ByHost holds
+// per-host names; Default is the fallback. HasDefault tells an empty default
+// (public pull) apart from no default at all.
+type PullSecretSelector struct {
+	Default    string            `json:"default,omitempty"`
+	HasDefault bool              `json:"hasDefault,omitempty"`
+	ByHost     map[string]string `json:"byHost,omitempty"`
+}
+
+// SecretForHost picks the secret for a host: the ByHost entry first, then the
+// Default, else "" (public pull).
+func (s PullSecretSelector) SecretForHost(host string) string {
+	if name, ok := s.ByHost[host]; ok {
+		return name
+	}
+	if s.HasDefault {
+		return s.Default
+	}
+	return ""
+}
+
+// Hosts returns the ByHost keys, sorted for stable error messages.
+func (s PullSecretSelector) Hosts() []string {
+	hosts := make([]string, 0, len(s.ByHost))
+	for h := range s.ByHost {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+// ParsePullSecretSelector reads repeatable --image-pull-secret values. Each is
+// a bare NAME (default for all registries) or HOST=NAME (one host). Only one
+// bare NAME is allowed, and each host may appear once.
+func ParsePullSecretSelector(values []string) (PullSecretSelector, error) {
+	var sel PullSecretSelector
+	for _, v := range values {
+		host, name, keyed := strings.Cut(v, "=")
+		if !keyed {
+			if sel.HasDefault {
+				return PullSecretSelector{}, errorx.IllegalArgument.New(
+					"multiple default --image-pull-secret values (%q and %q); only one bare NAME is allowed", sel.Default, v)
+			}
+			sel.Default, sel.HasDefault = v, true
+			continue
+		}
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return PullSecretSelector{}, errorx.IllegalArgument.New(
+				"--image-pull-secret %q has an empty registry host; use HOST=NAME (e.g. ghcr.io=ghcr-creds)", v)
+		}
+		if _, dup := sel.ByHost[host]; dup {
+			return PullSecretSelector{}, errorx.IllegalArgument.New(
+				"duplicate --image-pull-secret for host %q", host)
+		}
+		if sel.ByHost == nil {
+			sel.ByHost = make(map[string]string)
+		}
+		sel.ByHost[host] = name
+	}
+	return sel, nil
+}
+
+// RegistryHost returns the host part of an image reference, which is the text
+// before the first "/" after any scheme. For example, "ghcr.io/hashgraph/x"
+// returns "ghcr.io". A reference with no "/" is returned as-is.
+func RegistryHost(image string) string {
+	s := image
+	if i := strings.Index(s, "://"); i != -1 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexByte(s, '/'); i != -1 {
+		return s[:i]
+	}
+	return s
+}
+
 // ImageSource is the multi-registry image source resolved from the deployment
 // manifest, mapped onto the operator's SoftwareVersionSource. LayerHashes is the
 // per-platform ("linux/amd64") shared set every candidate must match; only
@@ -103,10 +182,11 @@ type ConsensusNodeInputs struct {
 	UCImageRepo string `json:"ucImageRepo,omitempty"`
 	UCImageTag  string `json:"ucImageTag,omitempty"`
 
-	// ImagePullSecret names a docker-registry secret in the node's namespace that
-	// the operator threads onto the consensus-node and UC containers for pulling
-	// private images. Defaults to ConsensusDefaultImagePullSecret; empty disables it.
-	ImagePullSecret string `json:"imagePullSecret,omitempty"`
+	// ImagePullSecrets is the host-keyed selector from --image-pull-secret. It names
+	// docker-registry secrets in the node's namespace. Every image (consensus, UC,
+	// each candidate registry) picks its own secret by host at build time, so a new
+	// image type needs no new field.
+	ImagePullSecrets PullSecretSelector `json:"imagePullSecrets,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 

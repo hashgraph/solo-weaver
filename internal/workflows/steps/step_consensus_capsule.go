@@ -431,11 +431,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
-									// Set on every container's SoftwareVersion; the operator merges
-									// ImagePullSecrets across containers onto the pod and the node's
-									// ServiceAccount (dedup by name), so listing the same secret on
-									// consensus-node and UC is harmless.
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									// This secret is chosen by the image's host. The operator copies
+									// these onto the pod and its service account and drops duplicates,
+									// so sharing a name with the UC image is fine.
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(inputs.ConsensusImageRepo))),
 								},
 								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
 								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
@@ -454,7 +453,7 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository:       ucRepository,
 									ImageName:        ucImageName,
 									ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(ucRepository))),
 								},
 							},
 						},
@@ -467,7 +466,7 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			// this run carries no manifest source and the user did not pin the image,
 			// preserve any source already on the live CR — ApplyTyped is server-side
 			// apply, so omitting the field would otherwise silently drop it.
-			if src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecret); src != nil {
+			if src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets); src != nil {
 				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
 			} else if !inputs.ImagePinned {
 				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
@@ -615,24 +614,23 @@ func splitConsensusImage(full string) (repository, imageName string) {
 	return "", full
 }
 
-// buildSoftwareVersionSource maps a models.ImageSource onto the operator's
-// SoftwareVersionSource, mirroring the image-pull secret onto every candidate and
-// emitting one verification entry per platform in sorted order (reproducible CR).
-// Returns nil when nothing is representable. SelectionStrategy is left unset to
-// use the operator's --registry-order default.
-func buildSoftwareVersionSource(src *models.ImageSource, pullSecret string) *operatorv1alpha1.SoftwareVersionSource {
+// buildSoftwareVersionSource turns an ImageSource into the operator's
+// SoftwareVersionSource. Each registry gets its own pull secret, picked by host,
+// and one verification entry per platform (sorted, so the output is stable).
+// Returns nil when there is nothing to build. SelectionStrategy is left empty so
+// the operator uses its own --registry-order default.
+func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.PullSecretSelector) *operatorv1alpha1.SoftwareVersionSource {
 	if src == nil || len(src.Repositories) == 0 || len(src.LayerHashes) == 0 {
 		return nil
 	}
 
-	secrets := consensusImagePullSecrets(pullSecret)
 	repos := make([]operatorv1alpha1.ImageRepository, 0, len(src.Repositories))
 	for _, r := range src.Repositories {
 		repos = append(repos, operatorv1alpha1.ImageRepository{
 			Repository:       r.Repository,
 			ImageName:        r.ImageName,
 			ImageTag:         r.ImageTag,
-			ImagePullSecrets: secrets,
+			ImagePullSecrets: consensusImagePullSecrets(pullSecrets.SecretForHost(models.RegistryHost(r.Repository))),
 		})
 	}
 
@@ -644,12 +642,12 @@ func buildSoftwareVersionSource(src *models.ImageSource, pullSecret string) *ope
 
 	specs := make([]operatorv1alpha1.ImageVerificationSpec, 0, len(platforms))
 	for _, p := range platforms {
-		os, arch, ok := strings.Cut(p, "/")
-		if !ok || os == "" || arch == "" || len(src.LayerHashes[p]) == 0 {
+		osName, arch, ok := strings.Cut(p, "/")
+		if !ok || osName == "" || arch == "" || len(src.LayerHashes[p]) == 0 {
 			continue
 		}
 		specs = append(specs, operatorv1alpha1.ImageVerificationSpec{
-			OS:           os,
+			OS:           osName,
 			Architecture: arch,
 			LayerHashes:  src.LayerHashes[p],
 		})

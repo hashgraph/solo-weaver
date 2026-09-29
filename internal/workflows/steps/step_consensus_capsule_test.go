@@ -295,7 +295,11 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 		Weight:             500,
 		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
 		ConsensusImageTag:  "0.74.2",
-		ImagePullSecret:    "regcred",
+		// Host-keyed selector: each registry resolves its own secret by host.
+		ImagePullSecrets: models.PullSecretSelector{ByHost: map[string]string{
+			"gcr.io":    "gcr-creds",
+			"docker.io": "docker-creds",
+		}},
 		ConsensusImageSource: &models.ImageSource{
 			Repositories: []models.ImageRepositoryRef{
 				{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
@@ -320,6 +324,9 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	// source is set (the operator merely prefers the source).
 	require.NotNil(t, cn.SoftwareVersion)
 	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
+	// The single SoftwareVersion resolves its secret by host (gcr.io ⇒ gcr-creds).
+	require.Len(t, cn.SoftwareVersion.ImagePullSecrets, 1)
+	assert.Equal(t, "gcr-creds", cn.SoftwareVersion.ImagePullSecrets[0].Name)
 
 	src := cn.SoftwareVersionSource
 	require.NotNil(t, src)
@@ -328,10 +335,11 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	assert.Equal(t, "consensus-node", src.ImageRepositories[0].ImageName)
 	assert.Equal(t, "0.74.2", src.ImageRepositories[0].ImageTag)
 	assert.Equal(t, "docker.io/hashgraph", src.ImageRepositories[1].Repository)
-	// The image-pull secret weaver already sets on SoftwareVersion is mirrored onto
-	// every candidate repository.
+	// Each candidate carries its own host-resolved pull secret, not a shared one.
 	require.Len(t, src.ImageRepositories[0].ImagePullSecrets, 1)
-	assert.Equal(t, "regcred", src.ImageRepositories[0].ImagePullSecrets[0].Name)
+	assert.Equal(t, "gcr-creds", src.ImageRepositories[0].ImagePullSecrets[0].Name)
+	require.Len(t, src.ImageRepositories[1].ImagePullSecrets, 1)
+	assert.Equal(t, "docker-creds", src.ImageRepositories[1].ImagePullSecrets[0].Name)
 
 	// Verification entries are emitted one per platform, in sorted platform order.
 	require.Len(t, src.ImageVerificationSpec, 2)
@@ -439,27 +447,38 @@ func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
 }
 
 func TestBuildSoftwareVersionSource(t *testing.T) {
+	var none models.PullSecretSelector
+
 	// nil / empty inputs yield no source.
-	assert.Nil(t, buildSoftwareVersionSource(nil, "regcred"))
-	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{}, "regcred"))
+	assert.Nil(t, buildSoftwareVersionSource(nil, none))
+	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{}, none))
 	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{
 		Repositories: []models.ImageRepositoryRef{{Repository: "r", ImageName: "n", ImageTag: "t"}},
-	}, "regcred"), "no layer hashes ⇒ nil")
+	}, none), "no layer hashes ⇒ nil")
 
 	// A source with a platform key that has no OS/arch split is skipped; if it is
 	// the only entry the whole source is nil (nothing verifiable).
 	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{
 		Repositories: []models.ImageRepositoryRef{{Repository: "r", ImageName: "n", ImageTag: "t"}},
 		LayerHashes:  map[string][]string{"bogus": {"sha256:x"}},
-	}, ""))
+	}, none))
 
-	// No pull secret ⇒ no ImagePullSecrets on the repositories.
+	// No secret selected for the host ⇒ no ImagePullSecrets on that repository.
 	src := buildSoftwareVersionSource(&models.ImageSource{
-		Repositories: []models.ImageRepositoryRef{{Repository: "r", ImageName: "n", ImageTag: "t"}},
+		Repositories: []models.ImageRepositoryRef{{Repository: "ghcr.io/x", ImageName: "n", ImageTag: "t"}},
 		LayerHashes:  map[string][]string{"linux/amd64": {"sha256:x"}},
-	}, "")
+	}, none)
 	require.NotNil(t, src)
 	assert.Nil(t, src.ImageRepositories[0].ImagePullSecrets)
+
+	// The selector resolves the secret by registry host.
+	src = buildSoftwareVersionSource(&models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{{Repository: "ghcr.io/x", ImageName: "n", ImageTag: "t"}},
+		LayerHashes:  map[string][]string{"linux/amd64": {"sha256:x"}},
+	}, models.PullSecretSelector{ByHost: map[string]string{"ghcr.io": "regcred"}})
+	require.NotNil(t, src)
+	require.Len(t, src.ImageRepositories[0].ImagePullSecrets, 1)
+	assert.Equal(t, "regcred", src.ImageRepositories[0].ImagePullSecrets[0].Name)
 }
 
 func TestSplitConsensusImage(t *testing.T) {
