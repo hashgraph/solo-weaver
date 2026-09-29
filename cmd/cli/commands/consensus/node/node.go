@@ -3,7 +3,10 @@
 package node
 
 import (
+	"strconv"
+
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +35,16 @@ var (
 	flagCPURequest       string
 	flagMemoryLimit      string
 	flagMemoryRequest    string
+
+	// Volume backing configuration.
+	flagDefaultVolumeType      string
+	flagDefaultPVCSize         string
+	flagDefaultPVCStorageClass string
+	flagDefaultPVCAccessMode   string
+	flagVolumes                []string
+	flagVolumesFile            string
+	flagHostPathUID            int
+	flagHostPathGID            int
 
 	nodeCmd = &cobra.Command{
 		Use:   "node",
@@ -67,6 +80,23 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagCPURequest, "cpu-request", models.ConsensusDefaultCPURequest, "Consensus-node CPU request (e.g. 250m)")
 	nodeCmd.PersistentFlags().StringVar(&flagMemoryLimit, "memory-limit", models.ConsensusDefaultMemoryLimit, "Consensus-node memory limit (e.g. 5Gi)")
 	nodeCmd.PersistentFlags().StringVar(&flagMemoryRequest, "memory-request", models.ConsensusDefaultMemoryRequest, "Consensus-node memory request (e.g. 1Gi)")
+
+	// Volume backing. Each data volume (upgrade/logs/stats/saved/state/blocks/records/
+	// events) can be emptyDir, hostPath, or a PVC. --default-* set fallbacks; --volume
+	// overrides one volume; --volumes-file supplies the same as YAML (flags win).
+	nodeCmd.PersistentFlags().StringVar(&flagDefaultVolumeType, "default-volume-type", "", "Default backing for all data volumes: emptydir|hostpath|pvc (empty = emptydir)")
+	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCSize, "default-pvc-size", "", "Default PVC size for pvc-backed volumes when size= is omitted (empty = per-volume default)")
+	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCStorageClass, "default-pvc-storage-class", "", "Default StorageClass for pvc-backed volumes (empty = cluster default)")
+	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
+	nodeCmd.PersistentFlags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
+	nodeCmd.PersistentFlags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
+	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
+	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
+	// value is the trusted "2000" constant, so the error can't fire).
+	hederaUID, _ := strconv.Atoi(config.HederaUserId())
+	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
+	nodeCmd.PersistentFlags().IntVar(&flagHostPathUID, "hostpath-uid", hederaUID, "Owner UID for hostPath volume dirs (the hedera user the pod runs as)")
+	nodeCmd.PersistentFlags().IntVar(&flagHostPathGID, "hostpath-gid", hederaGID, "Owner GID for hostPath volume dirs (the hedera group the pod runs as)")
 
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
 	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)

@@ -140,9 +140,17 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.PrecheckOperatorVersion(),
 	)
 
-	deploy := phaseWorkflow("consensus-node-setup", "Consensus Node Setup",
+	deploySteps := []automa.Builder{
 		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),
 		steps.EnsureConfigCRs(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
+	}
+	// When any data volume is hostPath-backed, create + chown its host dir on this
+	// host before the capsule so the pod (uid 2000) can write it (kubelet applies no
+	// fsGroup to hostPath). emptyDir/PVC-only installs skip this.
+	if steps.ConsensusHasHostPathVolumes(ins) {
+		deploySteps = append(deploySteps, steps.EnsureConsensusHostPaths(ins))
+	}
+	deploySteps = append(deploySteps,
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
 		// Report the node's current status (non-blocking) so the operator sees the
 		// phase and next step. Install does not wait for Running: a fresh network is
@@ -150,6 +158,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// Stopped until `consensus node start`. Live readiness is `node status`' job.
 		steps.ReportConsensusCapsuleStatus(ins, steps.DefaultCapsuleKubeProvider),
 	)
+	deploy := phaseWorkflow("consensus-node-setup", "Consensus Node Setup", deploySteps...)
 
 	wb := automa.NewWorkflowBuilder().WithId("consensus-node-install").Steps(preflight, deploy)
 
