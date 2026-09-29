@@ -121,6 +121,31 @@ func ParsePullSecretSelector(values []string) (PullSecretSelector, error) {
 	return sel, nil
 }
 
+// Registry selection strategies for a multi-registry SoftwareVersionSource. These
+// match the operator's SelectionStrategy enum. Empty means the operator's
+// --registry-order default.
+const (
+	RegistrySelectionRandom     = "Random"
+	RegistrySelectionSequential = "Sequential"
+)
+
+// NormalizeRegistrySelectionStrategy validates and canonicalizes the
+// --registry-selection-strategy value. It accepts any case, returns the exact
+// enum the operator expects, and treats empty as "use the operator default".
+func NormalizeRegistrySelectionStrategy(s string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return "", nil
+	case "random":
+		return RegistrySelectionRandom, nil
+	case "sequential":
+		return RegistrySelectionSequential, nil
+	default:
+		return "", errorx.IllegalArgument.New(
+			"invalid registry selection strategy %q (allowed: Random, Sequential)", s)
+	}
+}
+
 // RegistryHost returns the host part of an image reference, which is the text
 // before the first "/" after any scheme. For example, "ghcr.io/hashgraph/x"
 // returns "ghcr.io". A reference with no "/" is returned as-is.
@@ -187,6 +212,11 @@ type ConsensusNodeInputs struct {
 	// each candidate registry) picks its own secret by host at build time, so a new
 	// image type needs no new field.
 	ImagePullSecrets PullSecretSelector `json:"imagePullSecrets,omitempty"`
+
+	// RegistrySelectionStrategy sets SoftwareVersionSource.SelectionStrategy
+	// (Random or Sequential) when a multi-registry source is emitted. Empty uses the
+	// operator's --registry-order default.
+	RegistrySelectionStrategy string `json:"registrySelectionStrategy,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 
