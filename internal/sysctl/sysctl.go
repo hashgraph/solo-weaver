@@ -3,12 +3,15 @@
 package sysctl
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -21,6 +24,9 @@ const (
 	EtcSysctlDir  = "/etc/sysctl.d"
 	EtcSysctlConf = "/etc/sysctl.conf"
 )
+
+// ErrKeyNotFound means the kernel has no /proc/sys entry for a sysctl key.
+var ErrKeyNotFound = errorx.InternalError.NewSubtype("sysctl_key_not_found", errorx.NotFound())
 
 // use var to allow mocking in tests
 var (
@@ -237,6 +243,12 @@ func applyConfigs(files ...string) error {
 	}
 	for k, v := range config {
 		if err := Set(k, v); err != nil {
+			// Match sysctl --system: a key this kernel doesn't have is skipped, not fatal.
+			if errorx.IsNotFound(err) {
+				logx.As().Warn().Err(err).Str("key", k).Str("value", v).
+					Msg("Skipping sysctl key that is not present on this kernel")
+				continue
+			}
 			return errorx.InternalError.Wrap(err, "could not set %s = %s", k, v)
 		}
 	}
@@ -274,6 +286,9 @@ func Set(key, value string) error {
 
 	for _, sysctlPath := range sysctlPaths {
 		if err := os.WriteFile(sysctlPath, []byte(value), 0o644); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return ErrKeyNotFound.Wrap(err, "failed to set %s", sysctlPath)
+			}
 			return errorx.InternalError.Wrap(err, "failed to set %s", sysctlPath)
 		}
 	}
