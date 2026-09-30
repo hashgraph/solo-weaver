@@ -3,6 +3,7 @@
 package sysctl
 
 import (
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/lorenzosaino/go-sysctl"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -237,10 +239,33 @@ func applyConfigs(files ...string) error {
 	}
 	for k, v := range config {
 		if err := Set(k, v); err != nil {
+			// A key whose /proc/sys path does not exist is not in this kernel.
+			// sysctl --system skips those; one unknown key in a file we do not
+			// own must not fail the reload or its rollback.
+			if isMissingSysctl(err) {
+				log.Warn().Err(err).Str("key", k).Str("value", v).Msg("skipping sysctl key that is not present on this kernel")
+				continue
+			}
 			return errorx.InternalError.Wrap(err, "could not set %s = %s", k, v)
 		}
 	}
 	return nil
+}
+
+// isMissingSysctl reports whether setting a key failed because its /proc/sys path does not exist.
+// errorx.Wrap does not implement errors.Unwrap, so walk Cause as well as Unwrap.
+func isMissingSysctl(err error) bool {
+	for err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+		var typed *errorx.Error
+		if !errors.As(err, &typed) || typed.Cause() == nil {
+			return false
+		}
+		err = typed.Cause()
+	}
+	return false
 }
 
 // Get returns the current live value of a sysctl key.
