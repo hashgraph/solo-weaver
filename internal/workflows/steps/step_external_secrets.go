@@ -443,16 +443,18 @@ func uninstallESOChart(hm helm.Manager, spec *helmChartSpec) (*release.Release, 
 	}
 
 	// rel.Name, not spec.Release: the release found here may carry any name.
-	if err := hm.UninstallChart(rel.Name, rel.Namespace); err != nil {
+	// spec.Namespace, not rel.Namespace: the uninstall must not leave the namespace asked for.
+	if err := hm.UninstallChart(rel.Name, spec.Namespace); err != nil {
 		return nil, errx.Decorate(
 			errorx.ExternalError.Wrap(err,
 				"failed to uninstall External Secrets Operator release %q in namespace %q",
-				rel.Name, rel.Namespace),
+				rel.Name, spec.Namespace),
 			reasons.PreconditionNotMet,
 			"Check the release state:",
-			fmt.Sprintf("  helm list -n %s", rel.Namespace),
+			// -a: plain list hides the stalled states this step removes.
+			fmt.Sprintf("  helm list -a -n %s", spec.Namespace),
 			"Remove it manually if needed:",
-			fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, rel.Namespace),
+			fmt.Sprintf("  helm uninstall %s -n %s", rel.Name, spec.Namespace),
 		)
 	}
 	return rel, nil
