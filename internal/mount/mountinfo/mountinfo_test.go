@@ -116,6 +116,8 @@ func Test_IsLocal(t *testing.T) {
 		{"ceph rbd carrying ext4", Entry{FSType: "ext4", Source: "/dev/rbd0"}, false},
 		{"nbd carrying ext4", Entry{FSType: "ext4", Source: "/dev/nbd3"}, false},
 		{"drbd carrying xfs", Entry{FSType: "xfs", Source: "/dev/drbd1"}, false},
+		{"zfs dataset starting with nbd prefix", Entry{FSType: "zfs", Source: "tank/nbdata"}, true},
+		{"lvm name starting with rbd prefix", Entry{FSType: "ext4", Source: "/dev/mapper/rbdvg-data"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -54,7 +54,7 @@ var networkDevices = []struct{ prefix, transport string }{
 // kernel name, e.g. "rbd0", or "" when the name is not one.
 func networkDeviceTransport(name string) string {
 	for _, d := range networkDevices {
-		if strings.HasPrefix(name, d.prefix) {
+		if strings.HasPrefix(name, d.prefix) && len(name) > len(d.prefix) && name[len(d.prefix)] >= '0' && name[len(d.prefix)] <= '9' {
 			return d.transport
 		}
 	}
