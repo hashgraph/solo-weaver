@@ -31,6 +31,7 @@ var globalConfig = models.Config{
 		FileLogging:    false,
 		UTC:            true,
 		IncludeCaller:  true,
+		IncludePackage: true,
 	},
 	BlockNode: models.BlockNodeConfig{
 		Namespace:    deps.BLOCK_NODE_NAMESPACE,
@@ -74,9 +75,9 @@ var globalConfig = models.Config{
 func Initialize(path string) error {
 	configFile = ""
 	if path != "" {
-		// UTC and caller stay on unless the file turns them off; every other
-		// field starts from zero.
-		globalConfig = models.Config{Log: logx.LoggingConfig{UTC: true, IncludeCaller: true}}
+		// UTC, caller and package stay on unless the file turns them off; every
+		// other field starts from zero.
+		globalConfig = models.Config{Log: logx.LoggingConfig{UTC: true, IncludeCaller: true, IncludePackage: true}}
 		viper.Reset()
 		viper.SetConfigFile(path)
 		// AutomaticEnv is intentionally omitted: env var merging now happens in the RSL

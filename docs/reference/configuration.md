@@ -29,7 +29,7 @@ log:
   utc: true              # timestamps in UTC (…Z); false uses the host's zone
   includeCaller: true    # add a caller field, e.g. internal/ui/logging.go:42
   callerFieldLength: 0   # path segments kept in caller (0 = default 3; 1 = file name only)
-  includePackage: false  # add a package field, e.g. github.com/hashgraph/solo-weaver/internal/ui
+  includePackage: true   # add a package field, e.g. github.com/hashgraph/solo-weaver/internal/ui
 
 blockNode:
   namespace: "block-node"
@@ -210,15 +210,16 @@ sudo solo-provisioner block node install --profile=local --log-level=debug
 
 ## Log timestamps and caller
 
-By default every log line from the CLI and the daemon has a UTC timestamp (`2026-09-29T05:10:09Z`)
-and a `caller` field with the source file and line (`internal/ui/logging.go:42`). The workflow
-report file, its filename, and the `--output json` summary use UTC too. Change them for the CLI in
-the config file (the daemon does not read this file and always uses the defaults):
+By default every log line from the CLI and the daemon has a UTC timestamp (`2026-09-29T05:10:09Z`),
+a `caller` field with the source file and line (`internal/ui/logging.go:42`), and a `package` field
+with the caller's Go import path. The workflow report file, its filename, and the `--output json`
+summary use UTC too. Change them for the CLI in the config file (the daemon does not read this file
+and always uses the defaults):
 
 ```yaml
 log:
   utc: false             # use the host's time zone
   includeCaller: false   # drop the caller field
   callerFieldLength: 1   # keep only the file name in caller, e.g. logging.go:42
-  includePackage: true   # add the caller's Go import path as a package field
+  includePackage: false  # drop the package field
 ```
