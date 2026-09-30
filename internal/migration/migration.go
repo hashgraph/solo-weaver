@@ -151,6 +151,11 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 					Msg("Executing migration")
 
 				if err := migration.Execute(ctx, mctx); err != nil {
+					// The workflow error only names the failed step, so log the cause here.
+					logx.As().Error().
+						Err(err).
+						Str("migrationID", migration.ID()).
+						Msg("Migration failed")
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 				return automa.StepSuccessReport(stp.Id())
