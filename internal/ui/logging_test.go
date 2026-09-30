@@ -369,3 +369,143 @@ func (h *testableHook) run(level zerolog.Level, message string) {
 
 	h.onSend(detail)
 }
+
+// useLogFormat applies cfg's format settings the way the CLI does, through
+// logx.Initialize (the builders read them back from logx), and pins the local
+// zone to a non-UTC offset so a UTC timestamp is distinguishable on any host.
+func useLogFormat(t *testing.T, cfg logx.LoggingConfig) {
+	t.Helper()
+	origLocal := time.Local
+	time.Local = time.FixedZone("AEST", 10*60*60)
+	t.Cleanup(func() {
+		time.Local = origLocal
+		_ = logx.Initialize(logx.LoggingConfig{Level: "debug", ConsoleLogging: true})
+	})
+	require.NoError(t, logx.Initialize(logx.LoggingConfig{
+		Level:             "info",
+		ConsoleLogging:    true,
+		UTC:               cfg.UTC,
+		IncludeCaller:     cfg.IncludeCaller,
+		IncludePackage:    cfg.IncludePackage,
+		CallerFieldLength: cfg.CallerFieldLength,
+	}))
+}
+
+// buildLoggers constructs all three CLI loggers with their console halves sent
+// to stderrW.
+func buildLoggers(t *testing.T, cfg logx.LoggingConfig, stderrW *os.File) map[string]zerolog.Logger {
+	t.Helper()
+	origErr := os.Stderr
+	os.Stderr = stderrW
+	defer func() { os.Stderr = origErr }()
+	return map[string]zerolog.Logger{
+		"json":      newJSONConsoleLogger(cfg),
+		"stderr":    newStderrConsoleLogger(cfg),
+		"file-only": newFileOnlyLogger(cfg),
+	}
+}
+
+func readLogFileLine(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(data), &m), "log file: %s", data)
+	return m
+}
+
+// Every CLI logger must write the real call site and a UTC time to the log file.
+func TestLoggers_UTCAndCallerInLogFile(t *testing.T) {
+	cfg := logx.LoggingConfig{FileLogging: true, Filename: "test.log", MaxSize: 1, UTC: true, IncludeCaller: true}
+	useLogFormat(t, cfg)
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	for name := range buildLoggers(t, cfg, devNull) {
+		t.Run(name, func(t *testing.T) {
+			c := cfg
+			c.Directory = t.TempDir()
+			logger := buildLoggers(t, c, devNull)[name]
+
+			logger.Info().Msg("hello")
+
+			m := readLogFileLine(t, filepath.Join(c.Directory, c.Filename))
+			assert.Regexp(t, `^internal/ui/logging_test\.go:\d+$`, m["caller"])
+			assert.Regexp(t, `Z$`, m["time"])
+		})
+	}
+}
+
+// With both options off the loggers keep the pre-existing output: local time
+// and no caller field.
+func TestLoggers_LocalTimeAndNoCallerWhenOff(t *testing.T) {
+	cfg := logx.LoggingConfig{FileLogging: true, Filename: "test.log", MaxSize: 1}
+	useLogFormat(t, cfg)
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	for name := range buildLoggers(t, cfg, devNull) {
+		t.Run(name, func(t *testing.T) {
+			c := cfg
+			c.Directory = t.TempDir()
+			logger := buildLoggers(t, c, devNull)[name]
+
+			logger.Info().Msg("hello")
+
+			m := readLogFileLine(t, filepath.Join(c.Directory, c.Filename))
+			assert.NotContains(t, m, "caller")
+			assert.Regexp(t, `\+10:00$`, m["time"])
+		})
+	}
+}
+
+// The human-readable stderr writer formats the time itself, so it needs UTC
+// set separately from the JSON field.
+func TestNewStderrConsoleLogger_RendersUTCAndCaller(t *testing.T) {
+	cfg := logx.LoggingConfig{UTC: true, IncludeCaller: true}
+	useLogFormat(t, cfg)
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	logger := buildLoggers(t, cfg, w)["stderr"]
+
+	logger.Info().Msg("hello")
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+	assert.Regexp(t, `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`, out)
+	assert.Regexp(t, `internal/ui/logging_test\.go:\d+`, out)
+}
+
+// Package and caller-length settings reach the CLI loggers through logx.
+func TestLoggers_PackageAndCallerLengthFromLogx(t *testing.T) {
+	cfg := logx.LoggingConfig{
+		FileLogging: true, Filename: "test.log", MaxSize: 1,
+		IncludeCaller: true, IncludePackage: true, CallerFieldLength: 1,
+	}
+	useLogFormat(t, cfg)
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	for name := range buildLoggers(t, cfg, devNull) {
+		t.Run(name, func(t *testing.T) {
+			c := cfg
+			c.Directory = t.TempDir()
+			logger := buildLoggers(t, c, devNull)[name]
+
+			logger.Info().Msg("hello")
+
+			m := readLogFileLine(t, filepath.Join(c.Directory, c.Filename))
+			assert.Regexp(t, `^logging_test\.go:\d+$`, m["caller"])
+			assert.Equal(t, "github.com/hashgraph/solo-weaver/internal/ui", m["package"])
+		})
+	}
+}

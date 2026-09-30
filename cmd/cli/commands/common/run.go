@@ -187,7 +187,11 @@ func finalizeWorkflowReport(report *automa.Report) error {
 	}
 
 	logCfg := ensureLogConfig()
-	timestamp := time.Now().Format("20060102_150405")
+	now := time.Now()
+	if logCfg.UTC {
+		now = now.UTC()
+	}
+	timestamp := now.Format("20060102_150405")
 	reportPath := path.Join(logCfg.Directory, fmt.Sprintf("setup_report_%s.yaml", timestamp))
 	reportErr := steps.PrintWorkflowReport(report, reportPath)
 

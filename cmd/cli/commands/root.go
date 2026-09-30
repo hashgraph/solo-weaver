@@ -9,7 +9,9 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/alloy"
@@ -326,6 +328,12 @@ func initConfig(ctx context.Context) {
 		Str("build_version", version.Version).
 		Str("build_commit", version.Commit).
 		Logger())
+
+	// Workflow reports take their times from automa's clock; keep them in the
+	// same zone as the log lines.
+	if logConfig.UTC {
+		automa.SetClock(func() time.Time { return time.Now().UTC() })
+	}
 
 	// Activate proxy after logging is initialized so the activation log
 	// respects TUI suppression and goes to the log file instead of stdout.
