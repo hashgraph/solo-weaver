@@ -246,3 +246,60 @@ func TestFile_ReportsExplicitlyLoadedPath(t *testing.T) {
 		t.Fatalf("File() after Initialize(\"\"): expected %q, got %q", "", got)
 	}
 }
+
+// A config file that omits the log format keys must keep UTC and caller on:
+// Initialize zeroes the rest of the config before decoding the file.
+func TestInitialize_LogUTCAndCallerDefaults(t *testing.T) {
+	cases := []struct {
+		name       string
+		yaml       string
+		wantUTC    bool
+		wantCaller bool
+		wantPkg    bool
+	}{
+		{name: "no log section", yaml: "blockNode:\n  version: \"0.26.0\"\n", wantUTC: true, wantCaller: true, wantPkg: true},
+		{name: "log section without the keys", yaml: "log:\n  level: info\n", wantUTC: true, wantCaller: true, wantPkg: true},
+		{name: "turned off", yaml: "log:\n  utc: false\n  includeCaller: false\n  includePackage: false\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatalf("write temp config: %v", err)
+			}
+			if err := Initialize(path); err != nil {
+				t.Fatalf("Initialize failed: %v", err)
+			}
+
+			log := Get().Log
+			if log.UTC != tc.wantUTC {
+				t.Fatalf("UTC: expected %v, got %v", tc.wantUTC, log.UTC)
+			}
+			if log.IncludeCaller != tc.wantCaller {
+				t.Fatalf("IncludeCaller: expected %v, got %v", tc.wantCaller, log.IncludeCaller)
+			}
+			if log.IncludePackage != tc.wantPkg {
+				t.Fatalf("IncludePackage: expected %v, got %v", tc.wantPkg, log.IncludePackage)
+			}
+		})
+	}
+}
+
+// The remaining logx format fields decode from the config file like the rest.
+func TestInitialize_LogPackageAndCallerLength(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("log:\n  includePackage: false\n  callerFieldLength: 1\n"), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	if err := Initialize(path); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	log := Get().Log
+	if log.IncludePackage {
+		t.Fatalf("IncludePackage: expected false")
+	}
+	if log.CallerFieldLength != 1 {
+		t.Fatalf("CallerFieldLength: expected 1, got %d", log.CallerFieldLength)
+	}
+}

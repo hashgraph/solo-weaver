@@ -112,28 +112,29 @@ func newLogFileWriter(cfg logx.LoggingConfig) io.Writer {
 	}
 }
 
+// newBaseLogger builds the CLI's replacement for the logx logger on w. It must
+// run after logx.Initialize: CallerHook reads the caller and package settings
+// from it, and it sets zerolog's global TimestampFunc for UTC.
+func newBaseLogger(w io.Writer) zerolog.Logger {
+	return zerolog.New(w).With().
+		Timestamp().
+		Int("pid", os.Getpid()).
+		Str("version", version.Get().Version).
+		Logger().
+		Hook(logx.CallerHook())
+}
+
 // newFileOnlyLogger creates a zerolog.Logger that writes only to the log file
 // (no ConsoleWriter). Used by SuppressConsoleLogging. With file logging
 // disabled events are discarded — the TUI owns the console in this mode.
 func newFileOnlyLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	pid := os.Getpid()
-	return zerolog.New(newLogFileWriter(cfg)).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+	return newBaseLogger(newLogFileWriter(cfg))
 }
 
 // newJSONConsoleLogger creates a zerolog.Logger that writes NDJSON to stderr and
 // the rolling log file, leaving stdout for the command's own JSON.
 func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg))
-	return zerolog.New(mw).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+	return newBaseLogger(zerolog.MultiLevelWriter(os.Stderr, newLogFileWriter(cfg)))
 }
 
 // newStderrConsoleLogger creates a zerolog.Logger that writes the
@@ -145,28 +146,29 @@ func newJSONConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
 // means that redirecting a command's output to capture it, which is precisely
 // when the bytes have to be clean, is also when the log preamble joins them:
 // `show --output yaml > rules.yaml` produced a file `create --from-file` could
-// not parse (#1029).
+// not parse.
 //
 // Console output is moved rather than suppressed. The branch that uses this
 // exists so piped, non-interactive runs of long workflows still show progress;
 // dropping the lines would blind them.
 func newStderrConsoleLogger(cfg logx.LoggingConfig) zerolog.Logger {
-	console := zerolog.ConsoleWriter{Out: os.Stderr}
+	return newBaseLogger(zerolog.MultiLevelWriter(newStderrConsoleWriter(cfg), newLogFileWriter(cfg)))
+}
 
-	pid := os.Getpid()
-	mw := zerolog.MultiLevelWriter(console, newLogFileWriter(cfg))
-	return zerolog.New(mw).With().
-		Timestamp().
-		Int("pid", pid).
-		Str("version", version.Get().Version).
-		Logger()
+// newStderrConsoleWriter returns the human-readable stderr writer. It renders
+// the parsed timestamp itself, so UTC must be set here as well as on the field.
+func newStderrConsoleWriter(cfg logx.LoggingConfig) zerolog.ConsoleWriter {
+	console := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+	if cfg.UTC {
+		console.TimeLocation = time.UTC
+	}
+	return console
 }
 
 // SetStderrConsoleLogging replaces the global logx logger with one whose
 // human-readable console output goes to stderr, leaving stdout for the command's
-// own output. Used in unformatted (non-TTY) mode. Like its siblings it works
-// around logx.Initialize() unconditionally installing a ConsoleWriter bound to
-// os.Stdout.
+// own output. Used in unformatted (non-TTY) mode. Like its siblings it exists
+// because logx.Initialize() always writes its console sink to os.Stdout.
 func SetStderrConsoleLogging(cfg logx.LoggingConfig) {
 	logx.SetLogger(newStderrConsoleLogger(cfg))
 }
@@ -185,8 +187,8 @@ func SetJSONConsoleLogging(cfg logx.LoggingConfig) {
 // nil (called before the program exists) only the console suppression is
 // applied.
 //
-// This works around the upstream logx.Initialize() unconditionally creating a
-// ConsoleWriter regardless of the ConsoleLogging config field.
+// logx.Initialize() cannot do this itself: with ConsoleLogging false it still
+// writes raw JSON to os.Stdout.
 func SuppressConsoleLogging(cfg logx.LoggingConfig, program ...*tea.Program) {
 	logger := newFileOnlyLogger(cfg)
 
