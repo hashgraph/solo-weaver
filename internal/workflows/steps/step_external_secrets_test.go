@@ -280,6 +280,56 @@ func Test_uninstallESOChart_SkipsNilRelease(t *testing.T) {
 	require.NotNil(t, rel)
 }
 
+// An uninstalled record owns nothing; preferring it would leave ESO installed.
+func Test_uninstallESOChart_TwoESOReleases_PrefersOccupyingOverStaleCatalogName(t *testing.T) {
+	for _, live := range []release.Status{
+		release.StatusDeployed,
+		release.StatusFailed,
+		release.StatusPendingInstall,
+	} {
+		t.Run(string(live), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			spec, err := resolveCatalogChart("external-secrets")
+			require.NoError(t, err)
+
+			hm := helm.NewMockManager(ctrl)
+			hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+				esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusUninstalled),
+				esoRelease("my-eso", spec.Namespace, esoChartName, live),
+			}, nil)
+			hm.EXPECT().UninstallChart("my-eso", spec.Namespace).Return(nil)
+
+			rel, err := uninstallESOChart(hm, spec)
+			require.NoError(t, err)
+			require.NotNil(t, rel)
+			assert.Equal(t, "my-eso", rel.Name)
+		})
+	}
+}
+
+// Nothing occupies the namespace, so the catalog-named record is the one to clear.
+func Test_uninstallESOChart_TwoStaleReleases_PrefersCatalogName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	hm := helm.NewMockManager(ctrl)
+	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
+		esoRelease("my-eso", spec.Namespace, esoChartName, release.StatusUninstalled),
+		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusUninstalled),
+	}, nil)
+	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+
+	rel, err := uninstallESOChart(hm, spec)
+	require.NoError(t, err)
+	require.NotNil(t, rel)
+	assert.Equal(t, spec.Release, rel.Name)
+}
+
 func Test_uninstallESOChart_TwoESOReleases_PrefersCatalogName(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

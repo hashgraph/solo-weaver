@@ -390,17 +390,33 @@ func resolveESORelease(hm helm.Manager, spec *helmChartSpec) (*release.Release, 
 		return candidates[0], nil
 
 	default:
-		// Two live ESO releases collide on namespaced resources, but a half-torn-down
-		// one can linger. Prefer the catalog name; otherwise the operator must choose.
+		// An uninstalled record owns nothing, so it must never outrank one that does.
+		var occupying []*release.Release
 		for _, rel := range candidates {
+			if releaseStatus(rel) != release.StatusUninstalled {
+				occupying = append(occupying, rel)
+			}
+		}
+
+		// All leftovers: the catalog name is the one this command owns.
+		choices := occupying
+		if len(choices) == 0 {
+			choices = candidates
+		}
+		if len(choices) == 1 {
+			return choices[0], nil
+		}
+		for _, rel := range choices {
 			if rel.Name == spec.Release {
 				return rel, nil
 			}
 		}
+
+		// Two live ESO releases collide on namespaced resources, so this should be unreachable.
 		return nil, errx.Decorate(
 			errorx.IllegalState.New(
 				"namespace %q holds %d External Secrets Operator releases (%s); cannot choose one to uninstall",
-				spec.Namespace, len(candidates), strings.Join(releaseNames(candidates), ", ")),
+				spec.Namespace, len(choices), strings.Join(releaseNames(choices), ", ")),
 			reasons.PreconditionNotMet,
 			"Remove the one you want by name:",
 			fmt.Sprintf("  helm uninstall <release> -n %s", spec.Namespace),
