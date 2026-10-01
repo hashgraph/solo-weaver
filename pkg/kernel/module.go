@@ -11,7 +11,6 @@ import (
 
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
-	"pault.ag/go/modprobe"
 )
 
 const (
@@ -131,7 +130,7 @@ func (ops *defaultOperations) load(name string) error {
 		return errorx.IllegalArgument.New(errInvalidModuleCharacter, name)
 	}
 
-	return modprobe.Load(name, "")
+	return modprobeLoad(name)
 }
 
 func (ops *defaultOperations) unload(name string) error {
@@ -144,7 +143,7 @@ func (ops *defaultOperations) unload(name string) error {
 		return errorx.IllegalArgument.New(errInvalidModuleCharacter, name)
 	}
 
-	return modprobe.Remove(name)
+	return modprobeRemove(name)
 }
 
 // persist ensures the module is loaded at boot time
