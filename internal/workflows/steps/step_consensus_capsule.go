@@ -462,11 +462,13 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				},
 			}
 
-			// Add a SoftwareVersionSource alongside the required SoftwareVersion when the
-			// manifest declares a multi-registry source; the operator prefers it. When
-			// this run carries no manifest source and the user did not pin the image,
-			// preserve any source already on the live CR — ApplyTyped is server-side
-			// apply, so omitting the field would otherwise silently drop it.
+			// Pick exactly one of SoftwareVersion / SoftwareVersionSource on the
+			// consensus-node container, per the v0.8.0 CRD rule (hashgraph/solo-operator#1372).
+			// A manifest multi-registry source wins; otherwise, when no new source and the
+			// user did not pin the image, preserve any source already on the live CR
+			// (ApplyTyped is server-side apply, so omitting the field would silently drop
+			// it). When a source is set we drop the single SoftwareVersion so the CR does
+			// not carry a misleading registries[0] duplicate.
 			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
 			if src == nil && !inputs.ImagePinned {
 				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
@@ -483,7 +485,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			if src != nil && inputs.RegistrySelectionStrategy != "" {
 				src.SelectionStrategy = inputs.RegistrySelectionStrategy
 			}
-			capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+			if src != nil {
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion = nil
+			}
 
 			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
 			if err := applyConsensusVolumes(capsule, inputs); err != nil {
