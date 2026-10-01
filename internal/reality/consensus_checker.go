@@ -123,10 +123,63 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 			}
 		}
 
+		// Surface out-of-band drift: compare the live capsule against the recorded
+		// managed baseline and log any differences. We report but do NOT absorb the
+		// managed shape (updated keeps the persisted ManagedSpec), so drift keeps
+		// being reported until the operator reconciles via re-apply/reconfigure.
+		// Identity fields are still reconciled into updated above (reality outranks
+		// for RSL resolution) — the log makes that reconciliation visible rather
+		// than silent.
+		live := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName)
+		live.ImageRepo = updated.ImageRepo
+		live.ImageTag = updated.ImageTag
+		live.AccountId = updated.AccountId
+		live.LedgerId = updated.LedgerId
+		live.ChainId = updated.ChainId
+		if drift := diffConsensusManaged(ns, live); len(drift) > 0 {
+			l.Warn().
+				Str("scope", scope).
+				Str("capsule", capsuleName).
+				Strs("drift", drift).
+				Msg("Consensus node has drifted from its recorded managed spec")
+		}
+
 		result[scope] = updated
 	}
 
 	return result, nil
+}
+
+// readLiveConsensusShape reads the managed sizing/JVM/UC fields from the live
+// capsule's consensus-node container (and UC sidecar) for drift comparison. It is
+// best-effort: unreadable fields are left empty and skipped by diffConsensusManaged.
+// Identity fields are filled in by the caller from the values it already read.
+func (c *consensusChecker) readLiveConsensusShape(
+	ctx context.Context, kc ConsensusKubeClient, apiVersion, namespace, capsuleName string,
+) liveConsensusShape {
+	cn := []string{"spec", "podProperties", "containers", "consensusNode"}
+	get := func(fields ...string) string {
+		v, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), namespace, capsuleName, fields...)
+		return v
+	}
+
+	var live liveConsensusShape
+	live.ContainerName = get(append(cn, "name")...)
+	live.JavaHeapMin = get(append(cn, "javaHeapMin")...)
+	live.JavaHeapMax = get(append(cn, "javaHeapMax")...)
+	live.JavaOpts = get(append(cn, "javaOpts")...)
+	live.CPULimit = get(append(cn, "resources", "limits", "cpu")...)
+	live.MemoryLimit = get(append(cn, "resources", "limits", "memory")...)
+	live.CPURequest = get(append(cn, "resources", "requests", "cpu")...)
+	live.MemoryRequest = get(append(cn, "resources", "requests", "memory")...)
+
+	uc := []string{"spec", "podProperties", "containers", "uc", "softwareVersion"}
+	ucRepo := get(append(uc, "repository")...)
+	ucName := get(append(uc, "imageName")...)
+	live.UCImageRepo = joinImageRef(ucRepo, ucName)
+	live.UCImageTag = get(append(uc, "imageTag")...)
+
+	return live
 }
 
 // joinImageRef reassembles the full "registry/path/name" image reference from the
