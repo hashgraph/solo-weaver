@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func baselineNodeState() state.ConsensusNodeState {
@@ -15,11 +16,30 @@ func baselineNodeState() state.ConsensusNodeState {
 		ImageRepo: "gcr.io/hiero/consensus-node", ImageTag: "0.64.0",
 		LedgerId: "0x00", ChainId: "295",
 		ManagedSpec: &state.ConsensusNodeManagedSpec{
-			ContainerName: "root",
-			CPULimit:      "4", CPURequest: "2",
+			ProvisionerDaemonEnabled: true,
+			ContainerName:            "root",
+			CPULimit:                 "4", CPURequest: "2",
 			MemoryLimit: "16Gi", MemoryRequest: "8Gi",
 			JavaHeapMin: "8g", JavaHeapMax: "12g", JavaOpts: "-XX:+UseZGC",
 			UCImageRepo: "ghcr.io/hiero/solo-operator", UCImageTag: "0.8.0",
+			ImagePullSecrets: models.PullSecretSelector{
+				ByHost: map[string]string{
+					"gcr.io":  "gcr-creds",
+					"ghcr.io": "ghcr-creds",
+				},
+			},
+			Volumes: models.ConsensusVolumeConfig{
+				Volumes: map[string]models.ConsensusVolumeSpec{
+					"upgrade": {Type: "emptydir"},
+					"logs":    {Type: "emptydir"},
+					"stats":   {Type: "emptydir"},
+					"saved":   {Type: "hostpath", Path: "/opt/hgcapp/data/saved"},
+					"state":   {Type: "pvc", Size: "100Gi", StorageClass: "fast", AccessMode: "ReadWriteOnce"},
+					"blocks":  {Type: "emptydir"},
+					"records": {Type: "emptydir"},
+					"events":  {Type: "emptydir"},
+				},
+			},
 		},
 	}
 }
@@ -35,6 +55,28 @@ func liveMatching() liveConsensusShape {
 		MemoryLimit: "16Gi", MemoryRequest: "8Gi",
 		JavaHeapMin: "8g", JavaHeapMax: "12g", JavaOpts: "-XX:+UseZGC",
 		UCImageRepo: "ghcr.io/hiero/solo-operator", UCImageTag: "0.8.0",
+		ProvisionerDaemonEnabled:    true,
+		ProvisionerDaemonEnabledSet: true,
+		ImagePullSecrets: models.PullSecretSelector{
+			ByHost: map[string]string{
+				"gcr.io":  "gcr-creds",
+				"ghcr.io": "ghcr-creds",
+			},
+		},
+		ImagePullSecretsSet: true,
+		Volumes: models.ConsensusVolumeConfig{
+			Volumes: map[string]models.ConsensusVolumeSpec{
+				"upgrade": {Type: "emptydir"},
+				"logs":    {Type: "emptydir"},
+				"stats":   {Type: "emptydir"},
+				"saved":   {Type: "hostpath", Path: "/opt/hgcapp/data/saved"},
+				"state":   {Type: "pvc", Size: "100Gi", StorageClass: "fast", AccessMode: "ReadWriteOnce"},
+				"blocks":  {Type: "emptydir"},
+				"records": {Type: "emptydir"},
+				"events":  {Type: "emptydir"},
+			},
+		},
+		VolumesSet: true,
 	}
 }
 
@@ -75,6 +117,77 @@ func TestDiffConsensusManaged(t *testing.T) {
 			mutate: func(l *liveConsensusShape) {
 				l.CPULimit = "8"
 				l.ImageTag = "0.65.0"
+			},
+		},
+		{
+			name:     "provisionerDaemonEnabled drift",
+			wantN:    1,
+			wantHint: "provisionerDaemonEnabled",
+			mutate:   func(l *liveConsensusShape) { l.ProvisionerDaemonEnabled = false },
+		},
+		{
+			name:  "provisionerDaemonEnabled not set is not drift",
+			wantN: 0,
+			mutate: func(l *liveConsensusShape) {
+				l.ProvisionerDaemonEnabledSet = false
+				l.ProvisionerDaemonEnabled = false
+			},
+		},
+		{
+			name:     "imagePullSecrets default drift",
+			wantN:    1,
+			wantHint: "imagePullSecrets.default",
+			mutate: func(l *liveConsensusShape) {
+				l.ImagePullSecrets.Default = "new-default"
+			},
+		},
+		{
+			name:     "imagePullSecrets host drift",
+			wantN:    1,
+			wantHint: "imagePullSecrets[gcr.io]",
+			mutate: func(l *liveConsensusShape) {
+				l.ImagePullSecrets.ByHost["gcr.io"] = "rotated-creds"
+			},
+		},
+		{
+			name:  "imagePullSecrets not set is not drift",
+			wantN: 0,
+			mutate: func(l *liveConsensusShape) {
+				l.ImagePullSecretsSet = false
+				l.ImagePullSecrets = models.PullSecretSelector{}
+			},
+		},
+		{
+			name:     "volume type drift",
+			wantN:    4,
+			wantHint: "volumes[saved].type",
+			mutate: func(l *liveConsensusShape) {
+				l.Volumes.Volumes["saved"] = models.ConsensusVolumeSpec{Type: "pvc", Size: "500Gi", AccessMode: "ReadWriteOnce"}
+			},
+		},
+		{
+			name:     "volume path drift",
+			wantN:    1,
+			wantHint: "volumes[saved].path",
+			mutate: func(l *liveConsensusShape) {
+				l.Volumes.Volumes["saved"] = models.ConsensusVolumeSpec{Type: "hostpath", Path: "/different/path"}
+			},
+		},
+		{
+			name:  "volume pvc size quantity canonicalisation is not drift",
+			wantN: 0,
+			mutate: func(l *liveConsensusShape) {
+				s := l.Volumes.Volumes["state"]
+				s.Size = "102400Mi" // 100Gi = 102400Mi
+				l.Volumes.Volumes["state"] = s
+			},
+		},
+		{
+			name:  "volumes not set is not drift",
+			wantN: 0,
+			mutate: func(l *liveConsensusShape) {
+				l.VolumesSet = false
+				l.Volumes = models.ConsensusVolumeConfig{}
 			},
 		},
 	}
@@ -129,6 +242,82 @@ func TestQuantityDiffers(t *testing.T) {
 			t.Errorf("quantityDiffers(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
+}
+
+func TestDiffPullSecrets(t *testing.T) {
+	t.Run("identical selectors produce no drift", func(t *testing.T) {
+		s := models.PullSecretSelector{Default: "x", ByHost: map[string]string{"a": "1"}}
+		got := diffPullSecrets(s, s)
+		if len(got) != 0 {
+			t.Fatalf("want 0 drift, got %v", got)
+		}
+	})
+
+	t.Run("host added in live", func(t *testing.T) {
+		s := models.PullSecretSelector{ByHost: map[string]string{"a": "1"}}
+		l := models.PullSecretSelector{ByHost: map[string]string{"a": "1", "b": "2"}}
+		got := diffPullSecrets(s, l)
+		if len(got) != 1 || !contains(got[0], "imagePullSecrets[b]") {
+			t.Fatalf("want 1 drift for host b, got %v", got)
+		}
+	})
+
+	t.Run("host removed in live", func(t *testing.T) {
+		s := models.PullSecretSelector{ByHost: map[string]string{"a": "1", "b": "2"}}
+		l := models.PullSecretSelector{ByHost: map[string]string{"a": "1"}}
+		got := diffPullSecrets(s, l)
+		if len(got) != 1 || !contains(got[0], "imagePullSecrets[b]") {
+			t.Fatalf("want 1 drift for host b, got %v", got)
+		}
+	})
+}
+
+func TestDiffVolumes(t *testing.T) {
+	base := func() models.ConsensusVolumeConfig {
+		return models.ConsensusVolumeConfig{
+			Volumes: map[string]models.ConsensusVolumeSpec{
+				"saved": {Type: "hostpath", Path: "/data/saved"},
+				"state": {Type: "pvc", Size: "100Gi", StorageClass: "fast", AccessMode: "ReadWriteOnce"},
+			},
+		}
+	}
+
+	t.Run("identical configs produce no drift", func(t *testing.T) {
+		got := diffVolumes(base(), base())
+		if len(got) != 0 {
+			t.Fatalf("want 0, got %v", got)
+		}
+	})
+
+	t.Run("storage class changed", func(t *testing.T) {
+		live := base()
+		live.Volumes["state"] = models.ConsensusVolumeSpec{
+			Type: "pvc", Size: "100Gi", StorageClass: "slow", AccessMode: "ReadWriteOnce",
+		}
+		got := diffVolumes(base(), live)
+		if len(got) != 1 || !contains(got[0], "storageClass") {
+			t.Fatalf("want 1 storageClass drift, got %v", got)
+		}
+	})
+
+	t.Run("volume absent in live is skipped (not drift)", func(t *testing.T) {
+		live := models.ConsensusVolumeConfig{Volumes: map[string]models.ConsensusVolumeSpec{}}
+		got := diffVolumes(base(), live)
+		if len(got) != 0 {
+			t.Fatalf("want 0 (absent volumes skipped), got %v", got)
+		}
+	})
+
+	t.Run("pvc size quantity canonicalisation is not drift", func(t *testing.T) {
+		live := base()
+		live.Volumes["state"] = models.ConsensusVolumeSpec{
+			Type: "pvc", Size: "102400Mi", StorageClass: "fast", AccessMode: "ReadWriteOnce",
+		}
+		got := diffVolumes(base(), live)
+		if len(got) != 0 {
+			t.Fatalf("want 0 (100Gi == 102400Mi), got %v", got)
+		}
+	})
 }
 
 func contains(s, sub string) bool {

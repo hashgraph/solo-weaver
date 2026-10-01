@@ -4,18 +4,18 @@ package reality
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // liveConsensusShape holds the managed-shape fields the reality checker reads back
-// from a live ConsensusCapsule. Every field here is one the capsule step always
-// sets explicitly (never left to an operator-side default), so a non-empty live
-// value is authoritative and an empty one means "not read" — compared only when
-// non-empty to avoid false drift. Volume backing, image-pull secrets, and
-// provisionerDaemonEnabled are not read back yet (they need structural/bool reads
-// the checker's client does not expose) — see the #1187 drift follow-up.
+// from a live ConsensusCapsule (and the Orbit). Every field here is one the capsule
+// step always sets explicitly (never left to an operator-side default), so a
+// non-empty live value is authoritative and an empty one means "not read" —
+// compared only when non-empty to avoid false drift.
 type liveConsensusShape struct {
 	ImageRepo string
 	ImageTag  string
@@ -35,6 +35,13 @@ type liveConsensusShape struct {
 	JavaOpts      string
 	UCImageRepo   string
 	UCImageTag    string
+
+	ProvisionerDaemonEnabled    bool
+	ProvisionerDaemonEnabledSet bool
+	Volumes                     models.ConsensusVolumeConfig
+	VolumesSet                  bool
+	ImagePullSecrets            models.PullSecretSelector
+	ImagePullSecretsSet         bool
 }
 
 // diffConsensusManaged compares the persisted baseline (what weaver recorded at
@@ -82,6 +89,78 @@ func diffConsensusManaged(ns state.ConsensusNodeState, live liveConsensusShape) 
 	add("ucImageRepo", m.UCImageRepo, live.UCImageRepo)
 	add("ucImageTag", m.UCImageTag, live.UCImageTag)
 
+	if live.ProvisionerDaemonEnabledSet && live.ProvisionerDaemonEnabled != m.ProvisionerDaemonEnabled {
+		drift = append(drift, fmt.Sprintf("provisionerDaemonEnabled: state=%v live=%v",
+			m.ProvisionerDaemonEnabled, live.ProvisionerDaemonEnabled))
+	}
+
+	if live.ImagePullSecretsSet {
+		drift = append(drift, diffPullSecrets(m.ImagePullSecrets, live.ImagePullSecrets)...)
+	}
+
+	if live.VolumesSet {
+		drift = append(drift, diffVolumes(m.Volumes, live.Volumes)...)
+	}
+
+	return drift
+}
+
+// diffPullSecrets compares persisted vs live pull-secret selectors.
+func diffPullSecrets(state, live models.PullSecretSelector) []string {
+	var drift []string
+	if state.Default != live.Default {
+		drift = append(drift, fmt.Sprintf("imagePullSecrets.default: state=%q live=%q",
+			state.Default, live.Default))
+	}
+
+	allHosts := make(map[string]bool)
+	for h := range state.ByHost {
+		allHosts[h] = true
+	}
+	for h := range live.ByHost {
+		allHosts[h] = true
+	}
+	hosts := make([]string, 0, len(allHosts))
+	for h := range allHosts {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+
+	for _, h := range hosts {
+		sv := state.ByHost[h]
+		lv := live.ByHost[h]
+		if sv != lv {
+			drift = append(drift, fmt.Sprintf("imagePullSecrets[%s]: state=%q live=%q", h, sv, lv))
+		}
+	}
+	return drift
+}
+
+// diffVolumes compares persisted vs live volume configurations.
+func diffVolumes(state, live models.ConsensusVolumeConfig) []string {
+	var drift []string
+	for _, name := range models.ConsensusVolumeNames() {
+		sv := state.Volumes[name]
+		lv, liveHas := live.Volumes[name]
+		if !liveHas {
+			continue
+		}
+		if sv.Type != lv.Type {
+			drift = append(drift, fmt.Sprintf("volumes[%s].type: state=%q live=%q", name, sv.Type, lv.Type))
+		}
+		if sv.Path != lv.Path {
+			drift = append(drift, fmt.Sprintf("volumes[%s].path: state=%q live=%q", name, sv.Path, lv.Path))
+		}
+		if quantityDiffers(sv.Size, lv.Size) {
+			drift = append(drift, fmt.Sprintf("volumes[%s].size: state=%q live=%q", name, sv.Size, lv.Size))
+		}
+		if sv.StorageClass != lv.StorageClass {
+			drift = append(drift, fmt.Sprintf("volumes[%s].storageClass: state=%q live=%q", name, sv.StorageClass, lv.StorageClass))
+		}
+		if sv.AccessMode != lv.AccessMode {
+			drift = append(drift, fmt.Sprintf("volumes[%s].accessMode: state=%q live=%q", name, sv.AccessMode, lv.AccessMode))
+		}
+	}
 	return drift
 }
 
