@@ -86,7 +86,7 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 
 			if exists && !force {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again", inputs.NodeId, capsuleName),
+					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again — pass --force to re-apply", inputs.NodeId, capsuleName),
 					reasons.PreconditionNotMet,
 					"Pass --force to re-apply the install over the existing node",
 					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
