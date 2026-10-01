@@ -268,6 +268,11 @@ type BlockNodeState struct {
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
+	// LoadBalancerEnabled is the --load-balancer-enabled choice as the release
+	// values show it: whether the main service carries the MetalLB address-pool
+	// annotation. Nil means unknown: a state file written before this field
+	// existed, or a split topology, where the chart owns the LoadBalancer.
+	LoadBalancerEnabled *bool `yaml:"loadBalancerEnabled,omitempty" json:"loadBalancerEnabled,omitempty"`
 	// TrafficShapingEnabled records the install/reconfigure decision, which cannot
 	// be recovered from the Helm release or the live cluster. A missing key reads
 	// as off, so a lost record never turns shaping on. No omitempty: the key is
