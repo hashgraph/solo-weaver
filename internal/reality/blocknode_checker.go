@@ -112,7 +112,12 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
-	bn.LoadBalancerEnabled = blocknode.LoadBalancerEnabledFromValues(re.Config)
+	split, metallbPool := blocknode.ServiceExposureFromValues(re.Config)
+	bn.ServiceTopology = state.ServiceTopologySingle
+	if split {
+		bn.ServiceTopology = state.ServiceTopologySplit
+	}
+	bn.MetalLBPool = &metallbPool
 
 	// PersistentVolumes are cluster-scoped; pass empty namespace.
 	k8s, err := b.newKube()

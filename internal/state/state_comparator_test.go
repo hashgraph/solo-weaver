@@ -153,37 +153,47 @@ func TestBlockNodeDiff_ShapingComparesByContent(t *testing.T) {
 	}
 }
 
-func TestBlockNodeDiff_LoadBalancerComparedOnlyWhenBothKnown(t *testing.T) {
-	enabled, disabled := true, false
+func TestBlockNodeDiff_ExposureComparedOnlyWhenBothKnown(t *testing.T) {
+	pool, noPool := true, false
+	exposure := func(topology string, metallbPool *bool) func(*BlockNodeState) {
+		return func(b *BlockNodeState) { b.ServiceTopology, b.MetalLBPool = topology, metallbPool }
+	}
+	unknown := exposure("", nil)
 	cases := []struct {
 		name               string
-		persisted, reality *bool
+		persisted, reality func(*BlockNodeState)
 		want               []FieldDiff
 	}{
-		{name: "both unknown", persisted: nil, reality: nil},
-		{name: "persisted unknown", persisted: nil, reality: &enabled},
-		{name: "reality unknown", persisted: &disabled, reality: nil},
-		{name: "both known and the same", persisted: &enabled, reality: &enabled},
+		{name: "both unknown", persisted: unknown, reality: unknown},
+		{name: "a state file from before these fields", persisted: unknown, reality: exposure(ServiceTopologySingle, &pool)},
+		{name: "known and the same", persisted: exposure(ServiceTopologySingle, &pool), reality: exposure(ServiceTopologySingle, &pool)},
 		{
-			name:      "enabled out of band",
-			persisted: &disabled,
-			reality:   &enabled,
-			want: []FieldDiff{
-				{Field: "loadBalancerEnabled", Persisted: "false", Reality: "true", Observable: true},
-			},
+			name:      "moved to the split topology out of band",
+			persisted: exposure(ServiceTopologySingle, &pool),
+			reality:   exposure(ServiceTopologySplit, &pool),
+			want:      []FieldDiff{{Field: "serviceTopology", Persisted: "single", Reality: "split", Observable: true}},
+		},
+		{
+			name:      "pool annotation removed out of band",
+			persisted: exposure(ServiceTopologySingle, &pool),
+			reality:   exposure(ServiceTopologySingle, &noPool),
+			want:      []FieldDiff{{Field: "metallbPool", Persisted: "true", Reality: "false", Observable: true}},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			persisted, reality := deployedBlockNode(), deployedBlockNode()
-			persisted.LoadBalancerEnabled, reality.LoadBalancerEnabled = tc.persisted, tc.reality
+			tc.persisted(&persisted)
+			tc.reality(&reality)
 
 			require.Equal(t, tc.want, persisted.Diff(reality))
 		})
 	}
 }
 
-func TestBlockNodeEqual_IsAnEmptyDiff(t *testing.T) {
+// Equal is "no drift": weaver-only records, which a refresh cannot rebuild,
+// never make it false.
+func TestBlockNodeEqual_IgnoresWeaverOnlyRecords(t *testing.T) {
 	cases := []struct {
 		name   string
 		change func(*BlockNodeState)
@@ -194,7 +204,11 @@ func TestBlockNodeEqual_IsAnEmptyDiff(t *testing.T) {
 			b.ReleaseInfo.LastDeployed = htime.Unix(1_700_086_400, 0)
 			b.LastSync = htime.Unix(1_700_086_400, 0)
 		}, true},
-		{"plugin preset differs", func(b *BlockNodeState) { b.PluginPreset = "tier1-lfh" }, false},
+		{"weaver-only records differ", func(b *BlockNodeState) {
+			b.PluginPreset = "tier1-lfh"
+			b.Storage.BasePath = "/mnt/fast-storage"
+		}, true},
+		{"chart upgraded out of band", func(b *BlockNodeState) { b.ReleaseInfo.ChartVersion = "0.41.0" }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

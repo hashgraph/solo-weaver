@@ -616,19 +616,21 @@ func (m *Manager) injectServiceAnnotations(valuesContent []byte) ([]byte, error)
 // metallbPoolAnnotation is the main-service annotation that tags a MetalLB address pool.
 const metallbPoolAnnotation = "metallb.io/address-pool"
 
-// LoadBalancerEnabledFromValues reports whether a release's values carry the
-// MetalLB address-pool annotation on the main service, where
-// injectServiceAnnotations applies --load-balancer-enabled. It returns nil for a
-// split topology, where the chart owns the LoadBalancer and nothing is injected
-// whatever the choice.
-func LoadBalancerEnabledFromValues(vals map[string]interface{}) *bool {
-	if chartOwnsLoadBalancer(vals) {
-		return nil
+// ServiceExposureFromValues reads back from a release's values how the block
+// node is exposed: whether the chart's own loadBalancer block renders a split
+// topology, and whether the service that carries the external IP (the main
+// service, or the chart's external one when split) has a non-empty MetalLB
+// address-pool annotation. A null or empty annotation tags no pool.
+func ServiceExposureFromValues(vals map[string]interface{}) (split, metallbPool bool) {
+	split = chartOwnsLoadBalancer(vals)
+	exposed := "service"
+	if split {
+		exposed = "loadBalancer"
 	}
-	service, _ := vals["service"].(map[string]interface{})
-	annotations, _ := service["annotations"].(map[string]interface{})
-	_, enabled := annotations[metallbPoolAnnotation]
-	return &enabled
+	section, _ := vals[exposed].(map[string]interface{})
+	annotations, _ := section["annotations"].(map[string]interface{})
+	pool, _ := annotations[metallbPoolAnnotation].(string)
+	return split, pool != ""
 }
 
 // chartOwnsLoadBalancer reports whether the merged values enable the block-node chart's own
