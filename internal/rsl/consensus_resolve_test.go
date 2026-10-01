@@ -12,7 +12,8 @@ import (
 
 func TestBuildImageSource_DeterministicMultiRegistry(t *testing.T) {
 	img := &manifests.Image{
-		Version: "0.74.2",
+		Version:           "0.74.2",
+		SelectionStrategy: "Sequential",
 		Registries: []manifests.Registry{
 			{Image: "gcr.io/hedera-registry/consensus-node:0.74.2"},
 			{Image: "docker.io/hashgraph/consensus-node:0.74.2"},
@@ -31,6 +32,9 @@ func TestBuildImageSource_DeterministicMultiRegistry(t *testing.T) {
 	assert.Equal(t, "0.74.2", src.Repositories[0].ImageTag)
 	assert.Equal(t, "docker.io/hashgraph", src.Repositories[1].Repository)
 	assert.Equal(t, []string{"sha256:aaa"}, src.LayerHashes["linux/amd64"])
+	// Manifest selection strategy must be carried through so the capsule step
+	// can apply it when there's no CLI override.
+	assert.Equal(t, "Sequential", src.SelectionStrategy)
 }
 
 func TestBuildImageSource_NotRepresentable(t *testing.T) {
