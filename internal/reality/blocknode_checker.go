@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -112,6 +113,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
+	bn.LoadBalancerEnabled = blocknode.LoadBalancerEnabledFromValues(re.Config)
 
 	// PersistentVolumes are cluster-scoped; pass empty namespace.
 	k8s, err := b.newKube()

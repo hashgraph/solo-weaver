@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -140,11 +141,13 @@ type fakeHelmManager struct {
 
 func (f fakeHelmManager) ListAll() ([]*release.Release, error) { return f.releases, nil }
 
-// fakeKubeClient returns an empty PV list so populateStorageFromPVs is a no-op.
-type fakeKubeClient struct{}
+// fakeKubeClient returns pvs from List; with none set, populateStorageFromPVs is a no-op.
+type fakeKubeClient struct {
+	pvs []unstructured.Unstructured
+}
 
 func (f fakeKubeClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
-	return &unstructured.UnstructuredList{}, nil
+	return &unstructured.UnstructuredList{Items: f.pvs}, nil
 }
 
 // TestRefreshState_PreservesTrafficShapingDisabled verifies that the weaver-only
@@ -317,5 +320,128 @@ metadata:
 	if got.ReleaseInfo.ChartRef != persisted.ReleaseInfo.ChartRef {
 		t.Errorf("ChartRef must be preserved across a reality refresh: want %q, got %q",
 			persisted.ReleaseInfo.ChartRef, got.ReleaseInfo.ChartRef)
+	}
+}
+
+const blockNodeManifest = `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`
+
+// deployedRelease is a deployed block-node release installed with values.
+func deployedRelease(values map[string]any) *release.Release {
+	return &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.28.0", AppVersion: "0.28.0"},
+		},
+		Config:   values,
+		Manifest: blockNodeManifest,
+	}
+}
+
+// refresh runs RefreshState against persisted, a cluster holding re and pvs.
+func refresh(t *testing.T, persisted state.BlockNodeState, re *release.Release, pvs ...unstructured.Unstructured) state.BlockNodeState {
+	t.Helper()
+	full := state.State{}
+	full.BlockNodeState = persisted
+	checker := &blockNodeChecker{
+		sm:            fakeStateManager{st: full},
+		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube:       func() (KubeClient, error) { return fakeKubeClient{pvs: pvs}, nil },
+		clusterExists: func() (bool, error) { return true, nil },
+	}
+	got, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+	return got
+}
+
+// The fields Diff marks Observable are exactly the ones the checker reads back
+// from the cluster: a release and PVs carrying every value the
+// checker reads make each observable field, and nothing else, differ from a
+// persisted state that records none of them.
+func TestRefreshState_ReadsEveryObservableField(t *testing.T) {
+	re := deployedRelease(map[string]any{
+		"blockNode": map[string]any{"config": map[string]any{
+			"FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD": "1000",
+			"FILES_RECENT_BLOCK_RETENTION_THRESHOLD":   "100",
+		}},
+		"service": map[string]any{"annotations": map[string]any{
+			"metallb.io/address-pool": "public-address-pool",
+		}},
+	})
+	pvs := []unstructured.Unstructured{
+		makePV("block-node", "live-storage-pvc", "100Gi", "/mnt/live"),
+		makePV("block-node", "archive-storage-pvc", "200Gi", "/mnt/archive"),
+		makePV("block-node", "log-storage-pvc", "10Gi", "/mnt/log"),
+		makePV("block-node", "verification-storage-pvc", "20Gi", "/mnt/verification"),
+		makePV("block-node", "plugins-storage-pvc", "5Gi", "/mnt/plugins"),
+		makePV("block-node", "application-state-storage-pvc", "50Gi", "/mnt/app-state"),
+	}
+	// A known load-balancer choice on the persisted side, since an unknown one
+	// is never compared.
+	disabled := false
+	persisted := state.BlockNodeState{LoadBalancerEnabled: &disabled}
+
+	got := refresh(t, persisted, re, pvs...)
+
+	var fields []string
+	for _, d := range persisted.Diff(got) {
+		fields = append(fields, d.Field)
+	}
+	require.ElementsMatch(t, state.BlockNodeObservableFields(), fields)
+}
+
+func TestRefreshState_ReadsLoadBalancerChoice(t *testing.T) {
+	enabled, disabled := true, false
+	cases := []struct {
+		name   string
+		values map[string]any
+		want   *bool
+	}{
+		{
+			name: "pool annotation on the main service",
+			values: map[string]any{"service": map[string]any{
+				"type":        "LoadBalancer",
+				"annotations": map[string]any{"metallb.io/address-pool": "public-address-pool"},
+			}},
+			want: &enabled,
+		},
+		{
+			name:   "no pool annotation",
+			values: map[string]any{"service": map[string]any{"type": "LoadBalancer"}},
+			want:   &disabled,
+		},
+		{
+			name:   "no values",
+			values: nil,
+			want:   &disabled,
+		},
+		{
+			name: "split topology",
+			values: map[string]any{"loadBalancer": map[string]any{
+				"enabled":     true,
+				"annotations": map[string]any{"metallb.io/address-pool": "public-address-pool"},
+			}},
+			want: nil,
+		},
+		{
+			name:   "split topology enabled as a quoted string",
+			values: map[string]any{"loadBalancer": map[string]any{"enabled": "true"}},
+			want:   nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := refresh(t, state.BlockNodeState{}, deployedRelease(tc.values))
+
+			require.Equal(t, tc.want, got.LoadBalancerEnabled)
+		})
 	}
 }
