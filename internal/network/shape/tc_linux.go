@@ -118,28 +118,6 @@ func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]C
 	return stats, nil
 }
 
-// tcQdiscJSON is the subset of `tc -j qdisc show` output the probe reads.
-// iproute2 emits "root": true or "parent", never "root": false.
-type tcQdiscJSON struct {
-	Kind   string `json:"kind"`
-	Handle string `json:"handle"`
-	Parent string `json:"parent"`
-	Root   *bool  `json:"root"`
-}
-
-// isWeaverRoot reports whether this entry is weaver's `root handle 1: htb`
-// qdisc, not a foreign hierarchy's child HTB that happens to reuse handle 1:.
-func (q tcQdiscJSON) isWeaverRoot() bool {
-	if q.Kind != "htb" || strings.TrimSuffix(q.Handle, ":") != "1" {
-		return false
-	}
-	if q.Parent != "" {
-		return false
-	}
-	// A missing "root" is tolerated for iproute2 builds that omit the field.
-	return q.Root == nil || *q.Root
-}
-
 // QdiscRootExists implements TCRunner.
 func (r *execTCRunner) QdiscRootExists(ctx context.Context, dev string) (bool, error) {
 	cmd := exec.CommandContext(ctx, tcBin, "-j", "qdisc", "show", "dev", dev)
