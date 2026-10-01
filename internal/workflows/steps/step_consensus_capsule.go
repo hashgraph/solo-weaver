@@ -29,11 +29,12 @@ import (
 )
 
 const (
-	EnsureOrbitStepId            = "ensure-orbit"
-	EnsureConfigCRsStepId        = "ensure-config-crs"
-	EnsureHostPathsStepId        = "ensure-consensus-host-paths"
-	CreateConsensusCapsuleStepId = "create-consensus-capsule"
-	ReportCapsuleStatusStepId    = "report-consensus-capsule-status"
+	PrecheckConsensusNotInstalledStepId = "precheck-consensus-not-installed"
+	EnsureOrbitStepId                   = "ensure-orbit"
+	EnsureConfigCRsStepId               = "ensure-config-crs"
+	EnsureHostPathsStepId               = "ensure-consensus-host-paths"
+	CreateConsensusCapsuleStepId        = "create-consensus-capsule"
+	ReportCapsuleStatusStepId           = "report-consensus-capsule-status"
 )
 
 // CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
@@ -55,6 +56,59 @@ type CapsuleKubeProvider func(ctx context.Context) (CapsuleKubeClient, error)
 // client is not context-scoped) but keeps the provider signature uniform.
 func DefaultCapsuleKubeProvider(context.Context) (CapsuleKubeClient, error) {
 	return kube.NewClient()
+}
+
+// PrecheckConsensusNotInstalled guards consensus node install against mutating an
+// already-deployed node. If the ConsensusCapsule CR exists and --force is not set,
+// the step fails fast before any CR is applied. With --force it logs a warning and
+// proceeds (re-apply path).
+func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(PrecheckConsensusNotInstalledStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+			}
+
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+
+			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to check ConsensusCapsule %s", capsuleName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and RBAC for reading ConsensusCapsule resources")))
+			}
+
+			if exists && !force {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again — pass --force to re-apply", inputs.NodeId, capsuleName),
+					reasons.PreconditionNotMet,
+					"Pass --force to re-apply the install over the existing node",
+					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
+					"Or use 'solo-provisioner consensus node upgrade' for day-2 changes (planned)")))
+			}
+
+			if exists && force {
+				logx.As().Warn().Msgf("ConsensusCapsule %q already exists — re-applying because --force was passed", capsuleName)
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking consensus node not already installed")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Consensus node already installed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node install guard passed")
+		})
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
@@ -106,11 +160,12 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 					},
 				},
 				Spec: operatorv1alpha1.OrbitSpec{
+					// When true, the UC sidecar runs UC_MODE=mainnet and defers the execute
+					// phase to the host solo-provisioner-daemon; false (default) is
+					// cluster-only (the in-pod UC runs execute). v0.8.0 moved this from
+					// spec.consensus up to spec (it is a network-wide, host-level fact).
+					ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 					Consensus: operatorv1alpha1.OrbitConsensus{
-						// When true, the UC sidecar runs UC_MODE=mainnet and defers the
-						// execute phase to the host solo-provisioner-daemon; false (default)
-						// is cluster-only (the in-pod UC runs execute).
-						ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 						Genesis: operatorv1alpha1.OrbitGenesis{
 							AddressBook: operatorv1alpha1.OrbitAddressBook{
 								LedgerId: inputs.LedgerId,
@@ -461,11 +516,13 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				},
 			}
 
-			// Add a SoftwareVersionSource alongside the required SoftwareVersion when the
-			// manifest declares a multi-registry source; the operator prefers it. When
-			// this run carries no manifest source and the user did not pin the image,
-			// preserve any source already on the live CR — ApplyTyped is server-side
-			// apply, so omitting the field would otherwise silently drop it.
+			// Pick exactly one of SoftwareVersion / SoftwareVersionSource on the
+			// consensus-node container, per the v0.8.0 CRD rule (hashgraph/solo-operator#1372).
+			// A manifest multi-registry source wins; otherwise, when no new source and the
+			// user did not pin the image, preserve any source already on the live CR
+			// (ApplyTyped is server-side apply, so omitting the field would silently drop
+			// it). When a source is set we drop the single SoftwareVersion so the CR does
+			// not carry a misleading registries[0] duplicate.
 			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
 			if src == nil && !inputs.ImagePinned {
 				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
@@ -477,12 +534,22 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				}
 				src = existing
 			}
-			// An explicit --registry-selection-strategy overrides the operator's
-			// --registry-order default on whichever source we set.
-			if src != nil && inputs.RegistrySelectionStrategy != "" {
-				src.SelectionStrategy = inputs.RegistrySelectionStrategy
+			// SelectionStrategy precedence: --registry-selection-strategy flag beats
+			// the manifest's images.consensusNode.selectionStrategy, which beats the
+			// weaver default (Sequential — manifest primary first, deterministic
+			// failover). An empty src.SelectionStrategy here means neither the new
+			// manifest source nor the preserved live CR carried one.
+			if src != nil {
+				if inputs.RegistrySelectionStrategy != "" {
+					src.SelectionStrategy = inputs.RegistrySelectionStrategy
+				} else if src.SelectionStrategy == "" {
+					src.SelectionStrategy = models.RegistrySelectionSequential
+				}
 			}
-			capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+			if src != nil {
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion = nil
+			}
 
 			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
 			if err := applyConsensusVolumes(capsule, inputs); err != nil {
@@ -622,8 +689,8 @@ func splitConsensusImage(full string) (repository, imageName string) {
 // buildSoftwareVersionSource turns an ImageSource into the operator's
 // SoftwareVersionSource. Each registry gets its own pull secret, picked by host,
 // and one verification entry per platform (sorted, so the output is stable).
-// Returns nil when there is nothing to build. SelectionStrategy is left empty so
-// the operator uses its own --registry-order default.
+// Returns nil when there is nothing to build. SelectionStrategy is left empty
+// here; the caller sets it (weaver default = Sequential, or the user override).
 func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.PullSecretSelector) *operatorv1alpha1.SoftwareVersionSource {
 	if src == nil || len(src.Repositories) == 0 || len(src.LayerHashes) == 0 {
 		return nil
@@ -664,6 +731,9 @@ func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.Pull
 	return &operatorv1alpha1.SoftwareVersionSource{
 		ImageRepositories:     repos,
 		ImageVerificationSpec: specs,
+		// Carry the manifest's preferred strategy through; the caller still applies
+		// the CLI override and the weaver default (Sequential) in that precedence.
+		SelectionStrategy: src.SelectionStrategy,
 	}
 }
 

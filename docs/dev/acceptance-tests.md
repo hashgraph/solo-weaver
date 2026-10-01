@@ -476,10 +476,10 @@ Expected (both F1 and F2):
   them onto the pods and their SAs. Registries come from the manifest — a `HOST=`
   that matches no manifest registry is rejected.
 - `--registry-selection-strategy` (`Random` or `Sequential`) sets the emitted
-  `SoftwareVersionSource.SelectionStrategy`, overriding the operator's
-  `--registry-order` default. Empty leaves it unset. It only has effect when the
-  manifest yields multiple registries. Use `Sequential` to force order-based
-  probing (primary first) for a deterministic failover test.
+  `SoftwareVersionSource.SelectionStrategy`. Empty uses the weaver default
+  (**Sequential** — the manifest's primary registry is tried first, giving
+  deterministic failover). Pass `Random` to spread probe traffic. It only has
+  effect when the manifest yields multiple registries.
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.
@@ -496,6 +496,349 @@ Expected (both F1 and F2):
 
 ---
 
+## G. Consensus Multi-Registry Support
+
+Validates the multi-registry `SoftwareVersionSource` path end-to-end: weaver reads
+multiple registries + layer hashes from the manifest, picks the right pull secret per
+registry host, applies a selection strategy (CLI flag > manifest > weaver default
+`Sequential`), and the operator (v0.8.0+) selects, verifies, and digest-pins the
+image. Covers five variants in one scenario: core multi-registry install, manifest
+strategy override, CLI flag beating the manifest, forced failover (decoy at
+`registries[0]`), and invalid-strategy rejection.
+
+Pairs with hashgraph/solo-operator#1379, which teaches the `test/dev` deployment-
+package producer to emit `images.consensusNode.selectionStrategy` and to insert a
+decoy registry at `registries[0]`.
+
+### Prerequisites
+
+- UTM VM running and the usual `.env` with `GITHUB_USER` / `GITHUB_ACCESS_TOKEN`
+  (needed for the ghcr chart and the solo-operator Go module).
+- `crane` and `jq` on PATH — the operator's `test/dev/Taskfile.yml` uses them to
+  compute `rootfs.diff_ids` for the deterministic manifest and to probe the JFrog
+  mirror. Install with:
+  ```bash
+  go install github.com/google/go-containerregistry/cmd/crane@v0.22.0
+  ```
+- solo-operator checkout at `../solo-operator` with a **clean working tree** —
+  `task -d docs/dev/daemon prep`'s dirty-tree guard refuses to switch branches
+  otherwise. Stash/commit work-in-progress before running the UAT.
+- weaver on a stack that includes operator v0.8.0 (`SOLO_OPERATOR_VERSION = "0.8.0"`
+  in `pkg/deps/deps.go`) and the source-only emission + manifest-strategy
+  propagation.
+
+### G1. Baseline: multi-registry install with the weaver default (Sequential)
+
+Build the deployment package against the operator PR that emits the multi-registry
+manifest, then run the standard runbook:
+
+```bash
+# Host:
+task -d docs/dev/daemon prep SOLO_OPERATOR_REF=chore/update-beacon-examples
+# Verify the staged manifest lists TWO registries + deterministic layer hashes.
+cat test/data/build-v0.74.0/manifests/consensus-node-components.yaml
+
+task -d docs/dev/daemon sync
+
+# Inside the VM (via `task vm:ssh:proxy`):
+task -d docs/dev/daemon cluster       # kube cluster install
+task -d docs/dev/daemon secrets       # creates private-registry-creds in both namespaces
+task -d docs/dev/daemon operator      # kube operator install (v0.8.0 chart)
+task -d docs/dev/daemon consensus      # consensus node install
+```
+
+Verify the CR on the consensus-node container:
+
+```bash
+kubectl -n hiero-network-1 get consensuscapsule node0 -o yaml \
+  | yq '.spec.podProperties.containers.consensusNode'
+```
+
+Expected:
+- `softwareVersion` **absent** (source-only emission).
+- `softwareVersionSource.imageRepositories` has two entries (GCR + JFrog), each with
+  `imagePullSecrets: [{name: private-registry-creds}]`.
+- `softwareVersionSource.imageVerificationSpec` has entries for `linux/amd64` and
+  `linux/arm64` with real layer hashes.
+- `softwareVersionSource.selectionStrategy: Sequential` (the weaver default).
+
+UC sidecar is unchanged — `softwareVersion` present, no source (single-registry).
+
+Then watch the pod come up and reach `Active`:
+```bash
+kubectl -n hiero-network-1 get consensuscapsules -w
+```
+
+### G2. Manifest `selectionStrategy` is honored
+
+Rebuild with the operator's `CN_SELECTION_STRATEGY` knob so the manifest declares
+`Random`:
+
+```bash
+task -d docs/dev/daemon prep \
+  SOLO_OPERATOR_REF=chore/update-beacon-examples \
+  CN_SELECTION_STRATEGY=Random
+task -d docs/dev/daemon sync
+# Reinstall the node (uninstall first, or use a fresh namespace).
+```
+
+```bash
+kubectl -n hiero-network-1 get consensuscapsule node0 \
+  -o jsonpath='{.spec.podProperties.containers.consensusNode.softwareVersionSource.selectionStrategy}' ; echo
+# -> Random
+```
+
+### G3. CLI flag beats the manifest
+
+Same package (manifest says `Random`), override on install:
+
+```bash
+sudo solo-provisioner consensus node install \
+  --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
+  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --registry-selection-strategy Sequential
+```
+
+```bash
+kubectl -n hiero-network-1 get consensuscapsule node0 \
+  -o jsonpath='{.spec.podProperties.containers.consensusNode.softwareVersionSource.selectionStrategy}' ; echo
+# -> Sequential  (flag beats the manifest's Random)
+```
+
+### G4. Forced failover — decoy at `registries[0]`
+
+Insert an unpullable candidate at position 0 and keep Sequential so the operator
+must skip past it:
+
+```bash
+task -d docs/dev/daemon prep \
+  SOLO_OPERATOR_REF=chore/update-beacon-examples \
+  CN_DECOY_REGISTRY=artifacts.hashgraph.io/consensus-node-docker-release-local/consensus-node:0.0.0-invalid \
+  CN_DECOY_POSITION_0=true
+task -d docs/dev/daemon sync
+# Reinstall the node.
+```
+
+```bash
+kubectl -n hiero-network-1 get consensuscapsule node0 -o yaml \
+  | yq '.spec.podProperties.containers.consensusNode.softwareVersionSource.imageRepositories'
+```
+
+Expected: `[0]` is the decoy (invalid tag), `[1]` is the valid GCR image. The pod
+still reaches `Active` — the operator skipped the decoy and pulled from the valid
+mirror. Confirm in the operator logs:
+
+```bash
+kubectl -n solo-operator logs deploy/solo-operator | grep -iE "registry|probe|skip|fail"
+```
+
+### G5. Invalid manifest `selectionStrategy` fails fast
+
+Weaver's manifest parser rejects anything other than `""`, `Random`, `Sequential`
+(exact case):
+
+```bash
+# Inject a bad value, then try to install:
+sed -i.bak 's/version: "0.74.0"/version: "0.74.0"\n    selectionStrategy: random/' \
+  test/data/build-v0.74.0/manifests/consensus-node-components.yaml
+task -d docs/dev/daemon sync
+# Inside the VM:
+sudo solo-provisioner consensus node install \
+  --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
+  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0
+```
+
+Expected: install fails at manifest parse with
+`images.consensusNode.selectionStrategy must be one of "", Random, Sequential (got "random")`.
+Revert the file afterwards (`mv .../consensus-node-components.yaml.bak ...yaml`).
+
+### G6. Security patch only in a private registry (host-keyed secret must route correctly)
+
+The real-world case this stack is built for: a security patch is published to the
+operator's **private** registry; the **public** mirror does not have it yet. Both
+registries appear in the manifest. The operator must probe the public one, fail,
+fall through to the private one, **authenticate with the pull secret weaver routes
+to that host**, verify layer hashes, and deploy.
+
+The scenario stands up an **in-cluster** `registry:2` with basic auth (same shape as
+`solo-operator/test/consensus-mock/kind/registry.yaml`, plus htpasswd). Pod → registry
+goes via a pinned ClusterIP (`10.96.100.100:5000`); host → registry goes via
+`kubectl port-forward` for pushes. One-time containerd insecure-registry allowance
+is needed on the VM for kubelet pulls over plain HTTP.
+
+#### G6.1. One-time VM setup — containerd insecure-registry
+
+The in-cluster registry serves plain HTTP; containerd rejects HTTP registries by
+default. Inside the VM:
+
+```bash
+sudo mkdir -p /etc/containerd/certs.d/10.96.100.100:5000
+sudo tee /etc/containerd/certs.d/10.96.100.100:5000/hosts.toml >/dev/null <<'EOF'
+server = "http://10.96.100.100:5000"
+[host."http://10.96.100.100:5000"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+# Ensure containerd's config_path points at /etc/containerd/certs.d — most
+# distros do by default; verify:
+grep -E "config_path\s*=" /etc/containerd/config.toml || \
+  echo '!! containerd config_path missing — see "Reset" below for the full edit'
+sudo systemctl restart containerd
+```
+
+**Reset after you're done** (so other UAT runs are unaffected):
+```bash
+sudo rm -rf /etc/containerd/certs.d/10.96.100.100:5000
+sudo systemctl restart containerd
+```
+
+#### G6.2. Deploy the private registry and push the "patch"
+
+Apply the manifest (lives in-repo at `docs/dev/private-registry.yaml`), then push
+the consensus-node image under a patch tag. `crane copy` preserves layers byte-for-
+byte, so the diff_ids stay deterministic and match the source.
+
+```bash
+# Inside the VM:
+kubectl apply -f /mnt/solo-weaver/docs/dev/private-registry.yaml
+kubectl -n local-registry wait --for=condition=available --timeout=60s deployment/registry
+
+# Port-forward for the host-side push (leave this running in another shell).
+kubectl -n local-registry port-forward svc/registry 5001:5000 &
+PF_PID=$!
+
+export PATCH_TAG=0.74.0-security.1
+crane copy \
+  gcr.io/hedera-registry/consensus-node:0.74.0 \
+  localhost:5001/consensus-node:$PATCH_TAG \
+  --dst-plain-http \
+  --dst-auth-username uatuser --dst-auth-password uatpass
+
+# Capture the per-platform diff_ids for the manifest (they'll equal 0.74.0's):
+crane config localhost:5001/consensus-node:$PATCH_TAG --platform linux/amd64 \
+  --auth-username uatuser --auth-password uatpass --plain-http | jq -r '.rootfs.diff_ids[]'
+crane config localhost:5001/consensus-node:$PATCH_TAG --platform linux/arm64 \
+  --auth-username uatuser --auth-password uatpass --plain-http | jq -r '.rootfs.diff_ids[]'
+
+kill $PF_PID
+```
+
+Create the host-keyed pull secret in the consensus namespace (`--docker-server`
+must match the registry host the manifest uses):
+
+```bash
+kubectl -n hiero-network-1 create secret docker-registry patch-registry-creds \
+  --docker-server=10.96.100.100:5000 \
+  --docker-username=uatuser --docker-password=uatpass
+```
+
+#### G6.3. Build the base package and hand-edit the manifest
+
+Weaver's test-package producer doesn't synthesize a patch-only-in-one-registry
+case, so after a baseline `prep` we replace the generated `consensus-node-components.yaml`:
+
+```bash
+task -d docs/dev/daemon prep SOLO_OPERATOR_REF=chore/update-beacon-examples
+task -d docs/dev/daemon sync
+```
+
+Inside the VM, overwrite
+`test/data/build-v0.74.0/manifests/consensus-node-components.yaml` with the diff_ids
+captured in G6.2:
+
+```yaml
+schemaVersion: 1
+images:
+  consensusNode:
+    version: "0.74.0-security.1"
+    selectionStrategy: Sequential
+    deterministic:
+      supported: true
+      layerHashes:
+        linux/amd64:
+          - "<amd64 diff_id #1>"
+          - "<amd64 diff_id #2>"
+        linux/arm64:
+          - "<arm64 diff_id #1>"
+          - "<arm64 diff_id #2>"
+    registries:
+      # Public mirror listed first — it does NOT have the patch tag, so this is
+      # where the operator's probe must fail over.
+      - image: "artifacts.hashgraph.io/consensus-node-docker-release-local/consensus-node:0.74.0-security.1"
+      # Private in-cluster registry hosting the patch — operator falls through
+      # here, auths with patch-registry-creds (host-keyed by weaver), and pulls.
+      - image: "10.96.100.100:5000/consensus-node:0.74.0-security.1"
+```
+
+#### G6.4. Install and verify
+
+Install, routing the private registry's secret by host and keeping the default
+`private-registry-creds` for anything else:
+
+```bash
+sudo solo-provisioner consensus node install \
+  --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
+  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --image-pull-secret private-registry-creds \
+  --image-pull-secret 10.96.100.100:5000=patch-registry-creds
+```
+
+CR shows both registries with each one's own pull secret:
+
+```bash
+kubectl -n hiero-network-1 get consensuscapsule node0 -o yaml \
+  | yq '.spec.podProperties.containers.consensusNode.softwareVersionSource'
+```
+
+Expected:
+- `imageRepositories[0]`: `artifacts.hashgraph.io/...:0.74.0-security.1`, no secret
+  (unmapped public host; the bare default `private-registry-creds` applies by host
+  rule — won't match the public host either, so pulls are anonymous).
+- `imageRepositories[1]`: `10.96.100.100:5000/...` with
+  `imagePullSecrets: [{name: patch-registry-creds}]`.
+- `selectionStrategy: Sequential`.
+- `imageVerificationSpec`: the two platforms with the matching diff_ids.
+
+Pod reaches `Active`. The operator logs show the public probe 404'ing and the
+private pull succeeding:
+
+```bash
+kubectl -n solo-operator logs deploy/solo-operator | grep -iE "registry|probe|skip|pulled|auth"
+```
+
+The pulled image on the pod is pinned to the private registry's digest:
+
+```bash
+kubectl -n hiero-network-1 get pod node0-consensus-0 \
+  -o jsonpath='{.spec.containers[?(@.name=="consensus-node")].image}' ; echo
+# -> 10.96.100.100:5000/consensus-node@sha256:...
+```
+
+**Negative check** — delete the secret and reinstall; the pull must fail:
+```bash
+kubectl -n hiero-network-1 delete secret patch-registry-creds
+# ... re-run `consensus node install` with the same flags ...
+kubectl -n hiero-network-1 describe pod node0-consensus-0 | grep -A3 -i "fail\|unauth"
+# -> ErrImagePull / 401 Unauthorized on 10.96.100.100:5000
+```
+Recreate the secret to recover.
+
+#### G6.5. Teardown
+
+```bash
+kubectl -n hiero-network-1 delete secret patch-registry-creds --ignore-not-found
+kubectl delete -f /mnt/solo-weaver/docs/dev/private-registry.yaml
+# Then the containerd reset from G6.1.
+```
+
+### Known gaps
+
+- `TestResolveDaemonBinarySource` in `cmd/cli/commands/block/node` can fail in the
+  VM for environment-dependent reasons unrelated to this scenario; ignore it in
+  the e2e output.
+
+---
+
 ## Quick Reference
 
 | Scenario | Duration | Dependencies |
@@ -507,3 +850,5 @@ Expected (both F1 and F2):
 | E. Backward Compat | ~15 min | VM, proxy, released binary |
 | F1. Single Consensus Node | ~15 min | VM, ghcr PAT (private registry) |
 | F2. Multi-node Consensus Network | ~20 min | VM, ghcr PAT (private registry) |
+| G1–G5. Multi-Registry Support | ~20 min | VM, ghcr PAT, `crane`+`jq`, operator PR #1379 branch |
+| G6. Security patch in a private registry only | ~15 min | G1–G5 prereqs + Docker in VM for `registry:2` |

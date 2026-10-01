@@ -41,12 +41,16 @@ type Images struct {
 // "no opinion" (nil). Note that when an Image entry is present at all, the
 // other required fields (Version, Registries) must still be set — validation
 // enforces this. A nil entry under Images is the "absent = no change"
-// signal at the section level.
+// signal at the section level. SelectionStrategy, when set, is the deployment
+// package's preference for how the operator orders registry probes; it maps
+// onto SoftwareVersionSource.SelectionStrategy. An explicit CLI override
+// (--registry-selection-strategy) still wins at install time.
 type Image struct {
-	Enabled       *bool          `yaml:"enabled,omitempty"`
-	Version       string         `yaml:"version"`
-	Deterministic *Deterministic `yaml:"deterministic,omitempty"`
-	Registries    []Registry     `yaml:"registries"`
+	Enabled           *bool          `yaml:"enabled,omitempty"`
+	Version           string         `yaml:"version"`
+	SelectionStrategy string         `yaml:"selectionStrategy,omitempty"`
+	Deterministic     *Deterministic `yaml:"deterministic,omitempty"`
+	Registries        []Registry     `yaml:"registries"`
 }
 
 // Deterministic describes whether a component's container images produce
@@ -144,6 +148,14 @@ func (img *Image) validate(componentName string) error {
 	}
 	if len(img.Registries) == 0 {
 		return NewValidationError(KindConsensusNodeComponents, prefix+".registries", "must declare at least one registry")
+	}
+	// Match the operator's SelectionStrategy enum exactly (Random | Sequential),
+	// so a bad value fails at parse time instead of silently passing through.
+	switch img.SelectionStrategy {
+	case "", "Random", "Sequential":
+	default:
+		return NewValidationError(KindConsensusNodeComponents, prefix+".selectionStrategy",
+			fmt.Sprintf("must be one of \"\", Random, Sequential (got %q)", img.SelectionStrategy))
 	}
 
 	deterministicSupported := img.Deterministic != nil && img.Deterministic.Supported

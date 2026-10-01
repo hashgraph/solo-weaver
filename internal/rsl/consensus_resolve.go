@@ -97,7 +97,11 @@ func buildImageSource(img *manifests.Image) *models.ImageSource {
 		hashes[platform] = cp
 	}
 
-	return &models.ImageSource{Repositories: repos, LayerHashes: hashes}
+	return &models.ImageSource{
+		Repositories:      repos,
+		LayerHashes:       hashes,
+		SelectionStrategy: img.SelectionStrategy,
+	}
 }
 
 // stripImageTag removes a trailing ":tag", treating a colon as a tag separator
