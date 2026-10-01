@@ -320,13 +320,10 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	capsule := findCapsule(t, fake.appliedObjs)
 	cn := capsule.Spec.PodProperties.Containers.ConsensusNode
 
-	// SoftwareVersion stays populated — it is a required CRD field even when a
-	// source is set (the operator merely prefers the source).
-	require.NotNil(t, cn.SoftwareVersion)
-	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
-	// The single SoftwareVersion resolves its secret by host (gcr.io ⇒ gcr-creds).
-	require.Len(t, cn.SoftwareVersion.ImagePullSecrets, 1)
-	assert.Equal(t, "gcr-creds", cn.SoftwareVersion.ImagePullSecrets[0].Name)
+	// SoftwareVersion is dropped when a source is set — one of the two is enough
+	// per the v0.8.0 contract (hashgraph/solo-operator#1372), and leaving a
+	// synthesized registries[0] duplicate on the CR would be misleading.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion")
 
 	src := cn.SoftwareVersionSource
 	require.NotNil(t, src)
@@ -409,10 +406,13 @@ func TestCreateConsensusCapsule_PreservesExistingSourceWhenNoManifest(t *testing
 	require.NoError(t, err)
 	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 
-	src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
-	require.NotNil(t, src, "existing source must be preserved so SSA does not drop it")
-	require.Len(t, src.ImageRepositories, 2)
-	assert.Equal(t, "docker.io/hashgraph", src.ImageRepositories[1].Repository)
+	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
+	require.NotNil(t, cn.SoftwareVersionSource, "existing source must be preserved so SSA does not drop it")
+	require.Len(t, cn.SoftwareVersionSource.ImageRepositories, 2)
+	assert.Equal(t, "docker.io/hashgraph", cn.SoftwareVersionSource.ImageRepositories[1].Repository)
+	// Preserve path also drops the synthesized SoftwareVersion, keeping the CR to
+	// exactly one of the two fields.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion on the preserve path too")
 }
 
 func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
@@ -444,6 +444,9 @@ func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
 
 	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
 	assert.Nil(t, cn.SoftwareVersionSource, "an explicit pin must drop the existing source")
+	// With no source, the single SoftwareVersion is the one of the two we emit.
+	require.NotNil(t, cn.SoftwareVersion, "pinned install keeps the single SoftwareVersion")
+	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
 }
 
 func TestBuildSoftwareVersionSource(t *testing.T) {
