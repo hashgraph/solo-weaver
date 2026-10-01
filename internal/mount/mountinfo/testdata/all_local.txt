@@ -1,0 +1,2 @@
+27 1 253:0 / / rw,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro
+90 27 8:17 / /opt/hedera/blocknode rw,relatime shared:40 - xfs /dev/sdb1 rw

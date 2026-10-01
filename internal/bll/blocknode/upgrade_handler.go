@@ -84,8 +84,8 @@ func (h *UpgradeHandler) BuildWorkflow(
 	}
 
 	// Fail fast if storage paths can't be resolved.
-	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion,
-		!bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)); err != nil {
+	managesPlugins := !bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion, managesPlugins); err != nil {
 		return nil, err
 	}
 
@@ -108,6 +108,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
 	// enabled, is handled post-workflow in the CLI layer.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
+
+	// Warn (never block) when a storage path is not on local block storage.
+	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
 
 	plan, err := planStorage(currentState, ins)
 	if err != nil {

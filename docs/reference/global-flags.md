@@ -32,7 +32,10 @@ Flags on this page work on every `solo-provisioner` command.
   object; for a one-shot command (`network reassert`) it is a single JSON document.
   A command with its own `--output` (`network firewall show`) is the exception.
 - The summary object:
-  `{"type":"summary","status":…,"report_path":…,"report":{…}}`
+  `{"type":"summary","status":…,"report_path":…,"warnings":[…],"report":{…}}`
+  `warnings` hoists every step's non-fatal, operator-facing warning (for example
+  a block-node storage path that is not on local block storage) so automation can
+  read them without walking `report`. It is always an array, empty when clean.
 - Select the summary by its tag, not by position:
   ```bash
   solo-provisioner block node install --profile=mainnet -o json | jq 'select(.type=="summary")'

@@ -84,8 +84,8 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	}
 
 	// Fail fast if storage paths can't be resolved.
-	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion,
-		!bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)); err != nil {
+	managesPlugins := !bnpkg.EffectivePluginsNamesEmpty(inputs.Custom.PluginList, inputs.Custom.ValuesFile)
+	if err := bnpkg.ValidateStorageCompleteness(inputs.Custom.Storage, inputs.Custom.ChartVersion, managesPlugins); err != nil {
 		return nil, err
 	}
 
@@ -106,6 +106,9 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// convergence assembler is driven by the operator's decision and is allowed to
 	// tear a feature down when it is turned off. See networkPlaneSteps.
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
+
+	// Warn (never block) when a storage path is not on local block storage.
+	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
 
 	plan, err := planStorage(currentState, ins)
 	if err != nil {
