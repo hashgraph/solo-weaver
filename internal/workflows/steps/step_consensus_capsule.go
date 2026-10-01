@@ -29,11 +29,12 @@ import (
 )
 
 const (
-	EnsureOrbitStepId            = "ensure-orbit"
-	EnsureConfigCRsStepId        = "ensure-config-crs"
-	EnsureHostPathsStepId        = "ensure-consensus-host-paths"
-	CreateConsensusCapsuleStepId = "create-consensus-capsule"
-	ReportCapsuleStatusStepId    = "report-consensus-capsule-status"
+	PrecheckConsensusNotInstalledStepId = "precheck-consensus-not-installed"
+	EnsureOrbitStepId                   = "ensure-orbit"
+	EnsureConfigCRsStepId               = "ensure-config-crs"
+	EnsureHostPathsStepId               = "ensure-consensus-host-paths"
+	CreateConsensusCapsuleStepId        = "create-consensus-capsule"
+	ReportCapsuleStatusStepId           = "report-consensus-capsule-status"
 )
 
 // CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
@@ -55,6 +56,59 @@ type CapsuleKubeProvider func(ctx context.Context) (CapsuleKubeClient, error)
 // client is not context-scoped) but keeps the provider signature uniform.
 func DefaultCapsuleKubeProvider(context.Context) (CapsuleKubeClient, error) {
 	return kube.NewClient()
+}
+
+// PrecheckConsensusNotInstalled guards consensus node install against mutating an
+// already-deployed node. If the ConsensusCapsule CR exists and --force is not set,
+// the step fails fast before any CR is applied. With --force it logs a warning and
+// proceeds (re-apply path).
+func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(PrecheckConsensusNotInstalledStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+			}
+
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+
+			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to check ConsensusCapsule %s", capsuleName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and RBAC for reading ConsensusCapsule resources")))
+			}
+
+			if exists && !force {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again", inputs.NodeId, capsuleName),
+					reasons.PreconditionNotMet,
+					"Pass --force to re-apply the install over the existing node",
+					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
+					"Or use 'solo-provisioner consensus node upgrade' for day-2 changes (planned)")))
+			}
+
+			if exists && force {
+				logx.As().Warn().Msgf("ConsensusCapsule %q already exists — re-applying because --force was passed", capsuleName)
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking consensus node not already installed")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Consensus node already installed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node install guard passed")
+		})
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
