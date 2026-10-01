@@ -54,6 +54,15 @@ type fakeKernel struct {
 	lockReleases int
 	// locksTaken records every path an acquisition succeeded on, in order.
 	locksTaken []string
+
+	// verifyCalls counts verifier runs; verifyScope is the last one's scope.
+	verifyCalls int
+	verifyScope verifyScope
+}
+
+// openPlaneLock is a lock that is always acquired, for probing without locks.
+func openPlaneLock() planeLock {
+	return planeLock{acquired: true, release: func() {}}
 }
 
 // provisioned describes which artifacts exist on disk for a test.
@@ -153,6 +162,12 @@ func testConfig(k *fakeKernel, p provisioned) Config {
 				k.policyPresent = true
 			}
 			return k.nftRestartErr
+		},
+		// Never touch the real kernel; verify_test.go covers the verifier itself.
+		Verify: func(_ context.Context, scope verifyScope) *Checks {
+			k.verifyCalls++
+			k.verifyScope = scope
+			return &Checks{Rules: RulesCheck{Status: CheckOK}, Filters: FiltersCheck{Status: CheckOK}}
 		},
 		RestartShaper: func(context.Context) error {
 			k.shaperRestarts++
@@ -679,9 +694,24 @@ func TestReassertReportsALockFailureAsUndeterminable(t *testing.T) {
 	assert.Zero(t, k.shaperRestarts)
 }
 
-// TestCheckTakesNoLock keeps a read-only inspection usable while an apply is in
-// flight — it mutates nothing, so it has nothing to serialise against.
-func TestCheckTakesNoLock(t *testing.T) {
+// TestCheck_TakesBothLocksWithoutWaiting: --check must not read an operator's half-done change.
+func TestCheck_TakesBothLocksWithoutWaiting(t *testing.T) {
+	k := &fakeKernel{}
+	rs := newTestReasserter(k, allProvisioned())
+
+	r := rs.Check(context.Background())
+
+	assert.Equal(t, []string{testNftLockPath, testShapeLockPath}, k.locksTaken)
+	assert.Equal(t, 2, k.lockReleases)
+	// It still sees the outage it was asked about, and repairs nothing.
+	assert.Len(t, r.Missing(), 3)
+	assert.Zero(t, k.nftRestarts)
+	assert.Zero(t, k.shaperRestarts)
+	require.NotNil(t, r.Checks)
+}
+
+// TestCheck_BusyLocksReportSkippedInsteadOfGuessing: a busy lock means "try again", not a guess.
+func TestCheck_BusyLocksReportSkippedInsteadOfGuessing(t *testing.T) {
 	k := &fakeKernel{
 		lockHeld: map[string]bool{testNftLockPath: true, testShapeLockPath: true},
 	}
@@ -689,12 +719,84 @@ func TestCheckTakesNoLock(t *testing.T) {
 
 	r := rs.Check(context.Background())
 
-	assert.Empty(t, k.locksTaken)
-	for _, id := range []string{ArtifactHostFirewall, ArtifactWorkloadPolicy, ArtifactEgressQdisc} {
-		assert.False(t, artifact(t, r, id).Skipped, "%s must still be probed by --check", id)
+	assert.Len(t, r.Skipped(), 3)
+	require.NotNil(t, r.Checks)
+	assert.Equal(t, CheckSkipped, r.Checks.Rules.Status)
+	assert.Equal(t, CheckSkipped, r.Checks.Filters.Status)
+	assert.Zero(t, k.verifyCalls, "nothing may be verified without both locks")
+}
+
+// TestChecks_RunOnlyWithBothLocks: with one plane busy, checks stay off.
+func TestChecks_RunOnlyWithBothLocks(t *testing.T) {
+	k := &fakeKernel{firewallPresent: true, policyPresent: true, qdiscPresent: true,
+		lockHeld: map[string]bool{testShapeLockPath: true}}
+
+	r := newTestReasserter(k, allProvisioned()).Reassert(context.Background())
+
+	assert.Zero(t, k.verifyCalls)
+	assert.Equal(t, CheckSkipped, r.Checks.Rules.Status)
+	assert.Contains(t, r.Checks.Rules.Detail, testShapeLockPath)
+}
+
+// TestChecks_LockFaultIsUnknownNotSkipped: a broken lock must not look like contention.
+func TestChecks_LockFaultIsUnknownNotSkipped(t *testing.T) {
+	k := &fakeKernel{lockErr: errors.New("permission denied")}
+
+	r := newTestReasserter(k, allProvisioned()).Reassert(context.Background())
+
+	assert.Equal(t, CheckUnknown, r.Checks.Rules.Status)
+	assert.Equal(t, CheckUnknown, r.Checks.Filters.Status)
+}
+
+// TestChecks_ScopeFollowsTheFinalArtifactState: the verifier must see post-repair state.
+func TestChecks_ScopeFollowsTheFinalArtifactState(t *testing.T) {
+	unreadable := allProvisioned()
+	unreadable.scriptErr = errors.New("permission denied")
+	for name, tc := range map[string]struct {
+		k          *fakeKernel
+		p          provisioned
+		wantPolicy bool
+		wantNIC    string
+		wantShaped string
+		wantNoName bool
+	}{
+		"all live":           {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscPresent: true}, allProvisioned(), true, "eth0", "eth0", false},
+		"restored this run":  {&fakeKernel{qdiscPresent: true, restartFixes: true}, allProvisioned(), true, "eth0", "eth0", false},
+		"policy missing":     {&fakeKernel{firewallPresent: true, qdiscPresent: true, nftRestartErr: errors.New("x")}, allProvisioned(), false, "eth0", "eth0", false},
+		"qdisc probe failed": {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscErr: errors.New("x")}, allProvisioned(), true, "", "eth0", false},
+		"script unreadable":  {&fakeKernel{firewallPresent: true, policyPresent: true}, unreadable, true, "", "", true},
+		"shaping disabled":   {&fakeKernel{firewallPresent: true, policyPresent: true}, provisioned{hostNft: true, policyNft: true}, true, "", "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			newTestReasserter(tc.k, tc.p).Reassert(context.Background())
+
+			require.Equal(t, 1, tc.k.verifyCalls)
+			assert.Equal(t, tc.wantPolicy, tc.k.verifyScope.policyLive)
+			assert.Equal(t, tc.wantNIC, tc.k.verifyScope.egressNIC)
+			assert.Equal(t, tc.wantShaped, tc.k.verifyScope.shapedNIC)
+			assert.Equal(t, tc.wantNoName, tc.k.verifyScope.nicUnknown)
+		})
 	}
-	// And it still sees the outage it was asked about.
-	assert.Len(t, r.Missing(), 3)
+}
+
+// TestChecks_OnlyAFullRunMayRefreshOlderRules: --check must never write.
+func TestChecks_OnlyAFullRunMayRefreshOlderRules(t *testing.T) {
+	healthy := func() *fakeKernel { return &fakeKernel{firewallPresent: true, policyPresent: true, qdiscPresent: true} }
+
+	k := healthy()
+	newTestReasserter(k, allProvisioned()).Check(context.Background())
+	require.Equal(t, 1, k.verifyCalls)
+	assert.False(t, k.verifyScope.refreshOlderFormat, "--check must never write")
+
+	k = healthy()
+	newTestReasserter(k, allProvisioned()).Reassert(context.Background())
+	require.Equal(t, 1, k.verifyCalls)
+	assert.True(t, k.verifyScope.refreshOlderFormat)
+
+	k = &fakeKernel{qdiscPresent: true, restartFixes: true}
+	newTestReasserter(k, allProvisioned()).Reassert(context.Background())
+	require.Equal(t, 1, k.verifyCalls)
+	assert.True(t, k.verifyScope.refreshOlderFormat, "a run that repaired something may refresh too")
 }
 
 // TestReassert_HangingRestartIsCutOffAndReleasesBothLocks is the case the

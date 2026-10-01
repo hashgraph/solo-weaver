@@ -20,12 +20,6 @@ type planeLock struct {
 	release  func()
 }
 
-// openPlaneLock is a lock that is always acquired. Check uses it because it
-// changes nothing, so it does not need a real lock.
-func openPlaneLock() planeLock {
-	return planeLock{acquired: true, release: func() {}}
-}
-
 // skip reports whether this plane must be left alone this run, and the status
 // to report for its artifact if so.
 func (l planeLock) skip(id string) (ArtifactStatus, bool) {
@@ -74,7 +68,7 @@ func flockNB(path string) (func(), bool, error) {
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		// EWOULDBLOCK means the lock is held; it equals EAGAIN on our platforms.
+		// EWOULDBLOCK means the lock is held (same value as EAGAIN here).
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return noop, false, nil
 		}
