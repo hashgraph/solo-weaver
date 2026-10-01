@@ -22,7 +22,7 @@
 # beacon needs a solo-operator checkout (SOLO_OPERATOR_DIR) for `bin/beacon` and
 # the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip). `prep` builds those
 # from an up-to-date main checkout; the in-cluster chart/image is the released
-# v0.7.1 (deps.SOLO_OPERATOR_VERSION), which includes the #1323 alignment.
+# version pinned by deps.SOLO_OPERATOR_VERSION (v0.8.0 at the time of writing).
 
 version: '3'
 
@@ -50,7 +50,7 @@ vars:
   # resolve regardless of where `task` is invoked.
   WEAVER_ROOT:
     sh: cd ../../.. && pwd
-  # Path to a solo-operator checkout at v0.7.0+ (provides bin/beacon and the test/dev
+  # Path to a solo-operator checkout at v0.8.0+ (provides bin/beacon and the test/dev
   # staging zips). Defaults to a sibling checkout beside solo-weaver (the standard
   # go-import layout, .../github.com/hashgraph/solo-operator); override with
   # `task -d docs/dev/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
@@ -171,7 +171,7 @@ tasks:
           T1  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
           T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
           T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
-          T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.1 operator + CRDs)
+          T4  task -d docs/dev/daemon operator       # kube operator install (v0.8.0 operator + CRDs)
               #  ── how to run solo-operator (pick one) ──
               #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
               #  B) local binary out-of-cluster: run T5 (network) with the released operator
@@ -259,9 +259,9 @@ tasks:
           OPERATOR_NS: "{{.OPERATOR_NS}}"
           NODE: "node{{.NODE_ID}}"
 
-  # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
+  # ── 4. operator (real CRDs, v0.8.0) ──────────────────────────────────────────
   operator:
-    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.7.1 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
+    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.8.0 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
     cmds:
       - |
         set -e
