@@ -193,6 +193,15 @@ type HardwareState struct {
 	LastSync htime.Time       `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
+// The values of BlockNodeState.ServiceTopology.
+const (
+	// ServiceTopologySingle: the main service carries the external IP.
+	ServiceTopologySingle = "single"
+	// ServiceTopologySplit: the chart's own loadBalancer block renders a
+	// separate external service, and the main service stays ClusterIP.
+	ServiceTopologySplit = "split"
+)
+
 type BlockNodeState struct {
 	ReleaseInfo       HelmReleaseInfo         `yaml:",inline" json:",inline"`
 	Storage           models.BlockNodeStorage `yaml:"storage" json:"storage"`
@@ -200,6 +209,14 @@ type BlockNodeState struct {
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
+	// ServiceTopology is how the release exposes the block node, read back from
+	// its values: ServiceTopologySingle or ServiceTopologySplit. Empty means
+	// unknown: a state file written before this field existed.
+	ServiceTopology string `yaml:"serviceTopology,omitempty" json:"serviceTopology,omitempty"`
+	// MetalLBPool is whether the service that carries the external IP has a
+	// MetalLB address-pool annotation, read back from the release values. Nil
+	// means unknown, as for ServiceTopology.
+	MetalLBPool *bool `yaml:"metallbPool,omitempty" json:"metallbPool,omitempty"`
 	// TrafficShapingDisabled records an install-time opt-out
 	// (--traffic-shaping-enabled=false) that cannot be recovered from the Helm
 	// release or the live cluster. Negative polarity so the zero value means
