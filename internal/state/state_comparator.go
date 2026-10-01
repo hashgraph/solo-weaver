@@ -146,6 +146,25 @@ var blockNodeFields = []blockNodeField{
 	{"shaping.linkRate", false, nil, func(b *BlockNodeState) string { return shapingOf(b).LinkRate }},
 }
 
+// optionalField is an observable field that a state file written before it
+// existed does not know; Diff compares it only when both sides know it.
+type optionalField struct {
+	name  string
+	value func(*BlockNodeState) (value string, known bool)
+}
+
+var blockNodeOptionalFields = []optionalField{
+	{"serviceTopology", func(b *BlockNodeState) (string, bool) { return b.ServiceTopology, b.ServiceTopology != "" }},
+	{"metallbPool", func(b *BlockNodeState) (string, bool) { return formatOptionalBool(b.MetalLBPool), b.MetalLBPool != nil }},
+}
+
+func formatOptionalBool(v *bool) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatBool(*v)
+}
+
 // shapingOf returns b's shaping record, or an empty one when it was never set,
 // so a nil record and an empty one compare the same.
 func shapingOf(b *BlockNodeState) ShapingState {
@@ -196,8 +215,6 @@ func sameQuantity(a, b string) bool {
 	return qa.Cmp(qb) == 0
 }
 
-const loadBalancerEnabledField = "loadBalancerEnabled"
-
 // BlockNodeObservableFields returns the state.yaml keys of the BlockNodeState
 // fields reality can read back, the ones Diff marks Observable.
 func BlockNodeObservableFields() []string {
@@ -207,7 +224,10 @@ func BlockNodeObservableFields() []string {
 			fields = append(fields, f.name)
 		}
 	}
-	return append(fields, loadBalancerEnabledField)
+	for _, f := range blockNodeOptionalFields {
+		fields = append(fields, f.name)
+	}
+	return fields
 }
 
 // Diff returns the fields where the persisted state b differs from reality,
@@ -229,20 +249,28 @@ func (b *BlockNodeState) Diff(reality BlockNodeState) []FieldDiff {
 			})
 		}
 	}
-	// The load-balancer choice is unknown for nodes last run before it was
-	// recorded, and for a split topology; compare it only when both sides know it.
-	if p, r := b.LoadBalancerEnabled, reality.LoadBalancerEnabled; p != nil && r != nil && *p != *r {
-		diffs = append(diffs, FieldDiff{
-			Field:      loadBalancerEnabledField,
-			Persisted:  strconv.FormatBool(*p),
-			Reality:    strconv.FormatBool(*r),
-			Observable: true,
-		})
+	for _, f := range blockNodeOptionalFields {
+		fromState, stateKnows := f.value(b)
+		fromReality, realityKnows := f.value(&reality)
+		if stateKnows && realityKnows && fromState != fromReality {
+			diffs = append(diffs, FieldDiff{
+				Field:      f.name,
+				Persisted:  fromState,
+				Reality:    fromReality,
+				Observable: true,
+			})
+		}
 	}
 	return diffs
 }
 
-// Equal returns true if two BlockNodeState values have no Diff.
+// Equal returns true if no observable field differs between the two values:
+// weaver-only records, which a refresh cannot rebuild, are ignored.
 func (b *BlockNodeState) Equal(other BlockNodeState) bool {
-	return len(b.Diff(other)) == 0
+	for _, d := range b.Diff(other) {
+		if d.Observable {
+			return false
+		}
+	}
+	return true
 }

@@ -204,10 +204,11 @@ func (m *stateManager) Refresh() error {
 		return nil // no file on disk, keep initial state
 	}
 
-	newState, err := m.state.Clone()
-	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to clone current state for refresh")
-	}
+	// Decode onto fresh defaults rather than the in-memory state: yaml.v3 merges
+	// into existing maps and writes through existing pointers, so an entry
+	// removed from the file would otherwise survive the refresh.
+	fresh := NewState(m.state.StateFile)
+	newState := &fresh
 
 	if err = yaml.Unmarshal(b, newState); err != nil {
 		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")

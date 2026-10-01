@@ -384,10 +384,10 @@ func TestRefreshState_ReadsEveryObservableField(t *testing.T) {
 		makePV("block-node", "plugins-storage-pvc", "5Gi", "/mnt/plugins"),
 		makePV("block-node", "application-state-storage-pvc", "50Gi", "/mnt/app-state"),
 	}
-	// A known load-balancer choice on the persisted side, since an unknown one
-	// is never compared.
-	disabled := false
-	persisted := state.BlockNodeState{LoadBalancerEnabled: &disabled}
+	// Known exposure values on the persisted side, opposite to the release's,
+	// since an unknown one is never compared.
+	noPool := false
+	persisted := state.BlockNodeState{ServiceTopology: state.ServiceTopologySplit, MetalLBPool: &noPool}
 
 	got := refresh(t, persisted, re, pvs...)
 
@@ -398,50 +398,62 @@ func TestRefreshState_ReadsEveryObservableField(t *testing.T) {
 	require.ElementsMatch(t, state.BlockNodeObservableFields(), fields)
 }
 
-func TestRefreshState_ReadsLoadBalancerChoice(t *testing.T) {
-	enabled, disabled := true, false
+func TestRefreshState_ReadsServiceExposure(t *testing.T) {
+	pool := map[string]any{"metallb.io/address-pool": "public-address-pool"}
 	cases := []struct {
-		name   string
-		values map[string]any
-		want   *bool
+		name     string
+		values   map[string]any
+		topology string
+		pool     bool
 	}{
 		{
-			name: "pool annotation on the main service",
-			values: map[string]any{"service": map[string]any{
-				"type":        "LoadBalancer",
-				"annotations": map[string]any{"metallb.io/address-pool": "public-address-pool"},
-			}},
-			want: &enabled,
+			name:     "pool annotation on the main service",
+			values:   map[string]any{"service": map[string]any{"type": "LoadBalancer", "annotations": pool}},
+			topology: state.ServiceTopologySingle,
+			pool:     true,
 		},
 		{
-			name:   "no pool annotation",
-			values: map[string]any{"service": map[string]any{"type": "LoadBalancer"}},
-			want:   &disabled,
+			name:     "no pool annotation",
+			values:   map[string]any{"service": map[string]any{"type": "LoadBalancer"}},
+			topology: state.ServiceTopologySingle,
 		},
 		{
-			name:   "no values",
-			values: nil,
-			want:   &disabled,
+			name:     "pool annotation set to null",
+			values:   map[string]any{"service": map[string]any{"annotations": map[string]any{"metallb.io/address-pool": nil}}},
+			topology: state.ServiceTopologySingle,
 		},
 		{
-			name: "split topology",
-			values: map[string]any{"loadBalancer": map[string]any{
-				"enabled":     true,
-				"annotations": map[string]any{"metallb.io/address-pool": "public-address-pool"},
-			}},
-			want: nil,
+			name:     "pool annotation set to an empty string",
+			values:   map[string]any{"service": map[string]any{"annotations": map[string]any{"metallb.io/address-pool": ""}}},
+			topology: state.ServiceTopologySingle,
 		},
 		{
-			name:   "split topology enabled as a quoted string",
-			values: map[string]any{"loadBalancer": map[string]any{"enabled": "true"}},
-			want:   nil,
+			name:     "no values",
+			values:   nil,
+			topology: state.ServiceTopologySingle,
+		},
+		{
+			name:     "split topology with a pool on the external service",
+			values:   map[string]any{"loadBalancer": map[string]any{"enabled": true, "annotations": pool}},
+			topology: state.ServiceTopologySplit,
+			pool:     true,
+		},
+		{
+			name: "split topology enabled as a quoted string, pool only on the main service",
+			values: map[string]any{
+				"loadBalancer": map[string]any{"enabled": "true"},
+				"service":      map[string]any{"annotations": pool},
+			},
+			topology: state.ServiceTopologySplit,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := refresh(t, state.BlockNodeState{}, deployedRelease(tc.values))
 
-			require.Equal(t, tc.want, got.LoadBalancerEnabled)
+			require.Equal(t, tc.topology, got.ServiceTopology)
+			require.NotNil(t, got.MetalLBPool)
+			require.Equal(t, tc.pool, *got.MetalLBPool)
 		})
 	}
 }
