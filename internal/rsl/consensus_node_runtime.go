@@ -45,6 +45,10 @@ type ConsensusNodeRuntimeResolver struct {
 	imageTag  *EffectiveValue[string]
 	ledgerId  *EffectiveValue[string]
 	chainId   *EffectiveValue[string]
+
+	// imageSource is the manifest's multi-registry image source. It is not
+	// arbitrated (manifest-only), so it skips the Reality/State/UserInput layering.
+	imageSource *models.ImageSource
 }
 
 func (r *ConsensusNodeRuntimeResolver) WithIntent(intent models.Intent) Resolver[map[string]state.ConsensusNodeState, models.ConsensusNodeInputs] {
@@ -86,6 +90,12 @@ func (r *ConsensusNodeRuntimeResolver) WithDeploymentPackage(pkgDir string, node
 		setOrClearString(r.imageTag, StrategyConfig, tag)
 	} else {
 		l.Warn().Err(err).Msg("Failed to resolve image from deployment package manifest")
+	}
+
+	if src, err := resolveConsensusImageSource(pkgDir); err == nil {
+		r.imageSource = src
+	} else {
+		l.Warn().Err(err).Msg("Failed to resolve multi-registry image source from deployment package manifest")
 	}
 
 	if lid, cid, err := resolveLedgerAndChain(pkgDir); err == nil {
@@ -211,6 +221,13 @@ func (r *ConsensusNodeRuntimeResolver) ImageRepo() *EffectiveValue[string] { ret
 func (r *ConsensusNodeRuntimeResolver) ImageTag() *EffectiveValue[string]  { return r.imageTag }
 func (r *ConsensusNodeRuntimeResolver) LedgerId() *EffectiveValue[string]  { return r.ledgerId }
 func (r *ConsensusNodeRuntimeResolver) ChainId() *EffectiveValue[string]   { return r.chainId }
+
+// ConsensusImageSource returns the manifest's multi-registry image source, or nil.
+func (r *ConsensusNodeRuntimeResolver) ConsensusImageSource() *models.ImageSource {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.imageSource
+}
 
 // ── State refresh ────────────────────────────────────────────────────────────
 

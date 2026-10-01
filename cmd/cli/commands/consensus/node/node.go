@@ -25,7 +25,8 @@ var (
 	flagDeploymentPkgDir  string
 	flagGrpcTlsSecret     string
 	flagSigningSecret     string
-	flagImagePullSecret   string
+	flagImagePullSecret   []string
+	flagRegistryStrategy  string
 	flagProfile           string
 	flagContainerName     string
 	flagJavaHeapMin       string
@@ -73,7 +74,8 @@ func init() {
 	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
 	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
 	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
-	nodeCmd.PersistentFlags().StringVar(&flagImagePullSecret, "image-pull-secret", models.ConsensusDefaultImagePullSecret, "Name of a docker-registry Secret in the namespace used to pull private consensus/UC images; the operator threads it onto the pods. Empty to disable (public images)")
+	nodeCmd.PersistentFlags().StringArrayVar(&flagImagePullSecret, "image-pull-secret", []string{models.ConsensusDefaultImagePullSecret}, "Map a docker-registry Secret to a registry for pulling private consensus/UC images. Repeatable. Bare NAME applies to all registries (default private-registry-creds); keyed HOST=NAME overrides one registry host (e.g. ghcr.io=ghcr-creds). Empty (\"\") disables (public images). Registries come from the deployment manifest; each Secret must already exist in the namespace")
+	nodeCmd.PersistentFlags().StringVar(&flagRegistryStrategy, "registry-selection-strategy", "", "Order the operator probes candidate registries for a multi-registry image: Random or Sequential (primary first). Empty uses the operator's --registry-order default. Applies only when the manifest yields multiple registries")
 
 	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
 	// the explicit Java heap is required or the node stalls on startup.
