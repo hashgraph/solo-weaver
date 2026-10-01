@@ -476,10 +476,10 @@ Expected (both F1 and F2):
   them onto the pods and their SAs. Registries come from the manifest — a `HOST=`
   that matches no manifest registry is rejected.
 - `--registry-selection-strategy` (`Random` or `Sequential`) sets the emitted
-  `SoftwareVersionSource.SelectionStrategy`, overriding the operator's
-  `--registry-order` default. Empty leaves it unset. It only has effect when the
-  manifest yields multiple registries. Use `Sequential` to force order-based
-  probing (primary first) for a deterministic failover test.
+  `SoftwareVersionSource.SelectionStrategy`. Empty uses the weaver default
+  (**Sequential** — the manifest's primary registry is tried first, giving
+  deterministic failover). Pass `Random` to spread probe traffic. It only has
+  effect when the manifest yields multiple registries.
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.

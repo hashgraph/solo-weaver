@@ -344,8 +344,9 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	assert.Equal(t, "amd64", src.ImageVerificationSpec[0].Architecture)
 	assert.Equal(t, []string{"sha256:aaa", "sha256:bbb"}, src.ImageVerificationSpec[0].LayerHashes)
 	assert.Equal(t, "arm64", src.ImageVerificationSpec[1].Architecture)
-	// Left unset so the operator uses its --registry-order default.
-	assert.Empty(t, src.SelectionStrategy)
+	// Weaver defaults a multi-registry source to Sequential so the manifest's
+	// primary (registries[0]) is tried first — deterministic failover.
+	assert.Equal(t, "Sequential", src.SelectionStrategy)
 }
 
 func TestCreateConsensusCapsule_NoSource_SingleSoftwareVersion(t *testing.T) {
@@ -528,36 +529,47 @@ func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
 	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
 }
 
-// TestCreateConsensusCapsule_SelectionStrategy verifies --registry-selection-strategy
-// lands on the emitted SoftwareVersionSource (empty leaves it unset, see the
-// multi-registry test above).
+// TestCreateConsensusCapsule_SelectionStrategy verifies the weaver default
+// (Sequential when a source is emitted) and that --registry-selection-strategy
+// Random overrides it.
 func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
-	fake := &fakeCapsuleClient{existing: map[string]string{}}
-	in := models.ConsensusNodeInputs{
-		Namespace:                 "hiero-network-1",
-		OrbitName:                 "hiero-network-1",
-		NodeId:                    0,
-		AccountId:                 "0.0.3",
-		Weight:                    500,
-		ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
-		ConsensusImageTag:         "0.74.2",
-		RegistrySelectionStrategy: models.RegistrySelectionSequential,
-		ConsensusImageSource: &models.ImageSource{
-			Repositories: []models.ImageRepositoryRef{
-				{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
-				{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+	mkInputs := func(strategy string) models.ConsensusNodeInputs {
+		return models.ConsensusNodeInputs{
+			Namespace:                 "hiero-network-1",
+			OrbitName:                 "hiero-network-1",
+			NodeId:                    0,
+			AccountId:                 "0.0.3",
+			Weight:                    500,
+			ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
+			ConsensusImageTag:         "0.74.2",
+			RegistrySelectionStrategy: strategy,
+			ConsensusImageSource: &models.ImageSource{
+				Repositories: []models.ImageRepositoryRef{
+					{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+					{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+				},
+				LayerHashes: map[string][]string{"linux/amd64": {"sha256:aaa"}},
 			},
-			LayerHashes: map[string][]string{"linux/amd64": {"sha256:aaa"}},
-		},
+		}
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
-	require.NoError(t, err)
-	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+	run := func(t *testing.T, strategy, want string) {
+		t.Helper()
+		fake := &fakeCapsuleClient{existing: map[string]string{}}
+		step, err := CreateConsensusCapsule(mkInputs(strategy), fake.provider()).Build()
+		require.NoError(t, err)
+		require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+		src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
+		require.NotNil(t, src)
+		assert.Equal(t, want, src.SelectionStrategy)
+	}
 
-	src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
-	require.NotNil(t, src)
-	assert.Equal(t, "Sequential", src.SelectionStrategy)
+	// Default: empty input ⇒ Sequential (deterministic failover order).
+	run(t, "", "Sequential")
+	// Explicit Sequential is honoured.
+	run(t, models.RegistrySelectionSequential, "Sequential")
+	// Explicit Random overrides the default.
+	run(t, models.RegistrySelectionRandom, "Random")
 }
 
 func TestSplitConsensusImage(t *testing.T) {
