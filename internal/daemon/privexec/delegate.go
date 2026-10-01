@@ -194,6 +194,7 @@ type NetworkChecks struct {
 type NetworkRulesCheck struct {
 	Status     string   `json:"status"`
 	Detail     string   `json:"detail"`
+	LiveFormat int      `json:"live_format"`
 	Missing    []string `json:"missing"`
 	Unexpected []string `json:"unexpected"`
 }

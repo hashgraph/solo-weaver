@@ -690,3 +690,79 @@ func TestLogReport_ASkippedArtifactLogsNothing(t *testing.T) {
 
 	assert.Empty(t, logLines(t, buf), "contention is not an event an operator must act on")
 }
+
+// withChecks attaches correctness checks to a healthy three-artifact report.
+func withChecks(c *privexec.NetworkChecks) privexec.NetworkReassertResult {
+	res := report(
+		privexec.NetworkArtifactStatus{Artifact: "host-firewall", Expected: true, Present: true},
+		privexec.NetworkArtifactStatus{Artifact: "workload-policy", Expected: true, Present: true},
+		privexec.NetworkArtifactStatus{Artifact: "egress-qdisc", Expected: true, Present: true},
+	)
+	res.Checks = c
+	return res
+}
+
+func TestRecord_ChecksReachTheSnapshot(t *testing.T) {
+	d := &fakeDelegator{results: []privexec.NetworkReassertResult{withChecks(okChecks(nil))}}
+	m := newTestMonitor(d, func() bool { return true })
+
+	require.NoError(t, m.tick(context.Background()))
+
+	snap := m.Snapshot()
+	require.NotNil(t, snap.Checks)
+	assert.Equal(t, privexec.NetworkCheckOK, snap.Checks.Rules)
+	require.NotNil(t, snap.LastVerifiedGoodAt)
+}
+
+func TestRecord_WorkerWithoutChecksLeavesThemUnset(t *testing.T) {
+	d := &fakeDelegator{results: []privexec.NetworkReassertResult{withChecks(nil)}}
+	m := newTestMonitor(d, func() bool { return true })
+
+	require.NoError(t, m.tick(context.Background()))
+
+	assert.Nil(t, m.Snapshot().Checks)
+	assert.Nil(t, m.Snapshot().LastVerifiedGoodAt)
+}
+
+// TestLogChecks_DriftIsAnErrorWithEverySearchField pins the log contract: a
+// fixed reason and the same fields on every line.
+func TestLogChecks_DriftIsAnErrorWithEverySearchField(t *testing.T) {
+	drift := okChecks(nil)
+	drift.Rules = privexec.NetworkRulesCheck{Status: privexec.NetworkCheckFailed, Detail: "differ",
+		Missing: []string{"rule a"}}
+	d := &fakeDelegator{results: []privexec.NetworkReassertResult{withChecks(drift), withChecks(drift), withChecks(okChecks(nil))}}
+	m := newTestMonitor(d, func() bool { return true })
+	buf := captureLogs(t)
+
+	require.NoError(t, m.tick(context.Background()))
+	got := soleLine(t, buf)
+	assert.Equal(t, "error", got["level"])
+	assert.Equal(t, reasonRulesDrifted, got["reason"])
+	for _, field := range []string{"monitor", "check", "interface", "category", "detail", "consecutive", "hint"} {
+		assert.Contains(t, got, field)
+	}
+	assert.Equal(t, []any{"- rule a"}, got["lines"])
+
+	require.NoError(t, m.tick(context.Background()))
+	assert.Empty(t, logLines(t, buf), "a lasting problem is quiet until its hourly reminder")
+
+	require.NoError(t, m.tick(context.Background()))
+	got = soleLine(t, buf)
+	assert.Equal(t, "info", got["level"])
+	assert.Equal(t, reasonHealthyAgain, got["reason"])
+	assert.Equal(t, reasonRulesDrifted, got["cleared"])
+}
+
+func TestLogChecks_OlderFormatIsCalm(t *testing.T) {
+	c := okChecks(nil)
+	c.Rules.Status = privexec.NetworkCheckOlderFormat
+	d := &fakeDelegator{results: []privexec.NetworkReassertResult{withChecks(c)}}
+	m := newTestMonitor(d, func() bool { return true })
+	buf := captureLogs(t)
+
+	require.NoError(t, m.tick(context.Background()))
+
+	got := soleLine(t, buf)
+	assert.Equal(t, "info", got["level"])
+	assert.Equal(t, reasonRulesOlderFormat, got["reason"])
+}

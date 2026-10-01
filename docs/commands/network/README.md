@@ -32,7 +32,7 @@ flowchart TB
 | Control who can SSH to the host, or block an address outright | `network firewall` | [firewall.md](firewall.md) |
 | Decide which QoS class a workload's traffic lands in | `network policy` | [policy.md](policy.md) |
 | Decide how much bandwidth each class gets | `network shape` | [shape.md](shape.md) |
-| Check all three are still live, and restore any that were wiped | `network reassert` | [reassert.md](reassert.md) |
+| Check all three are still live and right, and restore any that were wiped | `network reassert` | [reassert.md](reassert.md) |
 
 `reassert` spans all three planes rather than owning one, which is why it sits at the
 `network` level. It is normally run by the daemon, not by hand — see
@@ -73,7 +73,8 @@ re-attaches it per-pod with [`block node tc-attach`](../block-node.md#tc-attach-
 
 Those two units also replay this state **mid-life**, not only at boot: if something else on the
 host destroys a table or the tc hierarchy, the daemon notices within a minute and restarts the
-owning unit. See [`network reassert`](reassert.md).
+owning unit. It also reports when the live rules drift from the policy registry, a stray tc
+filter appears, or stamped traffic stops reaching its lane. See [`network reassert`](reassert.md).
 
 ## See also
 
