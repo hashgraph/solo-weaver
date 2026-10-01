@@ -47,6 +47,10 @@ func (s *HardwareState) Clone() (*HardwareState, error) {
 // Clone creates a deep copy of BlockNodeState
 func (b *BlockNodeState) Clone() (*BlockNodeState, error) {
 	clone := *b
+	if b.LoadBalancerEnabled != nil {
+		enabled := *b.LoadBalancerEnabled
+		clone.LoadBalancerEnabled = &enabled
+	}
 	return &clone, nil
 }
 
