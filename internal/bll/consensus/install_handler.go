@@ -293,6 +293,8 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 		addHash(models.ConfigKeyThrottles, ins.ConfigThrottles)
 		addHash(models.ConfigKeyBlockNodes, ins.ConfigBlockNodes)
 
+		managedSpec := buildConsensusNodeManagedSpec(ins)
+
 		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
 			Namespace:     ins.Namespace,
 			OrbitName:     ins.OrbitName,
@@ -307,12 +309,59 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			GrpcTlsSecret: ins.GrpcTlsSecret,
 			SigningSecret: ins.SigningSecret,
 			ConfigHashes:  configHashes,
+			ManagedSpec:   managedSpec,
 			LastSync:      now,
 		}
 
 		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")
 		return nil
 	}
+}
+
+// buildConsensusNodeManagedSpec captures the deliberate install-time shape of the
+// capsule as it is actually applied — resolving the same defaults the capsule
+// step uses (ConsensusDefault* for sizing/JVM/UC image, and the per-volume
+// EffectiveSpec for volume backing) so the persisted baseline matches the live
+// CR rather than the raw (often empty) user inputs. This is the shape drift
+// detection and a disaster-recovery / migration re-apply resolve the node from.
+func buildConsensusNodeManagedSpec(ins models.ConsensusNodeInputs) *state.ConsensusNodeManagedSpec {
+	volumes := models.ConsensusVolumeConfig{Volumes: map[string]models.ConsensusVolumeSpec{}}
+	for _, name := range models.ConsensusVolumeNames() {
+		spec, err := ins.Volumes.EffectiveSpec(name)
+		if err != nil {
+			// resolveVolumeConfig already validated every volume before the
+			// workflow ran, so this cannot fail here; skip defensively.
+			continue
+		}
+		volumes.Volumes[name] = spec
+	}
+
+	return &state.ConsensusNodeManagedSpec{
+		ProvisionerDaemonEnabled: ins.ProvisionerDaemonEnabled,
+		ContainerName:            valueOrDefaultStr(ins.ContainerName, models.ConsensusDefaultContainerName),
+		CPULimit:                 valueOrDefaultStr(ins.CPULimit, models.ConsensusDefaultCPULimit),
+		CPURequest:               valueOrDefaultStr(ins.CPURequest, models.ConsensusDefaultCPURequest),
+		MemoryLimit:              valueOrDefaultStr(ins.MemoryLimit, models.ConsensusDefaultMemoryLimit),
+		MemoryRequest:            valueOrDefaultStr(ins.MemoryRequest, models.ConsensusDefaultMemoryRequest),
+		JavaHeapMin:              valueOrDefaultStr(ins.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
+		JavaHeapMax:              valueOrDefaultStr(ins.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
+		JavaOpts:                 valueOrDefaultStr(ins.JavaOpts, models.ConsensusDefaultJavaOpts),
+		UCImageRepo:              valueOrDefaultStr(ins.UCImageRepo, models.ConsensusDefaultUCImageRepo),
+		UCImageTag:               valueOrDefaultStr(ins.UCImageTag, models.ConsensusDefaultUCImageTag),
+		ImagePullSecrets:         ins.ImagePullSecrets,
+		Volumes:                  volumes,
+		HostPathUID:              ins.HostPathUID,
+		HostPathGID:              ins.HostPathGID,
+	}
+}
+
+// valueOrDefaultStr returns v when non-empty (after trimming), else def. Mirrors
+// the capsule step's valueOrDefault so the persisted shape matches what is applied.
+func valueOrDefaultStr(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
 }
 
 // NewInstallHandler creates a new InstallHandler.
