@@ -3,6 +3,9 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 
@@ -253,7 +256,74 @@ type ConsensusNodeState struct {
 	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
 	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
 	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
-	LastSync      htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+
+	// ManagedSpec records the deliberate install-time shape of the ConsensusCapsule
+	// beyond identity (sizing, JVM, images, volume backing, mode). A pointer so old
+	// state files (written before this field existed) load as nil rather than an
+	// empty shape. Populated at install; it is the baseline for drift detection,
+	// disaster-recovery reinstall, and migration adopt — resolving the node's
+	// intended shape instead of falling back to compiled-in defaults.
+	ManagedSpec *ConsensusNodeManagedSpec `yaml:"managedSpec,omitempty" json:"managedSpec,omitempty"`
+
+	// ManagedSpecHash is ManagedSpec.Hash() captured at write time. A single
+	// fingerprint the reality layer re-derives from the live CR to flag out-of-band
+	// capsule edits without diffing every field.
+	ManagedSpecHash string `yaml:"managedSpecHash,omitempty" json:"managedSpecHash,omitempty"`
+
+	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+}
+
+// ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver
+// deliberately sets at install time, beyond the node's identity. It is the desired
+// (managed) shape — the `.spec` half of the Kubernetes spec/status split — as
+// opposed to the observed snapshots the other `…State` types hold. Persisting it
+// lets a later re-apply, drift check, DR reinstall, or migration adopt resolve
+// the node's intended shape rather than resetting unset fields to defaults.
+type ConsensusNodeManagedSpec struct {
+	ProvisionerDaemonEnabled bool                         `yaml:"provisionerDaemonEnabled,omitempty" json:"provisionerDaemonEnabled,omitempty"`
+	ContainerName            string                       `yaml:"containerName,omitempty" json:"containerName,omitempty"`
+	CPULimit                 string                       `yaml:"cpuLimit,omitempty" json:"cpuLimit,omitempty"`
+	CPURequest               string                       `yaml:"cpuRequest,omitempty" json:"cpuRequest,omitempty"`
+	MemoryLimit              string                       `yaml:"memoryLimit,omitempty" json:"memoryLimit,omitempty"`
+	MemoryRequest            string                       `yaml:"memoryRequest,omitempty" json:"memoryRequest,omitempty"`
+	JavaHeapMin              string                       `yaml:"javaHeapMin,omitempty" json:"javaHeapMin,omitempty"`
+	JavaHeapMax              string                       `yaml:"javaHeapMax,omitempty" json:"javaHeapMax,omitempty"`
+	JavaOpts                 string                       `yaml:"javaOpts,omitempty" json:"javaOpts,omitempty"`
+	UCImageRepo              string                       `yaml:"ucImageRepo,omitempty" json:"ucImageRepo,omitempty"`
+	UCImageTag               string                       `yaml:"ucImageTag,omitempty" json:"ucImageTag,omitempty"`
+	ImagePullSecrets         models.PullSecretSelector    `yaml:"imagePullSecrets,omitempty" json:"imagePullSecrets,omitempty"`
+	Volumes                  models.ConsensusVolumeConfig `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	HostPathUID              int                          `yaml:"hostPathUid,omitempty" json:"hostPathUid,omitempty"`
+	HostPathGID              int                          `yaml:"hostPathGid,omitempty" json:"hostPathGid,omitempty"`
+}
+
+// Hash returns a stable SHA-256 fingerprint of the managed shape. Returns "" for
+// a nil receiver (a nil pointer wrapped in an interface would otherwise hash as
+// JSON "null"). Delegates to SpecHash so every component hashes identically.
+func (m *ConsensusNodeManagedSpec) Hash() string {
+	if m == nil {
+		return ""
+	}
+	return SpecHash(m)
+}
+
+// SpecHash returns a stable SHA-256 fingerprint of v, for recording a managed
+// component's desired shape so a later run can detect out-of-band drift.
+// encoding/json emits struct fields in declaration order and map keys sorted, so
+// the output is deterministic for a given value. Component-agnostic by design:
+// each component's ManagedSpec (consensus today; block/relay/mirror later) hashes
+// the same way without a shared "managed" god-struct. Returns "" when v is nil or
+// cannot be marshalled.
+func SpecHash(v any) string {
+	if v == nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%x", sum)
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

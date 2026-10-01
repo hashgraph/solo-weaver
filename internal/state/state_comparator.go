@@ -94,3 +94,55 @@ func (b *BlockNodeState) Equal(other BlockNodeState) bool {
 	return b.ReleaseInfo.Equal(other.ReleaseInfo) &&
 		b.Storage == other.Storage
 }
+
+// Equal returns true if two ConsensusNodeManagedSpec values describe the same
+// managed shape. It compares the stable hash (which covers every field, including
+// the Volumes map and the pull-secret selector), so a nil and an empty-but-non-nil
+// spec are treated as different (nil = "never recorded", {} = "recorded, all
+// defaults"). Callers handle the nil/nil case before dereferencing.
+func (m *ConsensusNodeManagedSpec) Equal(other *ConsensusNodeManagedSpec) bool {
+	if m == nil || other == nil {
+		return m == nil && other == nil
+	}
+	return m.Hash() == other.Hash()
+}
+
+// Equal returns true if two ConsensusNodeState values describe the same managed
+// node, ignoring LastSync and the per-run deployment-package dir (a host path
+// that changes per invocation — see issue #1187 note 4). It compares identity,
+// the config-content hashes (by hash + source, ignoring LastUpdate), and the
+// managed shape.
+func (n *ConsensusNodeState) Equal(other ConsensusNodeState) bool {
+	if n.Namespace != other.Namespace ||
+		n.OrbitName != other.OrbitName ||
+		n.NodeId != other.NodeId ||
+		n.AccountId != other.AccountId ||
+		n.Weight != other.Weight ||
+		n.ImageRepo != other.ImageRepo ||
+		n.ImageTag != other.ImageTag ||
+		n.LedgerId != other.LedgerId ||
+		n.ChainId != other.ChainId ||
+		n.GrpcTlsSecret != other.GrpcTlsSecret ||
+		n.SigningSecret != other.SigningSecret {
+		return false
+	}
+	if !equalConfigHashes(n.ConfigHashes, other.ConfigHashes) {
+		return false
+	}
+	return n.ManagedSpec.Equal(other.ManagedSpec)
+}
+
+// equalConfigHashes compares two config-hash maps by content hash and source,
+// ignoring each entry's LastUpdate timestamp.
+func equalConfigHashes(a, b map[string]ConfigHashEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || av.Hash != bv.Hash || av.Source != bv.Source {
+			return false
+		}
+	}
+	return true
+}
