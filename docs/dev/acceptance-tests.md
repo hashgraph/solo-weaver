@@ -538,13 +538,13 @@ task -d docs/dev/daemon prep SOLO_OPERATOR_REF=chore/update-beacon-examples
 # Verify the staged manifest lists TWO registries + deterministic layer hashes.
 cat test/data/build-v0.74.0/manifests/consensus-node-components.yaml
 
-task -d docs/dev/daemon vm:sync
+task -d docs/dev/daemon sync
 
 # Inside the VM (via `task vm:ssh:proxy`):
 task -d docs/dev/daemon cluster       # kube cluster install
 task -d docs/dev/daemon secrets       # creates private-registry-creds in both namespaces
 task -d docs/dev/daemon operator      # kube operator install (v0.8.0 chart)
-task -d docs/dev/daemon network       # consensus node install
+task -d docs/dev/daemon consensus      # consensus node install
 ```
 
 Verify the CR on the consensus-node container:
@@ -578,7 +578,7 @@ Rebuild with the operator's `CN_SELECTION_STRATEGY` knob so the manifest declare
 task -d docs/dev/daemon prep \
   SOLO_OPERATOR_REF=chore/update-beacon-examples \
   CN_SELECTION_STRATEGY=Random
-task -d docs/dev/daemon vm:sync
+task -d docs/dev/daemon sync
 # Reinstall the node (uninstall first, or use a fresh namespace).
 ```
 
@@ -615,7 +615,7 @@ task -d docs/dev/daemon prep \
   SOLO_OPERATOR_REF=chore/update-beacon-examples \
   CN_DECOY_REGISTRY=artifacts.hashgraph.io/consensus-node-docker-release-local/consensus-node:0.0.0-invalid \
   CN_DECOY_POSITION_0=true
-task -d docs/dev/daemon vm:sync
+task -d docs/dev/daemon sync
 # Reinstall the node.
 ```
 
@@ -641,7 +641,7 @@ Weaver's manifest parser rejects anything other than `""`, `Random`, `Sequential
 # Inject a bad value, then try to install:
 sed -i.bak 's/version: "0.74.0"/version: "0.74.0"\n    selectionStrategy: random/' \
   test/data/build-v0.74.0/manifests/consensus-node-components.yaml
-task -d docs/dev/daemon vm:sync
+task -d docs/dev/daemon sync
 # Inside the VM:
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
@@ -739,7 +739,7 @@ case, so after a baseline `prep` we replace the generated `consensus-node-compon
 
 ```bash
 task -d docs/dev/daemon prep SOLO_OPERATOR_REF=chore/update-beacon-examples
-task -d docs/dev/daemon vm:sync
+task -d docs/dev/daemon sync
 ```
 
 Inside the VM, overwrite
