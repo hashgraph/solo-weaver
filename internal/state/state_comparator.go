@@ -2,7 +2,14 @@
 
 package state
 
-import "github.com/hashgraph/solo-weaver/pkg/models"
+import (
+	"maps"
+	"slices"
+	"strconv"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"k8s.io/apimachinery/pkg/api/resource"
+)
 
 // Equal returns true if two SoftwareState values are equal, ignoring LastSync.
 func (s *SoftwareState) Equal(other SoftwareState) bool {
@@ -89,8 +96,153 @@ func (cs *ClusterState) Equal(other ClusterState) bool {
 	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo)
 }
 
-// Equal returns true if two BlockNodeState values are equal, ignoring LastSync.
+// FieldDiff is one field whose persisted value differs from reality.
+type FieldDiff struct {
+	// Field is the field's key path in state.yaml, such as "storage.liveSize".
+	Field     string
+	Persisted string
+	Reality   string
+	// Observable is false for a weaver-only record, which reality cannot read
+	// back, so a difference in it is not drift.
+	Observable bool
+}
+
+// blockNodeField is one BlockNodeState field the diff compares. A nil same
+// compares the two values as written.
+type blockNodeField struct {
+	name       string
+	observable bool
+	same       func(a, b string) bool
+	value      func(*BlockNodeState) string
+}
+
+var blockNodeFields = []blockNodeField{
+	{"name", true, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.Name }},
+	{"version", true, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.ChartVersion }},
+	{"appVersion", true, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.AppVersion }},
+	{"namespace", true, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.Namespace }},
+	{"chartRef", false, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.ChartRef }},
+	{"chartName", true, nil, func(b *BlockNodeState) string { return b.ReleaseInfo.ChartName }},
+	{"status", true, nil, func(b *BlockNodeState) string { return string(b.ReleaseInfo.Status) }},
+	{"storage.basePath", false, nil, func(b *BlockNodeState) string { return b.Storage.BasePath }},
+	{"storage.archivePath", true, nil, func(b *BlockNodeState) string { return b.Storage.ArchivePath }},
+	{"storage.livePath", true, nil, func(b *BlockNodeState) string { return b.Storage.LivePath }},
+	{"storage.logPath", true, nil, func(b *BlockNodeState) string { return b.Storage.LogPath }},
+	{"storage.verificationPath", true, nil, func(b *BlockNodeState) string { return b.Storage.VerificationPath }},
+	{"storage.pluginsPath", true, nil, func(b *BlockNodeState) string { return b.Storage.PluginsPath }},
+	{"storage.applicationStatePath", true, nil, func(b *BlockNodeState) string { return b.Storage.ApplicationStatePath }},
+	{"storage.liveSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.LiveSize }},
+	{"storage.archiveSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.ArchiveSize }},
+	{"storage.logSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.LogSize }},
+	{"storage.verificationSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.VerificationSize }},
+	{"storage.pluginsSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.PluginsSize }},
+	{"storage.applicationStateSize", true, sameQuantity, func(b *BlockNodeState) string { return b.Storage.ApplicationStateSize }},
+	{"historicRetention", true, nil, func(b *BlockNodeState) string { return b.HistoricRetention }},
+	{"recentRetention", true, nil, func(b *BlockNodeState) string { return b.RecentRetention }},
+	{"pluginPreset", false, nil, func(b *BlockNodeState) string { return b.PluginPreset }},
+	{"pluginList", false, nil, func(b *BlockNodeState) string { return b.PluginList }},
+	{"trafficShapingDisabled", false, nil, func(b *BlockNodeState) string { return strconv.FormatBool(b.TrafficShapingDisabled) }},
+	{"shaping.egressInterface", false, nil, func(b *BlockNodeState) string { return shapingOf(b).EgressInterface }},
+	{"shaping.linkRate", false, nil, func(b *BlockNodeState) string { return shapingOf(b).LinkRate }},
+}
+
+// shapingOf returns b's shaping record, or an empty one when it was never set,
+// so a nil record and an empty one compare the same.
+func shapingOf(b *BlockNodeState) ShapingState {
+	if b.Shaping == nil {
+		return ShapingState{}
+	}
+	return *b.Shaping
+}
+
+// shapeOverrideFields returns the override fields of every traffic class either
+// state records, sorted by class.
+func shapeOverrideFields(a, b *BlockNodeState) []blockNodeField {
+	classes := map[string]struct{}{}
+	for _, s := range []*BlockNodeState{a, b} {
+		for class := range shapingOf(s).ShapeOverrides {
+			classes[class] = struct{}{}
+		}
+	}
+
+	var fields []blockNodeField
+	for _, class := range slices.Sorted(maps.Keys(classes)) {
+		override := func(b *BlockNodeState) models.ShapeOverride { return shapingOf(b).ShapeOverrides[class] }
+		prefix := "shaping.shapeOverrides." + class + "."
+		fields = append(fields,
+			blockNodeField{prefix + "rate", false, nil, func(b *BlockNodeState) string { return override(b).Rate }},
+			blockNodeField{prefix + "ceil", false, nil, func(b *BlockNodeState) string { return override(b).Ceil }},
+			blockNodeField{prefix + "prio", false, nil, func(b *BlockNodeState) string { return formatPrio(override(b).Prio) }},
+		)
+	}
+	return fields
+}
+
+func formatPrio(prio *int) string {
+	if prio == nil {
+		return ""
+	}
+	return strconv.Itoa(*prio)
+}
+
+// sameQuantity compares two sizes as Kubernetes quantities, so 20Gi and 20480Mi
+// match. A size that does not parse, including an empty one, is compared as written.
+func sameQuantity(a, b string) bool {
+	qa, errA := resource.ParseQuantity(a)
+	qb, errB := resource.ParseQuantity(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return qa.Cmp(qb) == 0
+}
+
+const loadBalancerEnabledField = "loadBalancerEnabled"
+
+// BlockNodeObservableFields returns the state.yaml keys of the BlockNodeState
+// fields reality can read back, the ones Diff marks Observable.
+func BlockNodeObservableFields() []string {
+	var fields []string
+	for _, f := range blockNodeFields {
+		if f.observable {
+			fields = append(fields, f.name)
+		}
+	}
+	return append(fields, loadBalancerEnabledField)
+}
+
+// Diff returns the fields where the persisted state b differs from reality,
+// ignoring the release timestamps and LastSync.
+func (b *BlockNodeState) Diff(reality BlockNodeState) []FieldDiff {
+	var diffs []FieldDiff
+	for _, f := range slices.Concat(blockNodeFields, shapeOverrideFields(b, &reality)) {
+		fromState, fromReality := f.value(b), f.value(&reality)
+		same := fromState == fromReality
+		if f.same != nil {
+			same = f.same(fromState, fromReality)
+		}
+		if !same {
+			diffs = append(diffs, FieldDiff{
+				Field:      f.name,
+				Persisted:  fromState,
+				Reality:    fromReality,
+				Observable: f.observable,
+			})
+		}
+	}
+	// The load-balancer choice is unknown for nodes last run before it was
+	// recorded, and for a split topology; compare it only when both sides know it.
+	if p, r := b.LoadBalancerEnabled, reality.LoadBalancerEnabled; p != nil && r != nil && *p != *r {
+		diffs = append(diffs, FieldDiff{
+			Field:      loadBalancerEnabledField,
+			Persisted:  strconv.FormatBool(*p),
+			Reality:    strconv.FormatBool(*r),
+			Observable: true,
+		})
+	}
+	return diffs
+}
+
+// Equal returns true if two BlockNodeState values have no Diff.
 func (b *BlockNodeState) Equal(other BlockNodeState) bool {
-	return b.ReleaseInfo.Equal(other.ReleaseInfo) &&
-		b.Storage == other.Storage
+	return len(b.Diff(other)) == 0
 }
