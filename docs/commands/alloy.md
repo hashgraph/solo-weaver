@@ -242,9 +242,12 @@ is skipped with a clear message.
 > * the release in the target namespace is left in a failed, pending or uninstalled state;
 > * the `external-secrets` release name in the target namespace belongs to a different chart.
 >
-> Each message names the release and namespace in the way. Clear it with
-> `helm uninstall <release> -n <namespace>` — `eso operator uninstall` skips releases that are
-> not fully deployed.
+> Each message names the release and namespace that are in the way, and the command to clear it. For the
+> first two cases that is `sudo solo-provisioner eso operator uninstall --namespace <namespace>`,
+> which removes the ESO release in that namespace whatever its name and state. The third case —
+> a different chart holding the `external-secrets` release name — needs raw
+> `helm uninstall <release> -n <namespace>`: the uninstall command will not remove a chart that
+> is not ESO.
 
 ```bash
 # Default namespace: external-secrets
@@ -280,7 +283,16 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 > and the Kubernetes Secrets they sync. Do not run it while anything still depends on a synced
 > secret.
 
-Idempotent: if ESO is not installed in the target namespace, the uninstall is skipped.
+The target is the ESO release **in `--namespace`**, found by chart name — so this clears an ESO
+installed under a different release name (a hand-run `helm install my-eso`, or a controller such
+as Flux that installs through Helm and leaves a release record), and one left in a `failed`,
+`pending-*`, `uninstalling` or `uninstalled` state. A deployment that renders the chart and
+applies the manifests itself, as Argo CD does by default, leaves no Helm release, so this command
+cannot see it. It never reaches outside the namespace you name.
+
+Idempotent: if that namespace holds no ESO, the uninstall is skipped and the command exits 0.
+That includes the case where a *different* chart holds the `external-secrets` release name — it
+is left untouched, with a warning naming it; remove that one with `helm uninstall`.
 
 The three error-handling flags are mutually exclusive and apply to both `eso operator
 install` and `eso operator uninstall`. See
