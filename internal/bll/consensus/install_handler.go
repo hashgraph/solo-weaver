@@ -203,6 +203,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// guard that the operator is present and the right version.
 		steps.PrecheckConsensusSecrets(ins),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
+		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
 	)

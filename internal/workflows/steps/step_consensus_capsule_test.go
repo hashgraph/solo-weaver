@@ -60,6 +60,44 @@ func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {
 	return func(context.Context) (CapsuleKubeClient, error) { return f, nil }
 }
 
+// --- PrecheckConsensusNotInstalled tests ---
+
+func TestPrecheckConsensusNotInstalled_Absent(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "absent capsule must pass without --force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsNoForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusFailed, rpt.Status, "existing capsule without --force must fail")
+	assert.Contains(t, rpt.Error.Error(), "already installed")
+	assert.Contains(t, rpt.Error.Error(), "--force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsWithForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, true, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "existing capsule with --force must pass")
+}
+
+// --- consensusInputsWithConfigs helper ---
+
 // consensusInputsWithConfigs returns inputs whose 11 config bodies are all set
 // to content and whose per-file source is all set to source.
 func consensusInputsWithConfigs(content, source string) models.ConsensusNodeInputs {
