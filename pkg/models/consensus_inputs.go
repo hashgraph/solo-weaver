@@ -165,10 +165,13 @@ func RegistryHost(image string) string {
 // manifest, mapped onto the operator's SoftwareVersionSource. LayerHashes is the
 // per-platform ("linux/amd64") shared set every candidate must match; only
 // deterministic images (shared hashes across registries) are representable, so a
-// nil ImageSource means "keep the single SoftwareVersion".
+// nil ImageSource means "keep the single SoftwareVersion". SelectionStrategy
+// mirrors the manifest's preference (Random/Sequential, or "" for none); the
+// capsule step applies it when no CLI override is given.
 type ImageSource struct {
-	Repositories []ImageRepositoryRef `json:"repositories"`
-	LayerHashes  map[string][]string  `json:"layerHashes"`
+	Repositories      []ImageRepositoryRef `json:"repositories"`
+	LayerHashes       map[string][]string  `json:"layerHashes"`
+	SelectionStrategy string               `json:"selectionStrategy,omitempty"`
 }
 
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node

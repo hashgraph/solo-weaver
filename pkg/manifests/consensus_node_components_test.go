@@ -135,6 +135,38 @@ func TestParseConsensusNodeComponents_EmptyImagesTolerated(t *testing.T) {
 	require.Nil(t, doc.Images.ConsensusNode)
 }
 
+// A deployment package may declare its preferred registry probe order so that
+// clients (weaver) can honour it when no explicit CLI override is given.
+func TestParseConsensusNodeComponents_SelectionStrategy(t *testing.T) {
+	for _, strategy := range []string{"Random", "Sequential"} {
+		doc, err := ParseConsensusNodeComponents([]byte(`
+schemaVersion: 1
+images:
+  consensusNode:
+    version: "0.75.0"
+    selectionStrategy: ` + strategy + `
+    deterministic: {supported: true, layerHashes: {linux/amd64: ["x"], linux/arm64: ["y"]}}
+    registries:
+      - image: "ghcr.io/x:0.75.0"
+      - image: "artifacts.hashgraph.io/x:0.75.0"
+`))
+		require.NoError(t, err)
+		require.Equal(t, strategy, doc.Images.ConsensusNode.SelectionStrategy)
+	}
+
+	// Omitted field stays empty (weaver supplies its own default downstream).
+	doc, err := ParseConsensusNodeComponents([]byte(`
+schemaVersion: 1
+images:
+  consensusNode:
+    version: "0.75.0"
+    deterministic: {supported: true, layerHashes: {linux/amd64: ["x"], linux/arm64: ["y"]}}
+    registries: [{image: "ghcr.io/x:0.75.0"}]
+`))
+	require.NoError(t, err)
+	require.Empty(t, doc.Images.ConsensusNode.SelectionStrategy)
+}
+
 // HIP-1494 §Backwards Compatibility: unknown fields must be silently ignored.
 func TestParseConsensusNodeComponents_IgnoresUnknownFields(t *testing.T) {
 	data := []byte(`
@@ -188,6 +220,20 @@ images:
 `,
 			expectField:   "images.consensusNode.version",
 			expectMessage: "must not be empty",
+		},
+		{
+			name: "invalid selection strategy",
+			yaml: `
+schemaVersion: 1
+images:
+  consensusNode:
+    version: "0.75.0"
+    selectionStrategy: random
+    deterministic: {supported: true, layerHashes: {linux/amd64: ["x"], linux/arm64: ["y"]}}
+    registries: [{image: "ghcr.io/x:0.75.0"}]
+`,
+			expectField:   "images.consensusNode.selectionStrategy",
+			expectMessage: `must be one of "", Random, Sequential`,
 		},
 		{
 			name: "empty registries",
