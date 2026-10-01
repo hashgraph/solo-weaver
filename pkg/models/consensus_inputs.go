@@ -122,8 +122,8 @@ func ParsePullSecretSelector(values []string) (PullSecretSelector, error) {
 }
 
 // Registry selection strategies for a multi-registry SoftwareVersionSource. These
-// match the operator's SelectionStrategy enum. Empty means the operator's
-// --registry-order default.
+// match the operator's SelectionStrategy enum. Weaver defaults to Sequential when
+// emitting a source so the manifest's primary registry is tried first.
 const (
 	RegistrySelectionRandom     = "Random"
 	RegistrySelectionSequential = "Sequential"
@@ -131,7 +131,8 @@ const (
 
 // NormalizeRegistrySelectionStrategy validates and canonicalizes the
 // --registry-selection-strategy value. It accepts any case, returns the exact
-// enum the operator expects, and treats empty as "use the operator default".
+// enum the operator expects, and treats empty as "use the weaver default"
+// (applied by the capsule step when emitting a source).
 func NormalizeRegistrySelectionStrategy(s string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "":
@@ -215,7 +216,7 @@ type ConsensusNodeInputs struct {
 
 	// RegistrySelectionStrategy sets SoftwareVersionSource.SelectionStrategy
 	// (Random or Sequential) when a multi-registry source is emitted. Empty uses the
-	// operator's --registry-order default.
+	// weaver default (Sequential — manifest primary first).
 	RegistrySelectionStrategy string `json:"registrySelectionStrategy,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`

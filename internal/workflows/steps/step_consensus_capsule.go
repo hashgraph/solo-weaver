@@ -480,10 +480,16 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				}
 				src = existing
 			}
-			// An explicit --registry-selection-strategy overrides the operator's
-			// --registry-order default on whichever source we set.
-			if src != nil && inputs.RegistrySelectionStrategy != "" {
-				src.SelectionStrategy = inputs.RegistrySelectionStrategy
+			// Default a source's SelectionStrategy to Sequential so the manifest's
+			// primary registry (registries[0]) is tried first and failover is
+			// deterministic. An explicit --registry-selection-strategy wins (e.g.
+			// Random to spread probe traffic).
+			if src != nil {
+				if inputs.RegistrySelectionStrategy != "" {
+					src.SelectionStrategy = inputs.RegistrySelectionStrategy
+				} else if src.SelectionStrategy == "" {
+					src.SelectionStrategy = models.RegistrySelectionSequential
+				}
 			}
 			if src != nil {
 				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
@@ -628,8 +634,8 @@ func splitConsensusImage(full string) (repository, imageName string) {
 // buildSoftwareVersionSource turns an ImageSource into the operator's
 // SoftwareVersionSource. Each registry gets its own pull secret, picked by host,
 // and one verification entry per platform (sorted, so the output is stable).
-// Returns nil when there is nothing to build. SelectionStrategy is left empty so
-// the operator uses its own --registry-order default.
+// Returns nil when there is nothing to build. SelectionStrategy is left empty
+// here; the caller sets it (weaver default = Sequential, or the user override).
 func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.PullSecretSelector) *operatorv1alpha1.SoftwareVersionSource {
 	if src == nil || len(src.Repositories) == 0 || len(src.LayerHashes) == 0 {
 		return nil
