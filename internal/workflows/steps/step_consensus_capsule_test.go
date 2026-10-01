@@ -529,11 +529,11 @@ func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
 	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
 }
 
-// TestCreateConsensusCapsule_SelectionStrategy verifies the weaver default
-// (Sequential when a source is emitted) and that --registry-selection-strategy
-// Random overrides it.
+// TestCreateConsensusCapsule_SelectionStrategy verifies the three-way precedence:
+// --registry-selection-strategy flag > manifest selectionStrategy > weaver
+// default (Sequential).
 func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
-	mkInputs := func(strategy string) models.ConsensusNodeInputs {
+	mkInputs := func(flag, manifestStrategy string) models.ConsensusNodeInputs {
 		return models.ConsensusNodeInputs{
 			Namespace:                 "hiero-network-1",
 			OrbitName:                 "hiero-network-1",
@@ -542,21 +542,22 @@ func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
 			Weight:                    500,
 			ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
 			ConsensusImageTag:         "0.74.2",
-			RegistrySelectionStrategy: strategy,
+			RegistrySelectionStrategy: flag,
 			ConsensusImageSource: &models.ImageSource{
 				Repositories: []models.ImageRepositoryRef{
 					{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
 					{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
 				},
-				LayerHashes: map[string][]string{"linux/amd64": {"sha256:aaa"}},
+				LayerHashes:       map[string][]string{"linux/amd64": {"sha256:aaa"}},
+				SelectionStrategy: manifestStrategy,
 			},
 		}
 	}
 
-	run := func(t *testing.T, strategy, want string) {
+	run := func(t *testing.T, flag, manifest, want string) {
 		t.Helper()
 		fake := &fakeCapsuleClient{existing: map[string]string{}}
-		step, err := CreateConsensusCapsule(mkInputs(strategy), fake.provider()).Build()
+		step, err := CreateConsensusCapsule(mkInputs(flag, manifest), fake.provider()).Build()
 		require.NoError(t, err)
 		require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 		src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
@@ -564,12 +565,15 @@ func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
 		assert.Equal(t, want, src.SelectionStrategy)
 	}
 
-	// Default: empty input ⇒ Sequential (deterministic failover order).
-	run(t, "", "Sequential")
-	// Explicit Sequential is honoured.
-	run(t, models.RegistrySelectionSequential, "Sequential")
-	// Explicit Random overrides the default.
-	run(t, models.RegistrySelectionRandom, "Random")
+	// No flag, no manifest ⇒ weaver default Sequential (deterministic failover).
+	run(t, "", "", "Sequential")
+	// Manifest alone is honoured when no flag is set.
+	run(t, "", "Random", "Random")
+	// Explicit flag beats the manifest.
+	run(t, models.RegistrySelectionRandom, "Sequential", "Random")
+	run(t, models.RegistrySelectionSequential, "Random", "Sequential")
+	// Explicit flag with no manifest.
+	run(t, models.RegistrySelectionSequential, "", "Sequential")
 }
 
 func TestSplitConsensusImage(t *testing.T) {

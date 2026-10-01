@@ -480,10 +480,11 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				}
 				src = existing
 			}
-			// Default a source's SelectionStrategy to Sequential so the manifest's
-			// primary registry (registries[0]) is tried first and failover is
-			// deterministic. An explicit --registry-selection-strategy wins (e.g.
-			// Random to spread probe traffic).
+			// SelectionStrategy precedence: --registry-selection-strategy flag beats
+			// the manifest's images.consensusNode.selectionStrategy, which beats the
+			// weaver default (Sequential — manifest primary first, deterministic
+			// failover). An empty src.SelectionStrategy here means neither the new
+			// manifest source nor the preserved live CR carried one.
 			if src != nil {
 				if inputs.RegistrySelectionStrategy != "" {
 					src.SelectionStrategy = inputs.RegistrySelectionStrategy
@@ -676,6 +677,9 @@ func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.Pull
 	return &operatorv1alpha1.SoftwareVersionSource{
 		ImageRepositories:     repos,
 		ImageVerificationSpec: specs,
+		// Carry the manifest's preferred strategy through; the caller still applies
+		// the CLI override and the weaver default (Sequential) in that precedence.
+		SelectionStrategy: src.SelectionStrategy,
 	}
 }
 
