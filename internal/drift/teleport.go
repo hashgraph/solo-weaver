@@ -45,17 +45,12 @@ var teleportClusterAgent = teleportAgent{
 }
 
 // Teleport reports Teleport node and cluster agent fields that differ between
-// state.yaml and the host or cluster.
+// state.yaml and the host or cluster. It relies on the Teleport checker keeping
+// the persisted agent when a probe fails, so a difference is always an observed one.
 func Teleport(baseline, live state.State) []Change {
-	changes := teleportNodeAgent.compare(baseline.TeleportState, live.TeleportState)
-
-	// The checker reports an unreachable cluster the same way as one with no
-	// agent, so the cluster agent is only comparable when this refresh reached
-	// the cluster.
-	if live.ClusterState.Created {
-		changes = append(changes, teleportClusterAgent.compare(baseline.TeleportState, live.TeleportState)...)
-	}
-	return changes
+	return append(
+		teleportNodeAgent.compare(baseline.TeleportState, live.TeleportState),
+		teleportClusterAgent.compare(baseline.TeleportState, live.TeleportState)...)
 }
 
 // compare reports an install or removal as the installed flag alone, since the

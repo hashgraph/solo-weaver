@@ -3,6 +3,8 @@
 package state
 
 import (
+	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
 )
@@ -16,12 +18,14 @@ import (
 func (s State) PersistedSnapshot() (State, error) {
 	b, err := yaml.Marshal(s)
 	if err != nil {
-		return State{}, errorx.InternalError.Wrap(err, "failed to marshal state for snapshot")
+		return State{}, errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to marshal state for snapshot"), reasons.Internal)
 	}
 
 	var snapshot State
 	if err := yaml.Unmarshal(b, &snapshot); err != nil {
-		return State{}, errorx.InternalError.Wrap(err, "failed to unmarshal state snapshot")
+		return State{}, errx.WithReason(
+			errorx.InternalError.Wrap(err, "failed to unmarshal state snapshot"), reasons.Internal)
 	}
 	return snapshot, nil
 }

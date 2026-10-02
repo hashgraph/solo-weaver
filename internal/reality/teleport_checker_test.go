@@ -4,6 +4,7 @@ package reality_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -166,4 +167,55 @@ func TestTeleportChecker_HelmReleaseAbsent_ClusterAgentNotInstalled(t *testing.T
 	require.NoError(t, err)
 
 	assert.False(t, ts.ClusterAgent.Installed, "ClusterAgent should not be installed when no Helm release")
+}
+
+func persistInstalledClusterAgent(t *testing.T, sm state.Manager) state.TeleportClusterAgentState {
+	t.Helper()
+	agent := state.TeleportClusterAgentState{
+		Installed: true, Release: "teleport-agent", Namespace: "teleport-agent", ChartVersion: "18.6.4",
+	}
+	s := sm.State()
+	s.TeleportState.ClusterAgent = agent
+	sm.Set(s)
+	return agent
+}
+
+// A probe that cannot tell whether the cluster exists must not record the
+// cluster agent as removed.
+func TestTeleportChecker_ClusterProbeError_KeepsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persisted := persistInstalledClusterAgent(t, sm)
+
+	clusterExists := func() (bool, error) { return false, errors.New("kubernetes API server did not respond") }
+	helmCalled := false
+	newHelm := func() (reality.HelmManager, error) {
+		helmCalled = true
+		return &fakeHelmManager{}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, helmCalled)
+	assert.Equal(t, persisted, ts.ClusterAgent)
+}
+
+// false, nil is a confirmed absence: with no cluster there is no cluster agent.
+func TestTeleportChecker_ClusterConfirmedAbsent_ClearsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persistInstalledClusterAgent(t, sm)
+
+	clusterExists := func() (bool, error) { return false, nil }
+	newHelm := func() (reality.HelmManager, error) { return &fakeHelmManager{}, nil }
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, state.TeleportClusterAgentState{}, ts.ClusterAgent)
 }

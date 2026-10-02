@@ -77,9 +77,14 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 }
 
 func (t *teleportChecker) refreshClusterAgentState() (state.TeleportClusterAgentState, error) {
+	// A probe error is not an absent cluster: returning it keeps the persisted
+	// cluster agent instead of recording it as removed.
 	exists, err := t.clusterExists()
+	if err != nil {
+		return state.TeleportClusterAgentState{}, errorx.IllegalState.Wrap(err, "failed to probe the kubernetes cluster")
+	}
 	if !exists {
-		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping teleport cluster agent check")
+		logx.As().Debug().Msg("Kubernetes cluster does not exist, skipping teleport cluster agent check")
 		return state.TeleportClusterAgentState{}, nil
 	}
 

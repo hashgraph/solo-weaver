@@ -43,9 +43,20 @@ type KubeClient interface {
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
 
-// ClusterProbe abstracts the package-level kube.ClusterExists check.
+// ClusterProbe reports whether a Kubernetes cluster is reachable. false, nil
+// means there is no cluster; an error means one may exist but could not be
+// observed, so a checker must not treat it as absent.
 // Exported so callers can provide fakes in tests.
 type ClusterProbe func() (bool, error)
+
+// probeCluster is the production ClusterProbe.
+func probeCluster() (bool, error) {
+	configured, reachable := kube.ProbeCluster()
+	if configured && !reachable {
+		return false, errorx.IllegalState.New("kubernetes API server did not respond")
+	}
+	return reachable, nil
+}
 
 // ---------------------------------------------------------------------------
 // CheckerOption — functional options applied to all sub-checkers
@@ -95,7 +106,7 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		sm:            sm,
 		newHelm:       func() (HelmManager, error) { return helm2.NewManager() },
 		newKube:       func() (KubeClient, error) { return kube.NewClient() },
-		clusterExists: kube.ClusterExists,
+		clusterExists: probeCluster,
 	}
 	for _, o := range opts {
 		o(cc)

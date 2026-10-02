@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package drift finds fields of a managed component that were changed outside
-// solo-provisioner, by comparing the persisted state.yaml baseline with what the
-// live system reports, before a refresh folds the live values into state.
+// Package drift finds fields of a managed component whose live value differs
+// from the persisted state.yaml baseline, comparing them before a refresh folds
+// the live values into state.
 //
 // Each component supplies a Producer that owns its comparison rules. This
 // package only collects and formats what the producers return.
@@ -26,7 +26,7 @@ type Change struct {
 
 // String renders the change as one operator-facing warning line.
 func (c Change) String() string {
-	return fmt.Sprintf("%s %s changed outside solo-provisioner: state.yaml has %q, live is %q",
+	return fmt.Sprintf("%s %s differs from persisted state: state.yaml has %q, live is %q",
 		c.Component, c.Field, c.Persisted, c.Live)
 }
 

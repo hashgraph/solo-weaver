@@ -90,7 +90,7 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 //  1. Validates the intent and user inputs.
 //  2. Sets user inputs into the runtime state for effective-value resolution.
 //  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution, noting fields
-//     changed outside solo-provisioner since the last persisted state.
+//     whose live value differs from the persisted state.
 //  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it.
 //  5. Flushes the updated state to disk, performing three live refreshes before persistence.
 //

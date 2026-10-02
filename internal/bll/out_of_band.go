@@ -14,16 +14,29 @@ import (
 
 // detectOutOfBandChanges compares the persisted baseline with the refreshed
 // live state. With no baseline (no state file yet) there is nothing to compare.
+//
+// Each change is logged here, so it is on record even if the run fails before
+// its report exists. The log is debug only: an Info or Warn line would reach
+// the console as well as the report warning, showing the change twice.
 func detectOutOfBandChanges(baseline *state.State, live state.State) []drift.Change {
 	if baseline == nil {
 		return nil
 	}
-	return drift.Detect(*baseline, live, drift.DefaultProducers()...)
+
+	changes := drift.Detect(*baseline, live, drift.DefaultProducers()...)
+	for _, c := range changes {
+		logx.As().Debug().
+			Str("component", c.Component).
+			Str("field", c.Field).
+			Str("persisted", c.Persisted).
+			Str("live", c.Live).
+			Msg("Detected out-of-band change")
+	}
+	return changes
 }
 
 // addOutOfBandWarnings records each change as a report warning, which the
-// summary table and the JSON summary both show. It logs at debug only: an Info
-// or Warn line would reach the console as well and show the change twice.
+// summary table and the JSON summary both show.
 func addOutOfBandWarnings(report *automa.Report, changes []drift.Change) {
 	if report == nil || len(changes) == 0 {
 		return
@@ -34,12 +47,6 @@ func addOutOfBandWarnings(report *automa.Report, changes []drift.Change) {
 		lines = append(lines, existing)
 	}
 	for _, c := range changes {
-		logx.As().Debug().
-			Str("component", c.Component).
-			Str("field", c.Field).
-			Str("persisted", c.Persisted).
-			Str("live", c.Live).
-			Msg("Detected out-of-band change")
 		lines = append(lines, c.String())
 	}
 

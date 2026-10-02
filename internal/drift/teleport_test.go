@@ -22,11 +22,9 @@ func teleportInstalled() state.TeleportState {
 	}
 }
 
-// withTeleport returns a State holding t, as seen by a refresh that reached the cluster.
 func withTeleport(t state.TeleportState) state.State {
 	s := state.State{}
 	s.TeleportState = t
-	s.ClusterState.Created = true
 	return s
 }
 
@@ -77,14 +75,17 @@ func TestTeleport_IgnoresNodeAgentVersion(t *testing.T) {
 	require.Empty(t, Teleport(withTeleport(teleportInstalled()), withTeleport(live)))
 }
 
-// An unreachable cluster reads as an empty cluster agent, which must not be
-// reported as the agent being removed.
-func TestTeleport_SkipsClusterAgentWhenTheClusterWasNotReached(t *testing.T) {
-	live := withTeleport(teleportInstalled())
-	live.ClusterState.Created = false
-	live.TeleportState.ClusterAgent = state.TeleportClusterAgentState{}
+// Trust comes from the Teleport checker, not from another component's probe:
+// a cluster the cluster runtime could not reach does not hide a Teleport change.
+func TestTeleport_IgnoresTheClusterRuntimesView(t *testing.T) {
+	live := teleportInstalled()
+	live.ClusterAgent.ChartVersion = "18.2.0"
+	observed := withTeleport(live)
+	observed.ClusterState.Created = false
 
-	require.Empty(t, Teleport(withTeleport(teleportInstalled()), live))
+	require.Equal(t, []Change{
+		{Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.1.0", Live: "18.2.0"},
+	}, Teleport(withTeleport(teleportInstalled()), observed))
 }
 
 func TestTeleport_ClusterAgentDetailsAreNotComparedWhileUninstalled(t *testing.T) {
