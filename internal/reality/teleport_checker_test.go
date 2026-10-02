@@ -203,13 +203,36 @@ func TestTeleportChecker_ClusterProbeError_KeepsPersistedClusterAgent(t *testing
 	assert.Equal(t, persisted, ts.ClusterAgent)
 }
 
-// false, nil is a confirmed absence: with no cluster there is no cluster agent.
-func TestTeleportChecker_ClusterConfirmedAbsent_ClearsPersistedClusterAgent(t *testing.T) {
+// No configured cluster (false, nil) says nothing about the Helm release, so
+// the recorded agent stands.
+func TestTeleportChecker_NoObservableCluster_KeepsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persisted := persistInstalledClusterAgent(t, sm)
+
+	clusterExists := func() (bool, error) { return false, nil }
+	helmCalled := false
+	newHelm := func() (reality.HelmManager, error) {
+		helmCalled = true
+		return &fakeHelmManager{}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, helmCalled)
+	assert.Equal(t, persisted, ts.ClusterAgent)
+}
+
+// Only a reachable cluster whose Helm releases lack the agent confirms removal.
+func TestTeleportChecker_ReachableClusterWithoutRelease_ClearsPersistedClusterAgent(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 	persistInstalledClusterAgent(t, sm)
 
-	clusterExists := func() (bool, error) { return false, nil }
-	newHelm := func() (reality.HelmManager, error) { return &fakeHelmManager{}, nil }
+	clusterExists := func() (bool, error) { return true, nil }
+	newHelm := func() (reality.HelmManager, error) { return &fakeHelmManager{releases: nil}, nil }
 
 	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
 	require.NoError(t, err)

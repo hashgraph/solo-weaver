@@ -46,7 +46,8 @@ var teleportClusterAgent = teleportAgent{
 
 // Teleport reports Teleport node and cluster agent fields that differ between
 // state.yaml and the host or cluster. It relies on the Teleport checker keeping
-// the persisted agent when a probe fails, so a difference is always an observed one.
+// the persisted agent when it cannot observe it, so a difference is always an
+// observed one.
 func Teleport(baseline, live state.State) []Change {
 	return append(
 		teleportNodeAgent.compare(baseline.TeleportState, live.TeleportState),

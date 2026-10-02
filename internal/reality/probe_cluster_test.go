@@ -21,7 +21,7 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-func TestProbeCluster_NoKubeconfigIsNoCluster(t *testing.T) {
+func TestProbeCluster_NoKubeconfigIsFalseWithoutError(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-such-kubeconfig"))
 

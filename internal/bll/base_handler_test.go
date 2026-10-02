@@ -222,11 +222,23 @@ func TestHandleIntent_TeleportProbeErrorIsNotReportedAsRemoval(t *testing.T) {
 	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
 }
 
-// With no cluster at all, the persisted cluster agent is gone: that is reported.
-func TestHandleIntent_ConfirmedAbsentClusterIsReportedAsRemoval(t *testing.T) {
+// No configured cluster is not proof the release is gone: nothing is reported.
+func TestHandleIntent_NoObservableClusterIsNotReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
 	h := &host{teleportProbe: func() (bool, error) { return false, nil }}
+
+	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
+
+	require.Empty(t, ui.CollectWarnings(report))
+	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
+}
+
+// A reachable cluster whose Helm releases lack the agent is a confirmed removal.
+func TestHandleIntent_ReleaseMissingFromReachableClusterIsReportedAsRemoval(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, installedClusterAgent())
+	h := &host{teleportProbe: func() (bool, error) { return true, nil }}
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 

@@ -44,8 +44,9 @@ type KubeClient interface {
 }
 
 // ClusterProbe reports whether a Kubernetes cluster is reachable. false, nil
-// means there is no cluster; an error means one may exist but could not be
-// observed, so a checker must not treat it as absent.
+// means this host has no configured way to reach one (no kubeconfig), not that
+// a cluster has been proven gone; an error means one is configured but did not
+// answer.
 // Exported so callers can provide fakes in tests.
 type ClusterProbe func() (bool, error)
 
