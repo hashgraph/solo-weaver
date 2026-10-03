@@ -30,7 +30,7 @@ func detectOutOfBandChanges(baseline *state.State, live state.State) []drift.Cha
 			Str("field", c.Field).
 			Str("persisted", c.Persisted).
 			Str("live", c.Live).
-			Msg("Detected out-of-band change")
+			Msg("Live value differs from persisted state")
 	}
 	return changes
 }

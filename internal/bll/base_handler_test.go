@@ -275,7 +275,7 @@ func TestHandleIntent_EarlyFailureLogsTheChangeAndKeepsTheBaseline(t *testing.T)
 	_, err := handleBlockNodeIntent(t, stateFile, h, noopIntent{buildErr: errors.New("precondition failed")})
 
 	require.Error(t, err)
-	require.Contains(t, logs.String(), `"field":"nodeAgent.configured","persisted":"true","live":"false","message":"Detected out-of-band change"`)
+	require.Contains(t, logs.String(), `"field":"nodeAgent.configured","persisted":"true","live":"false","message":"Live value differs from persisted state"`)
 	require.True(t, readState(t, stateFile).TeleportState.NodeAgent.Configured, "nothing was flushed")
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
