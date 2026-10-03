@@ -89,7 +89,8 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 // It performs the following steps:
 //  1. Validates the intent and user inputs.
 //  2. Sets user inputs into the runtime state for effective-value resolution.
-//  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution.
+//  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution, noting fields
+//     whose live value differs from the persisted state.
 //  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it.
 //  5. Flushes the updated state to disk, performing three live refreshes before persistence.
 //
@@ -110,10 +111,13 @@ func (h *BaseHandler[T]) HandleIntent(
 
 	// ── 2. Refresh runtime state ───────────────────────────────────────────────
 	// We need to refresh runtime before preparing effective inputs
-	currentState, err := h.Runtime.Refresh(ctx, true)
+	baseline, currentState, err := h.Runtime.RefreshWithBaseline(ctx, true)
 	if err != nil {
 		return nil, err
 	}
+	// Only this refresh can see out-of-band changes: by the flush, reality also
+	// holds the workflow's own changes.
+	outOfBand := detectOutOfBandChanges(baseline, currentState)
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(intent, inputs)
@@ -139,6 +143,7 @@ func (h *BaseHandler[T]) HandleIntent(
 		Msgf("Running %s workflow for intent %q", intent.Target, intent.Action)
 
 	report := wf.Execute(ctx)
+	addOutOfBandWarnings(report, outOfBand)
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
 	return h.FlushState(

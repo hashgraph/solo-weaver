@@ -1343,20 +1343,31 @@ func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namesp
 //     Calls /version with a tight deadline.  A timeout or network error is
 //     treated as "cluster not reachable" (returns false, nil) rather than a
 //     hard error, so callers can skip cluster-dependent work without aborting.
+//
+// Use ProbeCluster to tell the two cases apart.
 func ClusterExists() (bool, error) {
+	_, reachable := ProbeCluster()
+	return reachable, nil
+}
+
+// ProbeCluster runs the same two stages as ClusterExists and reports them
+// separately: configured is false only when no kubeconfig exists, and reachable
+// is true only when the API server answered. configured && !reachable means a
+// cluster may exist but could not be observed.
+func ProbeCluster() (configured, reachable bool) {
 	// ── Stage 1: kubeconfig presence (no network) ─────────────────────────────
 	kubeconfigPath := resolveKubeconfigPath()
 	if kubeconfigPath == "" {
 		// No kubeconfig source found at all — cluster cannot exist.
 		logx.As().Debug().Msg("No kubeconfig found; cluster does not exist")
-		return false, nil
+		return false, false
 	}
 
 	if kubeconfigPath != inClusterSentinel {
 		if _, err := os.Stat(kubeconfigPath); err != nil {
 			// File absent or unreadable — treat as no cluster.
 			logx.As().Debug().Str("path", kubeconfigPath).Msg("Kubeconfig file not found; cluster does not exist")
-			return false, nil
+			return false, false
 		}
 	}
 
@@ -1365,7 +1376,7 @@ func ClusterExists() (bool, error) {
 	if err != nil {
 		// Config cannot be parsed (corrupted / missing context) — no cluster.
 		logx.As().Debug().Err(err).Msg("Failed to load kubeconfig; cluster does not exist")
-		return false, nil
+		return true, false
 	}
 
 	// Override the default timeout (which can be up to 32 s) with a tight deadline.
@@ -1375,17 +1386,17 @@ func ClusterExists() (bool, error) {
 	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		logx.As().Debug().Err(err).Msg("Failed to create discovery client; cluster does not exist")
-		return false, nil
+		return true, false
 	}
 
 	if _, err = disco.ServerVersion(); err != nil {
 		// Any error here (timeout, connection refused, TLS failure) means the
 		// cluster is not reachable right now — not a hard error for callers.
 		logx.As().Debug().Err(err).Msg("API server probe failed; cluster does not exist or is unreachable")
-		return false, nil
+		return true, false
 	}
 
-	return true, nil
+	return true, true
 }
 
 // resolveKubeconfigPath returns the kubeconfig path that loadKubeConfig would
