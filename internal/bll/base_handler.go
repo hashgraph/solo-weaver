@@ -14,6 +14,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -117,7 +118,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 	// Only this refresh can see out-of-band changes: by the flush, reality also
 	// holds the workflow's own changes.
-	outOfBand := detectOutOfBandChanges(baseline, currentState)
+	outOfBand := detectOutOfBandChanges(baseline, currentState, drift.DefaultProducers()...)
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(intent, inputs)

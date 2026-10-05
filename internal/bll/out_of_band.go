@@ -13,17 +13,18 @@ import (
 )
 
 // detectOutOfBandChanges compares the persisted baseline with the refreshed
-// live state. With no baseline (no state file yet) there is nothing to compare.
+// live state using producers. With no baseline (no state file yet) there is
+// nothing to compare.
 //
 // Each change is logged here, so it is on record even if the run fails before
 // its report exists. The log is debug only: an Info or Warn line would reach
 // the console as well as the report warning, showing the change twice.
-func detectOutOfBandChanges(baseline *state.State, live state.State) []drift.Change {
+func detectOutOfBandChanges(baseline *state.State, live state.State, producers ...drift.Producer) []drift.Change {
 	if baseline == nil {
 		return nil
 	}
 
-	changes := drift.Detect(*baseline, live, drift.DefaultProducers()...)
+	changes := drift.Detect(*baseline, live, producers...)
 	for _, c := range changes {
 		logx.As().Debug().
 			Str("component", c.Component).
