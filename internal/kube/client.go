@@ -1331,29 +1331,20 @@ func (c *Client) AnnotateResource(ctx context.Context, kind ResourceKind, namesp
 	return nil
 }
 
-// ClusterExists returns true if a Kubernetes cluster is reachable.
-//
-// It uses a two-stage fast path to avoid the default 32-second API timeout:
+// ProbeCluster reports whether a Kubernetes cluster is reachable, using a
+// two-stage fast path to avoid the default 32-second API timeout:
 //
 //  1. Kubeconfig presence check (local, no I/O beyond a stat call).
-//     If no kubeconfig file exists at the resolved path, the cluster cannot
-//     exist — returns false immediately.
+//     If no kubeconfig file exists at the resolved path, no cluster is
+//     configured — returns false, false immediately.
 //
 //  2. Short-deadline API probe (3 s).
-//     Calls /version with a tight deadline.  A timeout or network error is
-//     treated as "cluster not reachable" (returns false, nil) rather than a
-//     hard error, so callers can skip cluster-dependent work without aborting.
+//     Calls /version with a tight deadline. A config that will not load, a
+//     timeout or a network error returns true, false: a cluster is configured
+//     but could not be observed.
 //
-// Use ProbeCluster to tell the two cases apart.
-func ClusterExists() (bool, error) {
-	_, reachable := ProbeCluster()
-	return reachable, nil
-}
-
-// ProbeCluster runs the same two stages as ClusterExists and reports them
-// separately: configured is false only when no kubeconfig exists, and reachable
-// is true only when the API server answered. configured && !reachable means a
-// cluster may exist but could not be observed.
+// Neither case is an error, so callers can skip cluster-dependent work without
+// aborting. Callers that only gate on reachability ignore configured.
 func ProbeCluster() (configured, reachable bool) {
 	// ── Stage 1: kubeconfig presence (no network) ─────────────────────────────
 	kubeconfigPath := resolveKubeconfigPath()

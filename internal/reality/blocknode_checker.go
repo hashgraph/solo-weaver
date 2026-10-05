@@ -28,7 +28,7 @@ type blockNodeChecker struct {
 }
 
 // NewBlockNodeChecker constructs a blockNodeChecker.
-// In production pass helm2.NewManager, kube.NewClient and kube.ClusterExists.
+// NewCheckers passes the production factories and probe.
 // In tests swap them for fakes.
 func NewBlockNodeChecker(
 	sm state.Manager,

@@ -18,7 +18,7 @@ type clusterChecker struct {
 }
 
 // NewClusterChecker constructs a clusterChecker with the given probe.
-// In production pass kube.ClusterExists; in tests pass a fake.
+// NewCheckers passes the production probe; in tests pass a fake.
 func NewClusterChecker(sm state.Manager, clusterExists ClusterProbe) (Checker[state.ClusterState], error) {
 	return &clusterChecker{sm: sm, clusterExists: clusterExists}, nil
 }

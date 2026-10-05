@@ -57,8 +57,8 @@ type noHelmReleases struct{}
 
 func (noHelmReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
-// probeCluster replaced kube.ClusterExists for every checker. Only Teleport's
-// checker reads the error; the others must refresh the same way as for false, nil.
+// probeCluster is every checker's production probe. Only Teleport's checker
+// reads the error; the others must refresh the same way as for false, nil.
 func TestCheckers_ClusterProbeErrorIsHandledLikeNoCluster(t *testing.T) {
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
 	require.NoError(t, err)

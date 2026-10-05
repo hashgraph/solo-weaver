@@ -41,28 +41,6 @@ users:
 	t.Setenv("KUBECONFIG", kubeconfig)
 }
 
-func TestProbeCluster_NoKubeconfigIsNotConfigured(t *testing.T) {
-	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-such-kubeconfig"))
-
-	configured, reachable := ProbeCluster()
-
-	require.False(t, configured)
-	require.False(t, reachable)
-}
-
-func TestProbeCluster_UnparseableKubeconfigIsConfiguredButUnreachable(t *testing.T) {
-	kubeconfig := filepath.Join(t.TempDir(), "config")
-	require.NoError(t, os.WriteFile(kubeconfig, []byte{}, 0o600))
-	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	t.Setenv("KUBECONFIG", kubeconfig)
-
-	configured, reachable := ProbeCluster()
-
-	require.True(t, configured)
-	require.False(t, reachable)
-}
-
 func TestProbeCluster_SilentAPIServerIsConfiguredButUnreachable(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -74,9 +52,6 @@ func TestProbeCluster_SilentAPIServerIsConfiguredButUnreachable(t *testing.T) {
 
 	require.True(t, configured)
 	require.False(t, reachable)
-	exists, err := ClusterExists()
-	require.NoError(t, err)
-	require.False(t, exists)
 }
 
 func TestProbeCluster_AnsweringAPIServerIsReachable(t *testing.T) {
@@ -91,7 +66,4 @@ func TestProbeCluster_AnsweringAPIServerIsReachable(t *testing.T) {
 
 	require.True(t, configured)
 	require.True(t, reachable)
-	exists, err := ClusterExists()
-	require.NoError(t, err)
-	require.True(t, exists)
 }

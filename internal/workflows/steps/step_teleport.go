@@ -106,12 +106,7 @@ func uninstallTeleportKubeAgent() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
 
-			clusterExists, err := kube.ClusterExists()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			if !clusterExists {
+			if _, reachable := kube.ProbeCluster(); !reachable {
 				l.Info().Msg("Kubernetes cluster is not reachable, skipping Teleport cluster agent uninstallation")
 				return automa.StepSkippedReport(stp.Id())
 			}
