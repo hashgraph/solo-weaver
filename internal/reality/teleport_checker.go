@@ -16,21 +16,21 @@ import (
 // teleportChecker probes the Teleport node agent (binary) and cluster agent (Helm)
 // to build a TeleportState.
 type teleportChecker struct {
-	sm            state.Manager
-	newHelm       func() (HelmManager, error)
-	clusterExists ClusterProbe
+	sm      state.Manager
+	newHelm func() (HelmManager, error)
+	probe   ClusterProbe
 }
 
 // NewTeleportChecker constructs a teleportChecker.
 func NewTeleportChecker(
 	sm state.Manager,
 	newHelm func() (HelmManager, error),
-	clusterExists ClusterProbe,
+	probe ClusterProbe,
 ) (Checker[state.TeleportState], error) {
 	return &teleportChecker{
-		sm:            sm,
-		newHelm:       newHelm,
-		clusterExists: clusterExists,
+		sm:      sm,
+		newHelm: newHelm,
+		probe:   probe,
 	}, nil
 }
 
@@ -80,12 +80,12 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 // reached through a live cluster, has no deployed release for it. A cluster it
 // cannot observe proves nothing about the release, so the persisted agent stands.
 func (t *teleportChecker) refreshClusterAgentState(persisted state.TeleportClusterAgentState) (state.TeleportClusterAgentState, error) {
-	exists, err := t.clusterExists()
-	if err != nil {
-		return state.TeleportClusterAgentState{}, errorx.IllegalState.Wrap(err, "failed to probe the kubernetes cluster")
-	}
-	if !exists {
-		logx.As().Debug().Msg("No observable Kubernetes cluster; keeping the recorded teleport cluster agent")
+	if r := t.probe(); !r.Observed() {
+		if r.Configured() {
+			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded teleport cluster agent")
+		} else {
+			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded teleport cluster agent")
+		}
 		return persisted, nil
 	}
 

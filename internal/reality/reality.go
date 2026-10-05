@@ -43,20 +43,40 @@ type KubeClient interface {
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
 
-// ClusterProbe reports whether a Kubernetes cluster is reachable. false, nil
-// means this host has no configured way to reach one (no kubeconfig), not that
-// a cluster has been proven gone; an error means one is configured but did not
-// answer.
+// ClusterReachability is the outcome of probing for a Kubernetes cluster. Only
+// Reachable means the cluster was observed. For the other two a checker falls
+// back as it would for no cluster, and must not record what it could not see
+// as gone: no kubeconfig on this host does not prove a cluster was removed.
+type ClusterReachability int
+
+const (
+	NotConfigured ClusterReachability = iota // no kubeconfig on this host
+	Unobservable                             // a kubeconfig exists, but the API server did not answer
+	Reachable                                // the API server answered
+)
+
+// Observed reports whether the probe reached the cluster.
+func (r ClusterReachability) Observed() bool { return r == Reachable }
+
+// Configured reports whether this host has a kubeconfig.
+func (r ClusterReachability) Configured() bool { return r != NotConfigured }
+
+// ClusterProbe reports cluster reachability. It cannot fail: an unobservable
+// cluster is an outcome to fall back from, not an error to return.
 // Exported so callers can provide fakes in tests.
-type ClusterProbe func() (bool, error)
+type ClusterProbe func() ClusterReachability
 
 // probeCluster is the production ClusterProbe.
-func probeCluster() (bool, error) {
+func probeCluster() ClusterReachability {
 	configured, reachable := kube.ProbeCluster()
-	if configured && !reachable {
-		return false, errorx.IllegalState.New("kubernetes API server did not respond")
+	switch {
+	case reachable:
+		return Reachable
+	case configured:
+		return Unobservable
+	default:
+		return NotConfigured
 	}
-	return reachable, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +90,7 @@ type checkerConfig struct {
 	stateDir      string
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
-	clusterExists ClusterProbe
+	probe         ClusterProbe
 }
 
 // CheckerOption configures the Checker.
@@ -93,7 +113,7 @@ func WithKubeFactory(fn func() (KubeClient, error)) CheckerOption {
 }
 
 func WithClusterProbe(fn ClusterProbe) CheckerOption {
-	return func(c *checkerConfig) { c.clusterExists = fn }
+	return func(c *checkerConfig) { c.probe = fn }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,16 +124,16 @@ func WithClusterProbe(fn ClusterProbe) CheckerOption {
 // Production defaults are applied; use CheckerOption to override for tests.
 func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 	cc := &checkerConfig{
-		sm:            sm,
-		newHelm:       func() (HelmManager, error) { return helm2.NewManager() },
-		newKube:       func() (KubeClient, error) { return kube.NewClient() },
-		clusterExists: probeCluster,
+		sm:      sm,
+		newHelm: func() (HelmManager, error) { return helm2.NewManager() },
+		newKube: func() (KubeClient, error) { return kube.NewClient() },
+		probe:   probeCluster,
 	}
 	for _, o := range opts {
 		o(cc)
 	}
 
-	cluster, err := NewClusterChecker(cc.sm, cc.clusterExists)
+	cluster, err := NewClusterChecker(cc.sm, cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create cluster checker")
 	}
@@ -123,19 +143,19 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create machine checker")
 	}
 
-	blocknode, err := NewBlockNodeChecker(cc.sm, cc.newHelm, cc.newKube, cc.clusterExists)
+	blocknode, err := NewBlockNodeChecker(cc.sm, cc.newHelm, cc.newKube, cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create block node checker")
 	}
 
 	consensus, err := NewConsensusChecker(cc.sm,
 		func() (ConsensusKubeClient, error) { return kube.NewClient() },
-		cc.clusterExists)
+		cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create consensus checker")
 	}
 
-	teleport, err := NewTeleportChecker(cc.sm, cc.newHelm, cc.clusterExists)
+	teleport, err := NewTeleportChecker(cc.sm, cc.newHelm, cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create teleport checker")
 	}

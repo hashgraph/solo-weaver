@@ -208,13 +208,12 @@ func installedClusterAgent() state.TeleportState {
 }
 
 // The cluster runtime reaches the cluster, then the Teleport checker's own probe
-// fails. The persisted cluster agent stands and nothing is reported.
-func TestHandleIntent_TeleportProbeErrorIsNotReportedAsRemoval(t *testing.T) {
+// finds the API server silent. The persisted cluster agent stands and nothing is
+// reported.
+func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
-	h := &host{teleportProbe: func() (bool, error) {
-		return false, errors.New("kubernetes API server did not respond")
-	}}
+	h := &host{teleportProbe: func() reality.ClusterReachability { return reality.Unobservable }}
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
@@ -222,11 +221,11 @@ func TestHandleIntent_TeleportProbeErrorIsNotReportedAsRemoval(t *testing.T) {
 	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
 }
 
-// No configured cluster is not proof the release is gone: nothing is reported.
-func TestHandleIntent_NoObservableClusterIsNotReportedAsRemoval(t *testing.T) {
+// No kubeconfig is not proof the release is gone: nothing is reported.
+func TestHandleIntent_NoKubeconfigIsNotReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
-	h := &host{teleportProbe: func() (bool, error) { return false, nil }}
+	h := &host{teleportProbe: func() reality.ClusterReachability { return reality.NotConfigured }}
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
@@ -238,7 +237,7 @@ func TestHandleIntent_NoObservableClusterIsNotReportedAsRemoval(t *testing.T) {
 func TestHandleIntent_ReleaseMissingFromReachableClusterIsReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
-	h := &host{teleportProbe: func() (bool, error) { return true, nil }}
+	h := &host{teleportProbe: func() reality.ClusterReachability { return reality.Reachable }}
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 

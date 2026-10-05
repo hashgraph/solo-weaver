@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,45 +23,56 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
-func TestProbeCluster_NoKubeconfigIsFalseWithoutError(t *testing.T) {
+func TestProbeCluster_NoKubeconfigIsNotConfigured(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-such-kubeconfig"))
 
-	exists, err := probeCluster()
-
-	require.NoError(t, err)
-	require.False(t, exists)
+	require.Equal(t, NotConfigured, probeCluster())
 }
 
-func TestProbeCluster_SilentAPIServerIsAnError(t *testing.T) {
+// useKubeconfig points the probe at a kubeconfig whose only cluster is server.
+func useKubeconfig(t *testing.T, server string) {
+	t.Helper()
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, os.WriteFile(kubeconfig, fmt.Appendf(nil, `apiVersion: v1
+kind: Config
+clusters: [{name: c, cluster: {server: "%s"}}]
+contexts: [{name: c, context: {cluster: c, user: u}}]
+current-context: c
+users: [{name: u, user: {}}]
+`, server), 0o600))
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBECONFIG", kubeconfig)
+}
+
+func TestProbeCluster_SilentAPIServerIsUnobservable(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := l.Addr().String()
 	require.NoError(t, l.Close())
-	kubeconfig := filepath.Join(t.TempDir(), "config")
-	require.NoError(t, os.WriteFile(kubeconfig, fmt.Appendf(nil, `apiVersion: v1
-kind: Config
-clusters: [{name: c, cluster: {server: "http://%s"}}]
-contexts: [{name: c, context: {cluster: c, user: u}}]
-current-context: c
-users: [{name: u, user: {}}]
-`, addr), 0o600))
-	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	t.Setenv("KUBECONFIG", kubeconfig)
+	useKubeconfig(t, "http://"+addr)
 
-	exists, err := probeCluster()
+	require.Equal(t, Unobservable, probeCluster())
+}
 
-	require.Error(t, err)
-	require.False(t, exists)
+func TestProbeCluster_AnsweringAPIServerIsReachable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"major":"1","minor":"33","gitVersion":"v1.33.0"}`))
+	}))
+	t.Cleanup(server.Close)
+	useKubeconfig(t, server.URL)
+
+	require.Equal(t, Reachable, probeCluster())
 }
 
 type noHelmReleases struct{}
 
 func (noHelmReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
-// probeCluster is every checker's production probe. Only Teleport's checker
-// reads the error; the others must refresh the same way as for false, nil.
-func TestCheckers_ClusterProbeErrorIsHandledLikeNoCluster(t *testing.T) {
+// Unobservable and NotConfigured both mean the cluster was not observed, so the
+// cluster, block node and consensus checkers refresh the same way for each.
+func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
 	require.NoError(t, err)
 	persisted := state.NewState(filepath.Join(t.TempDir(), "state.yaml"))
@@ -68,8 +81,8 @@ func TestCheckers_ClusterProbeErrorIsHandledLikeNoCluster(t *testing.T) {
 	sm, err := state.NewStateManager(state.WithState(persisted), state.WithFileManager(fm))
 	require.NoError(t, err)
 
-	noCluster := func() (bool, error) { return false, nil }
-	unknown := func() (bool, error) { return false, errors.New("kubernetes API server did not respond") }
+	notConfigured := func() ClusterReachability { return NotConfigured }
+	unobservable := func() ClusterReachability { return Unobservable }
 	newHelm := func() (HelmManager, error) { return noHelmReleases{}, nil }
 	newKube := func() (KubeClient, error) { return nil, errors.New("not called") }
 	newConsensusKube := func() (ConsensusKubeClient, error) { return nil, errors.New("not called") }
@@ -91,8 +104,8 @@ func TestCheckers_ClusterProbeErrorIsHandledLikeNoCluster(t *testing.T) {
 		return cs, bn, cn
 	}
 
-	wantCS, wantBN, wantCN := refresh(noCluster)
-	gotCS, gotBN, gotCN := refresh(unknown)
+	wantCS, wantBN, wantCN := refresh(notConfigured)
+	gotCS, gotBN, gotCN := refresh(unobservable)
 
 	require.Equal(t, wantCS, gotCS)
 	require.Equal(t, wantBN, gotBN)

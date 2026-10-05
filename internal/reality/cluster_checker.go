@@ -13,22 +13,21 @@ import (
 // clusterChecker probes the Kubernetes cluster and returns a ClusterState.
 // It depends only on a ClusterProbe (injectable) and kube.RetrieveClusterInfo.
 type clusterChecker struct {
-	sm            state.Manager
-	clusterExists ClusterProbe
+	sm    state.Manager
+	probe ClusterProbe
 }
 
 // NewClusterChecker constructs a clusterChecker with the given probe.
 // NewCheckers passes the production probe; in tests pass a fake.
-func NewClusterChecker(sm state.Manager, clusterExists ClusterProbe) (Checker[state.ClusterState], error) {
-	return &clusterChecker{sm: sm, clusterExists: clusterExists}, nil
+func NewClusterChecker(sm state.Manager, probe ClusterProbe) (Checker[state.ClusterState], error) {
+	return &clusterChecker{sm: sm, probe: probe}, nil
 }
 
 func (c *clusterChecker) RefreshState(_ context.Context) (state.ClusterState, error) {
 	cs := state.NewClusterState()
 
-	exists, err := c.clusterExists()
-	if !exists {
-		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist or is unreachable, returning empty ClusterState")
+	if !c.probe().Observed() {
+		logx.As().Debug().Msg("Kubernetes cluster does not exist or is unreachable, returning empty ClusterState")
 		return cs, nil
 	}
 
