@@ -227,8 +227,7 @@
 - [ ] **TC-CMP-004** — `MachineState.Equal()` compares all software and hardware entries.
 - [ ] **TC-CMP-005** — `ClusterState.Equal()` compares `Created` flag and `ClusterInfo`.
 - [ ] **TC-CMP-006** — `ClusterInfo.Equal()` treats nil and empty maps as equivalent for `Clusters`/`Contexts`.
-- [ ] **TC-CMP-007** — `BlockNodeState.Equal()` is true exactly when `BlockNodeState.Diff()` reports no observable field; `Diff()` compares every field except the release timestamps and `LastSync`, and marks the weaver-only records not observable.
-- [ ] **TC-CMP-008** — `HelmReleaseInfo.Equal()` compares all fields except time fields.
+- [ ] **TC-CMP-007** — `BlockNodeState.Diff()` compares every field except the release timestamps and `LastSync`, and marks the weaver-only records not observable.
 - [ ] **TC-CMP-009** — `ClusterNodeState.Equal()` compares Labels and Annotations maps.
 
 ### 7.4 StringMap
