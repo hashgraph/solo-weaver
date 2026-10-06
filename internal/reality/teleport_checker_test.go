@@ -44,14 +44,14 @@ func TestTeleportChecker_ClusterNotExists_SkipsHelmChecks(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 
 	// Cluster probe returns false — Helm should never be called
-	clusterExists := func() (bool, error) { return false, nil }
+	probe := func() reality.ClusterReachability { return reality.NotConfigured }
 	helmCalled := false
 	newHelm := func() (reality.HelmManager, error) {
 		helmCalled = true
 		return &fakeHelmManager{}, nil
 	}
 
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
 	require.NoError(t, err)
 
 	ts, err := checker.RefreshState(context.Background())
@@ -64,7 +64,7 @@ func TestTeleportChecker_ClusterNotExists_SkipsHelmChecks(t *testing.T) {
 func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 
-	clusterExists := func() (bool, error) { return true, nil }
+	probe := func() reality.ClusterReachability { return reality.Reachable }
 	teleport := teleportCatalogChart()
 	newHelm := func() (reality.HelmManager, error) {
 		return &fakeHelmManager{
@@ -83,7 +83,7 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 		}, nil
 	}
 
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
 	require.NoError(t, err)
 
 	ts, err := checker.RefreshState(context.Background())
@@ -100,7 +100,7 @@ func TestTeleportChecker_HelmReleasePresent_ClusterAgentInstalled(t *testing.T) 
 func TestTeleportChecker_HelmReleaseNotDeployed_ClusterAgentNotInstalled(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 
-	clusterExists := func() (bool, error) { return true, nil }
+	probe := func() reality.ClusterReachability { return reality.Reachable }
 	teleport := teleportCatalogChart()
 	newHelm := func() (reality.HelmManager, error) {
 		return &fakeHelmManager{
@@ -115,7 +115,7 @@ func TestTeleportChecker_HelmReleaseNotDeployed_ClusterAgentNotInstalled(t *test
 		}, nil
 	}
 
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
 	require.NoError(t, err)
 
 	ts, err := checker.RefreshState(context.Background())
@@ -127,7 +127,7 @@ func TestTeleportChecker_HelmReleaseNotDeployed_ClusterAgentNotInstalled(t *test
 func TestTeleportChecker_HelmReleaseWithoutChartMetadata_ReportsEmptyVersion(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 
-	clusterExists := func() (bool, error) { return true, nil }
+	probe := func() reality.ClusterReachability { return reality.Reachable }
 	teleport := teleportCatalogChart()
 	newHelm := func() (reality.HelmManager, error) {
 		return &fakeHelmManager{
@@ -141,7 +141,7 @@ func TestTeleportChecker_HelmReleaseWithoutChartMetadata_ReportsEmptyVersion(t *
 		}, nil
 	}
 
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
 	require.NoError(t, err)
 
 	ts, err := checker.RefreshState(context.Background())
@@ -154,16 +154,90 @@ func TestTeleportChecker_HelmReleaseWithoutChartMetadata_ReportsEmptyVersion(t *
 func TestTeleportChecker_HelmReleaseAbsent_ClusterAgentNotInstalled(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 
-	clusterExists := func() (bool, error) { return true, nil }
+	probe := func() reality.ClusterReachability { return reality.Reachable }
 	newHelm := func() (reality.HelmManager, error) {
 		return &fakeHelmManager{releases: nil}, nil
 	}
 
-	checker, err := reality.NewTeleportChecker(sm, newHelm, clusterExists)
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
 	require.NoError(t, err)
 
 	ts, err := checker.RefreshState(context.Background())
 	require.NoError(t, err)
 
 	assert.False(t, ts.ClusterAgent.Installed, "ClusterAgent should not be installed when no Helm release")
+}
+
+func persistInstalledClusterAgent(t *testing.T, sm state.Manager) state.TeleportClusterAgentState {
+	t.Helper()
+	agent := state.TeleportClusterAgentState{
+		Installed: true, Release: "teleport-agent", Namespace: "teleport-agent", ChartVersion: "18.6.4",
+	}
+	s := sm.State()
+	s.TeleportState.ClusterAgent = agent
+	sm.Set(s)
+	return agent
+}
+
+// A configured cluster that does not answer must not record the cluster agent
+// as removed.
+func TestTeleportChecker_ClusterUnobservable_KeepsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persisted := persistInstalledClusterAgent(t, sm)
+
+	probe := func() reality.ClusterReachability { return reality.Unobservable }
+	helmCalled := false
+	newHelm := func() (reality.HelmManager, error) {
+		helmCalled = true
+		return &fakeHelmManager{}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, helmCalled)
+	assert.Equal(t, persisted, ts.ClusterAgent)
+}
+
+// No kubeconfig on this host says nothing about the Helm release, so the
+// recorded agent stands.
+func TestTeleportChecker_NoKubeconfig_KeepsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persisted := persistInstalledClusterAgent(t, sm)
+
+	probe := func() reality.ClusterReachability { return reality.NotConfigured }
+	helmCalled := false
+	newHelm := func() (reality.HelmManager, error) {
+		helmCalled = true
+		return &fakeHelmManager{}, nil
+	}
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, helmCalled)
+	assert.Equal(t, persisted, ts.ClusterAgent)
+}
+
+// Only a reachable cluster whose Helm releases lack the agent confirms removal.
+func TestTeleportChecker_ReachableClusterWithoutRelease_ClearsPersistedClusterAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persistInstalledClusterAgent(t, sm)
+
+	probe := func() reality.ClusterReachability { return reality.Reachable }
+	newHelm := func() (reality.HelmManager, error) { return &fakeHelmManager{releases: nil}, nil }
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, state.TeleportClusterAgentState{}, ts.ClusterAgent)
 }

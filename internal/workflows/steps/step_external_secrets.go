@@ -85,23 +85,9 @@ func TeardownExternalSecrets(namespace string) *automa.WorkflowBuilder {
 }
 
 // checkClusterReachable fails when the cluster is unreachable, so that surfaces
-// here instead of as a cryptic Helm error from the first IsInstalled call. probe
-// is kube.ClusterExists in production; it is a parameter so this can be
-// unit-tested without a cluster.
-func checkClusterReachable(probe func() (bool, error)) error {
-	// ClusterExists collapses every failure to (false, nil) today; this branch
-	// exists because the signature allows an error.
-	exists, err := probe()
-	if err != nil {
-		return errx.Decorate(
-			errorx.ExternalError.Wrap(err, "failed to probe Kubernetes cluster reachability"),
-			reasons.PreconditionNotMet,
-			"Ensure the cluster is installed and its API server is reachable:",
-			"  solo-provisioner kube cluster install",
-			"  kubectl cluster-info",
-		)
-	}
-	if !exists {
+// here instead of as a cryptic Helm error from the first IsInstalled call.
+func checkClusterReachable(reachable bool) error {
+	if !reachable {
 		return errx.Decorate(
 			errorx.IllegalState.New("Kubernetes cluster is not reachable"),
 			reasons.PreconditionNotMet,
@@ -209,7 +195,8 @@ func releaseStatus(rel *release.Release) release.Status {
 func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Builder {
 	return automa.NewStepBuilder().WithId(PreCheckExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if err := checkClusterReachable(kube.ClusterExists); err != nil {
+			_, reachable := kube.ProbeCluster()
+			if err := checkClusterReachable(reachable); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 

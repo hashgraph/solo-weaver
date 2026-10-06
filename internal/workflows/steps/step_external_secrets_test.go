@@ -505,31 +505,17 @@ func Test_uninstallESOChart_ErrorsAreDecorated(t *testing.T) {
 }
 
 func Test_checkClusterReachable_Reachable(t *testing.T) {
-	require.NoError(t, checkClusterReachable(func() (bool, error) { return true, nil }))
+	require.NoError(t, checkClusterReachable(true))
 }
 
 func Test_checkClusterReachable_NotReachable(t *testing.T) {
-	err := checkClusterReachable(func() (bool, error) { return false, nil })
+	err := checkClusterReachable(false)
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalState),
 		"an absent cluster is an IllegalState, got %v", err)
 	hints, ok := errx.Hints(err)
 	require.True(t, ok, "the failure must carry operator hints")
 	assert.Contains(t, hints, "  solo-provisioner kube cluster install")
-}
-
-// ClusterExists returns no error today; the branch is covered because the
-// signature allows one.
-func Test_checkClusterReachable_ProbeError(t *testing.T) {
-	err := checkClusterReachable(func() (bool, error) {
-		return false, errors.New("probe boom")
-	})
-	// errorx.Type.Wrap is opaque, so the cause is readable in the message but
-	// not reachable through errors.Is.
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "probe boom")
-	assert.True(t, errorx.IsOfType(err, errorx.ExternalError),
-		"a failed probe is an ExternalError, got %v", err)
 }
 
 func esoRelease(name, namespace, chartName string, status release.Status) *release.Release {

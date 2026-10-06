@@ -22,9 +22,9 @@ type ConsensusKubeClient interface {
 }
 
 type consensusChecker struct {
-	sm            state.Manager
-	newKube       func() (ConsensusKubeClient, error)
-	clusterExists ClusterProbe
+	sm      state.Manager
+	newKube func() (ConsensusKubeClient, error)
+	probe   ClusterProbe
 }
 
 // NewConsensusChecker creates a reality checker that reads Orbit and ConsensusCapsule CRs
@@ -32,19 +32,18 @@ type consensusChecker struct {
 func NewConsensusChecker(
 	sm state.Manager,
 	newKube func() (ConsensusKubeClient, error),
-	clusterExists ClusterProbe,
+	probe ClusterProbe,
 ) (Checker[map[string]state.ConsensusNodeState], error) {
 	if sm == nil {
 		return nil, errorx.IllegalArgument.New("state manager cannot be nil")
 	}
-	return &consensusChecker{sm: sm, newKube: newKube, clusterExists: clusterExists}, nil
+	return &consensusChecker{sm: sm, newKube: newKube, probe: probe}, nil
 }
 
 func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.ConsensusNodeState, error) {
 	l := logx.As()
 
-	exists, err := c.clusterExists()
-	if err != nil || !exists {
+	if !c.probe().Observed() {
 		l.Debug().Msg("Cluster not reachable; returning persisted consensus state")
 		return c.sm.State().ConsensusNodes, nil
 	}

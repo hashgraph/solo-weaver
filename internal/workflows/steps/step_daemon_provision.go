@@ -97,12 +97,7 @@ func newTypedClient() (*kubernetes.Clientset, error) {
 func CheckClusterStep() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("check-cluster").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			exists, err := kube.ClusterExists()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.InternalError.Wrap(err, "failed to check cluster reachability")))
-			}
-			if !exists {
+			if _, reachable := kube.ProbeCluster(); !reachable {
 				return automa.StepFailureReport(stp.Id(),
 					automa.WithError(errorx.IllegalState.New(
 						"K8s cluster is not reachable — ensure ~/.kube/config is valid and the API server is up").
