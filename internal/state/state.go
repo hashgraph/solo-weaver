@@ -265,7 +265,41 @@ type ConsensusNodeState struct {
 	// intended shape instead of falling back to compiled-in defaults.
 	ManagedSpec *ConsensusNodeManagedSpec `yaml:"managedSpec,omitempty" json:"managedSpec,omitempty"`
 
+	// ObservedShape is the managed-spec-equivalent read from the live cluster
+	// during a reality refresh. It is never persisted — it exists only so the
+	// drift producer can compare ManagedSpec (what weaver set) against what the
+	// cluster actually has, without re-reading the CRDs.
+	ObservedShape *ConsensusNodeObservedShape `yaml:"-" json:"-"`
+
 	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+}
+
+// ConsensusNodeObservedShape holds the managed-shape fields read from a live
+// ConsensusCapsule (and its Orbit) during a reality refresh. String fields use
+// empty = "not read" (skipped during comparison). Boolean and composite fields
+// use a *Set companion to distinguish "not observed" from a real zero value.
+// Not persisted; populated transiently by the reality checker for drift
+// detection.
+type ConsensusNodeObservedShape struct {
+	ContainerName string
+	CPULimit      string
+	CPURequest    string
+	MemoryLimit   string
+	MemoryRequest string
+	JavaHeapMin   string
+	JavaHeapMax   string
+	JavaOpts      string
+	UCImageRepo   string
+	UCImageTag    string
+
+	ProvisionerDaemonEnabled    bool
+	ProvisionerDaemonEnabledSet bool
+
+	Volumes    models.ConsensusVolumeConfig
+	VolumesSet bool
+
+	ImagePullSecrets    models.PullSecretSelector
+	ImagePullSecretsSet bool
 }
 
 // ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver
