@@ -109,6 +109,12 @@ func runBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopInte
 // a CLI command does: Setup's refresh, then HandleIntent, then the flush.
 func handleBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopIntent) (*automa.Report, error) {
 	t.Helper()
+	return handleBlockNodeIntentWith(t, stateFile, h, intent, Teleport)
+}
+
+// handleBlockNodeIntentWith is handleBlockNodeIntent with the handler's managed components chosen.
+func handleBlockNodeIntentWith(t *testing.T, stateFile string, h *host, intent noopIntent, managed ...Component) (*automa.Report, error) {
+	t.Helper()
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
@@ -137,7 +143,7 @@ func handleBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopI
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
-	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode)
+	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, WithManagedComponents[struct{}](managed...))
 	require.NoError(t, err)
 
 	inputs := models.UserInputs[struct{}]{Common: models.CommonInputs{
@@ -177,6 +183,25 @@ func TestHandleIntent_ReportsTeleportChangeThenPersistsLiveState(t *testing.T) {
 
 	second := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 	require.Empty(t, ui.CollectWarnings(second))
+}
+
+// A handler reports only the components it manages: with Teleport unmanaged, a
+// Teleport change is neither reported nor absorbed — the persisted Teleport
+// section survives the flush for its owning command to report later.
+func TestHandleIntent_UnmanagedComponentIsNeitherReportedNorAbsorbed(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+	h := &host{teleport: configuredNodeAgent()}
+	h.teleport.NodeAgent.Configured = false
+
+	// Manage BlockNode only, so the live Teleport change is out of scope.
+	report, err := handleBlockNodeIntentWith(t, stateFile, h, noopIntent{}, BlockNode)
+
+	require.NoError(t, err)
+	require.Empty(t, ui.CollectWarnings(report))
+	// The out-of-band Teleport change is not folded into state: the persisted
+	// baseline (Configured: true) is preserved, not the live value (false).
+	require.Equal(t, configuredNodeAgent().NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
 }
 
 func TestHandleIntent_WorkflowsOwnChangeIsNotReported(t *testing.T) {
