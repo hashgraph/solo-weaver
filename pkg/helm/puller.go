@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/action"
@@ -95,8 +96,37 @@ func (h *helmManager) pullAndVerifyClassic(destDir, chartRef, version, expected 
 	pull.Version = version
 	pull.SetRegistryClient(registryClient)
 
-	if _, err := pull.Run(chartRef); err != nil {
-		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
+	maxAttempts := h.chartPullAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultChartPullAttempts
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_, lastErr = pull.Run(chartRef)
+		if lastErr == nil {
+			break
+		}
+		if !isTransientChartFetchError(lastErr) {
+			break
+		}
+		if attempt == maxAttempts {
+			break
+		}
+
+		h.log.Warn().
+			Str("chart", chartRef).
+			Str("version", version).
+			Int("attempt", attempt).
+			Err(lastErr).
+			Msg("Helm chart fetch failed; retrying")
+		// Transient upstream 5xx/timeout errors are usually short-lived; a small
+		// exponential backoff keeps the retry budget bounded without stalling the
+		// workflow for a long time on a one-off GitHub or registry blip.
+		time.Sleep(time.Duration(attempt) * 3 * time.Second)
+	}
+	if lastErr != nil {
+		return "", ErrChartLoadFailed.Wrap(lastErr, "helm pull failed for chart %q version %q", chartRef, version)
 	}
 
 	// `helm pull <repo>/<chart>` writes <chart>-<version>.tgz (using the last
@@ -120,6 +150,31 @@ func (h *helmManager) pullAndVerifyClassic(destDir, chartRef, version, expected 
 		Msg("Helm chart pulled and verified")
 
 	return tgz, nil
+}
+
+func isTransientChartFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"500",
+		"502",
+		"503",
+		"504",
+		"timeout",
+		"timed out",
+		"gateway timeout",
+		"bad gateway",
+		"service unavailable",
+		"temporarily unavailable",
+		"connection reset",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // pullAndVerifyOCI calls the registry client directly so we can read the
