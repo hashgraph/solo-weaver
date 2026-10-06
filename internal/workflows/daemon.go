@@ -144,6 +144,7 @@ func daemonExtraReadWritePaths(cfg daemon.DaemonConfig) []string {
 //  1. Check root privileges                           (always)
 //  2. Install the daemon binary                       (always)
 //  3. Ensure hedera user/group exists; add weaver     (always)
+//     Make the CN upgrade dir hedera-group writable   (consensus_node enabled)
 //  4. Check K8s cluster is reachable                  (any K8s-dependent component)
 //  5. Create RBAC resources for all K8s components    (any K8s-dependent component)
 //  6. Write per-component kubeconfigs                 (any K8s-dependent component)
@@ -164,6 +165,10 @@ func NewDaemonServiceInstallWorkflow(cfg daemon.DaemonConfig, daemonSrc steps.Da
 		CheckPrivilegesStep(),
 		steps.InstallDaemonBinaryStep(daemonSrc, paths),
 		steps.EnsureHederaOwnerStep(),
+	}
+
+	if cn := cfg.Components.ConsensusNode; cn != nil && cn.Enabled {
+		wfSteps = append(wfSteps, steps.EnsureConsensusUpgradeDirStep(cn.EffectiveUpgradeDir()))
 	}
 
 	// K8s-dependent components: cluster reachability + RBAC + kubeconfigs.
