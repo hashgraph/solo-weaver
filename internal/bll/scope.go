@@ -33,7 +33,7 @@ type Component struct {
 // (the file a flush writes) with its drift producer, when it has one.
 var (
 	Cluster       = Component{id: state.ComponentCluster}
-	BlockNode     = Component{id: state.ComponentBlockNode}
+	BlockNode     = Component{id: state.ComponentBlockNode, producer: drift.BlockNode}
 	ConsensusNode = Component{id: state.ComponentConsensus, producer: drift.ConsensusNode}
 	Teleport      = Component{id: state.ComponentTeleport, producer: drift.Teleport}
 	// Profile, Firewall and System are the host components: the deployment

@@ -101,7 +101,8 @@ func (cs *ClusterState) Equal(other ClusterState) bool {
 
 // FieldDiff is one field whose persisted value differs from reality.
 type FieldDiff struct {
-	// Field is the field's key path in state.yaml, such as "storage.liveSize".
+	// Field is the field's key path in the block node's state file, such as
+	// "storage.liveSize".
 	Field     string
 	Persisted string
 	Reality   string
@@ -219,7 +220,7 @@ func sameQuantity(a, b string) bool {
 	return qa.Cmp(qb) == 0
 }
 
-// BlockNodeObservableFields returns the state.yaml keys of the BlockNodeState
+// BlockNodeObservableFields returns the state file keys of the BlockNodeState
 // fields reality can read back, the ones Diff marks Observable.
 func BlockNodeObservableFields() []string {
 	var fields []string
