@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -111,6 +112,12 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
+	split, metallbPool := blocknode.ServiceExposureFromValues(re.Config)
+	bn.ServiceTopology = state.ServiceTopologySingle
+	if split {
+		bn.ServiceTopology = state.ServiceTopologySplit
+	}
+	bn.MetalLBPool = &metallbPool
 
 	// PersistentVolumes are cluster-scoped; pass empty namespace.
 	k8s, err := b.newKube()
