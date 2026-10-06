@@ -94,3 +94,27 @@ func (b *BlockNodeState) Equal(other BlockNodeState) bool {
 	return b.ReleaseInfo.Equal(other.ReleaseInfo) &&
 		b.Storage == other.Storage
 }
+
+// Equal returns true if two TeleportNodeAgentState values are equal.
+func (n *TeleportNodeAgentState) Equal(other TeleportNodeAgentState) bool {
+	return n.Installed == other.Installed &&
+		n.Configured == other.Configured &&
+		n.Version == other.Version
+}
+
+// Equal returns true if two TeleportClusterAgentState values are equal.
+func (c *TeleportClusterAgentState) Equal(other TeleportClusterAgentState) bool {
+	return c.Installed == other.Installed &&
+		c.Release == other.Release &&
+		c.Namespace == other.Namespace &&
+		c.ChartVersion == other.ChartVersion
+}
+
+// Equal returns true if two TeleportState values are equal, ignoring LastSync.
+// Do not use it for drift detection: it compares NodeAgent.Version, which the
+// reality checker fills with the version the binary would install, not one read
+// from the host.
+func (t *TeleportState) Equal(other TeleportState) bool {
+	return t.NodeAgent.Equal(other.NodeAgent) &&
+		t.ClusterAgent.Equal(other.ClusterAgent)
+}
