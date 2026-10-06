@@ -150,28 +150,16 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 			}
 		}
 
-		// Surface out-of-band drift: compare the live capsule against the recorded
-		// managed baseline and log any differences. We report but do NOT absorb the
-		// managed shape (updated keeps the persisted ManagedSpec), so drift keeps
-		// being reported until the operator reconciles via re-apply/reconfigure.
-		// Identity fields are still reconciled into updated above (reality outranks
-		// for RSL resolution) — the log makes that reconciliation visible rather
-		// than silent.
-		live := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName)
-		live.ImageRepo = updated.ImageRepo
-		live.ImageTag = updated.ImageTag
-		live.AccountId = updated.AccountId
-		live.LedgerId = updated.LedgerId
-		live.ChainId = updated.ChainId
-		if err == nil && orbitExists {
-			readProvisionerDaemonEnabled(ctx, kc, apiVersion, ns.OrbitName, &live)
-		}
-		if drift := diffConsensusManaged(ns, live); len(drift) > 0 {
-			l.Warn().
-				Str("scope", scope).
-				Str("capsule", capsuleName).
-				Strs("drift", drift).
-				Msg("Consensus node has drifted from its recorded managed spec")
+		// Read the live managed shape for drift comparison. The checker does NOT
+		// absorb it into ConsensusNodeState (ManagedSpec stays unchanged); it
+		// populates the transient ObservedShape so the drift.ConsensusNode
+		// producer can compare at HandleIntent time.
+		if ns.ManagedSpec != nil {
+			live := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName)
+			if err == nil && orbitExists {
+				readProvisionerDaemonEnabled(ctx, kc, apiVersion, ns.OrbitName, &live)
+			}
+			updated.ObservedShape = liveShapeToObserved(live)
 		}
 
 		result[scope] = updated
