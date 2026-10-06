@@ -80,17 +80,6 @@ func (c *ClusterNodeState) Equal(other ClusterNodeState) bool {
 	return true
 }
 
-// Equal returns true if two HelmReleaseInfo values are equal, ignoring time fields
-func (h *HelmReleaseInfo) Equal(other HelmReleaseInfo) bool {
-	return h.Name == other.Name &&
-		h.ChartVersion == other.ChartVersion &&
-		h.Namespace == other.Namespace &&
-		h.ChartRef == other.ChartRef &&
-		h.ChartName == other.ChartName &&
-		h.Status == other.Status &&
-		h.AppVersion == other.AppVersion
-}
-
 // Equal returns true if two ClusterState values are equal, ignoring LastSync.
 func (cs *ClusterState) Equal(other ClusterState) bool {
 	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo)
@@ -262,15 +251,4 @@ func (b *BlockNodeState) Diff(reality BlockNodeState) []FieldDiff {
 		}
 	}
 	return diffs
-}
-
-// Equal returns true if no observable field differs between the two values:
-// weaver-only records, which a refresh cannot rebuild, are ignored.
-func (b *BlockNodeState) Equal(other BlockNodeState) bool {
-	for _, d := range b.Diff(other) {
-		if d.Observable {
-			return false
-		}
-	}
-	return true
 }

@@ -191,36 +191,6 @@ func TestBlockNodeDiff_ExposureComparedOnlyWhenBothKnown(t *testing.T) {
 	}
 }
 
-// Equal is "no drift": weaver-only records, which a refresh cannot rebuild,
-// never make it false.
-func TestBlockNodeEqual_IgnoresWeaverOnlyRecords(t *testing.T) {
-	cases := []struct {
-		name   string
-		change func(*BlockNodeState)
-		equal  bool
-	}{
-		{"size spelled differently", func(b *BlockNodeState) { b.Storage.LiveSize = "20480Mi" }, true},
-		{"deploy time and last sync moved", func(b *BlockNodeState) {
-			b.ReleaseInfo.LastDeployed = htime.Unix(1_700_086_400, 0)
-			b.LastSync = htime.Unix(1_700_086_400, 0)
-		}, true},
-		{"weaver-only records differ", func(b *BlockNodeState) {
-			b.PluginPreset = "tier1-lfh"
-			b.Storage.BasePath = "/mnt/fast-storage"
-		}, true},
-		{"chart upgraded out of band", func(b *BlockNodeState) { b.ReleaseInfo.ChartVersion = "0.41.0" }, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			persisted, other := deployedBlockNode(), deployedBlockNode()
-			tc.change(&other)
-
-			require.Equal(t, tc.equal, persisted.Equal(other))
-			require.Equal(t, tc.equal, other.Equal(persisted))
-		})
-	}
-}
-
 // Every leaf field of BlockNodeState is compared and named by its state.yaml
 // key, except the timestamps, so a field added later fails here until the diff
 // covers it.
