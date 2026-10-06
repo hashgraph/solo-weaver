@@ -328,11 +328,16 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// 0644, matching daemon.WriteDaemonConfig: the daemon runs as weaver and must be
+	// able to read a root-written config. Chmod also repairs a pre-existing 0600 file.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
+	if err := out.Chmod(0o644); err != nil {
+		return err
+	}
 
 	_, err = io.Copy(out, in)
 	return err
