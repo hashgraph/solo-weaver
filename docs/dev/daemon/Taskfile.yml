@@ -385,24 +385,14 @@ tasks:
         sudo solo-provisioner daemon service check || true
 
   daemon:logs:
-    desc: "Inside VM: tail the daemon log file (LEAVE RUNNING in its own terminal)"
+    desc: "Inside VM: follow the daemon journal (LEAVE RUNNING in its own terminal)"
     cmds:
-      # The daemon logs to a file via lumberjack, NOT journald — `journalctl -u ...`
-      # shows nothing for the provisioner user (needs sudo / systemd-journal group).
-      # -F follows across lumberjack's log rotation. For service start/crash output,
-      # use: sudo journalctl -u solo-provisioner-daemon.service -e
-      #
-      # For local foreground debugging, switch the daemon to human-friendly console
-      # logging instead of the production NDJSON file log. In daemon.yaml set:
-      #   log:
-      #     level: debug
-      #     consoleLogging: true
-      #     fileLogging: false
-      #     utc: true
-      #     includeCaller: true
-      #     includePackage: true
-      # and then run: `solo-provisioner-daemon --log-level=debug --config=/path/to/daemon-local.yaml`
-      - tail -F /opt/solo/weaver/logs/solo-provisioner-daemon.log
+      # The daemon's stdout goes to journald as human-readable console output, which is
+      # the readable view for local debugging; -o cat drops the journal prefix. The
+      # file /opt/solo/weaver/logs/solo-provisioner-daemon.log is always NDJSON (the
+      # logx file sink), so it is for machine consumption, not for tailing. Needs sudo
+      # (or the systemd-journal group) to read the unit's journal.
+      - sudo journalctl -fu solo-provisioner-daemon -o cat
 
   daemon:check:
     desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
