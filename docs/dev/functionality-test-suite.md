@@ -392,7 +392,7 @@
 ## 13. Kube Client & Admin (Integration)
 
 - [ ] **TC-KB-001** — `kube.NewClient()` creates a client that can list resources (PV, StatefulSet, etc.).
-- [ ] **TC-KB-002** — `kube.ClusterExists()` correctly detects whether a cluster is reachable (based on kubeconfig existence).
+- [ ] **TC-KB-002** — `kube.ProbeCluster()` correctly detects whether a cluster is configured (kubeconfig exists) and reachable (API server answers).
 - [ ] **TC-KB-003** — `kube.RetrieveClusterInfo()` returns populated `ClusterInfo` with server version, host, clusters, contexts.
 - [ ] **TC-KB-004** — `kube.Admin` operations (create namespace, apply manifests) function correctly.
 

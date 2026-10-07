@@ -21,26 +21,26 @@ import (
 // PersistentVolumes to build a BlockNodeState.
 // It depends only on injectable helm/kube factories and a cluster probe.
 type blockNodeChecker struct {
-	sm            state.Manager
-	newHelm       func() (HelmManager, error)
-	newKube       func() (KubeClient, error)
-	clusterExists ClusterProbe
+	sm      state.Manager
+	newHelm func() (HelmManager, error)
+	newKube func() (KubeClient, error)
+	probe   ClusterProbe
 }
 
 // NewBlockNodeChecker constructs a blockNodeChecker.
-// In production pass helm2.NewManager, kube.NewClient and kube.ClusterExists.
+// NewCheckers passes the production factories and probe.
 // In tests swap them for fakes.
 func NewBlockNodeChecker(
 	sm state.Manager,
 	newHelm func() (HelmManager, error),
 	newKube func() (KubeClient, error),
-	clusterExists ClusterProbe,
+	probe ClusterProbe,
 ) (Checker[state.BlockNodeState], error) {
 	return &blockNodeChecker{
-		sm:            sm,
-		newHelm:       newHelm,
-		newKube:       newKube,
-		clusterExists: clusterExists,
+		sm:      sm,
+		newHelm: newHelm,
+		newKube: newKube,
+		probe:   probe,
 	}, nil
 }
 
@@ -48,9 +48,8 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	now := htime.Now()
 	bn := b.sm.State().BlockNodeState
 
-	exists, err := b.clusterExists()
-	if !exists {
-		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping BlockNodeState check")
+	if !b.probe().Observed() {
+		logx.As().Debug().Msg("Kubernetes cluster is not observable, skipping BlockNodeState check")
 		return bn, nil
 	}
 

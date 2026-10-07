@@ -76,10 +76,59 @@ func NewRuntimeResolver(
 // Refresh forces all runtimes to refresh their state from reality, bypassing any caching or staleness checks.
 // This is useful after any user input that may have changed reality, to ensure that subsequent reads reflect the latest reality state.
 func (r *RuntimeResolver) Refresh(ctx context.Context, force bool) (state.State, error) {
-	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return state.State{}, errorx.IllegalState.Wrap(err, "failed to refresh state")
+	if err := r.refreshPersisted(); err != nil {
+		return state.State{}, err
+	}
+	return r.refreshRuntimes(ctx, force)
+}
+
+// RefreshWithBaseline refreshes exactly like Refresh and also returns the state
+// as persisted on disk before reality was folded in. The baseline is nil when
+// there is no state file or it could not be captured; capturing it never fails
+// the refresh.
+func (r *RuntimeResolver) RefreshWithBaseline(ctx context.Context, force bool) (*state.State, state.State, error) {
+	if err := r.refreshPersisted(); err != nil {
+		return nil, state.State{}, err
 	}
 
+	// Must be taken before the runtimes refresh: they replace the persisted
+	// sub-states with reality, and checkers that call sm.Refresh() write
+	// through pointers a plain copy would share.
+	baseline := r.persistedBaseline()
+
+	current, err := r.refreshRuntimes(ctx, force)
+	if err != nil {
+		return nil, state.State{}, err
+	}
+	return baseline, current, nil
+}
+
+func (r *RuntimeResolver) persistedBaseline() *state.State {
+	_, exists, err := r.sm.HasPersistedState()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to check for a state file; skipping out-of-band change detection")
+		return nil
+	}
+	if !exists {
+		return nil
+	}
+
+	baseline, err := r.sm.State().PersistedSnapshot()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to snapshot persisted state; skipping out-of-band change detection")
+		return nil
+	}
+	return &baseline
+}
+
+func (r *RuntimeResolver) refreshPersisted() error {
+	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		return errorx.IllegalState.Wrap(err, "failed to refresh state")
+	}
+	return nil
+}
+
+func (r *RuntimeResolver) refreshRuntimes(ctx context.Context, force bool) (state.State, error) {
 	if r.ClusterRuntime != nil {
 		ctx1, cancel1 := context.WithTimeout(ctx, DefaultRefreshTimeout)
 		defer cancel1()

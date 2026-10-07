@@ -1,0 +1,13 @@
+21 27 0:20 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+22 27 0:5 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+23 27 0:6 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=4045000k,mode=755
+27 1 253:0 / / rw,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro
+120 27 0:45 / /mnt/nfs rw,relatime shared:64 - nfs4 10.0.0.5:/export rw,vers=4.2
+121 27 0:46 / /mnt/s3 rw,relatime shared:65 - fuse.s3fs s3fs rw,user_id=0
+122 27 0:47 / /run/user/0 rw,nosuid,nodev,relatime shared:66 - tmpfs tmpfs rw,size=809004k
+123 27 252:16 / /mnt/ceph rw,relatime shared:67 - ext4 /dev/rbd0 rw
+124 27 0:48 / /mnt/overlay rw,relatime - overlay overlay rw,lowerdir=/a,upperdir=/b
+125 27 253:0 /srv/data /mnt/bind rw,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro
+126 27 8:17 / /mnt/with\040space rw,relatime - xfs /dev/sdb1 rw
+this line is not a mountinfo record
+127 27 8:33 / /mnt/data rw,relatime shared:70 master:9 propagate_from:3 - xfs /dev/sdc1 rw

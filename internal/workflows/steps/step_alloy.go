@@ -108,17 +108,7 @@ func preCheckAlloy() automa.Builder {
 			// deploy-into-existing-cluster command (like teleport cluster) — it does not
 			// bootstrap the cluster. Without this gate a missing/unreachable cluster only
 			// surfaces later as a cryptic Helm "Kubernetes cluster unreachable" error.
-			clusterExists, err := kube.ClusterExists()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.ExternalError.Wrap(err, "failed to probe Kubernetes cluster reachability").
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Ensure the cluster is installed and its API server is reachable:",
-							"  solo-provisioner kube cluster install",
-							"  kubectl cluster-info",
-						})))
-			}
-			if !clusterExists {
+			if _, reachable := kube.ProbeCluster(); !reachable {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(
 					errorx.IllegalState.New("Kubernetes cluster is not reachable").
 						WithProperty(models.ErrPropertyResolution, []string{

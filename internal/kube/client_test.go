@@ -534,44 +534,37 @@ func TestResolveKubeconfigPath_NoHome(t *testing.T) {
 	}
 }
 
-// ── ClusterExists fast-path ───────────────────────────────────────────────────
+// ── ProbeCluster fast-path ────────────────────────────────────────────────────
 
-// TestClusterExists_ReturnsFalseImmediately_WhenNoKubeconfig verifies the
-// Stage-1 fast path: if the kubeconfig file is absent ClusterExists returns
-// (false, nil) without making any network call.
-func TestClusterExists_ReturnsFalseImmediately_WhenNoKubeconfig(t *testing.T) {
+// TestProbeCluster_NotConfigured_WhenNoKubeconfig verifies the Stage-1 fast
+// path: with no kubeconfig at all, ProbeCluster returns without a network call.
+func TestProbeCluster_NotConfigured_WhenNoKubeconfig(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", "")
 	t.Setenv("HOME", t.TempDir()) // temp dir has no .kube/config
 
-	exists, err := ClusterExists()
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if exists {
-		t.Fatal("expected false when kubeconfig is absent")
+	configured, reachable := ProbeCluster()
+	if configured || reachable {
+		t.Fatalf("got configured=%v reachable=%v, want false, false", configured, reachable)
 	}
 }
 
-// TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigMissing verifies
-// that pointing KUBECONFIG at a non-existent file returns (false, nil) without
-// a network call.
-func TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigMissing(t *testing.T) {
+// TestProbeCluster_NotConfigured_WhenKubeconfigMissing verifies that pointing
+// KUBECONFIG at a non-existent file returns without a network call.
+func TestProbeCluster_NotConfigured_WhenKubeconfigMissing(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-such-kubeconfig"))
 
-	exists, err := ClusterExists()
-	if err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
-	}
-	if exists {
-		t.Fatal("expected false when kubeconfig file does not exist")
+	configured, reachable := ProbeCluster()
+	if configured || reachable {
+		t.Fatalf("got configured=%v reachable=%v, want false, false", configured, reachable)
 	}
 }
 
-// TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigEmpty verifies that
-// an empty (unparseable) kubeconfig file does not block on the network.
-func TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigEmpty(t *testing.T) {
+// TestProbeCluster_Unreachable_WhenKubeconfigEmpty verifies that an empty
+// (unparseable) kubeconfig does not block on the network, and counts as a
+// configured cluster that could not be observed.
+func TestProbeCluster_Unreachable_WhenKubeconfigEmpty(t *testing.T) {
 	dir := t.TempDir()
 	kubeconfig := filepath.Join(dir, "config")
 	if err := os.WriteFile(kubeconfig, []byte{}, 0o600); err != nil {
@@ -580,12 +573,9 @@ func TestClusterExists_ReturnsFalseImmediately_WhenKubeconfigEmpty(t *testing.T)
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", kubeconfig)
 
-	exists, err := ClusterExists()
-	if err != nil {
-		t.Fatalf("expected nil error for empty kubeconfig, got: %v", err)
-	}
-	if exists {
-		t.Fatal("expected false for empty/unparseable kubeconfig")
+	configured, reachable := ProbeCluster()
+	if !configured || reachable {
+		t.Fatalf("got configured=%v reachable=%v, want true, false", configured, reachable)
 	}
 }
 

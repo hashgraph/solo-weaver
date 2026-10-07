@@ -180,10 +180,10 @@ metadata:
 	full.BlockNodeState = persisted
 
 	checker := &blockNodeChecker{
-		sm:            fakeStateManager{st: full},
-		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
-		newKube:       func() (KubeClient, error) { return fakeKubeClient{}, nil },
-		clusterExists: func() (bool, error) { return true, nil },
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		probe:   func() ClusterReachability { return Reachable },
 	}
 
 	got, err := checker.RefreshState(context.Background())
@@ -238,10 +238,10 @@ metadata:
 	full.BlockNodeState = persisted
 
 	checker := &blockNodeChecker{
-		sm:            fakeStateManager{st: full},
-		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
-		newKube:       func() (KubeClient, error) { return fakeKubeClient{}, nil },
-		clusterExists: func() (bool, error) { return true, nil },
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		probe:   func() ClusterReachability { return Reachable },
 	}
 
 	got, err := checker.RefreshState(context.Background())
@@ -301,10 +301,10 @@ metadata:
 	full.BlockNodeState = persisted
 
 	checker := &blockNodeChecker{
-		sm:            fakeStateManager{st: full},
-		newHelm:       func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
-		newKube:       func() (KubeClient, error) { return fakeKubeClient{}, nil },
-		clusterExists: func() (bool, error) { return true, nil },
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		probe:   func() ClusterReachability { return Reachable },
 	}
 
 	got, err := checker.RefreshState(context.Background())

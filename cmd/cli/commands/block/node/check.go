@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	blocknode "github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
@@ -66,7 +67,10 @@ var checkCmd = &cobra.Command{
 			Str("pluginPreset", flagPluginPreset).
 			Msg("Running preflight checks for Hedera Block Node")
 
-		if err := common.RunWorkflowBuilder(cmd.Context(), workflows.NewBlockNodePreflightCheckWorkflow(deploySpec)); err != nil {
+		effStorage, effChartVersion := storageForCheck()
+
+		if err := common.RunWorkflowBuilder(cmd.Context(),
+			workflows.NewBlockNodePreflightCheckWorkflow(deploySpec, effStorage, effChartVersion)); err != nil {
 			return err
 		}
 
@@ -91,4 +95,56 @@ func splitPlugins(s string) []string {
 		}
 	}
 	return result
+}
+
+// storageForCheck resolves the storage and chart version `install` would use.
+// Any failure degrades to zero values, so the media check reports "not determined".
+func storageForCheck() (models.BlockNodeStorage, string) {
+	if err := initializeDependencies(); err != nil {
+		logx.As().Warn().Err(err).
+			Msg("Storage media check skipped: failed to initialise block node dependencies")
+		return models.BlockNodeStorage{}, ""
+	}
+	return resolveStorageForCheck(blockNodeHandler.Runtime(), storageFromFlags())
+}
+
+// resolveStorageForCheck seeds rt the way `install` does and returns the
+// effective storage and chart version. Failures degrade to zero values.
+func resolveStorageForCheck(rt *rsl.BlockNodeRuntimeResolver, flags models.BlockNodeStorage) (models.BlockNodeStorage, string) {
+	// WithUserInputs drops storage that fails validation silently; say so.
+	if err := flags.Validate(); err != nil {
+		logx.As().Warn().Err(err).
+			Msg("Ignoring storage flags for the storage media check: they did not validate")
+	}
+
+	// The chart-version resolver needs an intent; install's makes the deployed
+	// version win on a deployed node.
+	rt.WithIntent(models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}).
+		WithUserInputs(models.BlockNodeInputs{Storage: flags})
+
+	effStorage, err := rt.Storage()
+	if err != nil {
+		logx.As().Warn().Err(err).
+			Msg("Storage media check skipped: failed to resolve block node storage")
+		return models.BlockNodeStorage{}, ""
+	}
+
+	effChartVersion, err := rt.ChartVersion()
+	if err != nil {
+		logx.As().Warn().Err(err).
+			Msg("Storage media check skipped: failed to resolve block node chart version")
+		return models.BlockNodeStorage{}, ""
+	}
+
+	chartVersion := effChartVersion.Get().Val()
+	if chartVersion == "" {
+		// An empty version (StrategyZero) isn't caught by the error branch above,
+		// but would make GetApplicableOptionalStorages silently drop every optional
+		// volume; treat it as a failure to resolve instead.
+		logx.As().Warn().
+			Msg("Storage media check skipped: no block node chart version could be determined")
+		return models.BlockNodeStorage{}, ""
+	}
+
+	return effStorage.Get().Val(), chartVersion
 }

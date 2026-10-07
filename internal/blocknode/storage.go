@@ -519,3 +519,41 @@ func ResolveStoragePaths(storage models.BlockNodeStorage, chartVersion string) (
 
 	return archivePath, livePath, logPath, optionalPaths, nil
 }
+
+// Volume names key the map returned by StoragePathsByVolume and appear
+// verbatim in workflow report metadata.
+const (
+	VolumeArchive = "archive"
+	VolumeLive    = "live"
+	VolumeLog     = "log"
+)
+
+// StoragePathsByVolume is the map form of ResolveStoragePaths, keyed by volume
+// name. A remote store such as a cloud-storage-archive bucket has no path here.
+// managesPlugins false drops the plugins volume, which install skips for a
+// plugins-baked image (#913).
+func StoragePathsByVolume(storage models.BlockNodeStorage, chartVersion string, managesPlugins bool) (map[string]string, error) {
+	archivePath, livePath, logPath, optionalPaths, err := ResolveStoragePaths(storage, chartVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := map[string]string{
+		VolumeArchive: archivePath,
+		VolumeLive:    livePath,
+		VolumeLog:     logPath,
+	}
+	// ResolveStoragePaths returns optional paths in registry order, which is
+	// the order GetApplicableOptionalStorages yields for the same version.
+	for i, opt := range GetApplicableOptionalStorages(chartVersion) {
+		if i >= len(optionalPaths) {
+			break
+		}
+		if opt.Name == "plugins" && !managesPlugins {
+			continue
+		}
+		paths[opt.Name] = optionalPaths[i]
+	}
+
+	return paths, nil
+}

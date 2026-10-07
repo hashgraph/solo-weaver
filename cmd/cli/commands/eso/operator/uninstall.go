@@ -15,8 +15,14 @@ var uninstallCmd = &cobra.Command{
 	Short: "Uninstall the External Secrets Operator",
 	Long: `Uninstall the External Secrets Operator (ESO) Helm release from the cluster.
 
-The command is idempotent: when ESO is not installed in the target namespace, it
-exits cleanly with a skip message.
+The target is the ESO release in --namespace, located by chart name: this clears
+an ESO installed under a different release name, and one left in a failed,
+pending, uninstalling or uninstalled state. It never reaches outside that
+namespace.
+
+The command is idempotent: when the namespace holds no ESO, it exits cleanly with
+a skip message. A different chart holding the "external-secrets" release name is
+left untouched, with a warning naming it.
 
 Warning: uninstalling ESO removes its cluster-scoped CRDs, which deletes every
 ExternalSecret and SecretStore resource in the cluster (and the Kubernetes Secrets

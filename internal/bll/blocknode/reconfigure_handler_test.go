@@ -101,6 +101,12 @@ var enableNetworkPrefix = []string{
 	steps.RestartDaemonServiceStepId,
 }
 
+// withMediaCheck prepends the warn-only storage media check, which heads every
+// reconfigure and upgrade workflow ahead of the network-plane steps.
+func withMediaCheck(ids ...string) []string {
+	return append([]string{steps.CheckStorageMediaStepId}, ids...)
+}
+
 // workflowStepIDs builds the given WorkflowBuilder and returns the IDs of the
 // top-level child steps in execution order.
 func workflowStepIDs(t *testing.T, wb *automa.WorkflowBuilder) []string {
@@ -133,7 +139,7 @@ func TestBuildWorkflow_WithReset_PathsUnchanged_DataOnly(t *testing.T) {
 	assert.Equal(t, "block-node-reconfigure-with-reset", wb.Id())
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+	assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 		steps.PurgeBlockNodeStorageStepId,
 		steps.UpgradeBlockNodeStepId,
 	), ids)
@@ -181,7 +187,7 @@ func TestBuildWorkflow_PurgeStorage_IncludesRecreateStep(t *testing.T) {
 			assert.Equal(t, "block-node-reconfigure-purge-storage", wb.Id())
 
 			ids := workflowStepIDs(t, wb)
-			assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+			assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 				steps.PurgeBlockNodeStorageStepId,
 				steps.RecreateBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
@@ -204,7 +210,7 @@ func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
 	assert.Equal(t, "block-node-reconfigure", wb.Id())
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+	assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 		steps.UpgradeBlockNodeStepId,
 		steps.RolloutRestartBlockNodeStepId,
 	), ids)
@@ -223,7 +229,7 @@ func TestBuildWorkflow_TrafficShapingDisabled_TearsDown(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, []string{
+	assert.Equal(t, withMediaCheck(
 		steps.NetworkFirewallCreateStepId,
 		steps.NetworkPolicyDeleteAllStepId,
 		steps.TcEgressTeardownStepId,
@@ -231,7 +237,7 @@ func TestBuildWorkflow_TrafficShapingDisabled_TearsDown(t *testing.T) {
 		steps.RestartDaemonServiceStepId,
 		steps.UpgradeBlockNodeStepId,
 		steps.RolloutRestartBlockNodeStepId,
-	}, ids)
+	), ids)
 }
 
 // TestBuildWorkflow_FirewallDisabled_DeletesTable verifies that when the resolved
@@ -249,8 +255,10 @@ func TestBuildWorkflow_FirewallDisabled_DeletesTable(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[0],
-		"host firewall disabled should emit the delete step first")
+	require.GreaterOrEqual(t, len(ids), 2)
+	assert.Equal(t, steps.CheckStorageMediaStepId, ids[0])
+	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[1],
+		"host firewall disabled should emit the delete step first in the network plane")
 }
 
 // TestBuildWorkflow_NoReset_ChangedPathsReturnsError verifies that changing
@@ -339,7 +347,7 @@ func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, wb)
 			assert.Equal(t, tc.workflowId, wb.Id())
-			assert.Equal(t, append(append([]string{}, enableNetworkPrefix...), tc.tail...),
+			assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...), tc.tail...),
 				workflowStepIDs(t, wb))
 		})
 	}
@@ -359,7 +367,7 @@ func TestBuildWorkflow_NoRestartWithLeaveScaledDown(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "block-node-reconfigure-no-restart", wb.Id())
-	assert.Equal(t, append(append([]string{}, enableNetworkPrefix...),
+	assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 		steps.UpgradeBlockNodeStepId,
 		steps.ScaleDownAfterUpgradeStepId,
 	), workflowStepIDs(t, wb))

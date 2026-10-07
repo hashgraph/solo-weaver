@@ -16,21 +16,21 @@ import (
 // teleportChecker probes the Teleport node agent (binary) and cluster agent (Helm)
 // to build a TeleportState.
 type teleportChecker struct {
-	sm            state.Manager
-	newHelm       func() (HelmManager, error)
-	clusterExists ClusterProbe
+	sm      state.Manager
+	newHelm func() (HelmManager, error)
+	probe   ClusterProbe
 }
 
 // NewTeleportChecker constructs a teleportChecker.
 func NewTeleportChecker(
 	sm state.Manager,
 	newHelm func() (HelmManager, error),
-	clusterExists ClusterProbe,
+	probe ClusterProbe,
 ) (Checker[state.TeleportState], error) {
 	return &teleportChecker{
-		sm:            sm,
-		newHelm:       newHelm,
-		clusterExists: clusterExists,
+		sm:      sm,
+		newHelm: newHelm,
+		probe:   probe,
 	}, nil
 }
 
@@ -47,7 +47,7 @@ func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState
 	}
 
 	// Refresh cluster agent state via Helm
-	clusterState, err := t.refreshClusterAgentState()
+	clusterState, err := t.refreshClusterAgentState(ts.ClusterAgent)
 	if err != nil {
 		logx.As().Warn().Err(err).Msg("Failed to refresh teleport cluster agent state")
 	} else {
@@ -76,11 +76,17 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 	}, nil
 }
 
-func (t *teleportChecker) refreshClusterAgentState() (state.TeleportClusterAgentState, error) {
-	exists, err := t.clusterExists()
-	if !exists {
-		logx.As().Debug().Err(err).Msg("Kubernetes cluster does not exist, skipping teleport cluster agent check")
-		return state.TeleportClusterAgentState{}, nil
+// refreshClusterAgentState records the cluster agent as absent only when Helm,
+// reached through a live cluster, has no deployed release for it. A cluster it
+// cannot observe proves nothing about the release, so the persisted agent stands.
+func (t *teleportChecker) refreshClusterAgentState(persisted state.TeleportClusterAgentState) (state.TeleportClusterAgentState, error) {
+	if r := t.probe(); !r.Observed() {
+		if r.Configured() {
+			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded teleport cluster agent")
+		} else {
+			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded teleport cluster agent")
+		}
+		return persisted, nil
 	}
 
 	hm, err := t.newHelm()
