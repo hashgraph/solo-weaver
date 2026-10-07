@@ -119,7 +119,7 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 
 	// Remove legacy files now that the state has been persisted.
 	for _, fp := range files {
-		if removeErr := os.Remove(fp); removeErr != nil && mctx.Logger != nil {
+		if removeErr := os.Remove(fp); removeErr != nil && mctx != nil && mctx.Logger != nil {
 			mctx.Logger.Warn().Err(removeErr).Str("file", fp).Msg("Failed to remove legacy state file after migration")
 		}
 	}
