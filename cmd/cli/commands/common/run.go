@@ -335,7 +335,7 @@ func RunStartupMigrations(ctx context.Context) error {
 	}
 	currentCLIVersion := version.Get().Version
 
-	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
+	// An absent machine.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
 	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
 	// install
 	installedCLIVersion := migration.ResolveInstalledCLIVersion(onDiskCLIVersion)
@@ -370,7 +370,7 @@ func RunStartupMigrations(ctx context.Context) error {
 	}
 
 	// Record the running version so boundary migrations aren't re-run next time and
-	// pre-state-tracking clusters get a state.yaml. Persist regardless of whether a
+	// pre-state-tracking clusters get a machine.yaml. Persist regardless of whether a
 	// migration applied — coupling it to that would stop backfilling once nothing
 	// crosses the baseline. Gate on a version change and a provisioned host so a
 	// fresh machine keeps no state file. Best-effort.
