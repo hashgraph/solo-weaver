@@ -4,7 +4,9 @@ package reality
 
 import (
 	"context"
+	"os"
 	"strings"
+	"syscall"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -199,8 +201,42 @@ func (c *consensusChecker) readLiveConsensusShape(
 
 	readLiveVolumes(ctx, kc, apiVersion, namespace, capsuleName, &live)
 	readLiveImagePullSecrets(ctx, kc, apiVersion, namespace, capsuleName, &live)
+	readHostPathOwners(&live)
 
 	return live
+}
+
+// readHostPathOwners stats each hostpath-backed volume directory and records its
+// owner. The uid/gid weaver applies (hostPathUid/hostPathGid) is a host chown, not
+// capsule state, so the disk is the only place it can be observed. Directories
+// that cannot be stat'ed (e.g. weaver not on the node's host) are skipped.
+func readHostPathOwners(live *liveConsensusShape) {
+	for name, v := range live.Volumes.Volumes {
+		if v.Type != models.VolumeBackingHostPath || v.Path == "" {
+			continue
+		}
+		uid, gid, ok := statOwner(v.Path)
+		if !ok {
+			continue
+		}
+		if live.HostPathOwners == nil {
+			live.HostPathOwners = map[string]state.HostPathOwner{}
+		}
+		live.HostPathOwners[name] = state.HostPathOwner{UID: uid, GID: gid}
+	}
+}
+
+// statOwner returns the uid/gid owning path.
+func statOwner(path string) (uid, gid int, ok bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	st, isStat := fi.Sys().(*syscall.Stat_t)
+	if !isStat {
+		return 0, 0, false
+	}
+	return int(st.Uid), int(st.Gid), true
 }
 
 // readProvisionerDaemonEnabled reads spec.provisionerDaemonEnabled from the Orbit.
@@ -398,10 +434,8 @@ func readLiveImagePullSecrets(
 			return
 		}
 		host := models.RegistryHost(fullRef)
-		secretName := firstPullSecretName(svMap)
-		if secretName != "" {
-			sel.ByHost[host] = secretName
-		}
+		// Record the host even without a secret so removal of a secret is visible.
+		sel.ByHost[host] = firstPullSecretName(svMap)
 	}
 
 	addSecret(cnSV)

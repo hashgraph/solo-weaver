@@ -29,6 +29,7 @@ type liveConsensusShape struct {
 	VolumesSet                  bool
 	ImagePullSecrets            models.PullSecretSelector
 	ImagePullSecretsSet         bool
+	HostPathOwners              map[string]state.HostPathOwner
 }
 
 // liveShapeToObserved converts the checker's internal readback type into the
@@ -51,5 +52,6 @@ func liveShapeToObserved(l liveConsensusShape) *state.ConsensusNodeObservedShape
 		VolumesSet:                  l.VolumesSet,
 		ImagePullSecrets:            l.ImagePullSecrets,
 		ImagePullSecretsSet:         l.ImagePullSecretsSet,
+		HostPathOwners:              l.HostPathOwners,
 	}
 }
