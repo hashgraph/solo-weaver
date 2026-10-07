@@ -6,7 +6,6 @@ package rsl
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 type funcChecker[T any] func() (T, error)
@@ -130,9 +128,7 @@ func TestRefreshWithBaseline_BaselineSurvivesARefreshDuringTheRuntimeRefresh(t *
 		s := sm.State()
 		s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth9"}
 		s.TeleportState = state.TeleportState{}
-		b, err := yaml.Marshal(s)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(stateFile, b, 0o600))
+		require.NoError(t, sm.Set(s).FlushScoped(state.ComponentBlockNode, state.ComponentTeleport))
 	}
 	r := newResolver(t, sm, liveTeleport(), rewrite)
 

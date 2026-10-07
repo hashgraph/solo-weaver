@@ -13,22 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// readProvisionerVersionFrom parses the provisioner version from a state file at an arbitrary path (unlike the reader's fixed models.Paths() path).
-func readProvisionerVersionFrom(t *testing.T, path string) string {
+// readProvisionerVersionFrom parses the provisioner version from the machine
+// component file inside dir (unlike the reader's fixed models.Paths() path).
+func readProvisionerVersionFrom(t *testing.T, dir string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
 	require.NoError(t, err)
 	var doc ProvisionerVersionDoc
 	require.NoError(t, unmarshalStateDoc(data, &doc))
 	return doc.State.Provisioner.Version
 }
 
-// TestPersistProvisionerVersion_CreatesFileWhenAbsent: with no state.yaml, the write creates one holding the running binary's version.
+// TestPersistProvisionerVersion_CreatesFileWhenAbsent: with no machine file, the write creates one holding the running binary's version.
 func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
+	machineFile := componentFilePath(dir, ComponentMachine)
 
-	_, err := os.Stat(tmp)
-	require.True(t, os.IsNotExist(err), "precondition: state file must not exist")
+	_, err := os.Stat(machineFile)
+	require.True(t, os.IsNotExist(err), "precondition: machine state file must not exist")
 
 	err = PersistProvisionerVersion(
 		WithState(newTestState(tmp)),
@@ -36,15 +39,16 @@ func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = os.Stat(tmp)
-	require.NoError(t, err, "state file should now exist")
+	_, err = os.Stat(machineFile)
+	require.NoError(t, err, "machine state file should now exist")
 
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
 }
 
 // TestPersistProvisionerVersion_PreservesExistingState: the write merges — an existing software entry survives; only provisioner.version advances.
 func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
 	fm := newTestFileManager(t)
 
 	const oldVersion = "0.0.0-pre-existing"
@@ -69,7 +73,7 @@ func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
 	require.NoError(t, err)
 
 	// Version advanced; the pre-existing software entry is untouched.
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
 
 	reloaded, err := NewStateManager(WithState(newTestState(tmp)), WithFileManager(fm))
 	require.NoError(t, err)
@@ -81,14 +85,15 @@ func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
 
 // TestPersistProvisionerVersion_Idempotent: repeated calls succeed (the concurrency baseline resets each call).
 func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
 	fm := newTestFileManager(t)
 
 	for i := range 3 {
 		err := PersistProvisionerVersion(WithState(newTestState(tmp)), WithFileManager(fm))
 		require.NoErrorf(t, err, "call %d should succeed", i)
 	}
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
 }
 
 // TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on the state-file path and shape — the round-trip #789 depends on.
@@ -97,22 +102,22 @@ func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
 	restore := models.SetPaths(home)
 	t.Cleanup(restore)
 
-	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
+	machineFile := componentFilePath(models.Paths().StateDir, ComponentMachine)
 
-	// Precondition: state dir exists but no state.yaml — the reader returns "".
+	// Precondition: state dir exists but no machine state file — the reader returns "".
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
-	_, statErr := os.Stat(stateFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: state file must not exist yet")
+	_, statErr := os.Stat(machineFile)
+	require.True(t, os.IsNotExist(statErr), "precondition: machine state file must not exist yet")
 
 	absent, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.Empty(t, absent, "absent state.yaml must read back as an empty version")
+	assert.Empty(t, absent, "absent machine state file must read back as an empty version")
 
 	// Write the running version at the default path (no opts → the reader's path).
 	require.NoError(t, PersistProvisionerVersion())
 
-	_, statErr = os.Stat(stateFile)
-	require.NoError(t, statErr, "state file should now exist at the reader's path")
+	_, statErr = os.Stat(machineFile)
+	require.NoError(t, statErr, "machine state file should now exist at the reader's path")
 
 	// The reader observes exactly the version just written (non-empty).
 	readBack, err := ReadProvisionerVersionFromDisk()

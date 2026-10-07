@@ -165,6 +165,9 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
 	migration.Register(migration.ScopeStartup, state.NewMgmtPortsV1Migration())
 	migration.Register(migration.ScopeStartup, state.NewTrafficShapingEnabledV1Migration())
+	// Must run after every migration above: those still assume and rewrite the
+	// single-file legacy state.yaml this one splits apart.
+	migration.Register(migration.ScopeStartup, state.NewPerComponentStateMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
