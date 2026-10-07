@@ -309,22 +309,55 @@ func (m *stateManager) FlushAll() error {
 	return nil
 }
 
+// preparedComponentFlush is one component's validated, ready-to-write output:
+// everything flushComponents needs to know the write is safe to make, computed
+// without touching disk.
+type preparedComponentFlush struct {
+	id      ComponentID
+	path    string
+	bytes   []byte
+	toWrite State
+	newHash string
+}
+
+// flushComponents writes every listed component's file. It validates every
+// component's optimistic-concurrency precondition first, before writing any of
+// them (prepareComponentFlush), then writes them all (commitComponentFlush).
+// That ordering matters: writing one at a time, interleaved with each one's own
+// hash check, could write component A successfully and then fail component B's
+// check — leaving A on disk referencing an action whose effects never reached
+// B or the action history. Checking everything first makes a hash-check
+// failure fail cleanly with nothing written, which is the realistic failure
+// mode this protects against; it does not make the set of writes atomic
+// against a crash between two of the writes below.
 func (m *stateManager) flushComponents(ids []ComponentID) error {
+	prepared := make([]preparedComponentFlush, 0, len(ids))
 	for _, id := range ids {
-		if err := m.flushComponent(id); err != nil {
+		p, err := m.prepareComponentFlush(id)
+		if err != nil {
+			return err
+		}
+		prepared = append(prepared, p)
+	}
+
+	for _, p := range prepared {
+		if err := m.commitComponentFlush(p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// flushComponent writes id's file with canonical hashing and an atomic write.
-// It is the per-component equivalent of the single-file flushState this
-// package had before the #1231 split; see
-// docs/claude/plans/01231-per-component-state-files.md for why both the
-// per-file hash check here and the per-file flock in AcquireComponentLocks
-// exist side by side.
-func (m *stateManager) flushComponent(id ComponentID) error {
+// prepareComponentFlush computes id's canonical hash and marshaled bytes and
+// validates its optimistic-concurrency precondition against disk, without
+// writing anything. It is the per-component equivalent of the single-file
+// flushState this package had before splitting into per-component files; both
+// a per-file hash check here and a per-file flock in AcquireComponentLocks
+// exist side by side because they protect against different things — the lock
+// stops two callers of this manager racing each other, while this check
+// catches a change made by anything else (a hand edit, a process that
+// bypassed the lock) regardless of whether the lock was ever involved.
+func (m *stateManager) prepareComponentFlush(id ComponentID) (preparedComponentFlush, error) {
 	// Capture state and baseline under lock, then release before I/O.
 	m.mu.Lock()
 	full := m.state
@@ -334,13 +367,11 @@ func (m *stateManager) flushComponent(id ComponentID) error {
 	path := componentFilePath(m.dir(), id)
 	projected := projectComponentSection(full, id)
 
-	logx.As().Debug().Str("component", string(id)).Any("state", projected).Msg("Flushing component state to disk")
-
 	// Compute deterministic canonical JSON over only the domain record (envelope
 	// fields and all LastSync timestamps are excluded by Hashable()).
 	canonical, err := canonicalJSON(projected.Hashable())
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to create canonical representation of %s state for hashing", id)
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to create canonical representation of %s state for hashing", id)
 	}
 	sum := sha256.Sum256(canonical)
 	newHashHex := hex.EncodeToString(sum[:])
@@ -354,31 +385,28 @@ func (m *stateManager) flushComponent(id ComponentID) error {
 	// Marshal YAML to write to disk.
 	b, err := yaml.Marshal(toWrite)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to marshal %s state to YAML", id)
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to marshal %s state to YAML", id)
 	}
 
 	// Optimistic concurrency: compare on-disk state against the BASELINE (what we
 	// last read/wrote for this component), not against the new state. This
 	// detects external changes without false-positives after Refresh() + Set()
-	// cycles. It is a different guarantee than AcquireComponentLocks: the lock
-	// stops two callers of this manager racing each other; this check catches a
-	// change made by anything else (a hand edit, a process that bypassed the
-	// lock) regardless of whether the lock was ever involved.
+	// cycles.
 	if _, exists, err := m.fm.PathExists(path); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to stat %s state file before flush", id)
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to stat %s state file before flush", id)
 	} else if exists {
 		if baseline == "" {
-			return errorx.IllegalState.New("cannot flush %s without a baseline; call Refresh() first", id)
+			return preparedComponentFlush{}, errorx.IllegalState.New("cannot flush %s without a baseline; call Refresh() first", id)
 		}
 
 		existing, err := m.fm.ReadFile(path, -1)
 		if err != nil {
-			return errorx.InternalError.Wrap(err, "failed to read %s state file before flush", id)
+			return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to read %s state file before flush", id)
 		}
 
 		var existingState State
 		if err := yaml.Unmarshal(existing, &existingState); err != nil {
-			return errorx.IllegalState.New("%s state file at %s is not parseable YAML; aborting flush to avoid overwrite", id, path)
+			return preparedComponentFlush{}, errorx.IllegalState.New("%s state file at %s is not parseable YAML; aborting flush to avoid overwrite", id, path)
 		}
 
 		var diskHash string
@@ -388,7 +416,7 @@ func (m *stateManager) flushComponent(id ComponentID) error {
 			// Fallback for hand-edited or legacy files without a stored hash.
 			canonicalExisting, err := canonicalJSON(existingState.Hashable())
 			if err != nil {
-				return errorx.InternalError.Wrap(err, "failed to canonicalize existing %s state on disk", id)
+				return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to canonicalize existing %s state on disk", id)
 			}
 			sumExisting := sha256.Sum256(canonicalExisting)
 			diskHash = hex.EncodeToString(sumExisting[:])
@@ -396,25 +424,32 @@ func (m *stateManager) flushComponent(id ComponentID) error {
 
 		// Compare on-disk hash against baseline, NOT against the new hash.
 		if diskHash != baseline {
-			return errorx.IllegalState.New(
+			return preparedComponentFlush{}, errorx.IllegalState.New(
 				"%s state file changed externally on disk at %s (expected baseline %s, found %s); aborting flush to avoid overwrite",
 				id, path, baseline, diskHash,
 			)
 		}
 	}
 
-	// Atomic write: write to temp file in same directory and rename.
-	if err := atomicWriteFile(path, b); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write %s state file to %s", id, path)
+	return preparedComponentFlush{id: id, path: path, bytes: b, toWrite: toWrite, newHash: newHashHex}, nil
+}
+
+// commitComponentFlush writes a prepared component's file and advances its
+// in-memory state and baseline hash. Called only after every component in the
+// batch has already passed prepareComponentFlush.
+func (m *stateManager) commitComponentFlush(p preparedComponentFlush) error {
+	logx.As().Debug().Str("component", string(p.id)).Any("state", p.toWrite).Msg("Flushing component state to disk")
+
+	if err := atomicWriteFile(p.path, p.bytes); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to write %s state file to %s", p.id, p.path)
 	}
 
-	// Update in-memory state's section, and advance the baseline hash.
 	m.mu.Lock()
-	applyComponentSection(&m.state, id, toWrite)
+	applyComponentSection(&m.state, p.id, p.toWrite)
 	if m.baselineHash == nil {
 		m.baselineHash = make(map[ComponentID]string, len(AllComponentIDs))
 	}
-	m.baselineHash[id] = newHashHex // the new state is now this component's on-disk baseline
+	m.baselineHash[p.id] = p.newHash // the new state is now this component's on-disk baseline
 	m.mu.Unlock()
 
 	return nil
