@@ -25,7 +25,7 @@ func legacyStateFixture(t *testing.T, dir string) State {
 }
 
 // writeLegacyStateFixture writes s as a single state.yaml the way a
-// pre-#1231 CLI would have, independent of the per-component flush this
+// pre-split CLI would have, independent of the per-component flush this
 // migration exists to replace.
 func writeLegacyStateFixture(t *testing.T, path string, s State) {
 	t.Helper()

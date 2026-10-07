@@ -19,7 +19,7 @@ func TestAcquireComponentLocks_DisjointComponentsNeverContend(t *testing.T) {
 
 	// A second caller locking a different component must succeed immediately,
 	// even while the first lock is still held — this is the daemon-writes-
-	// consensus / CLI-writes-teleport concurrency case the #1231 split exists for.
+	// consensus / CLI-writes-teleport concurrency case the per-component split exists for.
 	releaseB, err := AcquireComponentLocks(dir, []ComponentID{ComponentTeleport}, 0)
 	require.NoError(t, err)
 	defer releaseB()
@@ -111,4 +111,17 @@ func TestAcquireComponentLocks_CanonicalOrderingAvoidsDeadlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("deadlocked: both commands should make progress under canonical lock ordering")
 	}
+}
+
+// TestAcquireComponentLocks_DuplicateIDsDoNotSelfConflict verifies a caller
+// that accidentally lists the same component twice still succeeds. Without
+// deduping, the second attempt to flock an already-open file would see its
+// own first lock (a different open file description, even in the same
+// process) as held and fail or hang on itself.
+func TestAcquireComponentLocks_DuplicateIDsDoNotSelfConflict(t *testing.T) {
+	dir := t.TempDir()
+
+	release, err := AcquireComponentLocks(dir, []ComponentID{ComponentBlockNode, ComponentBlockNode}, 0)
+	require.NoError(t, err)
+	release()
 }

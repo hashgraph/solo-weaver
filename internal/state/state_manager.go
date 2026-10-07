@@ -26,7 +26,7 @@ import (
 type Reader interface {
 	// State returns a snapshot of the current in-memory state.
 	State() State
-	// HasPersistedState reports whether a state file already exists on disk.
+	// HasPersistedState reports whether any component already has a persisted file on disk.
 	HasPersistedState() (os.FileInfo, bool, error)
 }
 
@@ -572,7 +572,6 @@ func encodeCanonical(buf *bytes.Buffer, iface interface{}) error {
 	return nil
 }
 
-// HasPersistedState checks if the state file exists on disk
 // HasPersistedState reports whether any component has a persisted file yet.
 // A host can have some components persisted and others not (e.g. a cluster
 // installed but no block node yet), so this is "any", not "all".
