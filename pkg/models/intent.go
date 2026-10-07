@@ -40,6 +40,11 @@ const (
 
 	// ActionReconfigure re-applies configuration to an already-deployed component without changing its version.
 	ActionReconfigure ActionType = "reconfigure"
+
+	// ActionGenesis generates the network genesis for a fresh consensus network,
+	// creating the NetworkGenesis CR so the operator produces genesis-network.json.
+	// It is idempotent: re-running against an existing genesis is a no-op.
+	ActionGenesis ActionType = "genesis"
 )
 
 type TargetType string
@@ -78,6 +83,10 @@ const (
 
 	// TargetTeleportCluster represents the Teleport Kubernetes cluster agent
 	TargetTeleportCluster TargetType = "teleport-cluster"
+
+	// TargetConsensusNetwork represents orbit/network-level operations over a
+	// consensus network (e.g. genesis), as distinct from a single consensus node.
+	TargetConsensusNetwork TargetType = "consensus-network"
 )
 
 // allowedOperations maps each action to the valid target types it can be performed on.
@@ -89,6 +98,7 @@ var allowedOperations = map[ActionType][]TargetType{
 	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionReconfigure: {TargetBlockNode},
+	ActionGenesis:     {TargetConsensusNetwork},
 }
 
 // Intent defines the desired action to be performed given certain parameters and configuration.
