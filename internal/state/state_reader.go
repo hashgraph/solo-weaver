@@ -10,7 +10,6 @@ package state
 
 import (
 	"os"
-	"path/filepath"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -29,18 +28,18 @@ func unmarshalStateDoc(data []byte, doc interface{}) error {
 	return nil
 }
 
-// readStateFileBytes returns the raw bytes of the on-disk state file.
-// If the file does not exist it returns (nil, nil) so callers can
-// treat a missing file as "empty state" without error handling.
-func readStateFileBytes() ([]byte, error) {
-	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
+// readComponentFileBytes returns the raw bytes of one component's persisted
+// file. If the file does not exist it returns (nil, nil) so callers can treat
+// an unrecorded component as "empty state" without error handling.
+func readComponentFileBytes(id ComponentID) ([]byte, error) {
+	path := componentFilePath(models.Paths().StateDir, id)
 
-	data, err := os.ReadFile(stateFile)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, errorx.InternalError.Wrap(err, "failed to read state file at %s", stateFile)
+		return nil, errorx.InternalError.Wrap(err, "failed to read %s state file at %s", id, path)
 	}
 	return data, nil
 }
@@ -116,10 +115,11 @@ type SoftwareVersionsDoc struct {
 	} `yaml:"state"`
 }
 
-// ReadProvisionerVersionFromDisk extracts the provisioner version from the on-disk state file
-// without loading the full state into memory. Returns an empty string when no state file exists.
+// ReadProvisionerVersionFromDisk extracts the provisioner version from the
+// on-disk machine state file without loading the full state into memory.
+// Returns an empty string when that file does not exist.
 func ReadProvisionerVersionFromDisk() (string, error) {
-	data, err := readStateFileBytes()
+	data, err := readComponentFileBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -133,10 +133,11 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 }
 
 // ReadSoftwareVersionFromDisk reads a single host component's recorded version
-// (by catalog artifact name) from the on-disk state file without loading the
-// full state. Returns an empty string when the state file or component is absent.
+// (by catalog artifact name) from the on-disk machine state file without
+// loading the full state. Returns an empty string when that file or the
+// component is absent.
 func ReadSoftwareVersionFromDisk(name string) (string, error) {
-	data, err := readStateFileBytes()
+	data, err := readComponentFileBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -200,20 +201,34 @@ type PromptDefaults struct {
 	Firewall *models.HostConfig
 }
 
-// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields from the
-// on-disk state file in a single read + YAML parse.  This avoids the overhead
-// of reading and parsing the same file twice when both BlockNodeSelectPrompts
-// and BlockNodeInputPrompts run in the same prompt flow.
-// Returns a zero-value struct when no state file exists.
+// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields in a single
+// read + YAML parse per component file (machine for Profile/Firewall, block
+// node for the rest). This avoids the overhead of reading and parsing the
+// same files twice when both BlockNodeSelectPrompts and BlockNodeInputPrompts
+// run in the same prompt flow. A component whose file does not exist leaves
+// its section of doc at its zero value, so this returns a zero-value struct
+// only when neither file exists.
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
-	data, err := readStateFileBytes()
-	if err != nil || data == nil {
+	var doc PromptDefaultsDoc
+
+	machineData, err := readComponentFileBytes(ComponentMachine)
+	if err != nil {
 		return PromptDefaults{}, err
 	}
+	if machineData != nil {
+		if err := unmarshalStateDoc(machineData, &doc); err != nil {
+			return PromptDefaults{}, err
+		}
+	}
 
-	var doc PromptDefaultsDoc
-	if err := unmarshalStateDoc(data, &doc); err != nil {
+	blockNodeData, err := readComponentFileBytes(ComponentBlockNode)
+	if err != nil {
 		return PromptDefaults{}, err
+	}
+	if blockNodeData != nil {
+		if err := unmarshalStateDoc(blockNodeData, &doc); err != nil {
+			return PromptDefaults{}, err
+		}
 	}
 
 	var firewall *models.HostConfig

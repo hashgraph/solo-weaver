@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -177,7 +178,7 @@ func TestHandleIntent_ReportsTeleportChangeThenPersistsLiveState(t *testing.T) {
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
 	require.Equal(t, []string{
-		`teleport nodeAgent.configured differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport nodeAgent.configured differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
 	require.Equal(t, h.teleport.NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
 
@@ -187,10 +188,14 @@ func TestHandleIntent_ReportsTeleportChangeThenPersistsLiveState(t *testing.T) {
 
 // A handler reports only the components it manages: with Teleport unmanaged, a
 // Teleport change is neither reported nor absorbed — the persisted Teleport
-// section survives the flush for its owning command to report later.
+// file is never touched, so its owning command can still report it later.
 func TestHandleIntent_UnmanagedComponentIsNeitherReportedNorAbsorbed(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, configuredNodeAgent())
+	teleportFile := state.ComponentFilePath(filepath.Dir(stateFile), state.ComponentTeleport)
+	before, err := os.Stat(teleportFile)
+	require.NoError(t, err)
+
 	h := &host{teleport: configuredNodeAgent()}
 	h.teleport.NodeAgent.Configured = false
 
@@ -202,6 +207,10 @@ func TestHandleIntent_UnmanagedComponentIsNeitherReportedNorAbsorbed(t *testing.
 	// The out-of-band Teleport change is not folded into state: the persisted
 	// baseline (Configured: true) is preserved, not the live value (false).
 	require.Equal(t, configuredNodeAgent().NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
+	// Stronger than content equality: the file itself was never rewritten.
+	after, err := os.Stat(teleportFile)
+	require.NoError(t, err)
+	require.Equal(t, before.ModTime(), after.ModTime(), "teleport.yaml must not be opened for writing by a BlockNode-only command")
 }
 
 func TestHandleIntent_WorkflowsOwnChangeIsNotReported(t *testing.T) {
@@ -267,7 +276,7 @@ func TestHandleIntent_ReleaseMissingFromReachableClusterIsReportedAsRemoval(t *t
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
 	require.Equal(t, []string{
-		`teleport clusterAgent.installed differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport clusterAgent.installed differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
 	require.Equal(t, state.TeleportClusterAgentState{}, readState(t, stateFile).TeleportState.ClusterAgent)
 }
@@ -304,6 +313,6 @@ func TestHandleIntent_EarlyFailureLogsTheChangeAndKeepsTheBaseline(t *testing.T)
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 	require.Equal(t, []string{
-		`teleport nodeAgent.configured differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport nodeAgent.configured differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
 }
