@@ -234,22 +234,25 @@ type PromptDefaults struct {
 	Firewall *models.HostConfig
 }
 
-// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields in a single
+// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields with one
 // read + YAML parse per component file (machine for Profile/Firewall, block
-// node for the rest). This avoids the overhead of reading and parsing the
-// same files twice when both BlockNodeSelectPrompts and BlockNodeInputPrompts
-// run in the same prompt flow. A component whose file does not exist leaves
-// its section of doc at its zero value, so this returns a zero-value struct
-// only when neither file exists.
+// node for the rest). Each file is decoded into its own PromptDefaultsDoc —
+// not a shared one — because every component file is a marshaled State, so
+// blockNodeData's non-owned machineState section is present too (just zero-
+// valued, since MachineState has no omitempty tag). Decoding both files into
+// one doc would let the second unmarshal silently overwrite the Profile/
+// Firewall the first one just loaded. A component whose file does not exist
+// leaves its doc at its zero value, so this returns a zero-value struct only
+// when neither file exists.
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
-	var doc PromptDefaultsDoc
+	var machineDoc, blockNodeDoc PromptDefaultsDoc
 
 	machineData, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil {
 		return PromptDefaults{}, err
 	}
 	if machineData != nil {
-		if err := unmarshalStateDoc(machineData, &doc); err != nil {
+		if err := unmarshalStateDoc(machineData, &machineDoc); err != nil {
 			return PromptDefaults{}, err
 		}
 	}
@@ -259,13 +262,13 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		return PromptDefaults{}, err
 	}
 	if blockNodeData != nil {
-		if err := unmarshalStateDoc(blockNodeData, &doc); err != nil {
+		if err := unmarshalStateDoc(blockNodeData, &blockNodeDoc); err != nil {
 			return PromptDefaults{}, err
 		}
 	}
 
 	var firewall *models.HostConfig
-	if fw := doc.State.MachineState.Firewall; fw != nil {
+	if fw := machineDoc.State.MachineState.Firewall; fw != nil {
 		firewall = &models.HostConfig{
 			Disabled:        fw.Disabled,
 			ManagementCIDRs: fw.ManagementCIDRs,
@@ -276,14 +279,14 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		}
 	}
 
-	bn := doc.State.BlockNodeState
+	bn := blockNodeDoc.State.BlockNodeState
 	var egressInterface, linkRate string
 	if bn.Shaping != nil {
 		egressInterface = bn.Shaping.EgressInterface
 		linkRate = bn.Shaping.LinkRate
 	}
 	return PromptDefaults{
-		Profile:  doc.State.MachineState.Profile,
+		Profile:  machineDoc.State.MachineState.Profile,
 		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
 			ReleaseName:            bn.Name,
