@@ -400,3 +400,43 @@ func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
 		t.Error("LastAction.Timestamp is zero after AddActionHistory")
 	}
 }
+
+// TestFlushState_HandEditWithStaleHashFieldIsDetected verifies the optimistic-
+// concurrency check recomputes the on-disk hash from content rather than
+// trusting the file's own stored hash field. A hand edit naturally leaves
+// that field untouched (nobody manually recomputes a sha256), so trusting it
+// would make the edit compare equal to the stale baseline and get silently
+// overwritten — exactly what this check exists to catch.
+func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "state.yaml")
+	fm := newTestFileManager(t)
+
+	s := newTestState(stateFile)
+	s.MachineState.Profile = "before"
+	m, err := NewStateManager(WithState(s), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, m.Refresh())
+	require.NoError(t, m.FlushState())
+
+	// Simulate a hand edit: change the content but leave the stored hash field
+	// exactly as it was written.
+	machineFile := componentFilePath(dir, ComponentMachine)
+	raw, err := os.ReadFile(machineFile)
+	require.NoError(t, err)
+	edited := bytes.Replace(raw, []byte("profile: before"), []byte("profile: hand-edited"), 1)
+	require.NotEqual(t, string(raw), string(edited), "precondition: the replacement must have matched something")
+	require.NoError(t, os.WriteFile(machineFile, edited, 0o644))
+
+	changed := m.State()
+	changed.MachineState.Profile = "after"
+	err = m.Set(changed).FlushState()
+	require.Error(t, err, "a hand edit with an untouched hash field must still be detected")
+	require.Contains(t, err.Error(), "changed externally on disk")
+
+	reread, err := NewStateManager(WithState(newTestState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, reread.Refresh())
+	require.Equal(t, "hand-edited", reread.State().MachineState.Profile,
+		"the hand edit must survive — it must not be silently overwritten")
+}

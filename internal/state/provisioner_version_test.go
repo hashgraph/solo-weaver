@@ -179,3 +179,26 @@ func TestReadProvisionerVersion_PrefersMachineFileOverLegacy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "9.9.9-current", got, "machine.yaml must win once it exists")
 }
+
+// TestPersistProvisionerVersion_OnlyCreatesMachineFile verifies the version
+// backfill writes only machine.yaml. It's called from startup-migration
+// backfill and the cluster-install tail step, neither of which manages
+// cluster/blocknode/consensus/teleport — writing those files anyway is
+// exactly the class of stray write the per-component split exists to prevent.
+func TestPersistProvisionerVersion_OnlyCreatesMachineFile(t *testing.T) {
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
+
+	require.NoError(t, PersistProvisionerVersion(
+		WithState(newTestState(tmp)),
+		WithFileManager(newTestFileManager(t)),
+	))
+
+	_, err := os.Stat(componentFilePath(dir, ComponentMachine))
+	require.NoError(t, err, "machine.yaml must exist")
+
+	for _, id := range []ComponentID{ComponentCluster, ComponentBlockNode, ComponentConsensus, ComponentTeleport} {
+		_, err := os.Stat(componentFilePath(dir, id))
+		require.Truef(t, os.IsNotExist(err), "%s state file must not be created by a version-only persist", id)
+	}
+}

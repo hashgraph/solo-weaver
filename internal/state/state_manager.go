@@ -150,17 +150,20 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	return m, nil
 }
 
-// PersistProvisionerVersion records the running binary's version in the on-disk
-// state file so version-boundary startup migrations are not re-evaluated — and
+// PersistProvisionerVersion records the running binary's version in machine.yaml
+// so version-boundary startup migrations are not re-evaluated — and
 // non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
-// invocation.
+// invocation. It flushes only the machine component: this is called from
+// startup migration backfill and the cluster-install tail step, neither of
+// which manages (or should create) cluster/blocknode/consensus/teleport's files
+// — a stray write of those is exactly the class of bug the per-component split
+// exists to prevent.
 //
-// It Refresh()es first, so any existing reality-detected software/cluster/
-// block-node fields are preserved and the optimistic-concurrency baseline is set;
-// on a host with no state file it writes a minimal one from NewState defaults. A
-// missing file is not an error. Call only after a successful startup-migration
-// pass and only on a provisioned host, so a genuinely fresh machine keeps having
-// no state file.
+// It Refresh()es first, so any existing reality-detected machine fields are
+// preserved and the optimistic-concurrency baseline is set; on a host with no
+// state file it writes a minimal one from NewState defaults. A missing file is
+// not an error. Call only after a successful startup-migration pass and only
+// on a provisioned host, so a genuinely fresh machine keeps having no state file.
 func PersistProvisionerVersion(opts ...ManagerOption) error {
 	sm, err := NewStateManager(opts...)
 	if err != nil {
@@ -173,7 +176,7 @@ func PersistProvisionerVersion(opts ...ManagerOption) error {
 
 	s := sm.State()
 	s.ProvisionerState.Version = version.Get().Version
-	return sm.Set(s).FlushState()
+	return sm.Set(s).FlushScoped(ComponentMachine)
 }
 
 // State returns a copy of the current in-memory state (thread-safe).
@@ -236,19 +239,11 @@ func (m *stateManager) Refresh() error {
 		}
 		applyComponentSection(composed, id, fileState)
 
-		// Use the stored hash as the baseline if available (written by a prior
-		// flush). Fall back to recomputing for hand-edited or legacy files
-		// without a hash.
-		if fileState.Hash != "" {
-			baseline[id] = fileState.Hash
-		} else {
-			canonical, err := canonicalJSON(fileState.Hashable())
-			if err != nil {
-				return errorx.InternalError.Wrap(err, "failed to canonicalize refreshed %s state for baseline hash", id)
-			}
-			sum := sha256.Sum256(canonical)
-			baseline[id] = hex.EncodeToString(sum[:])
+		hash, err := stateContentHash(fileState)
+		if err != nil {
+			return errorx.InternalError.Wrap(err, "failed to canonicalize refreshed %s state for baseline hash", id)
 		}
+		baseline[id] = hash
 	}
 
 	// Stamp the current CLI version so the provisioner.version field on disk
@@ -367,17 +362,25 @@ func (m *stateManager) prepareComponentFlush(id ComponentID) (preparedComponentF
 	path := componentFilePath(m.dir(), id)
 	projected := projectComponentSection(full, id)
 
-	// Compute deterministic canonical JSON over only the domain record (envelope
-	// fields and all LastSync timestamps are excluded by Hashable()).
-	canonical, err := canonicalJSON(projected.Hashable())
+	// Round-trip through YAML before hashing: yaml.v3 turns a nil map into a
+	// non-nil empty one on unmarshal (among other such normalizations), so a
+	// hash taken from the raw in-memory value — which still has nil maps for
+	// every zeroed-out section this component doesn't own — would never match
+	// the hash recomputed from this same content after it's written and later
+	// read back. Normalizing first makes the embedded hash and the baseline
+	// both reflect what a future read of this file will actually see.
+	normalized, err := roundTripThroughYAML(projected)
+	if err != nil {
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to normalize %s state before hashing", id)
+	}
+
+	newHashHex, err := stateContentHash(normalized)
 	if err != nil {
 		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to create canonical representation of %s state for hashing", id)
 	}
-	sum := sha256.Sum256(canonical)
-	newHashHex := hex.EncodeToString(sum[:])
 
 	// Attach computed hash and real LastSync to the copy we will write.
-	toWrite := projected
+	toWrite := normalized
 	toWrite.Hash = newHashHex
 	toWrite.HashAlgo = "sha256"
 	toWrite.LastSync = htime.Now()
@@ -409,17 +412,13 @@ func (m *stateManager) prepareComponentFlush(id ComponentID) (preparedComponentF
 			return preparedComponentFlush{}, errorx.IllegalState.New("%s state file at %s is not parseable YAML; aborting flush to avoid overwrite", id, path)
 		}
 
-		var diskHash string
-		if existingState.Hash != "" {
-			diskHash = existingState.Hash
-		} else {
-			// Fallback for hand-edited or legacy files without a stored hash.
-			canonicalExisting, err := canonicalJSON(existingState.Hashable())
-			if err != nil {
-				return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to canonicalize existing %s state on disk", id)
-			}
-			sumExisting := sha256.Sum256(canonicalExisting)
-			diskHash = hex.EncodeToString(sumExisting[:])
+		// Always recompute from content rather than trusting existingState's own
+		// Hash field: a hand edit that changes content but leaves that field
+		// untouched would otherwise compare equal to a stale baseline and be
+		// silently overwritten — exactly what this check exists to catch.
+		diskHash, err := stateContentHash(existingState)
+		if err != nil {
+			return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to canonicalize existing %s state on disk", id)
 		}
 
 		// Compare on-disk hash against baseline, NOT against the new hash.
@@ -482,6 +481,39 @@ func (m *stateManager) flushActionHistory() error {
 	m.mu.Unlock()
 
 	return nil
+}
+
+// roundTripThroughYAML marshals s to YAML and decodes it into a fresh State,
+// normalizing representational differences YAML's own encode/decode cycle
+// introduces (notably: a nil map becomes a non-nil empty map) so a value that
+// has never touched disk hashes the same way a value just read back from disk
+// will.
+func roundTripThroughYAML(s State) (State, error) {
+	b, err := yaml.Marshal(s)
+	if err != nil {
+		return State{}, err
+	}
+	var normalized State
+	if err := yaml.Unmarshal(b, &normalized); err != nil {
+		return State{}, err
+	}
+	return normalized, nil
+}
+
+// stateContentHash returns the sha256 hex digest of s's canonical content
+// (Hashable(), which excludes envelope fields and reconciliation timestamps).
+// Always recomputed from content — never trust a State's own stored Hash
+// field as a stand-in for this, including one just read from disk: a hand
+// edit that changes content without updating that field would otherwise
+// compare equal to a stale baseline and be silently overwritten, which is
+// exactly what the optimistic-concurrency check exists to catch.
+func stateContentHash(s State) (string, error) {
+	canonical, err := canonicalJSON(s.Hashable())
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // canonicalJSON returns a deterministic JSON encoding of v where object keys are sorted.
