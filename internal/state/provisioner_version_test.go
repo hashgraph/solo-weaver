@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // readProvisionerVersionFrom parses the provisioner version from the machine
@@ -125,4 +126,56 @@ func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
 	assert.NotEmpty(t, readBack, "recorded version must read back non-empty, unlike the absent case")
 	assert.Equal(t, version.Get().Version, readBack,
 		"the reader must observe the version the writer persisted")
+}
+
+// TestReadProvisionerVersion_FallsBackToLegacyStateFile: on a host that has not
+// run the per-component split migration yet, machine.yaml does not exist, but
+// the legacy state.yaml already has a real recorded version. RunStartupMigrations
+// reads this to decide which migrations apply — including the split migration
+// itself — before any migration for this invocation has run, so a reader that
+// only looked at machine.yaml would see "" and re-run every version-gated
+// migration on every upgrade from a pre-split host. The reader must fall back
+// to the legacy file instead.
+func TestReadProvisionerVersion_FallsBackToLegacyStateFile(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
+
+	legacy := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
+	legacy.ProvisionerState.Version = "1.2.3-legacy"
+	b, err := yaml.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
+
+	_, statErr := os.Stat(componentFilePath(models.Paths().StateDir, ComponentMachine))
+	require.True(t, os.IsNotExist(statErr), "precondition: machine.yaml must not exist yet")
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Equal(t, "1.2.3-legacy", got, "must read the version from the legacy file, not treat it as absent")
+}
+
+// TestReadProvisionerVersion_PrefersMachineFileOverLegacy: once the split has
+// happened, machine.yaml is authoritative even if a stale state.yaml.pre-v1231-
+// shaped leftover is still sitting around under the legacy name.
+func TestReadProvisionerVersion_PrefersMachineFileOverLegacy(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
+
+	legacy := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
+	legacy.ProvisionerState.Version = "0.0.0-stale-legacy"
+	b, err := yaml.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
+
+	machine := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
+	machine.ProvisionerState.Version = "9.9.9-current"
+	mb, err := yaml.Marshal(machine)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(componentFilePath(models.Paths().StateDir, ComponentMachine), mb, 0o644))
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Equal(t, "9.9.9-current", got, "machine.yaml must win once it exists")
 }
