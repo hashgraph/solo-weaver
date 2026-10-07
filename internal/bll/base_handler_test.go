@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -315,4 +316,51 @@ func TestHandleIntent_EarlyFailureLogsTheChangeAndKeepsTheBaseline(t *testing.T)
 	require.Equal(t, []string{
 		`teleport nodeAgent.configured differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
+}
+
+// TestHandleIntent_DisjointHandlersDoNotBlockEachOther runs two commands
+// through the real HandleIntent path — not AcquireComponentLocks/FlushScoped
+// called directly — so it actually exercises what lockedComponentIDs locks.
+// A BlockNode-only handler holds its lock for the whole duration of a
+// deliberately slow workflow; a concurrent Teleport-only handler must still
+// complete quickly. Before machine was removed from the locked (as opposed to
+// flushed) set, both commands locked machine too and this test would hang
+// until the slow handler finished.
+func TestHandleIntent_DisjointHandlersDoNotBlockEachOther(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	slow := noopIntent{execute: func() {
+		close(started)
+		<-release
+	}}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, err := handleBlockNodeIntentWith(t, stateFile, &host{}, slow, BlockNode)
+		require.NoError(t, err)
+	}()
+
+	<-started // the slow handler now holds its BlockNode lock
+
+	fastDone := make(chan struct{})
+	go func() {
+		_, err := handleBlockNodeIntentWith(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{}, Teleport)
+		require.NoError(t, err)
+		close(fastDone)
+	}()
+
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("a Teleport-only handler must not block on a concurrent BlockNode-only handler's lock")
+	}
+
+	close(release)
+	wg.Wait()
 }

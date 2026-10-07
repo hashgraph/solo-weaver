@@ -82,13 +82,27 @@ func WithLockWait[T any](wait time.Duration) BaseHandlerOption[T] {
 	}
 }
 
-// lockedComponentIDs returns the internal/state.ComponentID set this handler
-// locks and flushes: every managed component, plus machine — MachineState
-// (Profile/Firewall) has no single owning handler (see
-// docs/claude/plans/01231-per-component-state-files.md), so every handler
-// locks and flushes it alongside whatever it manages.
-func (h *BaseHandler[T]) lockedComponentIDs() []state.ComponentID {
+// flushComponentIDs returns the internal/state.ComponentID set this handler
+// flushes: every managed component, plus machine. MachineState
+// (Profile/Firewall) has no single owning handler, so every handler flushes
+// it alongside whatever it manages — that part of the design is unchanged
+// from before per-component locking existed, and stays unscoped/unlocked on
+// purpose (a known, separately-tracked gap, not something this lock covers).
+func (h *BaseHandler[T]) flushComponentIDs() []state.ComponentID {
 	return append([]state.ComponentID{state.ComponentMachine}, componentIDsOf(h.Managed)...)
+}
+
+// lockedComponentIDs returns the internal/state.ComponentID set this handler
+// locks for the duration of the command: only the components it actually
+// manages. machine is deliberately excluded — it has no single owner, so
+// locking it here would serialize every command in the system against every
+// other one (a block node install and a teleport install would contend on
+// nothing but machine), which defeats the entire point of per-component
+// locking. The per-file hash check in flushComponent is what still protects
+// machine.yaml's content; see the comment on AcquireComponentLocks for why
+// both mechanisms exist.
+func (h *BaseHandler[T]) lockedComponentIDs() []state.ComponentID {
+	return componentIDsOf(h.Managed)
 }
 
 // NewBaseHandler validates the required dependencies and returns a
@@ -124,8 +138,8 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 // HandleIntent is the shared generic handler.
 // It performs the following steps:
 //  1. Validates the intent and user inputs.
-//  2. Locks every file this run will touch (machine + h.Managed) for the rest
-//     of the call, so no other command can write them concurrently.
+//  2. Locks every component this handler manages for the rest of the call, so
+//     no other command writing the same component can run concurrently.
 //  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution, noting fields
 //     whose live value differs from the persisted state.
 //  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it.
@@ -146,8 +160,8 @@ func (h *BaseHandler[T]) HandleIntent(
 		return nil, err
 	}
 
-	// Lock every file this run will flush (machine + managed) for the whole
-	// command, not just the flush — see internal/state.AcquireComponentLocks.
+	// Lock every managed component for the whole command, not just the flush
+	// — see internal/state.AcquireComponentLocks.
 	release, err := state.AcquireComponentLocks(h.Runtime.StateDir(), h.lockedComponentIDs(), h.LockWait)
 	if err != nil {
 		return nil, err
@@ -241,8 +255,8 @@ func (h *BaseHandler[T]) FlushState(
 	}
 
 	// Flush only the files this handler owns (machine + h.Managed) plus the
-	// action history — see lockedComponentIDs.
-	if err := h.Runtime.FlushScoped(fullState, h.lockedComponentIDs()...); err != nil {
+	// action history — see flushComponentIDs.
+	if err := h.Runtime.FlushScoped(fullState, h.flushComponentIDs()...); err != nil {
 		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
 	}
 
