@@ -257,7 +257,7 @@ func (h *BaseHandler[T]) FlushState(
 	// Flush only the files this handler owns (machine + h.Managed) plus the
 	// action history — see flushComponentIDs.
 	if err := h.Runtime.FlushScoped(fullState, h.flushComponentIDs()...); err != nil {
-		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
+		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")
 	}
 
 	logx.As().Info().
