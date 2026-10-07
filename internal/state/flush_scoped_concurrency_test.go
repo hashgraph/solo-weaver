@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFlushScoped_DisjointComponentsBothSucceedConcurrently is the #1231
+// TestFlushScoped_DisjointComponentsBothSucceedConcurrently is the
 // acceptance criterion: a daemon writing consensus state concurrently with a
 // CLI writing teleport state must both succeed, because they touch disjoint
 // files with independent hashes and locks — not the one shared state.yaml

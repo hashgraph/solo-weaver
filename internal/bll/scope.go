@@ -21,10 +21,8 @@ import (
 // Scope governs the write, not the read: a handler may still read any
 // component's live state during the in-memory refresh.
 type Component struct {
-	// name uniquely identifies the component within a handler's managed set.
-	name string
 	// id is the internal/state.ComponentID this component corresponds to on
-	// disk, used to select which file(s) a flush writes.
+	// disk, used to select which file(s) a flush writes and locks.
 	id state.ComponentID
 	// producer reports this component's out-of-band drift, or nil when the
 	// component has no drift producer yet.
@@ -34,12 +32,12 @@ type Component struct {
 // The managed components. Each pairs a component's internal/state.ComponentID
 // (the file a flush writes) with its drift producer, when it has one.
 var (
-	Cluster   = Component{name: "cluster", id: state.ComponentCluster}
-	BlockNode = Component{name: "blocknode", id: state.ComponentBlockNode}
-	// ConsensusNode has no drift producer on this branch; drift.ConsensusNode is
-	// wired in with #1187. The flush scope applies now regardless.
-	ConsensusNode = Component{name: "consensus", id: state.ComponentConsensus}
-	Teleport      = Component{name: "teleport", id: state.ComponentTeleport, producer: drift.Teleport}
+	Cluster   = Component{id: state.ComponentCluster}
+	BlockNode = Component{id: state.ComponentBlockNode}
+	// ConsensusNode has no drift producer yet; a consensus drift producer will
+	// wire one in later. The flush scope applies now regardless.
+	ConsensusNode = Component{id: state.ComponentConsensus}
+	Teleport      = Component{id: state.ComponentTeleport, producer: drift.Teleport}
 )
 
 // producersOf returns the drift producers of the managed components that have one.
