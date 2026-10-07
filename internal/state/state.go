@@ -300,6 +300,17 @@ type ConsensusNodeObservedShape struct {
 
 	ImagePullSecrets    models.PullSecretSelector
 	ImagePullSecretsSet bool
+
+	// HostPathOwners is the on-disk owner of each hostpath-backed volume directory,
+	// keyed by volume name. Host-side readback (not capsule state); volumes whose
+	// directory could not be stat'ed are omitted.
+	HostPathOwners map[string]HostPathOwner
+}
+
+// HostPathOwner is the uid/gid owning a hostPath directory on the node.
+type HostPathOwner struct {
+	UID int
+	GID int
 }
 
 // ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver
