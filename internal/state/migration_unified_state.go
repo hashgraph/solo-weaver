@@ -18,6 +18,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"gopkg.in/yaml.v3"
 )
 
 // UnifiedStateMigration consolidates individual legacy state files into the
@@ -69,6 +70,23 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 	}
 
 	current := sm.State()
+
+	// A host can already have a state.yaml (written by a version that both
+	// post-dates this migration and pre-dates the per-component split) while
+	// still carrying these older *.installed/*.configured marker files — e.g.
+	// if marker-file removal failed on a prior run. sm.State() alone only
+	// holds fresh defaults; without reading the existing file first, flushing
+	// current below would overwrite real cluster/block-node/teleport data with
+	// zero values instead of merely adding the software entries from the marker
+	// files to what's already there.
+	legacyPath := filepath.Join(models.Paths().StateDir, StateFileName)
+	if b, readErr := os.ReadFile(legacyPath); readErr == nil {
+		if yamlErr := yaml.Unmarshal(b, &current); yamlErr != nil {
+			return errorx.IllegalFormat.Wrap(yamlErr, "existing state file %s is not parseable YAML", legacyPath)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return errorx.IllegalState.Wrap(readErr, "failed to read existing state file %s", legacyPath)
+	}
 
 	for _, fp := range files {
 		base := filepath.Base(fp)
