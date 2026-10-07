@@ -17,8 +17,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 
@@ -57,10 +55,20 @@ func (m *PerComponentStateMigration) legacyStateFilePath() string {
 	return filepath.Join(models.Paths().StateDir, StateFileName)
 }
 
-// Applies returns true when a legacy state.yaml exists and at least one
-// component file has not yet been split out of it. A host already fully split
-// (or a fresh install, which writes component files directly and never
-// creates state.yaml) does not re-run this.
+// Applies returns true whenever a legacy state.yaml exists, regardless of
+// whether the component files are already present. A host already fully
+// split never has a state.yaml (Execute always renames or removes it on
+// success), and a fresh install never creates one — so "legacy file exists"
+// alone is both necessary and sufficient to mean "not done yet".
+//
+// This also covers a crash strictly between Execute's last component-file
+// write and its rename/remove of the legacy file: at that point every
+// component file is already correct, but state.yaml is still present, so
+// Applies() must stay true to retry the rename on the very next invocation —
+// checking "any component missing" instead would miss this window, since
+// nothing is missing. Execute is cheap to retry in that case: it clears and
+// rewrites identical content, then the rename succeeds (or fails again,
+// handled the same way as any other rename failure).
 func (m *PerComponentStateMigration) Applies(_ *migration.Context) (bool, error) {
 	legacyPath := m.legacyStateFilePath()
 	if _, err := os.Stat(legacyPath); err != nil {
@@ -69,14 +77,7 @@ func (m *PerComponentStateMigration) Applies(_ *migration.Context) (bool, error)
 		}
 		return false, errorx.ExternalError.Wrap(err, "failed to stat legacy state file")
 	}
-
-	dir := filepath.Dir(legacyPath)
-	for _, id := range AllComponentIDs {
-		if _, err := os.Stat(componentFilePath(dir, id)); os.IsNotExist(err) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return true, nil
 }
 
 // Execute reads the legacy state.yaml, writes every component's section to
@@ -195,12 +196,11 @@ func recomposeLegacyStateFromComponents(legacyPath string) error {
 	}
 
 	composed := sm.State()
-	canonical, err := canonicalJSON(composed.Hashable())
+	hash, err := stateContentHash(composed)
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to canonicalize state for rollback")
 	}
-	sum := sha256.Sum256(canonical)
-	composed.Hash = hex.EncodeToString(sum[:])
+	composed.Hash = hash
 	composed.HashAlgo = "sha256"
 
 	b, err := yaml.Marshal(composed)

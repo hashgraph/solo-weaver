@@ -231,7 +231,7 @@ func (r *RuntimeResolver) AddActionHistory(entry state.ActionHistory) state.Writ
 
 func (r *RuntimeResolver) FlushAll(currentState state.State) error {
 	if err := r.sm.Set(currentState).FlushAll(); err != nil {
-		return errorx.IllegalState.New("failed to flush state to disk: %v", err)
+		return errorx.IllegalState.Wrap(err, "failed to flush state to disk")
 	}
 
 	return nil
@@ -242,10 +242,10 @@ func (r *RuntimeResolver) FlushAll(currentState state.State) error {
 func (r *RuntimeResolver) FlushScoped(currentState state.State, ids ...state.ComponentID) error {
 	w := r.sm.Set(currentState)
 	if err := w.FlushScoped(ids...); err != nil {
-		return errorx.IllegalState.New("failed to flush scoped state to disk: %v", err)
+		return errorx.IllegalState.Wrap(err, "failed to flush scoped state to disk")
 	}
 	if err := w.FlushActionHistory(); err != nil {
-		return errorx.IllegalState.New("failed to flush action history: %v", err)
+		return errorx.IllegalState.Wrap(err, "failed to flush action history")
 	}
 
 	return nil

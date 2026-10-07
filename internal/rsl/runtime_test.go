@@ -16,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,4 +153,38 @@ func TestRefreshWithBaseline_NoStateFileHasNoBaseline(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, baseline)
 	require.Equal(t, liveTeleport().NodeAgent, current.TeleportState.NodeAgent)
+}
+
+// TestFlushScoped_PreservesUnderlyingErrorCause verifies FlushScoped wraps
+// (rather than stringifies via %v) the state manager's error, so the
+// underlying errorx cause — here, the per-file hash-conflict error — survives
+// in the error chain for diagnostics instead of being flattened to text.
+func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, sm, liveTeleport(), nil)
+	fm := newFileManager(t)
+
+	// A second, independent manager on the same file writes teleport after sm
+	// last refreshed, so sm's baseline is now stale.
+	other, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, other.Refresh())
+	otherState := other.State()
+	otherState.TeleportState.NodeAgent.Configured = false // flips from persistedTeleport()'s true
+	require.NoError(t, other.Set(otherState).FlushScoped(state.ComponentTeleport))
+
+	staleState := sm.State()
+	staleState.TeleportState.NodeAgent.Configured = false
+	err = r.FlushScoped(staleState, state.ComponentTeleport)
+	require.Error(t, err)
+
+	// errorx.Wrap is opaque to errors.Is/As/Unwrap by design (see the errorx
+	// doc comment on Type.Wrap) — the cause is reachable only via .Cause() on
+	// the errorx.Error, which is exactly what diagnostics walk. New("...: %v",
+	// err) would discard the cause object entirely, leaving only its string
+	// baked into the outer message with no way back to the original error.
+	cause := errorx.Cast(err).Cause()
+	require.NotNil(t, cause, "the underlying errorx cause must still be reachable via .Cause(), not flattened to text by %%v")
+	require.Contains(t, cause.Error(), "changed externally on disk")
 }

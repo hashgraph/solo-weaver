@@ -35,7 +35,7 @@ func writeLegacyStateFixture(t *testing.T, path string, s State) {
 	require.NoError(t, os.WriteFile(path, b, 0o644))
 }
 
-func TestPerComponentStateMigration_AppliesOnlyWithLegacyFileAndMissingComponents(t *testing.T) {
+func TestPerComponentStateMigration_AppliesWheneverTheLegacyFileExists(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, StateFileName)
 	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
@@ -48,6 +48,38 @@ func TestPerComponentStateMigration_AppliesOnlyWithLegacyFileAndMissingComponent
 	applies, err = m.Applies(nil)
 	require.NoError(t, err)
 	require.True(t, applies, "legacy file exists and no component files split out yet")
+}
+
+// TestPerComponentStateMigration_AppliesAfterACrashBetweenLastWriteAndRename
+// covers a crash strictly between Execute's last component-file write and its
+// rename of the legacy file: every component file is already correct, but
+// state.yaml is still present. Applies() must stay true (checking "any
+// component missing" instead would return false here, since nothing is
+// missing), and a retried Execute must succeed and finally rename the file.
+func TestPerComponentStateMigration_AppliesAfterACrashBetweenLastWriteAndRename(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, StateFileName)
+	writeLegacyStateFixture(t, legacyPath, legacyStateFixture(t, dir))
+	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
+
+	// Simulate Execute having completed every component write but crashed
+	// before the rename: write all five component files directly, leave
+	// state.yaml in place.
+	for _, id := range AllComponentIDs {
+		require.NoError(t, os.WriteFile(componentFilePath(dir, id), []byte("state:\n"), 0o644))
+	}
+
+	applies, err := m.Applies(nil)
+	require.NoError(t, err)
+	require.True(t, applies, "state.yaml is still present, so the rename must still be retried")
+
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	_, err = os.Stat(legacyPath)
+	require.True(t, os.IsNotExist(err), "the retried Execute must finish the rename this time")
+	applies, err = m.Applies(nil)
+	require.NoError(t, err)
+	require.False(t, applies, "fully done now: the legacy file is gone")
 }
 
 func TestPerComponentStateMigration_ExecuteSplitsAllComponentsAndBacksUpLegacy(t *testing.T) {
