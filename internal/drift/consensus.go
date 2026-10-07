@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -110,19 +111,53 @@ func compareConsensusManagedSpec(component string, m *state.ConsensusNodeManaged
 		changes = append(changes, diffVolumes(component, m.Volumes, o.Volumes)...)
 	}
 
+	changes = append(changes, diffHostPathOwners(component, m, o.HostPathOwners)...)
+
 	return changes
 }
 
-// diffPullSecrets compares persisted vs live pull-secret selectors.
-func diffPullSecrets(component string, persisted, live models.PullSecretSelector) []Change {
-	var changes []Change
-	if persisted.Default != live.Default {
-		changes = append(changes, Change{
-			Component: component, Field: "imagePullSecrets.default",
-			Persisted: persisted.Default, Live: live.Default,
-		})
+// diffHostPathOwners compares the uid/gid weaver chowns hostpath directories to
+// (hostPathUid/hostPathGid, defaulting to the hedera user) with the on-disk owner.
+func diffHostPathOwners(component string, m *state.ConsensusNodeManagedSpec, owners map[string]state.HostPathOwner) []Change {
+	wantUID, _ := strconv.Atoi(config.HederaUserId())
+	wantGID, _ := strconv.Atoi(config.HederaGroupId())
+	if m.HostPathUID > 0 {
+		wantUID = m.HostPathUID
+	}
+	if m.HostPathGID > 0 {
+		wantGID = m.HostPathGID
 	}
 
+	names := make([]string, 0, len(owners))
+	for n := range owners {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var changes []Change
+	for _, n := range names {
+		o := owners[n]
+		if o.UID != wantUID {
+			changes = append(changes, Change{
+				Component: component, Field: fmt.Sprintf("hostPathUid[%s]", n),
+				Persisted: strconv.Itoa(wantUID), Live: strconv.Itoa(o.UID),
+			})
+		}
+		if o.GID != wantGID {
+			changes = append(changes, Change{
+				Component: component, Field: fmt.Sprintf("hostPathGid[%s]", n),
+				Persisted: strconv.Itoa(wantGID), Live: strconv.Itoa(o.GID),
+			})
+		}
+	}
+	return changes
+}
+
+// diffPullSecrets compares the secret each registry host resolves to. The live
+// capsule only carries per-host secrets, so the persisted selector is resolved
+// per host (ByHost entry, else Default) before comparing; comparing the raw
+// selectors would flag a persisted default as drift on every run.
+func diffPullSecrets(component string, persisted, live models.PullSecretSelector) []Change {
 	allHosts := make(map[string]bool)
 	for h := range persisted.ByHost {
 		allHosts[h] = true
@@ -136,13 +171,16 @@ func diffPullSecrets(component string, persisted, live models.PullSecretSelector
 	}
 	sort.Strings(hosts)
 
+	var changes []Change
 	for _, h := range hosts {
-		sv := persisted.ByHost[h]
-		lv := live.ByHost[h]
-		if sv != lv {
+		want, ok := persisted.ByHost[h]
+		if !ok {
+			want = persisted.Default
+		}
+		if got := live.ByHost[h]; want != got {
 			changes = append(changes, Change{
 				Component: component, Field: fmt.Sprintf("imagePullSecrets[%s]", h),
-				Persisted: sv, Live: lv,
+				Persisted: want, Live: got,
 			})
 		}
 	}

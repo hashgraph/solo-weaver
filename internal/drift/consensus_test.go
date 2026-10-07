@@ -260,10 +260,10 @@ func TestConsensusNode_PullSecretsDrift(t *testing.T) {
 		wantHint string
 	}{
 		{
-			name:     "default changed",
+			name:     "secret removed from live host",
 			wantN:    1,
-			wantHint: "imagePullSecrets.default",
-			mutate:   func(o *state.ConsensusNodeObservedShape) { o.ImagePullSecrets.Default = "new-default" },
+			wantHint: "imagePullSecrets[gcr.io]",
+			mutate:   func(o *state.ConsensusNodeObservedShape) { o.ImagePullSecrets.ByHost["gcr.io"] = "" },
 		},
 		{
 			name:     "host secret changed",
@@ -295,6 +295,40 @@ func TestConsensusNode_PullSecretsDrift(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConsensusNode_PullSecretsDefaultResolvedPerHost(t *testing.T) {
+	spec := models.PullSecretSelector{Default: "creds", HasDefault: true}
+	live := liveConsensusNodeState()
+	live.ManagedSpec.ImagePullSecrets = spec
+	live.ObservedShape.ImagePullSecrets = models.PullSecretSelector{
+		ByHost: map[string]string{"gcr.io": "creds", "ghcr.io": "creds"},
+	}
+	baseline := stateWith(testScope, baselineConsensusNodeState())
+	assert.Empty(t, ConsensusNode(baseline, stateWith(testScope, live)))
+
+	live.ObservedShape.ImagePullSecrets.ByHost["ghcr.io"] = ""
+	got := ConsensusNode(baseline, stateWith(testScope, live))
+	require.Len(t, got, 1)
+	assert.Equal(t, "imagePullSecrets[ghcr.io]", got[0].Field)
+}
+
+func TestConsensusNode_HostPathOwnerDrift(t *testing.T) {
+	baseline := stateWith(testScope, baselineConsensusNodeState())
+	live := liveConsensusNodeState()
+	live.ManagedSpec.HostPathUID = 3000
+	live.ManagedSpec.HostPathGID = 3000
+	live.ObservedShape.HostPathOwners = map[string]state.HostPathOwner{
+		"saved": {UID: 3000, GID: 3000},
+	}
+	assert.Empty(t, ConsensusNode(baseline, stateWith(testScope, live)))
+
+	live.ObservedShape.HostPathOwners["saved"] = state.HostPathOwner{UID: 0, GID: 3000}
+	got := ConsensusNode(baseline, stateWith(testScope, live))
+	require.Len(t, got, 1)
+	assert.Equal(t, "hostPathUid[saved]", got[0].Field)
+	assert.Equal(t, "3000", got[0].Persisted)
+	assert.Equal(t, "0", got[0].Live)
 }
 
 // ── Volumes ──────────────────────────────────────────────────────────────

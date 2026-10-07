@@ -5,6 +5,7 @@
 package reality
 
 import (
+	"os"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -52,4 +53,20 @@ func TestLiveShapeToObserved(t *testing.T) {
 	assert.Equal(t, "hostpath", string(obs.Volumes.Volumes["saved"].Type))
 	assert.True(t, obs.ImagePullSecretsSet)
 	assert.Equal(t, "gcr-creds", obs.ImagePullSecrets.ByHost["gcr.io"])
+}
+
+func TestReadHostPathOwners(t *testing.T) {
+	dir := t.TempDir()
+	live := liveConsensusShape{Volumes: models.ConsensusVolumeConfig{Volumes: map[string]models.ConsensusVolumeSpec{
+		"saved":  {Type: models.VolumeBackingHostPath, Path: dir},
+		"gone":   {Type: models.VolumeBackingHostPath, Path: dir + "/missing"},
+		"events": {Type: models.VolumeBackingEmptyDir},
+	}}}
+
+	readHostPathOwners(&live)
+
+	require.Contains(t, live.HostPathOwners, "saved")
+	assert.Equal(t, os.Getuid(), live.HostPathOwners["saved"].UID)
+	assert.NotContains(t, live.HostPathOwners, "gone")
+	assert.NotContains(t, live.HostPathOwners, "events")
 }
