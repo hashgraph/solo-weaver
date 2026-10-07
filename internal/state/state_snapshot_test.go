@@ -70,7 +70,7 @@ func TestPersistedSnapshot_IsolatedFromMutationOfTheSource(t *testing.T) {
 	require.Equal(t, "abc", snapshot.ConsensusNodes["node1"].ConfigHashes["app"].Hash)
 }
 
-// Per-component Refresh (internal/state#1231) always unmarshals a found
+// Per-component Refresh always unmarshals a found
 // component's file onto a fresh zero-valued State, then replaces that
 // component's whole section in the composed state — it never decodes onto an
 // existing non-nil pointer the way the single-file version's
