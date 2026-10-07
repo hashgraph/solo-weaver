@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // migration_per_component_state.go splits the single state.yaml into the
-// per-component files internal/bll.BaseHandler.FlushScoped writes (#1231):
+// per-component files internal/bll.BaseHandler.FlushScoped writes:
 // machine.yaml, cluster.yaml, blocknode.yaml, consensus.yaml, teleport.yaml,
 // each in the same state directory. It must run after every other
 // ScopeStartup migration in this package (migration_unified_state.go,
@@ -122,26 +122,70 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, mctx *migration.
 
 	backupPath := legacyPath + legacyStateBackupSuffix
 	if err := os.Rename(legacyPath, backupPath); err != nil {
-		// The split already succeeded and is what every command now reads; a
-		// failed rename only leaves a redundant legacy file behind, so this is
-		// logged, not fatal.
-		if mctx.Logger != nil {
+		// The split already succeeded and legacyPath is what Applies() checks
+		// for next time — leaving it in place would make Applies() true again
+		// the moment any component file is later lost for an unrelated reason
+		// (a bug, a bad actor, a disk issue), and Execute would then delete
+		// every current component file and regenerate all of them from this
+		// now-stale legacy content, discarding everything written since. Fall
+		// back to removing it outright: its content is already safely
+		// duplicated in the component files just written, so losing the
+		// backup copy is a far smaller cost than that failure mode.
+		if mctx != nil && mctx.Logger != nil {
 			mctx.Logger.Warn().Err(err).Str("legacyStateFile", legacyPath).
-				Msg("per-component migration wrote the new files but could not rename the legacy state.yaml out of the way; remove it manually once verified")
+				Msg("could not rename the legacy state file to its backup name; removing it instead")
+		}
+		if removeErr := os.Remove(legacyPath); removeErr != nil {
+			return errorx.ExternalError.Wrap(removeErr,
+				"wrote the new per-component files but could not remove or rename the now-stale legacy state file %s; remove it manually before running any further commands",
+				legacyPath)
 		}
 	}
 	return nil
 }
 
-// Rollback recomposes a single state.yaml from the per-component files and
-// removes them, undoing Execute. Best-effort: any change to a component file
-// made after Execute (by a command or by a later migration) is included in
-// the recomposed legacy file, same as the "may not fully restore" contract
-// every Migration.Rollback has.
+// Rollback restores a single state.yaml and removes the per-component files,
+// undoing Execute. When Execute's backup survived (the normal case), this
+// restores that exact pre-migration snapshot verbatim — not a recomposition
+// of the current component files, which would stamp the running binary's
+// version into provisioner.version rather than whatever version was actually
+// recorded before the split. If the backup is missing (Execute's rename
+// failed and it fell back to removing the legacy file, or there was never a
+// legacy file to begin with), this falls back to a best-effort recomposition
+// from the current component files, which may not fully restore — the same
+// contract every Migration.Rollback has.
 func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Context) error {
 	legacyPath := m.legacyStateFilePath()
 	dir := filepath.Dir(legacyPath)
+	backupPath := legacyPath + legacyStateBackupSuffix
 
+	if b, err := os.ReadFile(backupPath); err == nil {
+		if err := atomicWriteFile(legacyPath, b); err != nil {
+			return errorx.ExternalError.Wrap(err, "failed to restore legacy state file from backup %s", backupPath)
+		}
+	} else if os.IsNotExist(err) {
+		if err := recomposeLegacyStateFromComponents(legacyPath); err != nil {
+			return err
+		}
+	} else {
+		return errorx.ExternalError.Wrap(err, "failed to check for a per-component migration backup at %s", backupPath)
+	}
+
+	for _, id := range AllComponentIDs {
+		if err := os.Remove(componentFilePath(dir, id)); err != nil && !os.IsNotExist(err) {
+			return errorx.ExternalError.Wrap(err, "failed to remove %s state file during rollback", id)
+		}
+	}
+	// Best-effort: the backup has now been restored (or recomposed in its
+	// absence), so it no longer serves a purpose.
+	_ = os.Remove(backupPath)
+	return nil
+}
+
+// recomposeLegacyStateFromComponents rebuilds a legacy state file from the
+// current per-component files when no Execute-created backup is available to
+// restore verbatim.
+func recomposeLegacyStateFromComponents(legacyPath string) error {
 	sm, err := NewStateManager(WithStateFile(legacyPath))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager for per-component rollback")
@@ -165,12 +209,6 @@ func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Co
 	}
 	if err := atomicWriteFile(legacyPath, b); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to write recomposed state.yaml for rollback")
-	}
-
-	for _, id := range AllComponentIDs {
-		if err := os.Remove(componentFilePath(dir, id)); err != nil && !os.IsNotExist(err) {
-			return errorx.ExternalError.Wrap(err, "failed to remove %s state file during rollback", id)
-		}
 	}
 	return nil
 }
