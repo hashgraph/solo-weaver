@@ -10,6 +10,7 @@ package state
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -28,6 +29,23 @@ func unmarshalStateDoc(data []byte, doc interface{}) error {
 	return nil
 }
 
+// readComponentOrLegacyBytes returns id's persisted file if it exists, else
+// falls back to a legacy single state.yaml so these readers also work on a
+// host that has not run the per-component split migration yet. This matters
+// because ReadProvisionerVersionFromDisk is read to decide which startup
+// migrations apply — including the split migration itself — before any
+// migration for this invocation has run, so the component file may not exist
+// yet even though the host has a perfectly good recorded version in the
+// legacy file. The two files share the same YAML shape (both marshal a
+// State), so parsing either with the same doc type works unchanged.
+func readComponentOrLegacyBytes(id ComponentID) ([]byte, error) {
+	data, err := readComponentFileBytes(id)
+	if err != nil || data != nil {
+		return data, err
+	}
+	return readLegacyStateFileBytes()
+}
+
 // readComponentFileBytes returns the raw bytes of one component's persisted
 // file. If the file does not exist it returns (nil, nil) so callers can treat
 // an unrecorded component as "empty state" without error handling.
@@ -40,6 +58,21 @@ func readComponentFileBytes(id ComponentID) ([]byte, error) {
 			return nil, nil
 		}
 		return nil, errorx.InternalError.Wrap(err, "failed to read %s state file at %s", id, path)
+	}
+	return data, nil
+}
+
+// readLegacyStateFileBytes returns the raw bytes of the pre-split single state
+// file, or (nil, nil) if it doesn't exist.
+func readLegacyStateFileBytes() ([]byte, error) {
+	path := filepath.Join(models.Paths().StateDir, StateFileName)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, errorx.InternalError.Wrap(err, "failed to read legacy state file at %s", path)
 	}
 	return data, nil
 }
@@ -119,7 +152,7 @@ type SoftwareVersionsDoc struct {
 // on-disk machine state file without loading the full state into memory.
 // Returns an empty string when that file does not exist.
 func ReadProvisionerVersionFromDisk() (string, error) {
-	data, err := readComponentFileBytes(ComponentMachine)
+	data, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -137,7 +170,7 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 // loading the full state. Returns an empty string when that file or the
 // component is absent.
 func ReadSoftwareVersionFromDisk(name string) (string, error) {
-	data, err := readComponentFileBytes(ComponentMachine)
+	data, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -211,7 +244,7 @@ type PromptDefaults struct {
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 	var doc PromptDefaultsDoc
 
-	machineData, err := readComponentFileBytes(ComponentMachine)
+	machineData, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil {
 		return PromptDefaults{}, err
 	}
@@ -221,7 +254,7 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		}
 	}
 
-	blockNodeData, err := readComponentFileBytes(ComponentBlockNode)
+	blockNodeData, err := readComponentOrLegacyBytes(ComponentBlockNode)
 	if err != nil {
 		return PromptDefaults{}, err
 	}
