@@ -372,3 +372,175 @@ func TestLogReassertOutcome_SkippedNeverReadsAsVerified(t *testing.T) {
 	assert.NotContains(t, got["message"], "nothing to re-assert")
 	assert.Equal(t, []any{ra.ArtifactHostFirewall, ra.ArtifactWorkloadPolicy}, got["skipped"])
 }
+
+// canonicalChecks exercises every field of the checks section.
+func canonicalChecks() *ra.Checks {
+	return &ra.Checks{
+		Rules: ra.RulesCheck{
+			Status: ra.CheckFailed, Detail: "differ", LiveFormat: 2,
+			Missing: []string{"rule a"}, Unexpected: []string{"rule b"},
+		},
+		Filters: ra.FiltersCheck{Status: ra.CheckFailed, Detail: "d", Devices: []ra.DeviceFilters{
+			{Dev: "lxc1", Role: ra.RoleVeth, Filters: []string{"parent 1: pref 1 protocol all kind u32"}},
+			{Dev: "eth0", Role: ra.RoleEgress, Error: "tc died"},
+		}},
+		Counters: &ra.CounterSample{
+			RulesEpoch: "7", ForwardCounted: true, ForwardBytes: 9000,
+			RuleBytes: map[string]uint64{"partner": 100},
+			Devices: []ra.DeviceCounters{{
+				Dev: "eth0", Role: ra.RoleEgress, IfIndex: 2, DefaultClass: "reserve-egress",
+				TrunkBytes: 1000, LaneBytes: map[string]uint64{"partner": 400}, Error: "e",
+			}},
+		},
+	}
+}
+
+// TestJSONContract_ChecksSurviveTheDaemonsParse is the drift guard for the
+// checks section, which privexec also mirrors instead of importing.
+func TestJSONContract_ChecksSurviveTheDaemonsParse(t *testing.T) {
+	emitted := canonicalReport()
+	emitted.Checks = canonicalChecks()
+
+	raw, err := json.Marshal(emitted)
+	require.NoError(t, err)
+	parsed, err := privexec.ParseNetworkReassertReport(raw)
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Checks)
+
+	// Re-encode both sides; the same JSON means every field made it across.
+	want, err := json.Marshal(emitted.Checks)
+	require.NoError(t, err)
+	got, err := json.Marshal(parsed.Checks)
+	require.NoError(t, err)
+	var wantDoc, gotDoc map[string]any
+	require.NoError(t, json.Unmarshal(want, &wantDoc))
+	require.NoError(t, json.Unmarshal(got, &gotDoc))
+	assert.Equal(t, wantDoc, pruneEmpty(gotDoc))
+}
+
+// pruneEmpty drops empty values, which the engine omits and privexec keeps.
+func pruneEmpty(v any) map[string]any {
+	var walk func(any) any
+	walk = func(v any) any {
+		switch t := v.(type) {
+		case map[string]any:
+			out := map[string]any{}
+			for k, val := range t {
+				val = walk(val)
+				switch x := val.(type) {
+				case nil:
+					continue
+				case string:
+					if x == "" {
+						continue
+					}
+				case float64:
+					if x == 0 {
+						continue
+					}
+				case []any:
+					if len(x) == 0 {
+						continue
+					}
+				}
+				out[k] = val
+			}
+			return out
+		case []any:
+			out := make([]any, len(t))
+			for i, val := range t {
+				out[i] = walk(val)
+			}
+			return out
+		default:
+			return v
+		}
+	}
+	return walk(v).(map[string]any)
+}
+
+// TestJSONContract_CheckConstantsMatch pins the values privexec mirrors.
+func TestJSONContract_CheckConstantsMatch(t *testing.T) {
+	assert.Equal(t, ra.CheckOK, privexec.NetworkCheckOK)
+	assert.Equal(t, ra.CheckFailed, privexec.NetworkCheckFailed)
+	assert.Equal(t, ra.CheckOlderFormat, privexec.NetworkCheckOlderFormat)
+	assert.Equal(t, ra.CheckUnknown, privexec.NetworkCheckUnknown)
+	assert.Equal(t, ra.CheckNotChecked, privexec.NetworkCheckNotChecked)
+	assert.Equal(t, ra.CheckSkipped, privexec.NetworkCheckSkipped)
+	assert.Equal(t, ra.RoleEgress, privexec.NetworkRoleEgress)
+	assert.Equal(t, ra.RoleVeth, privexec.NetworkRoleVeth)
+}
+
+func TestWriteReassertTable_ShowsChecksAndTheirLines(t *testing.T) {
+	report := canonicalReport()
+	report.Checks = canonicalChecks()
+	cmd := GetCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	writeReassertTable(cmd, report)
+
+	s := out.String()
+	assert.Contains(t, s, "CHECK")
+	assert.Contains(t, s, "- rule a")
+	assert.Contains(t, s, "+ rule b")
+	assert.Contains(t, s, "lxc1 (veth): parent 1: pref 1 protocol all kind u32")
+	assert.Contains(t, s, "eth0 (egress): tc died")
+}
+
+// filterRows returns the indented device lines of the CHECK table, trimmed.
+func filterRows(out string) []string {
+	var rows []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, " ") && strings.Contains(l, "): ") {
+			rows = append(rows, strings.TrimSpace(l))
+		}
+	}
+	return rows
+}
+
+func TestWriteReassertTable_FilterRowsPerDevice(t *testing.T) {
+	report := ra.Report{Checks: &ra.Checks{
+		Rules: ra.RulesCheck{Status: ra.CheckOK},
+		Filters: ra.FiltersCheck{Status: ra.CheckFailed, Devices: []ra.DeviceFilters{
+			{Dev: "lxc1", Role: ra.RoleVeth, Filters: []string{"f1", "f2"}, Error: "boom"},
+			{Dev: "lxc2", Role: ra.RoleVeth},
+			{Dev: "eth0", Role: ra.RoleEgress, Error: "tc died"},
+			{Dev: "lxc3", Role: ra.RoleVeth, Filters: []string{"f3"}},
+		}},
+	}}
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	writeReassertTable(cmd, report)
+
+	assert.Equal(t, []string{
+		"lxc1 (veth): f1",
+		"lxc1 (veth): f2",
+		"lxc1 (veth): boom",
+		"eth0 (egress): tc died",
+		"lxc3 (veth): f3",
+	}, filterRows(out.String()), "filters first, then the error; a clean device prints nothing")
+}
+
+// The error line must not be appended into the caller's Filters slice when it
+// has spare capacity.
+func TestWriteReassertTable_DoesNotWriteIntoTheReport(t *testing.T) {
+	filters := make([]string, 1, 4)
+	filters[0] = "f1"
+	report := ra.Report{Checks: &ra.Checks{Filters: ra.FiltersCheck{Devices: []ra.DeviceFilters{
+		{Dev: "lxc1", Role: ra.RoleVeth, Filters: filters, Error: "boom"},
+	}}}}
+	cmd := &cobra.Command{}
+	var first, second bytes.Buffer
+
+	cmd.SetOut(&first)
+	writeReassertTable(cmd, report)
+	cmd.SetOut(&second)
+	writeReassertTable(cmd, report)
+
+	assert.Equal(t, []string{"f1"}, report.Checks.Filters.Devices[0].Filters)
+	assert.Empty(t, filters[:2][1], "the backing array past len must stay untouched")
+	assert.Equal(t, first.String(), second.String())
+}

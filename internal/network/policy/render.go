@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -135,9 +136,14 @@ func baseChainLines() []string {
 		"\t# hierarchy: a packet no rule matches falls through carrying no",
 		"\t# `meta priority` and lands in the HTB default class. The deny tier in the",
 		"\t# chains below is the exception — those rules drop.",
+		"\t#",
+		"\t# The counter here is total traffic this table saw; with the per-class",
+		"\t# counters below it lets `network reassert` tell quiet traffic from",
+		"\t# traffic that skipped this table. The comment tags the render format.",
 		"\tchain " + chainBase + " {",
 		"\t\ttype filter hook forward priority 0; policy accept;",
-		"\t\tmeta nfproto vmap { ipv4 : jump " + chainV4 + ", ipv6 : jump " + chainV6 + " }",
+		"\t\tcounter meta nfproto vmap { ipv4 : jump " + chainV4 + ", ipv6 : jump " + chainV6 + " } comment " +
+			strconv.Quote(FormatComment(FormatVersion)),
 		"\t}",
 	}
 }
@@ -506,8 +512,8 @@ func renderReplyRestoreRule(p *Policy) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("\t\tct direction reply ct mark %s meta priority set %s accept",
-		hex(reply.Mark), hex(reply.Priority)), nil
+	return fmt.Sprintf("\t\tct direction reply ct mark %s counter meta priority set %s accept comment %s",
+		hex(reply.Mark), hex(reply.Priority), classComment(p.ReplyStamp)), nil
 }
 
 // renderStampRule renders one address family's classification rule for a stamp
@@ -531,8 +537,8 @@ func renderStampRule(p *Policy, f family) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("\t\t%s saddr %s %s daddr . tcp dport @%s ct mark set %s meta priority set %s accept",
-			f.proto, f.podCIDR, f.proto, f.setName(p.Name), hex(reply.Mark), hex(fwd.Priority)), nil
+		return fmt.Sprintf("\t\t%s saddr %s %s daddr . tcp dport @%s counter ct mark set %s meta priority set %s accept comment %s",
+			f.proto, f.podCIDR, f.proto, f.setName(p.Name), hex(reply.Mark), hex(fwd.Priority), classComment(p.Stamp)), nil
 	}
 
 	return renderPlainStampRule(p, f, fwd)
@@ -564,7 +570,7 @@ func renderPlainStampRule(p *Policy, f family, fwd class) (string, error) {
 	default:
 		return "", errorx.AssertionFailed.New("stamp policy %q has no direction", p.Name)
 	}
-	b.WriteString(fmt.Sprintf(" meta priority set %s accept", hex(fwd.Priority)))
+	b.WriteString(fmt.Sprintf(" counter meta priority set %s accept comment %s", hex(fwd.Priority), classComment(p.Stamp)))
 	return b.String(), nil
 }
 
@@ -574,6 +580,40 @@ func renderPlainStampRule(p *Policy, f family, fwd class) (string, error) {
 // `major:minor` display form on read-back (e.g. 0x10010 -> "1:10") -- that's
 // nft's own listing behavior, not a discrepancy in the rendered document.
 func hex(v uint32) string { return fmt.Sprintf("0x%x", v) }
+
+// FormatVersion is bumped when a render change alters live rules, so an older
+// table is reported as older, not as drift. Version 1 predates counters and comments.
+const FormatVersion = 2
+
+// Comment prefixes, read back from `nft -j list table`.
+const (
+	formatCommentPrefix = "weaver:format="
+	classCommentPrefix  = "weaver:class="
+)
+
+// FormatComment is the comment on the `forward` rule that tags the render format.
+func FormatComment(v int) string { return formatCommentPrefix + strconv.Itoa(v) }
+
+// ParseFormatComment returns the format version a `forward` rule comment names.
+func ParseFormatComment(comment string) (int, bool) {
+	rest, ok := strings.CutPrefix(comment, formatCommentPrefix)
+	if !ok {
+		return 0, false
+	}
+	v, err := strconv.Atoi(rest)
+	return v, err == nil
+}
+
+// ClassComment is the comment on a stamp rule naming the class it stamps.
+func ClassComment(class string) string { return classCommentPrefix + class }
+
+// ParseClassComment returns the class a stamp rule comment names.
+func ParseClassComment(comment string) (string, bool) {
+	return strings.CutPrefix(comment, classCommentPrefix)
+}
+
+// classComment is ClassComment quoted for the nft document.
+func classComment(class string) string { return strconv.Quote(ClassComment(class)) }
 
 // atomicWriteFile writes content to path via a temp file in the same directory
 // followed by fsync + rename + parent-dir fsync, so a crash mid-write can never

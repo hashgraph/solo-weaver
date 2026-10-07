@@ -64,6 +64,10 @@ type Snapshot struct {
 	LastError string `json:"last_error,omitempty"`
 	// Artifacts is nil until the first successful run.
 	Artifacts []ArtifactState `json:"artifacts,omitempty"`
+	// LastVerifiedGoodAt is when every correctness check last passed, nil if never.
+	LastVerifiedGoodAt *time.Time `json:"last_verified_good_at,omitempty"`
+	// Checks is whether the live rules and lanes are right, nil before the first check.
+	Checks *ChecksState `json:"checks,omitempty"`
 }
 
 // ReassertMonitor periodically runs `network reassert` under sudo and keeps the
@@ -78,6 +82,8 @@ type ReassertMonitor struct {
 
 	mu    sync.Mutex
 	state Snapshot
+	// judge keeps the correctness checks' history; created on first use.
+	judge *judge
 }
 
 // NewReassertMonitor constructs a ReassertMonitor wired to the sudo-backed
@@ -236,9 +242,21 @@ func (m *ReassertMonitor) record(res privexec.NetworkReassertResult) {
 		m.state.LastCheckAt = &now
 	}
 	m.state.LastError = ""
+
+	var events []event
+	if res.Checks != nil {
+		if m.judge == nil {
+			m.judge = newJudge()
+		}
+		events = m.judge.observe(res.Checks, now)
+		// A fresh ChecksState per run, never mutated after, so Snapshot may share it.
+		m.state.Checks = m.judge.state
+		m.state.LastVerifiedGoodAt = m.judge.lastGood
+	}
 	m.mu.Unlock()
 
 	m.logReport(res, next, prev)
+	m.logChecks(events)
 }
 
 // logReport emits one line per artifact that needs attention: WARN for a
@@ -289,6 +307,83 @@ func (m *ReassertMonitor) logReport(
 				Int("failed_runs", prev[a.Artifact].ConsecutiveFailures).
 				Msg("weaver network state is present again")
 		}
+	}
+}
+
+// logChecks logs ERROR when a problem appears, a reminder while it lasts, and INFO
+// when it clears. Older render format and unrunnable checks are not errors: INFO/WARN.
+func (m *ReassertMonitor) logChecks(events []event) {
+	for _, e := range events {
+		p := e.problem
+		var line *zerolog.Event
+		msg := checkMessage(p.Reason)
+		switch e.kind {
+		case eventRaised:
+			line = logx.As().WithLevel(raisedLevel(p.Reason))
+		case eventReminder:
+			line = logx.As().WithLevel(min(raisedLevel(p.Reason), zerolog.WarnLevel))
+			msg += " (still)"
+		case eventIdle:
+			line = logx.As().Warn()
+		case eventCleared:
+			logx.As().Info().
+				Str("reason", reasonHealthyAgain).
+				Str("monitor", m.Name()).
+				Str("check", p.Check).
+				Str("interface", p.Interface).
+				Str("category", p.Category).
+				Str("cleared", p.Reason).
+				Int("consecutive", p.Consecutive).
+				Msg("weaver network check is healthy again")
+			continue
+		}
+		line = line.
+			Str("reason", p.Reason).
+			Str("monitor", m.Name()).
+			Str("check", p.Check).
+			Str("interface", p.Interface).
+			Str("category", p.Category).
+			Str("detail", p.Detail).
+			Int("consecutive", p.Consecutive).
+			Str("hint", p.Hint)
+		if len(p.Lines) > 0 {
+			line = line.Strs("lines", p.Lines)
+		}
+		line.Msg(msg)
+	}
+}
+
+// raisedLevel keeps benign reasons below ERROR so ERROR alerts stay meaningful.
+func raisedLevel(reason string) zerolog.Level {
+	switch reason {
+	case reasonRulesOlderFormat:
+		return zerolog.InfoLevel
+	case reasonCheckUnknown:
+		return zerolog.WarnLevel
+	default:
+		return zerolog.ErrorLevel
+	}
+}
+
+// checkMessage maps each reason code to its operator-facing text.
+func checkMessage(reason string) string {
+	switch reason {
+	case reasonRulesDrifted:
+		return "weaver's live traffic rules differ from the policy registry"
+	case reasonRulesOlderFormat:
+		return "weaver's live traffic rules were written by an older version"
+	case reasonStrayTcFilter:
+		return "a tc filter weaver did not install sits on a lane tree"
+	case reasonLaneBroken:
+		return "traffic is stamped for a lane but never reaches it"
+	case reasonLaneSuspicious:
+		return "a lane is receiving traffic no rule stamped for it"
+	case reasonRulesBypassed:
+		return "traffic is skipping weaver's traffic rules"
+	case reasonLaneIdle:
+		return "a traffic category has carried no traffic, so its lane is not verified"
+	default:
+		return "a weaver network check could not run"
 	}
 }
 

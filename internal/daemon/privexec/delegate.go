@@ -162,6 +162,76 @@ var networkReassertArtifacts = []string{"host-firewall", "workload-policy", "egr
 type NetworkReassertResult struct {
 	Type      string                  `json:"type"`
 	Artifacts []NetworkArtifactStatus `json:"artifacts"`
+	// Checks is nil from a worker that predates the correctness checks.
+	Checks *NetworkChecks `json:"checks,omitempty"`
+}
+
+// Mirrors reassert.Check* (privexec must not import it); a CLI-side test pins them.
+const (
+	NetworkCheckOK          = "ok"
+	NetworkCheckFailed      = "failed"
+	NetworkCheckOlderFormat = "older-format"
+	NetworkCheckUnknown     = "unknown"
+	NetworkCheckNotChecked  = "not-checked"
+	NetworkCheckSkipped     = "skipped"
+)
+
+// Device roles. Mirror reassert.Role*.
+const (
+	NetworkRoleEgress  = "egress"
+	NetworkRoleVeth    = "veth"
+	NetworkRoleUnknown = "unknown"
+)
+
+// NetworkChecks mirrors reassert.Checks.
+type NetworkChecks struct {
+	Rules    NetworkRulesCheck     `json:"rules"`
+	Filters  NetworkFiltersCheck   `json:"filters"`
+	Counters *NetworkCounterSample `json:"counters,omitempty"`
+}
+
+// NetworkRulesCheck mirrors reassert.RulesCheck.
+type NetworkRulesCheck struct {
+	Status     string   `json:"status"`
+	Detail     string   `json:"detail"`
+	LiveFormat int      `json:"live_format"`
+	Missing    []string `json:"missing"`
+	Unexpected []string `json:"unexpected"`
+}
+
+// NetworkFiltersCheck mirrors reassert.FiltersCheck.
+type NetworkFiltersCheck struct {
+	Status  string                 `json:"status"`
+	Detail  string                 `json:"detail"`
+	Devices []NetworkDeviceFilters `json:"devices"`
+}
+
+// NetworkDeviceFilters mirrors reassert.DeviceFilters.
+type NetworkDeviceFilters struct {
+	Dev     string   `json:"dev"`
+	Role    string   `json:"role"`
+	Filters []string `json:"filters"`
+	Error   string   `json:"error"`
+}
+
+// NetworkCounterSample mirrors reassert.CounterSample.
+type NetworkCounterSample struct {
+	RulesEpoch     string                  `json:"rules_epoch"`
+	ForwardCounted bool                    `json:"forward_counted"`
+	ForwardBytes   uint64                  `json:"forward_bytes"`
+	RuleBytes      map[string]uint64       `json:"rule_bytes"`
+	Devices        []NetworkDeviceCounters `json:"devices"`
+}
+
+// NetworkDeviceCounters mirrors reassert.DeviceCounters.
+type NetworkDeviceCounters struct {
+	Dev          string            `json:"dev"`
+	Role         string            `json:"role"`
+	IfIndex      int               `json:"ifindex"`
+	DefaultClass string            `json:"default_class"`
+	TrunkBytes   uint64            `json:"trunk_bytes"`
+	LaneBytes    map[string]uint64 `json:"lane_bytes"`
+	Error        string            `json:"error"`
 }
 
 // NetworkArtifactStatus is one artifact's outcome from a reassert run.
