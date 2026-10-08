@@ -112,6 +112,18 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
+// orbitProvisionerDaemonEnabled reads spec.provisionerDaemonEnabled from the live
+// Orbit; the operator omits the key when false, so absent means false.
+func orbitProvisionerDaemonEnabled(ctx context.Context, kc CapsuleKubeClient, orbitName string) (bool, error) {
+	spec, _, err := kc.GetResourceNestedMap(ctx,
+		kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", orbitName, "spec")
+	if err != nil {
+		return false, err
+	}
+	v, _ := spec["provisionerDaemonEnabled"].(bool)
+	return v, nil
+}
+
 func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureOrbitStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -135,6 +147,24 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			}
 
 			if exists {
+				// The Orbit is shared by every node that names it and is never
+				// re-applied here, so a node asking for a different daemon mode would
+				// silently run against the wrong one.
+				live, err := orbitProvisionerDaemonEnabled(ctx, kc, inputs.OrbitName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read Orbit %s", inputs.OrbitName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
+				}
+				if live != inputs.ProvisionerDaemonEnabled {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("Orbit %q already exists with provisionerDaemonEnabled=%t but this install requests %t; every node on an Orbit must use the same mode",
+							inputs.OrbitName, live, inputs.ProvisionerDaemonEnabled),
+						reasons.PreconditionNotMet,
+						"Re-run with the Orbit's mode: pass --provisioner-daemon only if the Orbit has it enabled",
+						"To change the mode, uninstall every consensus node on this Orbit and delete the Orbit first")))
+				}
 				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
 					AlreadyInstalled: "true",

@@ -15,17 +15,16 @@ import (
 // sampleManagedSpec returns a fully-populated managed spec for tests.
 func sampleManagedSpec() *ConsensusNodeManagedSpec {
 	return &ConsensusNodeManagedSpec{
-		ProvisionerDaemonEnabled: true,
-		ContainerName:            "root",
-		CPULimit:                 "4",
-		CPURequest:               "2",
-		MemoryLimit:              "16Gi",
-		MemoryRequest:            "8Gi",
-		JavaHeapMin:              "8g",
-		JavaHeapMax:              "12g",
-		JavaOpts:                 "-XX:+UseZGC",
-		UCImageRepo:              "ghcr.io/hiero/solo-operator",
-		UCImageTag:               "0.8.0",
+		ContainerName: "root",
+		CPULimit:      "4",
+		CPURequest:    "2",
+		MemoryLimit:   "16Gi",
+		MemoryRequest: "8Gi",
+		JavaHeapMin:   "8g",
+		JavaHeapMax:   "12g",
+		JavaOpts:      "-XX:+UseZGC",
+		UCImageRepo:   "ghcr.io/hiero/solo-operator",
+		UCImageTag:    "0.8.0",
 		ImagePullSecrets: models.PullSecretSelector{
 			HasDefault: true,
 			Default:    "default-creds",

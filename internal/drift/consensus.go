@@ -21,13 +21,16 @@ const consensusComponent = "consensus"
 //   - Identity fields (imageRepo, imageTag, accountId, …) are compared as
 //     baseline vs live, because the reality checker absorbs the live value into
 //     ConsensusNodeState — identical to the Teleport pattern.
-//   - Managed-spec fields (sizing, JVM, UC image, volumes, pull secrets, daemon
-//     flag) are compared as ManagedSpec vs ObservedShape. ManagedSpec records
-//     what weaver deliberately set at install and is never refreshed from the
-//     cluster; ObservedShape is the transient readback the checker populates
-//     during RefreshState.
+//   - Managed-spec fields (sizing, JVM, UC image, volumes, pull secrets) are
+//     compared as ManagedSpec vs ObservedShape. ManagedSpec records what weaver
+//     deliberately set at install and is never refreshed from the cluster;
+//     ObservedShape is the transient readback the checker populates during
+//     RefreshState.
+//   - Orbit-level fields (the provisioner-daemon flag) are shared by every node
+//     on the Orbit, so they are compared once per Orbit against ConsensusOrbits.
 func ConsensusNode(baseline, live state.State) []Change {
 	var changes []Change
+	orbitsSeen := map[string]bool{}
 	for scope, liveNS := range live.ConsensusNodes {
 		component := fmt.Sprintf("%s[%s]", consensusComponent, scope)
 		baseNS, inBaseline := baseline.ConsensusNodes[scope]
@@ -41,8 +44,33 @@ func ConsensusNode(baseline, live state.State) []Change {
 		if liveNS.ManagedSpec != nil && liveNS.ObservedShape != nil {
 			changes = append(changes, compareConsensusManagedSpec(component, liveNS.ManagedSpec, liveNS.ObservedShape)...)
 		}
+
+		// Orbit-level drift: the Orbit is shared by its nodes, so compare it once.
+		if liveNS.ObservedShape != nil && !orbitsSeen[liveNS.OrbitName] {
+			orbitsSeen[liveNS.OrbitName] = true
+			if want, ok := live.ConsensusOrbits[liveNS.OrbitName]; ok {
+				changes = append(changes, compareConsensusOrbit(liveNS.OrbitName, want, liveNS.ObservedShape)...)
+			}
+		}
 	}
 	return changes
+}
+
+// compareConsensusOrbit reports Orbit-level fields that differ between the
+// recorded ConsensusOrbitState and the live Orbit. It covers only fields weaver
+// deliberately sets on the Orbit (ledgerId/chainId are already reported as node
+// identity; operator defaults and the daemon-refreshed version annotations are
+// not baselined). A node that could not read the Orbit (ProvisionerDaemonEnabledSet = false) is skipped.
+func compareConsensusOrbit(orbit string, want state.ConsensusOrbitState, o *state.ConsensusNodeObservedShape) []Change {
+	if !o.ProvisionerDaemonEnabledSet || o.ProvisionerDaemonEnabled == want.ProvisionerDaemonEnabled {
+		return nil
+	}
+	return []Change{{
+		Component: fmt.Sprintf("%s-orbit[%s]", consensusComponent, orbit),
+		Field:     "provisionerDaemonEnabled",
+		Persisted: strconv.FormatBool(want.ProvisionerDaemonEnabled),
+		Live:      strconv.FormatBool(o.ProvisionerDaemonEnabled),
+	}}
 }
 
 // compareConsensusIdentity reports identity fields that differ between the
@@ -96,14 +124,6 @@ func compareConsensusManagedSpec(component string, m *state.ConsensusNodeManaged
 	add("javaOpts", m.JavaOpts, o.JavaOpts)
 	add("ucImageRepo", m.UCImageRepo, o.UCImageRepo)
 	add("ucImageTag", m.UCImageTag, o.UCImageTag)
-
-	if o.ProvisionerDaemonEnabledSet && o.ProvisionerDaemonEnabled != m.ProvisionerDaemonEnabled {
-		changes = append(changes, Change{
-			Component: component, Field: "provisionerDaemonEnabled",
-			Persisted: strconv.FormatBool(m.ProvisionerDaemonEnabled),
-			Live:      strconv.FormatBool(o.ProvisionerDaemonEnabled),
-		})
-	}
 
 	if o.ImagePullSecretsSet {
 		changes = append(changes, diffPullSecrets(component, m.ImagePullSecrets, o.ImagePullSecrets)...)

@@ -250,6 +250,9 @@ func statOwner(path string) (uid, gid int, ok bool) {
 }
 
 // readProvisionerDaemonEnabled reads spec.provisionerDaemonEnabled from the Orbit.
+// The operator omits the key when false, so an absent key on a readable Orbit is a
+// real false (a true→false change must be reportable); only a failed read or a
+// non-bool value leaves the field unset.
 func readProvisionerDaemonEnabled(
 	ctx context.Context, kc ConsensusKubeClient, apiVersion, orbitName string, live *liveConsensusShape,
 ) {
@@ -257,11 +260,14 @@ func readProvisionerDaemonEnabled(
 	if err != nil || !found {
 		return
 	}
-	if v, ok := specMap[fieldProvisionerDaemonEnabled]; ok {
-		if b, ok := v.(bool); ok {
-			live.ProvisionerDaemonEnabled = b
-			live.ProvisionerDaemonEnabledSet = true
-		}
+	v, present := specMap[fieldProvisionerDaemonEnabled]
+	if !present {
+		live.ProvisionerDaemonEnabledSet = true
+		return
+	}
+	if b, ok := v.(bool); ok {
+		live.ProvisionerDaemonEnabled = b
+		live.ProvisionerDaemonEnabledSet = true
 	}
 }
 
