@@ -40,8 +40,8 @@ type Reader interface {
 type Writer interface {
 	// Set replaces the entire in-memory state and returns the Writer for chaining.
 	Set(s State) Writer
-	// AddActionHistory appends an entry to the pending action log and updates
-	// State.LastAction. Entries are flushed to disk on the next Flush() call.
+	// AddActionHistory appends an entry to the pending action log. Entries are
+	// flushed to the append-only action_history.yaml on the next flush.
 	// Returns the Writer for chaining.
 	AddActionHistory(entry ActionHistory) Writer
 	// FlushState persists every component's state without flushing the action history.
@@ -249,12 +249,6 @@ func (m *stateManager) Refresh() error {
 	//   lastCLIVersion  = the version read from disk before this Refresh()
 	//   currentCLIVersion = version.Get().Version (the running binary)
 	composed.ProvisionerState.Version = version.Get().Version
-
-	// A pending action recorded by AddActionHistory before this Refresh (for
-	// the flush this call is in service of) must survive the machine file's
-	// on-disk value, which reflects the previous run's last action, not this
-	// one's.
-	composed.LastAction = m.state.LastAction
 
 	m.state = *composed
 	m.baselineHash = baseline
@@ -621,7 +615,7 @@ func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	return nil, false, nil
 }
 
-// AddActionHistory adds an entry to the in-memory action history and updates the last action in the state.
+// AddActionHistory adds an entry to the in-memory pending action history.
 // The action history is flushed to disk as part of the Flush() operation, and is stored in a separate history file to
 // avoid unbounded growth of the main state file.
 // The timestamp of the entry is set to the current time when adding to history to ensure consistency.
@@ -630,7 +624,6 @@ func (m *stateManager) AddActionHistory(entry ActionHistory) Writer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.actions = append(m.actions, entry)
-	m.state.LastAction = entry
 	logx.As().Debug().Any("entry", entry).Msg("Added action history entry")
 	return m
 }
