@@ -46,7 +46,7 @@ func AcquireComponentLocks(dir string, ids []ComponentID, wait time.Duration) (r
 	}
 
 	for _, id := range ordered {
-		unlock, lockErr := acquireOneLock(lockFilePath(dir, id), id, wait)
+		unlock, lockErr := acquireOneLock(lockFilePath(dir, id), string(id), wait)
 		if lockErr != nil {
 			release()
 			return func() {}, lockErr
@@ -60,14 +60,23 @@ func lockFilePath(dir string, id ComponentID) string {
 	return filepath.Join(dir, "."+string(id)+".lock")
 }
 
+// AcquireStartupMigrationsLock takes an exclusive lock on dir that serializes
+// startup migrations across concurrent invocations, waiting up to wait for
+// one already running elsewhere. Several startup migrations (the
+// per-component split in particular) delete and rename state files, so two
+// running at once can fail spuriously or leave a reader seeing missing files.
+func AcquireStartupMigrationsLock(dir string, wait time.Duration) (release func(), err error) {
+	return acquireOneLock(filepath.Join(dir, ".startup-migrations.lock"), "the state directory", wait)
+}
+
 // acquireOneLock tries to lock path, retrying every lockPollInterval until
 // wait has elapsed. wait == 0 still tries exactly once.
-func acquireOneLock(path string, id ComponentID, wait time.Duration) (func(), error) {
+func acquireOneLock(path, label string, wait time.Duration) (func(), error) {
 	deadline := time.Now().Add(wait)
 	for {
 		unlock, acquired, err := tryFlock(path)
 		if err != nil {
-			return nil, errorx.ExternalError.Wrap(err, "failed to acquire lock for %s", id)
+			return nil, errorx.ExternalError.Wrap(err, "failed to acquire lock for %s", label)
 		}
 		if acquired {
 			return unlock, nil
@@ -75,7 +84,7 @@ func acquireOneLock(path string, id ComponentID, wait time.Duration) (func(), er
 		if time.Now().After(deadline) {
 			return nil, errorx.IllegalState.New(
 				"%s is being modified (held by %s); re-run with a longer wait or try again once it finishes",
-				id, readLockHolder(path))
+				label, readLockHolder(path))
 		}
 		time.Sleep(lockPollInterval)
 	}
