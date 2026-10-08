@@ -36,21 +36,20 @@ func daemonTestPaths(t *testing.T) models.WeaverPaths {
 	return *paths
 }
 
-// cleanupDaemonService removes any left-over symlink, sandbox file, and
-// daemon-reloads. Errors are intentionally ignored — this is cleanup only.
+// cleanupDaemonService removes any left-over unit file and daemon-reloads.
+// Errors are intentionally ignored — this is cleanup only.
 func cleanupDaemonService(t *testing.T, paths models.WeaverPaths) {
 	t.Helper()
 	ctx := context.Background()
 	_ = osx.StopService(ctx, daemonServiceName)
 	_ = osx.DisableService(ctx, daemonServiceName)
-	removeDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
+	removeDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath)
 	_ = osx.DaemonReload(ctx)
 }
 
 // Test_DaemonService_FilePlacement_Integration verifies that
-// installDaemonServiceFiles writes the sandbox file and creates the
-// /usr/lib/systemd/system symlink pointing to it, and that
-// removeDaemonServiceFiles tears both down.
+// installDaemonServiceFiles writes a regular unit file under
+// /usr/lib/systemd/system, and that removeDaemonServiceFiles tears it down.
 func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
 	requireRoot(t)
 
@@ -59,27 +58,50 @@ func Test_DaemonService_FilePlacement_Integration(t *testing.T) {
 	t.Cleanup(func() { cleanupDaemonService(t, paths) })
 
 	// Install files
-	err := installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil)
+	err := installDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath, nil)
 	require.NoError(t, err)
 
-	// Sandbox file must exist and be non-empty
-	fi, err := os.Stat(paths.DaemonServiceSandboxPath)
-	require.NoError(t, err, "sandbox unit file should exist")
+	fi, err := os.Lstat(paths.DaemonServiceUnitPath)
+	require.NoError(t, err, "unit file should exist")
+	assert.Greater(t, fi.Size(), int64(0))
+	assert.Zero(t, fi.Mode()&os.ModeSymlink, "unit must be a regular file, not a symlink into the sandbox")
+
+	removeDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath)
+
+	_, err = os.Lstat(paths.DaemonServiceUnitPath)
+	assert.True(t, os.IsNotExist(err), "unit file should be gone after removal")
+}
+
+// Test_DaemonService_ReplacesLegacySandboxUnit_Integration covers the upgrade
+// path: a host provisioned earlier carries a symlink into the sandbox, whose
+// target a later cluster install destroys. Writing through that dangling link
+// would recreate the file in the sandbox instead of installing the unit.
+func Test_DaemonService_ReplacesLegacySandboxUnit_Integration(t *testing.T) {
+	requireRoot(t)
+
+	paths := daemonTestPaths(t)
+	cleanupDaemonService(t, paths)
+	t.Cleanup(func() { cleanupDaemonService(t, paths) })
+
+	require.NoError(t, os.MkdirAll(filepath.Dir(paths.DaemonServiceLegacyUnitPath), 0o755))
+	require.NoError(t, os.WriteFile(paths.DaemonServiceLegacyUnitPath, []byte("[Unit]\n"), 0o644))
+	_ = os.Remove(paths.DaemonServiceUnitPath)
+	require.NoError(t, os.Symlink(paths.DaemonServiceLegacyUnitPath, paths.DaemonServiceUnitPath))
+
+	// The sandbox rebuild that orphaned the unit.
+	require.NoError(t, os.Remove(paths.DaemonServiceLegacyUnitPath))
+	_, statErr := os.Stat(paths.DaemonServiceUnitPath)
+	require.True(t, os.IsNotExist(statErr), "precondition: the symlink must be dangling")
+
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath, nil))
+
+	fi, err := os.Lstat(paths.DaemonServiceUnitPath)
+	require.NoError(t, err)
+	assert.Zero(t, fi.Mode()&os.ModeSymlink, "the dangling symlink must be replaced by a regular file")
 	assert.Greater(t, fi.Size(), int64(0))
 
-	// Symlink must exist and resolve to the sandbox path
-	target, err := os.Readlink(paths.DaemonServiceSymlinkPath)
-	require.NoError(t, err, "system symlink should exist")
-	assert.Equal(t, filepath.Clean(paths.DaemonServiceSandboxPath), filepath.Clean(target))
-
-	// Remove files
-	removeDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath)
-
-	_, err = os.Lstat(paths.DaemonServiceSymlinkPath)
-	assert.True(t, os.IsNotExist(err), "symlink should be gone after removal")
-
-	_, err = os.Stat(paths.DaemonServiceSandboxPath)
-	assert.True(t, os.IsNotExist(err), "sandbox file should be gone after removal")
+	_, err = os.Lstat(paths.DaemonServiceLegacyUnitPath)
+	assert.True(t, os.IsNotExist(err), "the legacy sandbox copy must be cleared")
 }
 
 // Test_DaemonService_EnableDisable_Integration verifies that after placing the
@@ -96,7 +118,7 @@ func Test_DaemonService_EnableDisable_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Place files + daemon-reload
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 
 	// Enable
@@ -130,7 +152,7 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 
 	// Simulate a partial install: files placed + daemon-reload + enabled,
 	// but service never started (as if RestartService had failed).
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 
@@ -142,12 +164,8 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 	require.NotNil(t, rollbackReport)
 	assert.Equal(t, automa.StatusSuccess, rollbackReport.Status)
 
-	// Sandbox file and symlink should be gone
-	_, errSandbox := os.Stat(paths.DaemonServiceSandboxPath)
-	assert.True(t, os.IsNotExist(errSandbox), "sandbox file should be removed by rollback")
-
-	_, errSymlink := os.Lstat(paths.DaemonServiceSymlinkPath)
-	assert.True(t, os.IsNotExist(errSymlink), "symlink should be removed by rollback")
+	_, errUnit := os.Lstat(paths.DaemonServiceUnitPath)
+	assert.True(t, os.IsNotExist(errUnit), "unit file should be removed by rollback")
 
 	// Service should be disabled
 	enabled, err := osx.IsServiceEnabled(ctx, daemonServiceName)
@@ -156,7 +174,7 @@ func Test_InstallDaemonServiceStep_Rollback_Integration(t *testing.T) {
 }
 
 // Test_RemoveDaemonServiceStep_Integration verifies that RemoveDaemonServiceStep
-// removes the symlink and sandbox file and disables the service.
+// removes the unit file and disables the service.
 func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
 	requireRoot(t)
 
@@ -167,7 +185,7 @@ func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Simulate an installed (but not running) service
-	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceSandboxPath, paths.DaemonServiceSymlinkPath, nil))
+	require.NoError(t, installDaemonServiceFiles(paths.DaemonServiceUnitPath, paths.DaemonServiceLegacyUnitPath, nil))
 	require.NoError(t, osx.DaemonReload(ctx))
 	require.NoError(t, osx.EnableService(ctx, daemonServiceName))
 
@@ -180,13 +198,8 @@ func Test_RemoveDaemonServiceStep_Integration(t *testing.T) {
 	assert.Equal(t, automa.StatusSuccess, report.Status)
 	assert.NoError(t, report.Error)
 
-	// Symlink gone
-	_, errSymlink := os.Lstat(paths.DaemonServiceSymlinkPath)
-	assert.True(t, os.IsNotExist(errSymlink), "symlink should be removed")
-
-	// Sandbox file gone
-	_, errSandbox := os.Stat(paths.DaemonServiceSandboxPath)
-	assert.True(t, os.IsNotExist(errSandbox), "sandbox file should be removed")
+	_, errUnit := os.Lstat(paths.DaemonServiceUnitPath)
+	assert.True(t, os.IsNotExist(errUnit), "unit file should be removed")
 
 	// Service disabled
 	enabled, err := osx.IsServiceEnabled(ctx, daemonServiceName)
