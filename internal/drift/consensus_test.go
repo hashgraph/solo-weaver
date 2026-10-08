@@ -181,8 +181,8 @@ func TestConsensusNode_ManagedSpecDrift(t *testing.T) {
 			},
 		},
 		{
-			name:  "empty live value is skipped (not read, not drift)",
-			wantN: 0,
+			name:  "field deleted from the live capsule is drift",
+			wantN: 2,
 			mutate: func(o *state.ConsensusNodeObservedShape) {
 				o.JavaOpts = ""
 				o.MemoryLimit = ""

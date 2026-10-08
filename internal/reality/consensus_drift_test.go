@@ -5,6 +5,8 @@
 package reality
 
 import (
+	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -69,4 +71,58 @@ func TestReadHostPathOwners(t *testing.T) {
 	assert.Equal(t, os.Getuid(), live.HostPathOwners["saved"].UID)
 	assert.NotContains(t, live.HostPathOwners, "gone")
 	assert.NotContains(t, live.HostPathOwners, "events")
+}
+
+// containersKubeClient serves only the capsule's spec.podProperties.containers map.
+type containersKubeClient struct {
+	ConsensusKubeClient
+	containers map[string]interface{}
+	err        error
+}
+
+func (c containersKubeClient) GetResourceNestedMap(
+	_ context.Context, _, _, _, _ string, fields ...string,
+) (map[string]interface{}, bool, error) {
+	if c.err != nil {
+		return nil, false, c.err
+	}
+	if len(fields) == 3 && fields[2] == fieldContainers {
+		return c.containers, c.containers != nil, nil
+	}
+	return nil, false, nil
+}
+
+func TestReadLiveConsensusShape(t *testing.T) {
+	cn := map[string]interface{}{
+		"name":     "root",
+		"javaOpts": "-XX:+UseZGC",
+		// javaHeapMin deliberately absent: a deleted field.
+		"resources": map[string]interface{}{
+			"limits": map[string]interface{}{"cpu": "4", "memory": "16Gi"},
+		},
+	}
+	c := &consensusChecker{}
+
+	t.Run("missing field reads as absent, not skipped", func(t *testing.T) {
+		kc := containersKubeClient{containers: map[string]interface{}{"consensusNode": cn}}
+		live, ok := c.readLiveConsensusShape(context.Background(), kc, "v1", "ns", "capsule")
+		require.True(t, ok)
+		assert.Equal(t, "root", live.ContainerName)
+		assert.Equal(t, "-XX:+UseZGC", live.JavaOpts)
+		assert.Equal(t, "4", live.CPULimit)
+		assert.Equal(t, "", live.JavaHeapMin)
+		assert.Equal(t, "", live.MemoryRequest)
+	})
+
+	t.Run("no containers at all still reads (everything absent)", func(t *testing.T) {
+		live, ok := c.readLiveConsensusShape(context.Background(), containersKubeClient{}, "v1", "ns", "capsule")
+		require.True(t, ok)
+		assert.Equal(t, "", live.ContainerName)
+	})
+
+	t.Run("read error skips the whole shape", func(t *testing.T) {
+		kc := containersKubeClient{err: errors.New("boom")}
+		_, ok := c.readLiveConsensusShape(context.Background(), kc, "v1", "ns", "capsule")
+		assert.False(t, ok)
+	})
 }

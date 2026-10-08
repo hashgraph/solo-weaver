@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // ConsensusKubeClient is the subset of kube.Client used by the consensus checker.
@@ -157,11 +158,12 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		// populates the transient ObservedShape so the drift.ConsensusNode
 		// producer can compare at HandleIntent time.
 		if ns.ManagedSpec != nil {
-			live := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName)
-			if err == nil && orbitExists {
-				readProvisionerDaemonEnabled(ctx, kc, apiVersion, ns.OrbitName, &live)
+			if live, ok := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName); ok {
+				if err == nil && orbitExists {
+					readProvisionerDaemonEnabled(ctx, kc, apiVersion, ns.OrbitName, &live)
+				}
+				updated.ObservedShape = liveShapeToObserved(live)
 			}
-			updated.ObservedShape = liveShapeToObserved(live)
 		}
 
 		result[scope] = updated
@@ -171,19 +173,27 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 }
 
 // readLiveConsensusShape reads the managed sizing/JVM/UC fields from the live
-// capsule's consensus-node container (and UC sidecar) for drift comparison. It is
-// best-effort: unreadable fields are left empty and skipped by diffConsensusManaged.
-// Identity fields are filled in by the caller from the values it already read.
+// capsule's consensus-node container (and UC sidecar) for drift comparison. The
+// containers are fetched once; if that read fails, ok is false and the caller
+// skips managed-spec drift entirely. Once the read succeeds, a field missing from
+// the capsule is a real "absent" value (empty string) rather than "not read", so
+// a deleted field is reported as drift. Identity fields are filled in by the
+// caller from the values it already read.
 func (c *consensusChecker) readLiveConsensusShape(
 	ctx context.Context, kc ConsensusKubeClient, apiVersion, namespace, capsuleName string,
-) liveConsensusShape {
-	cn := []string{fieldSpec, fieldPodProperties, fieldContainers, fieldConsensusNode}
+) (live liveConsensusShape, ok bool) {
+	containers, _, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindConsensusCapsule),
+		namespace, capsuleName, fieldSpec, fieldPodProperties, fieldContainers)
+	if err != nil {
+		logx.As().Warn().Err(err).Str("capsule", capsuleName).Msg("Failed to read capsule containers; skipping managed-spec drift")
+		return live, false
+	}
 	get := func(fields ...string) string {
-		v, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), namespace, capsuleName, fields...)
+		v, _, _ := unstructured.NestedString(containers, fields...)
 		return v
 	}
 
-	var live liveConsensusShape
+	cn := []string{fieldConsensusNode}
 	live.ContainerName = get(append(cn, fieldName)...)
 	live.JavaHeapMin = get(append(cn, "javaHeapMin")...)
 	live.JavaHeapMax = get(append(cn, "javaHeapMax")...)
@@ -193,7 +203,7 @@ func (c *consensusChecker) readLiveConsensusShape(
 	live.CPURequest = get(append(cn, fieldResources, fieldRequests, "cpu")...)
 	live.MemoryRequest = get(append(cn, fieldResources, fieldRequests, "memory")...)
 
-	uc := []string{fieldSpec, fieldPodProperties, fieldContainers, fieldUC, fieldSoftwareVersion}
+	uc := []string{fieldUC, fieldSoftwareVersion}
 	ucRepo := get(append(uc, fieldRepository)...)
 	ucName := get(append(uc, fieldImageName)...)
 	live.UCImageRepo = joinImageRef(ucRepo, ucName)
@@ -203,7 +213,7 @@ func (c *consensusChecker) readLiveConsensusShape(
 	readLiveImagePullSecrets(ctx, kc, apiVersion, namespace, capsuleName, &live)
 	readHostPathOwners(&live)
 
-	return live
+	return live, true
 }
 
 // readHostPathOwners stats each hostpath-backed volume directory and records its
