@@ -11,6 +11,7 @@ package bll
 
 import (
 	"context"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -41,6 +42,10 @@ type BaseHandler[T any] struct {
 	Target           models.TargetType // expected target for intent validation
 	ProfileExtractor func(T) string    // optional; extracts profile from custom inputs (nil for handlers without profile)
 	Managed          []Component       // components this handler owns; scopes drift detection and the state flush (none by default)
+	// LockWait bounds how long HandleIntent blocks acquiring a managed
+	// component's lock before failing. Zero (the default) fails immediately
+	// rather than waiting — see WithLockWait.
+	LockWait time.Duration
 }
 
 // BaseHandlerOption is a functional option for configuring a BaseHandler.
@@ -58,13 +63,46 @@ func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
 
 // WithManagedComponents returns a BaseHandlerOption that declares the components a
 // handler owns. The declaration scopes both drift detection (only managed components'
-// producers run) and the state flush (only managed components' sections are written
-// from reality; others are reverted to the persisted baseline). Handlers that omit it
-// manage nothing: they report no drift and revert every component section to baseline.
+// producers run) and the state flush (only managed components' files are written).
+// Handlers that omit it manage nothing: they report no drift and write no
+// component file of their own (machine.yaml is still flushed regardless — see
+// HandleIntent).
 func WithManagedComponents[T any](components ...Component) BaseHandlerOption[T] {
 	return func(h *BaseHandler[T]) {
 		h.Managed = components
 	}
+}
+
+// WithLockWait returns a BaseHandlerOption that sets how long HandleIntent
+// blocks acquiring a managed component's lock before failing. The default
+// (unset, zero) fails immediately — see BaseHandler.LockWait.
+func WithLockWait[T any](wait time.Duration) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.LockWait = wait
+	}
+}
+
+// flushComponentIDs returns the internal/state.ComponentID set this handler
+// flushes: every managed component, plus machine. MachineState
+// (Profile/Firewall) has no single owning handler, so every handler flushes
+// it alongside whatever it manages — that part of the design is unchanged
+// from before per-component locking existed, and stays unscoped/unlocked on
+// purpose (a known, separately-tracked gap, not something this lock covers).
+func (h *BaseHandler[T]) flushComponentIDs() []state.ComponentID {
+	return state.DedupeComponentIDs(append([]state.ComponentID{state.ComponentMachine}, componentIDsOf(h.Managed)...))
+}
+
+// lockedComponentIDs returns the internal/state.ComponentID set this handler
+// locks for the duration of the command: only the components it actually
+// manages. machine is deliberately excluded — it has no single owner, so
+// locking it here would serialize every command in the system against every
+// other one (a block node install and a teleport install would contend on
+// nothing but machine), which defeats the entire point of per-component
+// locking. The per-file hash check in flushComponent is what still protects
+// machine.yaml's content; see the comment on AcquireComponentLocks for why
+// both mechanisms exist.
+func (h *BaseHandler[T]) lockedComponentIDs() []state.ComponentID {
+	return componentIDsOf(h.Managed)
 }
 
 // NewBaseHandler validates the required dependencies and returns a
@@ -100,7 +138,8 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 // HandleIntent is the shared generic handler.
 // It performs the following steps:
 //  1. Validates the intent and user inputs.
-//  2. Sets user inputs into the runtime state for effective-value resolution.
+//  2. Locks every component this handler manages for the rest of the call, so
+//     no other command writing the same component can run concurrently.
 //  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution, noting fields
 //     whose live value differs from the persisted state.
 //  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it.
@@ -120,6 +159,14 @@ func (h *BaseHandler[T]) HandleIntent(
 	if err != nil {
 		return nil, err
 	}
+
+	// Lock every managed component for the whole command, not just the flush
+	// — see internal/state.AcquireComponentLocks.
+	release, err := state.AcquireComponentLocks(h.Runtime.StateDir(), h.lockedComponentIDs(), h.LockWait)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	// ── 2. Refresh runtime state ───────────────────────────────────────────────
 	// We need to refresh runtime before preparing effective inputs
@@ -184,18 +231,9 @@ func (h *BaseHandler[T]) FlushState(
 		Inputs: effectiveInputs,
 	})
 
-	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
+	fullState, err := h.Runtime.Refresh(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
-	}
-
-	// Scope the write to the components this handler manages: revert every
-	// unmanaged component's section to the persisted baseline, so the command
-	// does not rewrite state it does not own. With no baseline (first write, no
-	// state file) there is nothing to preserve, so the full composed state is
-	// written as it establishes the initial file.
-	if baseline != nil {
-		restoreUnmanaged(&fullState, *baseline, h.Managed)
 	}
 
 	// Persist the deployment profile when the handler carries one.
@@ -216,9 +254,10 @@ func (h *BaseHandler[T]) FlushState(
 		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")
 	}
 
-	// flush state and action history
-	if err := h.Runtime.FlushAll(fullState); err != nil {
-		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
+	// Flush only the files this handler owns (machine + h.Managed) plus the
+	// action history — see flushComponentIDs.
+	if err := h.Runtime.FlushScoped(fullState, h.flushComponentIDs()...); err != nil {
+		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")
 	}
 
 	logx.As().Info().

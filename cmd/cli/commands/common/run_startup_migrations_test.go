@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/automa-saga/version"
@@ -15,6 +17,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeStartupMigration applies only at the 0.0.0 baseline and counts each Execute.
@@ -155,4 +158,66 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 		"a failed version record must not fail startup")
 	assert.Equal(t, 1, persistCalled, "the version record must have been attempted")
 	assert.Equal(t, 1, *applied, "the migration must still have executed despite the persist failure")
+}
+
+// TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce starts several
+// invocations at once on a host with a legacy state.yaml. The split deletes
+// and renames state files, so without serialization the losers fail reading a
+// state.yaml the winner already renamed, or clear files the winner just wrote.
+// Every invocation must succeed and the split must land intact.
+func TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce(t *testing.T) {
+	migration.ClearRegistry()
+	t.Cleanup(migration.ClearRegistry)
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, state.StateFileName), []byte(`state:
+  machineState:
+    profile: mainnet
+  blockNodeState:
+    name: block-node
+`), 0o644))
+	migration.Register(migration.ScopeStartup, state.NewPerComponentStateMigration())
+
+	origK8s := workflows.KubernetesInstalled
+	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
+	workflows.KubernetesInstalled = func() bool { return false }
+
+	const invocations = 8
+	errs := make(chan error, invocations)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < invocations; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- RunStartupMigrations(context.Background())
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	_, err := os.Stat(filepath.Join(dir, state.StateFileName))
+	require.True(t, os.IsNotExist(err), "state.yaml must be split and moved out of the way")
+	_, err = os.Stat(filepath.Join(dir, state.StateFileName+".legacy"))
+	require.NoError(t, err, "the split must have kept its backup")
+	diverged, err := filepath.Glob(filepath.Join(dir, state.StateFileName+".diverged-*"))
+	require.NoError(t, err)
+	require.Empty(t, diverged)
+
+	read := func(id state.ComponentID) state.State {
+		b, err := os.ReadFile(state.ComponentFilePath(dir, id))
+		require.NoError(t, err, "%s state file must exist", id)
+		var s state.State
+		require.NoError(t, yaml.Unmarshal(b, &s))
+		return s
+	}
+	assert.Equal(t, "mainnet", read(state.ComponentMachine).MachineState.Profile)
+	assert.Equal(t, "block-node", read(state.ComponentBlockNode).BlockNodeState.ReleaseInfo.Name)
 }

@@ -324,33 +324,33 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 // RunStartupMigrations without a writable state dir.
 var persistProvisionerVersion = state.PersistProvisionerVersion
 
+// startupMigrationsLockWait bounds how long an invocation waits for another
+// one's startup migrations to finish; some (e.g. a Cilium agent restart) are slow.
+const startupMigrationsLockWait = 5 * time.Minute
+
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
 // It is a no-op when no migrations apply.
 func RunStartupMigrations(ctx context.Context) error {
-	// Read the provisioner version last written to disk — this is the "installed"
-	// CLI version before the current binary ran for the first time.
-	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
+	onDiskCLIVersion, mctx, migrations, err := pendingStartupMigrations()
 	if err != nil {
 		return err
+	}
+
+	// Lock only when something applies, so read-only invocations by users
+	// without write access to the state dir are unaffected. Re-check under the
+	// lock: a concurrent invocation may have run these migrations meanwhile.
+	if len(migrations) > 0 {
+		release, err := state.AcquireStartupMigrationsLock(models.Paths().StateDir, startupMigrationsLockWait)
+		if err != nil {
+			return err
+		}
+		defer release()
+
+		if onDiskCLIVersion, mctx, migrations, err = pendingStartupMigrations(); err != nil {
+			return err
+		}
 	}
 	currentCLIVersion := version.Get().Version
-
-	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
-	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
-	// install
-	installedCLIVersion := migration.ResolveInstalledCLIVersion(onDiskCLIVersion)
-
-	mctx := &migration.Context{
-		Component: migration.ScopeStartup,
-		Data:      &automa.SyncStateBag{},
-	}
-	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
-	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, currentCLIVersion)
-
-	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
-	if err != nil {
-		return err
-	}
 
 	if len(migrations) > 0 {
 		migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
@@ -370,7 +370,7 @@ func RunStartupMigrations(ctx context.Context) error {
 	}
 
 	// Record the running version so boundary migrations aren't re-run next time and
-	// pre-state-tracking clusters get a state.yaml. Persist regardless of whether a
+	// pre-state-tracking clusters get a machine.yaml. Persist regardless of whether a
 	// migration applied — coupling it to that would stop backfilling once nothing
 	// crosses the baseline. Gate on a version change and a provisioned host so a
 	// fresh machine keeps no state file. Best-effort.
@@ -381,6 +381,32 @@ func RunStartupMigrations(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// pendingStartupMigrations reads the provisioner version last written to disk
+// (the "installed" CLI version before the current binary first ran) and
+// returns the startup migrations that apply to it.
+func pendingStartupMigrations() (string, *migration.Context, []migration.Migration, error) {
+	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	// An absent machine.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
+	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
+	// install
+	mctx := &migration.Context{
+		Component: migration.ScopeStartup,
+		Data:      &automa.SyncStateBag{},
+	}
+	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, migration.ResolveInstalledCLIVersion(onDiskCLIVersion))
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Get().Version)
+
+	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return onDiskCLIVersion, mctx, migrations, nil
 }
 
 // DefaultRunE is a default RunE function that shows help message and provides a placeholder to add common behaviour.
