@@ -153,11 +153,8 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 // PersistProvisionerVersion records the running binary's version in machine.yaml
 // so version-boundary startup migrations are not re-evaluated — and
 // non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
-// invocation. It flushes only the machine component: this is called from
-// startup migration backfill and the cluster-install tail step, neither of
-// which manages (or should create) cluster/blocknode/consensus/teleport's files
-// — a stray write of those is exactly the class of bug the per-component split
-// exists to prevent.
+// invocation. It writes machine.yaml only; no other component file is created
+// or touched.
 //
 // It Refresh()es first, so any existing reality-detected machine fields are
 // preserved and the optimistic-concurrency baseline is set; on a host with no
