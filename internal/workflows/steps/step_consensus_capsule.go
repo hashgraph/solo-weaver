@@ -16,6 +16,7 @@ import (
 	"github.com/automa-saga/version"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -112,16 +113,16 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
-// orbitProvisionerDaemonEnabled reads spec.provisionerDaemonEnabled from the live
-// Orbit; the operator omits the key when false, so absent means false.
-func orbitProvisionerDaemonEnabled(ctx context.Context, kc CapsuleKubeClient, orbitName string) (bool, error) {
-	spec, _, err := kc.GetResourceNestedMap(ctx,
-		kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", orbitName, "spec")
-	if err != nil {
-		return false, err
+// DesiredOrbitState is the Orbit this install requests: the fields weaver sets
+// from the install inputs, with every other tracked field at its zero value
+// (operator default). EnsureOrbit creates the Orbit from it, requires an existing
+// Orbit to match it, and the install handler records it as the drift baseline.
+func DesiredOrbitState(inputs models.ConsensusNodeInputs) state.ConsensusOrbitState {
+	return state.ConsensusOrbitState{
+		ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
+		LedgerId:                 inputs.LedgerId,
+		ChainId:                  inputs.ChainId,
 	}
-	v, _ := spec["provisionerDaemonEnabled"].(bool)
-	return v, nil
 }
 
 func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
@@ -148,22 +149,28 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 
 			if exists {
 				// The Orbit is shared by every node that names it and is never
-				// re-applied here, so a node asking for a different daemon mode would
-				// silently run against the wrong one.
-				live, err := orbitProvisionerDaemonEnabled(ctx, kc, inputs.OrbitName)
+				// re-applied here, so a node asking for a different Orbit would
+				// silently run against the wrong network or mode.
+				spec, _, err := kc.GetResourceNestedMap(ctx,
+					kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, "spec")
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.Wrap(err, "failed to read Orbit %s", inputs.OrbitName),
 						reasons.PreconditionNotMet,
 						"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
 				}
-				if live != inputs.ProvisionerDaemonEnabled {
+				if diffs := DesiredOrbitState(inputs).Diff(state.ConsensusOrbitStateFromSpec(spec)); len(diffs) > 0 {
+					parts := make([]string, 0, len(diffs))
+					for _, d := range diffs {
+						parts = append(parts, fmt.Sprintf("%s: Orbit has %q, install requests %q", d.Field, d.Live, d.Want))
+					}
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.New("Orbit %q already exists with provisionerDaemonEnabled=%t but this install requests %t; every node on an Orbit must use the same mode",
-							inputs.OrbitName, live, inputs.ProvisionerDaemonEnabled),
+						errorx.IllegalState.New("Orbit %q already exists and differs from this install (%s); every node on an Orbit must use the same Orbit settings",
+							inputs.OrbitName, strings.Join(parts, "; ")),
 						reasons.PreconditionNotMet,
-						"Re-run with the Orbit's mode: pass --provisioner-daemon only if the Orbit has it enabled",
-						"To change the mode, uninstall every consensus node on this Orbit and delete the Orbit first")))
+						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
+						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
+						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
 				}
 				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
