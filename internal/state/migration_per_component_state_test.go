@@ -3,11 +3,15 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -173,7 +177,14 @@ func TestPerComponentStateMigration_ExecuteKeepsComponentFilesWhenLegacyDiverges
 	writeComponentFromState(t, dir, ComponentBlockNode, newer)
 	writeLegacyStateFixture(t, legacyPath, stale)
 
-	require.NoError(t, m.Execute(context.Background(), nil))
+	var logs bytes.Buffer
+	prevLogger := *logx.As()
+	logx.SetLogger(zerolog.New(&logs))
+	t.Cleanup(func() { logx.SetLogger(prevLogger) })
+
+	require.NoError(t, m.Execute(context.Background(), &migration.Context{}))
+	require.Contains(t, logs.String(), `"divergedComponent":"blocknode"`,
+		"the operator must be told state.yaml was moved aside; production passes no Logger in the migration context")
 
 	b, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
 	require.NoError(t, err)

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -56,7 +57,7 @@ func (m *UnifiedStateMigration) Applies(mctx *migration.Context) (bool, error) {
 
 // Execute merges every marker file into the persisted state and removes the
 // marker files on success.
-func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Context) error {
+func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context) error {
 	files, err := findLegacyStateFiles(models.Paths().StateDir)
 	if err != nil {
 		return err
@@ -110,8 +111,8 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 
 	// Remove legacy files now that the state has been persisted.
 	for _, fp := range files {
-		if removeErr := os.Remove(fp); removeErr != nil && mctx != nil && mctx.Logger != nil {
-			mctx.Logger.Warn().Err(removeErr).Str("file", fp).Msg("Failed to remove legacy state file after migration")
+		if removeErr := os.Remove(fp); removeErr != nil {
+			logx.As().Warn().Err(removeErr).Str("file", fp).Msg("Failed to remove legacy state file after migration")
 		}
 	}
 
