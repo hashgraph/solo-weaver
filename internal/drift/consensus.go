@@ -69,17 +69,19 @@ func compareConsensusIdentity(component string, baseline, live state.ConsensusNo
 }
 
 // compareConsensusManagedSpec reports managed-shape fields that differ between
-// the install-time ManagedSpec and the live ObservedShape. Fields the checker
-// could not read (empty string / *Set = false) are skipped.
+// the install-time ManagedSpec and the live ObservedShape. A non-nil
+// ObservedShape means the checker read the capsule, so an empty scalar is a real
+// "absent" value (a deleted field) and is compared. Composite fields the checker
+// could not read (*Set = false) are skipped.
 func compareConsensusManagedSpec(component string, m *state.ConsensusNodeManagedSpec, o *state.ConsensusNodeObservedShape) []Change {
 	var changes []Change
 	add := func(field, persisted, observed string) {
-		if observed != "" && observed != persisted {
+		if observed != persisted {
 			changes = append(changes, Change{Component: component, Field: field, Persisted: persisted, Live: observed})
 		}
 	}
 	addQuantity := func(field, persisted, observed string) {
-		if observed != "" && quantityDiffers(persisted, observed) {
+		if quantityDiffers(persisted, observed) {
 			changes = append(changes, Change{Component: component, Field: field, Persisted: persisted, Live: observed})
 		}
 	}

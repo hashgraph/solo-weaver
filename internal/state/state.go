@@ -276,8 +276,10 @@ type ConsensusNodeState struct {
 
 // ConsensusNodeObservedShape holds the managed-shape fields read from a live
 // ConsensusCapsule (and its Orbit) during a reality refresh. String fields use
-// empty = "not read" (skipped during comparison). Boolean and composite fields
-// use a *Set companion to distinguish "not observed" from a real zero value.
+// empty = absent from the capsule (compared, so a deleted field is drift); the
+// whole shape is left nil when the capsule could not be read. Boolean and
+// composite fields use a *Set companion to distinguish "not observed" from a real
+// zero value.
 // Not persisted; populated transiently by the reality checker for drift
 // detection.
 type ConsensusNodeObservedShape struct {
