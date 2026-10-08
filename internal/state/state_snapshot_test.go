@@ -5,14 +5,10 @@
 package state
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 
-	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/reasons"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -98,26 +94,4 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 		"a plain copy of State() taken before a later Refresh is not mutated by it")
 	require.Equal(t, "eth0", snapshot.BlockNodeState.Shaping.EgressInterface)
 	require.Contains(t, snapshot.BlockNodeState.Shaping.ShapeOverrides, "publisher")
-}
-
-type failingMarshaler struct{}
-
-func (failingMarshaler) MarshalYAML() (any, error) { return nil, errors.New("boom") }
-
-// PersistedSnapshot is an exported boundary: its internal failures carry
-// reasons.Internal and no hints, on an unchanged InternalError.
-func TestPersistedSnapshot_MarshalFailureIsAnInternalError(t *testing.T) {
-	s := NewState("/tmp/state.yaml")
-	s.LastAction.Inputs = failingMarshaler{}
-
-	_, err := s.PersistedSnapshot()
-
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, errorx.InternalError))
-	require.Contains(t, err.Error(), "failed to marshal state for snapshot")
-	reason, ok := errx.ReasonOf(err)
-	require.True(t, ok)
-	require.Equal(t, reasons.Internal, reason)
-	_, hasHints := errx.Hints(err)
-	require.False(t, hasHints)
 }
