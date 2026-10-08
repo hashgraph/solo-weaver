@@ -229,6 +229,9 @@ func (h *BaseHandler[T]) FlushState(
 	h.Runtime.AddActionHistory(state.ActionHistory{
 		Intent: intent,
 		Inputs: effectiveInputs,
+		// Provenance: the component files this flush writes, so action_history.yaml
+		// records what on disk each action changed (see state.ActionHistory.Components).
+		Components: h.flushComponentIDs(),
 	})
 
 	fullState, err := h.Runtime.Refresh(ctx, true)
