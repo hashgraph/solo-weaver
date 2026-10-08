@@ -27,7 +27,7 @@ const EnsureConsensusUpgradeDirStepId = "ensure-consensus-upgrade-dir"
 // exists (e.g. mainnet) the directory is typically hedera:hedera 0755, which the
 // daemon's disk prerequisite probes reject. The CN recreates the staging dir on every
 // upgrade, so the parent is given a default ACL (group rwx for hedera) that new dirs
-// inherit; the current dir also gets group rwx plus setgid now, keeping its other bits.
+// inherit; the current dir also gets at least 0775 plus setgid now, keeping any extra bits.
 func EnsureConsensusUpgradeDirStep(upgradeDir string) *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(EnsureConsensusUpgradeDirStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -94,6 +94,8 @@ func ensureConsensusUpgradeDir(upgradeDir string) error {
 	// The CN deletes and recreates the staging dir on every upgrade with its own umask,
 	// so a one-off chmod is lost. A default ACL on the parent makes each new dir
 	// inherit group rwx for hedera.
+	// Fail install if the ACL cannot be set: without it the CN's next recreation of
+	// the dir drops group write and the daemon's startup probe breaks.
 	if err := setDefaultGroupACL(parent, gid); err != nil {
 		return err
 	}
@@ -108,7 +110,8 @@ func ensureConsensusUpgradeDir(upgradeDir string) error {
 	if err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to stat %s", upgradeDir)
 	}
-	want := info.Mode().Perm() | 0o070
+	// The daemon's ownership probe requires at least 0775 (owner rwx, group rwx, other r-x).
+	want := info.Mode().Perm() | 0o775
 	if err := os.Chmod(upgradeDir, want|os.ModeSetgid); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to chmod %s", upgradeDir)
 	}
