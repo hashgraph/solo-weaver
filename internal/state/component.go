@@ -77,3 +77,27 @@ func projectComponentSection(full State, id ComponentID) State {
 	applyComponentSection(&projected, id, full)
 	return projected
 }
+
+// DedupeComponentIDs returns ids with duplicates removed, preserving the
+// first occurrence's order. Exported so callers outside this package (e.g.
+// internal/bll.BaseHandler, which unions a handler's managed components with
+// the machine component) can share one definition of "duplicate" instead of
+// each writing their own — AcquireComponentLocks needs this because a caller
+// that accidentally lists the same component twice would otherwise try to
+// flock it twice in the same call (two separate open file descriptions on
+// the same file conflict with each other even within one process, so the
+// second attempt would see its own first lock as already held and fail or
+// hang on itself); FlushScoped needs it because flushComponents has no
+// dedup of its own and would otherwise prepare and write the same file twice.
+func DedupeComponentIDs(ids []ComponentID) []ComponentID {
+	seen := make(map[ComponentID]struct{}, len(ids))
+	deduped := make([]ComponentID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		deduped = append(deduped, id)
+	}
+	return deduped
+}
