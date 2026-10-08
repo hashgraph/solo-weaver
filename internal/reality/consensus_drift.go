@@ -23,35 +23,33 @@ type liveConsensusShape struct {
 	UCImageRepo   string
 	UCImageTag    string
 
-	ProvisionerDaemonEnabled    bool
-	ProvisionerDaemonEnabledSet bool
-	Volumes                     models.ConsensusVolumeConfig
-	VolumesSet                  bool
-	ImagePullSecrets            models.PullSecretSelector
-	ImagePullSecretsSet         bool
-	HostPathOwners              map[string]state.HostPathOwner
+	Orbit               *state.ConsensusOrbitState
+	Volumes             models.ConsensusVolumeConfig
+	VolumesSet          bool
+	ImagePullSecrets    models.PullSecretSelector
+	ImagePullSecretsSet bool
+	HostPathOwners      map[string]state.HostPathOwner
 }
 
 // liveShapeToObserved converts the checker's internal readback type into the
 // state-package type that the drift producer consumes.
 func liveShapeToObserved(l liveConsensusShape) *state.ConsensusNodeObservedShape {
 	return &state.ConsensusNodeObservedShape{
-		ContainerName:               l.ContainerName,
-		CPULimit:                    l.CPULimit,
-		CPURequest:                  l.CPURequest,
-		MemoryLimit:                 l.MemoryLimit,
-		MemoryRequest:               l.MemoryRequest,
-		JavaHeapMin:                 l.JavaHeapMin,
-		JavaHeapMax:                 l.JavaHeapMax,
-		JavaOpts:                    l.JavaOpts,
-		UCImageRepo:                 l.UCImageRepo,
-		UCImageTag:                  l.UCImageTag,
-		ProvisionerDaemonEnabled:    l.ProvisionerDaemonEnabled,
-		ProvisionerDaemonEnabledSet: l.ProvisionerDaemonEnabledSet,
-		Volumes:                     l.Volumes,
-		VolumesSet:                  l.VolumesSet,
-		ImagePullSecrets:            l.ImagePullSecrets,
-		ImagePullSecretsSet:         l.ImagePullSecretsSet,
-		HostPathOwners:              l.HostPathOwners,
+		ContainerName:       l.ContainerName,
+		CPULimit:            l.CPULimit,
+		CPURequest:          l.CPURequest,
+		MemoryLimit:         l.MemoryLimit,
+		MemoryRequest:       l.MemoryRequest,
+		JavaHeapMin:         l.JavaHeapMin,
+		JavaHeapMax:         l.JavaHeapMax,
+		JavaOpts:            l.JavaOpts,
+		UCImageRepo:         l.UCImageRepo,
+		UCImageTag:          l.UCImageTag,
+		Orbit:               l.Orbit,
+		Volumes:             l.Volumes,
+		VolumesSet:          l.VolumesSet,
+		ImagePullSecrets:    l.ImagePullSecrets,
+		ImagePullSecretsSet: l.ImagePullSecretsSet,
+		HostPathOwners:      l.HostPathOwners,
 	}
 }
