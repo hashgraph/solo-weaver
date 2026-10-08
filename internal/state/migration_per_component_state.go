@@ -45,7 +45,7 @@ func NewPerComponentStateMigration() *PerComponentStateMigration {
 	return &PerComponentStateMigration{}
 }
 
-func (m *PerComponentStateMigration) ID() string { return "per-component-state-v1" }
+func (m *PerComponentStateMigration) ID() string { return "per-component-state" }
 func (m *PerComponentStateMigration) Description() string {
 	return "Split the single state.yaml into one file per component (machine, cluster, blocknode, consensus, teleport)"
 }
