@@ -35,6 +35,15 @@ func writeLegacyStateFixture(t *testing.T, path string, s State) {
 	require.NoError(t, os.WriteFile(path, b, 0o644))
 }
 
+// writeComponentFromState writes id's section of s to its component file, the
+// way a crashed Execute would have left it before renaming state.yaml.
+func writeComponentFromState(t *testing.T, dir string, id ComponentID, s State) {
+	t.Helper()
+	b, err := yaml.Marshal(projectComponentSection(s, id))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(componentFilePath(dir, id), b, 0o644))
+}
+
 func TestPerComponentStateMigration_AppliesWheneverTheLegacyFileExists(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, StateFileName)
@@ -59,14 +68,15 @@ func TestPerComponentStateMigration_AppliesWheneverTheLegacyFileExists(t *testin
 func TestPerComponentStateMigration_AppliesAfterACrashBetweenLastWriteAndRename(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, StateFileName)
-	writeLegacyStateFixture(t, legacyPath, legacyStateFixture(t, dir))
+	legacy := legacyStateFixture(t, dir)
+	writeLegacyStateFixture(t, legacyPath, legacy)
 	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
 
 	// Simulate Execute having completed every component write but crashed
-	// before the rename: write all five component files directly, leave
-	// state.yaml in place.
+	// before the rename: write all five component files from state.yaml's
+	// content, leave state.yaml in place.
 	for _, id := range AllComponentIDs {
-		require.NoError(t, os.WriteFile(componentFilePath(dir, id), []byte("state:\n"), 0o644))
+		writeComponentFromState(t, dir, id, legacy)
 	}
 
 	applies, err := m.Applies(nil)
@@ -77,6 +87,8 @@ func TestPerComponentStateMigration_AppliesAfterACrashBetweenLastWriteAndRename(
 
 	_, err = os.Stat(legacyPath)
 	require.True(t, os.IsNotExist(err), "the retried Execute must finish the rename this time")
+	_, err = os.Stat(legacyPath + legacyStateBackupSuffix)
+	require.NoError(t, err, "matching leftovers are a normal retry: state.yaml goes to the .legacy backup, not aside as diverged")
 	applies, err = m.Applies(nil)
 	require.NoError(t, err)
 	require.False(t, applies, "fully done now: the legacy file is gone")
@@ -119,13 +131,14 @@ func TestPerComponentStateMigration_ExecuteSplitsAllComponentsAndBacksUpLegacy(t
 func TestPerComponentStateMigration_ExecuteIsIdempotentAfterASimulatedCrash(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, StateFileName)
-	writeLegacyStateFixture(t, legacyPath, legacyStateFixture(t, dir))
+	legacy := legacyStateFixture(t, dir)
+	writeLegacyStateFixture(t, legacyPath, legacy)
 	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
 
 	// Simulate a crash partway through a prior Execute: one component file
 	// already exists (from the "crashed" run), but the legacy file was never
 	// renamed because Execute never got that far.
-	require.NoError(t, os.WriteFile(componentFilePath(dir, ComponentTeleport), []byte("stale: true\n"), 0o644))
+	writeComponentFromState(t, dir, ComponentTeleport, legacy)
 
 	applies, err := m.Applies(nil)
 	require.NoError(t, err)
@@ -139,6 +152,45 @@ func TestPerComponentStateMigration_ExecuteIsIdempotentAfterASimulatedCrash(t *t
 	}
 	_, err = os.Stat(legacyPath)
 	require.True(t, os.IsNotExist(err), "legacy state.yaml should be renamed out of the way on the retried run")
+}
+
+// TestPerComponentStateMigration_ExecuteKeepsComponentFilesWhenLegacyDiverges
+// covers a state.yaml that reappears after the split with content older than
+// the component files (e.g. an operator restored an old backup by hand).
+// Execute must not regenerate the component files from it: it keeps them and
+// moves state.yaml aside for inspection.
+func TestPerComponentStateMigration_ExecuteKeepsComponentFilesWhenLegacyDiverges(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, StateFileName)
+	stale := legacyStateFixture(t, dir)
+	writeLegacyStateFixture(t, legacyPath, stale)
+	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	// A later command updates blocknode.yaml, then the old state.yaml is put back.
+	newer := stale
+	newer.BlockNodeState.ReleaseInfo.Name = "block-node-upgraded"
+	writeComponentFromState(t, dir, ComponentBlockNode, newer)
+	writeLegacyStateFixture(t, legacyPath, stale)
+
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	b, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
+	require.NoError(t, err)
+	var onDisk State
+	require.NoError(t, yaml.Unmarshal(b, &onDisk))
+	require.Equal(t, "block-node-upgraded", onDisk.BlockNodeState.ReleaseInfo.Name,
+		"the newer component file must not be overwritten from the stale state.yaml")
+
+	_, err = os.Stat(legacyPath)
+	require.True(t, os.IsNotExist(err), "the diverged state.yaml must be moved out of the way")
+	aside, err := filepath.Glob(legacyPath + ".diverged-*")
+	require.NoError(t, err)
+	require.Len(t, aside, 1, "the diverged state.yaml must be kept for inspection")
+
+	applies, err := m.Applies(nil)
+	require.NoError(t, err)
+	require.False(t, applies)
 }
 
 func TestPerComponentStateMigration_FreshInstallNeverApplies(t *testing.T) {

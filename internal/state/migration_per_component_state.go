@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -100,14 +101,39 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, mctx *migration.
 		return errorx.IllegalFormat.Wrap(err, "legacy state file %s is not parseable YAML", legacyPath)
 	}
 	legacy.StateFile = legacyPath
-
-	// Applies() only reports true while the legacy file still exists, so any
-	// component file found at this point is a partial leftover from a prior
-	// Execute that crashed before the rename below — not something flushing
-	// needs a baseline to protect, since nothing else writes these files while
-	// state.yaml is still present. Clear it so the flush below is a plain
-	// first write for every component, matching a fresh install.
 	dir := filepath.Dir(legacyPath)
+
+	// A component file that disagrees with state.yaml means the two have
+	// diverged — e.g. an operator restored an old state.yaml by hand, or a
+	// pre-split binary wrote a new one after the split. The component files
+	// are what this binary has been reading and writing, so keep them and move
+	// state.yaml aside for inspection rather than guessing which side is newer
+	// (mtime doesn't survive cp or a backup restore).
+	divergedID, err := firstDivergedComponent(dir, legacy)
+	if err != nil {
+		return err
+	}
+	if divergedID != "" {
+		asidePath := legacyPath + ".diverged-" + time.Now().UTC().Format("20060102T150405Z")
+		if err := os.Rename(legacyPath, asidePath); err != nil {
+			return errorx.ExternalError.Wrap(err,
+				"%s differs from %s; could not move it aside to %s — move it manually after checking which is correct",
+				legacyPath, componentFilePath(dir, divergedID), asidePath)
+		}
+		if mctx != nil && mctx.Logger != nil {
+			mctx.Logger.Warn().
+				Str("legacyStateFile", legacyPath).
+				Str("movedTo", asidePath).
+				Str("divergedComponent", string(divergedID)).
+				Msg("legacy state file differs from the existing per-component files; kept the per-component files and moved the legacy file aside for inspection")
+		}
+		return nil
+	}
+
+	// Every component file that exists matches state.yaml, so it is a partial
+	// leftover from a prior Execute that crashed before the rename below.
+	// Clear it so the flush below is a plain first write for every component,
+	// matching a fresh install.
 	for _, id := range AllComponentIDs {
 		if err := os.Remove(componentFilePath(dir, id)); err != nil && !os.IsNotExist(err) {
 			return errorx.ExternalError.Wrap(err, "failed to remove partial %s state file before migration", id)
@@ -182,6 +208,58 @@ func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Co
 	// absence), so it no longer serves a purpose.
 	_ = os.Remove(backupPath)
 	return nil
+}
+
+// firstDivergedComponent returns the first component whose file in dir
+// exists and whose content differs from legacy's section for it, or "" when
+// every existing component file matches. Missing files don't count: a host
+// installed after the split only ever writes the components it manages.
+func firstDivergedComponent(dir string, legacy State) (ComponentID, error) {
+	for _, id := range AllComponentIDs {
+		path := componentFilePath(dir, id)
+		b, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", errorx.ExternalError.Wrap(err, "failed to read %s state file %s", id, path)
+		}
+		var onDisk State
+		if err := yaml.Unmarshal(b, &onDisk); err != nil {
+			return "", errorx.IllegalFormat.Wrap(err, "%s state file %s is not parseable YAML", id, path)
+		}
+
+		same, err := sameComponentContent(id, legacy, onDisk)
+		if err != nil {
+			return "", err
+		}
+		if !same {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+// sameComponentContent reports whether a and b hold the same content for id's
+// section. Both are round-tripped through YAML first so a nil map on one side
+// and an empty map on the other (which serialize identically) compare equal.
+func sameComponentContent(id ComponentID, a, b State) (bool, error) {
+	hashOf := func(s State) (string, error) {
+		normalized, err := roundTripThroughYAML(projectComponentSection(s, id))
+		if err != nil {
+			return "", errorx.InternalError.Wrap(err, "failed to normalize %s state for comparison", id)
+		}
+		return stateContentHash(normalized)
+	}
+	ha, err := hashOf(a)
+	if err != nil {
+		return false, err
+	}
+	hb, err := hashOf(b)
+	if err != nil {
+		return false, err
+	}
+	return ha == hb, nil
 }
 
 // recomposeLegacyStateFromComponents rebuilds a legacy state file from the
