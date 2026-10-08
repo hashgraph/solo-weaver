@@ -42,6 +42,11 @@ func registerFakeStartupMigration(t *testing.T) *int {
 	migration.ClearRegistry()
 	t.Cleanup(migration.ClearRegistry)
 
+	// An unstamped test binary reports "dev"; stamp a semver so the recorded version round-trips.
+	origVersion := version.Version
+	t.Cleanup(func() { version.Version = origVersion })
+	version.Version = "1.2.3"
+
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
 	// Provisioned host: state dir exists but no state.yaml → reader returns "".
