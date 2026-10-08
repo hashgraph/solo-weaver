@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -88,7 +89,7 @@ func (m *PerComponentStateMigration) Applies(_ *migration.Context) (bool, error)
 // If writing the component files fails partway through, state.yaml is left
 // untouched, so a re-run is idempotent: Applies() is still true and Execute
 // starts over from the unmodified legacy content.
-func (m *PerComponentStateMigration) Execute(_ context.Context, mctx *migration.Context) error {
+func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Context) error {
 	legacyPath := m.legacyStateFilePath()
 
 	b, err := os.ReadFile(legacyPath)
@@ -120,13 +121,11 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, mctx *migration.
 				"%s differs from %s; could not move it aside to %s — move it manually after checking which is correct",
 				legacyPath, componentFilePath(dir, divergedID), asidePath)
 		}
-		if mctx != nil && mctx.Logger != nil {
-			mctx.Logger.Warn().
-				Str("legacyStateFile", legacyPath).
-				Str("movedTo", asidePath).
-				Str("divergedComponent", string(divergedID)).
-				Msg("legacy state file differs from the existing per-component files; kept the per-component files and moved the legacy file aside for inspection")
-		}
+		logx.As().Warn().
+			Str("legacyStateFile", legacyPath).
+			Str("movedTo", asidePath).
+			Str("divergedComponent", string(divergedID)).
+			Msg("legacy state file differs from the existing per-component files; kept the per-component files and moved the legacy file aside for inspection")
 		return nil
 	}
 
@@ -159,10 +158,8 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, mctx *migration.
 		// back to removing it outright: its content is already safely
 		// duplicated in the component files just written, so losing the
 		// backup copy is a far smaller cost than that failure mode.
-		if mctx != nil && mctx.Logger != nil {
-			mctx.Logger.Warn().Err(err).Str("legacyStateFile", legacyPath).
-				Msg("could not rename the legacy state file to its backup name; removing it instead")
-		}
+		logx.As().Warn().Err(err).Str("legacyStateFile", legacyPath).
+			Msg("could not rename the legacy state file to its backup name; removing it instead")
 		if removeErr := os.Remove(legacyPath); removeErr != nil {
 			return errorx.ExternalError.Wrap(removeErr,
 				"wrote the new per-component files but could not remove or rename the now-stale legacy state file %s; remove it manually before running any further commands",
