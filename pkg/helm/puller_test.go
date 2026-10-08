@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,4 +96,41 @@ func newTestHelmManager(t *testing.T) *helmManager {
 	t.Setenv("HELM_REPOSITORY_CONFIG", filepath.Join(home, "config", "repositories.yaml"))
 	t.Setenv("HELM_REPOSITORY_CACHE", filepath.Join(home, "cache", "repository"))
 	return &helmManager{}
+}
+
+func TestRetryTransientFetch(t *testing.T) {
+	var slept []time.Duration
+	orig := chartPullSleep
+	chartPullSleep = func(d time.Duration) { slept = append(slept, d) }
+	t.Cleanup(func() { chartPullSleep = orig })
+
+	transient := fmt.Errorf("502 Bad Gateway")
+	tests := []struct {
+		name      string
+		attempts  int
+		results   []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{"succeeds first time", 3, []error{nil}, 1, false},
+		{"transient then success", 3, []error{transient, transient, nil}, 3, false},
+		{"transient budget exhausted", 3, []error{transient, transient, transient}, 3, true},
+		{"permanent error is not retried", 3, []error{fmt.Errorf("401 unauthorized")}, 1, true},
+		{"zero attempts uses the default", 0, []error{transient, transient, transient}, defaultChartPullAttempts, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			slept = nil
+			hm := newTestHelmManager(t)
+			hm.chartPullAttempts = tc.attempts
+			calls := 0
+			err := hm.retryTransientFetch("oci://example/chart", "1.0.0", func() error {
+				r := tc.results[calls]
+				calls++
+				return r
+			})
+			assert.Equal(t, tc.wantCalls, calls)
+			assert.Equal(t, tc.wantErr, err != nil)
+		})
+	}
 }
