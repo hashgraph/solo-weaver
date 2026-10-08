@@ -89,7 +89,7 @@ func WithLockWait[T any](wait time.Duration) BaseHandlerOption[T] {
 // from before per-component locking existed, and stays unscoped/unlocked on
 // purpose (a known, separately-tracked gap, not something this lock covers).
 func (h *BaseHandler[T]) flushComponentIDs() []state.ComponentID {
-	return append([]state.ComponentID{state.ComponentMachine}, componentIDsOf(h.Managed)...)
+	return state.DedupeComponentIDs(append([]state.ComponentID{state.ComponentMachine}, componentIDsOf(h.Managed)...))
 }
 
 // lockedComponentIDs returns the internal/state.ComponentID set this handler
