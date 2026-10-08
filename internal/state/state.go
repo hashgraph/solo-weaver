@@ -64,15 +64,32 @@ type StateRecord struct {
 	BlockNodeState   BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
 	ConsensusNodes   map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
 	TeleportState    TeleportState                 `yaml:"teleportState" json:"teleportState"`
-	LastAction       ActionHistory                 `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
 }
 
-// Hashable returns a deep copy of the domain StateRecord with all reconciliation
-// timestamps (LastSync) zeroed. This is the canonical input for hashing:
-//   - Envelope fields (Hash, HashAlgo, StateFile, LastSync on State) are already
-//     excluded by returning only StateRecord.
-//   - Sub-state LastSync fields are zeroed because they advance on every
-//     reconciliation cycle and do not represent meaningful provisioning changes.
+// Hashable returns the canonical input for the content hash: the domain
+// StateRecord with every piece of bookkeeping metadata stripped. Only
+// provisioning/domain data participates in the hash, so metadata that changes
+// without the provisioning intent changing never reads as a state change and
+// never trips the per-file optimistic-concurrency check in prepareComponentFlush.
+//
+// Bookkeeping metadata excluded from the content hash:
+//
+//   - Envelope fields on State — Hash, HashAlgo, StateFile, LastSync — are
+//     excluded structurally, by returning only StateRecord (the envelope never
+//     reaches this value).
+//   - Reconciliation timestamps inside StateRecord, zeroed below: the top-level
+//     MachineState/ClusterState/BlockNodeState/TeleportState LastSync; every
+//     MachineState.Software and MachineState.Hardware entry's LastSync; and every
+//     ConsensusNodes entry's LastSync plus its ConfigHashes' LastUpdate. These
+//     advance on every reconciliation cycle and carry no provisioning meaning.
+//
+// When adding a field: domain/provisioning data goes in StateRecord (hashed);
+// bookkeeping metadata (timestamps, digests, paths, provenance) goes in the
+// envelope on State or is zeroed here. A field that changes on every write but
+// is not a provisioning change must not be hashed — otherwise every write churns
+// the hash and makes concurrent writers to the same file collide. That is why
+// the former LastAction pointer was dropped from State in favour of the
+// append-only action_history.yaml; see issue #1242.
 //
 // Note: We don't want to use pointer receiver here because we don't need to modify the original state instance.
 func (s State) Hashable() StateRecord {
@@ -129,6 +146,13 @@ type ActionHistory struct {
 	Intent    models.Intent `yaml:"intent" json:"intent"` // e.g. "weaver block node init"
 	Inputs    any           `yaml:"inputs" json:"inputs"` // inputs used for this intent; any marshallable value is accepted (e.g. models.UserInputs[T])
 	Timestamp htime.Time    `yaml:"timestamp" json:"timestamp"`
+	// Components names the per-component files this action wrote (e.g. machine,
+	// blocknode). Provenance for the multi-file layout: with state split across
+	// files, the intent alone no longer says what on disk changed. Reading
+	// action_history.yaml back and taking the latest entry whose Components
+	// include X answers "what last modified component X" — the role the single
+	// in-state LastAction pointer used to serve before it was dropped (#1242).
+	Components []ComponentID `yaml:"components,omitempty" json:"components,omitempty"`
 }
 
 type ProvisionerInfo struct {
