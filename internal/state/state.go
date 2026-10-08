@@ -295,12 +295,10 @@ type ConsensusNodeObservedShape struct {
 	UCImageRepo   string
 	UCImageTag    string
 
-	// ProvisionerDaemonEnabled is the flag on the node's Orbit (an Orbit-level
-	// fact read via the node's OrbitName). The drift producer compares it once per
-	// Orbit against ConsensusOrbitState, not per node. Set = the Orbit was read;
-	// an absent spec key then means false.
-	ProvisionerDaemonEnabled    bool
-	ProvisionerDaemonEnabledSet bool
+	// Orbit is the node's Orbit as read from the cluster (an Orbit-level fact
+	// reached via the node's OrbitName); nil when it could not be read. The drift
+	// producer compares it once per Orbit against ConsensusOrbitState, not per node.
+	Orbit *ConsensusOrbitState
 
 	Volumes    models.ConsensusVolumeConfig
 	VolumesSet bool
@@ -318,16 +316,6 @@ type ConsensusNodeObservedShape struct {
 type HostPathOwner struct {
 	UID int
 	GID int
-}
-
-// ConsensusOrbitState is the managed shape of an Orbit, keyed by Orbit name in
-// StateRecord.ConsensusOrbits. An Orbit is shared by every consensus node that
-// names it and is created once (by the first install), so facts that belong to
-// the Orbit live here rather than on each node's ManagedSpec. It is the baseline
-// for Orbit-level drift detection; later installs verify against it and never
-// overwrite it.
-type ConsensusOrbitState struct {
-	ProvisionerDaemonEnabled bool `yaml:"provisionerDaemonEnabled" json:"provisionerDaemonEnabled"`
 }
 
 // ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver

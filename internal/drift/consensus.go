@@ -26,7 +26,7 @@ const consensusComponent = "consensus"
 //     deliberately set at install and is never refreshed from the cluster;
 //     ObservedShape is the transient readback the checker populates during
 //     RefreshState.
-//   - Orbit-level fields (the provisioner-daemon flag) are shared by every node
+//   - Orbit-level fields (daemon flag, ledger/chain ids, …) are shared by every node
 //     on the Orbit, so they are compared once per Orbit against ConsensusOrbits.
 func ConsensusNode(baseline, live state.State) []Change {
 	var changes []Change
@@ -56,21 +56,23 @@ func ConsensusNode(baseline, live state.State) []Change {
 	return changes
 }
 
-// compareConsensusOrbit reports Orbit-level fields that differ between the
-// recorded ConsensusOrbitState and the live Orbit. It covers only fields weaver
-// deliberately sets on the Orbit (ledgerId/chainId are already reported as node
-// identity; operator defaults and the daemon-refreshed version annotations are
-// not baselined). A node that could not read the Orbit (ProvisionerDaemonEnabledSet = false) is skipped.
+// compareConsensusOrbit reports tracked Orbit fields that differ between the
+// recorded ConsensusOrbitState and the live Orbit read by a node. A node that
+// could not read the Orbit (nil) is skipped. Only fields that change what a node
+// runs against are tracked; operator tuning and the daemon-refreshed version
+// annotations are not baselined.
 func compareConsensusOrbit(orbit string, want state.ConsensusOrbitState, o *state.ConsensusNodeObservedShape) []Change {
-	if !o.ProvisionerDaemonEnabledSet || o.ProvisionerDaemonEnabled == want.ProvisionerDaemonEnabled {
+	if o.Orbit == nil {
 		return nil
 	}
-	return []Change{{
-		Component: fmt.Sprintf("%s-orbit[%s]", consensusComponent, orbit),
-		Field:     "provisionerDaemonEnabled",
-		Persisted: strconv.FormatBool(want.ProvisionerDaemonEnabled),
-		Live:      strconv.FormatBool(o.ProvisionerDaemonEnabled),
-	}}
+	var changes []Change
+	for _, d := range want.Diff(*o.Orbit) {
+		changes = append(changes, Change{
+			Component: fmt.Sprintf("%s-orbit[%s]", consensusComponent, orbit),
+			Field:     d.Field, Persisted: d.Want, Live: d.Live,
+		})
+	}
+	return changes
 }
 
 // compareConsensusIdentity reports identity fields that differ between the
@@ -85,8 +87,6 @@ func compareConsensusIdentity(component string, baseline, live state.ConsensusNo
 	add("imageRepo", baseline.ImageRepo, live.ImageRepo)
 	add("imageTag", baseline.ImageTag, live.ImageTag)
 	add("accountId", baseline.AccountId, live.AccountId)
-	add("ledgerId", baseline.LedgerId, live.LedgerId)
-	add("chainId", baseline.ChainId, live.ChainId)
 	if live.Weight != baseline.Weight {
 		changes = append(changes, Change{
 			Component: component, Field: "weight",

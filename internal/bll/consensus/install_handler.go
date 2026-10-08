@@ -319,9 +319,7 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			full.ConsensusOrbits = make(map[string]state.ConsensusOrbitState)
 		}
 		if _, ok := full.ConsensusOrbits[ins.OrbitName]; !ok {
-			full.ConsensusOrbits[ins.OrbitName] = state.ConsensusOrbitState{
-				ProvisionerDaemonEnabled: ins.ProvisionerDaemonEnabled,
-			}
+			full.ConsensusOrbits[ins.OrbitName] = steps.DesiredOrbitState(ins)
 		}
 
 		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")

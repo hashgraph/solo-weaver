@@ -22,11 +22,13 @@ func stateWith(scope string, ns state.ConsensusNodeState) state.State {
 	s := state.State{}
 	if scope != "" {
 		s.ConsensusNodes = map[string]state.ConsensusNodeState{scope: ns}
-		s.ConsensusOrbits = map[string]state.ConsensusOrbitState{
-			ns.OrbitName: {ProvisionerDaemonEnabled: true},
-		}
+		s.ConsensusOrbits = map[string]state.ConsensusOrbitState{ns.OrbitName: *baselineOrbitState()}
 	}
 	return s
+}
+
+func baselineOrbitState() *state.ConsensusOrbitState {
+	return &state.ConsensusOrbitState{ProvisionerDaemonEnabled: true, LedgerId: "0x00", ChainId: "295"}
 }
 
 func baselineManagedSpec() *state.ConsensusNodeManagedSpec {
@@ -64,18 +66,17 @@ func baselineManagedSpec() *state.ConsensusNodeManagedSpec {
 
 func matchingObservedShape() *state.ConsensusNodeObservedShape {
 	return &state.ConsensusNodeObservedShape{
-		ContainerName:               "root",
-		CPULimit:                    "4",
-		CPURequest:                  "2",
-		MemoryLimit:                 "16Gi",
-		MemoryRequest:               "8Gi",
-		JavaHeapMin:                 "8g",
-		JavaHeapMax:                 "12g",
-		JavaOpts:                    "-XX:+UseZGC",
-		UCImageRepo:                 "ghcr.io/hiero/solo-operator",
-		UCImageTag:                  "0.8.0",
-		ProvisionerDaemonEnabled:    true,
-		ProvisionerDaemonEnabledSet: true,
+		ContainerName: "root",
+		CPULimit:      "4",
+		CPURequest:    "2",
+		MemoryLimit:   "16Gi",
+		MemoryRequest: "8Gi",
+		JavaHeapMin:   "8g",
+		JavaHeapMax:   "12g",
+		JavaOpts:      "-XX:+UseZGC",
+		UCImageRepo:   "ghcr.io/hiero/solo-operator",
+		UCImageTag:    "0.8.0",
+		Orbit:         baselineOrbitState(),
 		ImagePullSecrets: models.PullSecretSelector{
 			ByHost: map[string]string{
 				"gcr.io":  "gcr-creds",
@@ -129,8 +130,6 @@ func TestConsensusNode_IdentityDrift(t *testing.T) {
 		{"image repo drift", func(ns *state.ConsensusNodeState) { ns.ImageRepo = "docker.io/hiero/consensus-node" }, 1, "imageRepo"},
 		{"weight drift", func(ns *state.ConsensusNodeState) { ns.Weight = 50 }, 1, "weight"},
 		{"accountId drift", func(ns *state.ConsensusNodeState) { ns.AccountId = "0.0.99" }, 1, "accountId"},
-		{"ledgerId drift", func(ns *state.ConsensusNodeState) { ns.LedgerId = "0x01" }, 1, "ledgerId"},
-		{"chainId drift", func(ns *state.ConsensusNodeState) { ns.ChainId = "296" }, 1, "chainId"},
 	}
 
 	for _, tc := range tests {
@@ -196,20 +195,6 @@ func TestConsensusNode_ManagedSpecDrift(t *testing.T) {
 			mutate: func(o *state.ConsensusNodeObservedShape) {
 				o.CPULimit = "8"
 				o.UCImageTag = "0.9.0"
-			},
-		},
-		{
-			name:     "provisionerDaemonEnabled drift",
-			wantN:    1,
-			wantHint: "provisionerDaemonEnabled",
-			mutate:   func(o *state.ConsensusNodeObservedShape) { o.ProvisionerDaemonEnabled = false },
-		},
-		{
-			name:  "provisionerDaemonEnabled not set is not drift",
-			wantN: 0,
-			mutate: func(o *state.ConsensusNodeObservedShape) {
-				o.ProvisionerDaemonEnabledSet = false
-				o.ProvisionerDaemonEnabled = false
 			},
 		},
 	}
@@ -452,7 +437,7 @@ func TestConsensusNode_OrbitDriftReportedOncePerOrbit(t *testing.T) {
 	second.NodeId = 4
 	live.ConsensusNodes["mainnet/4"] = second
 	for k, ns := range live.ConsensusNodes {
-		ns.ObservedShape.ProvisionerDaemonEnabled = false
+		ns.ObservedShape.Orbit.ProvisionerDaemonEnabled = false
 		live.ConsensusNodes[k] = ns
 	}
 
@@ -468,9 +453,66 @@ func TestConsensusNode_NoOrbitBaselineSkipsOrbitComparison(t *testing.T) {
 	live := stateWith(testScope, liveConsensusNodeState())
 	live.ConsensusOrbits = nil
 	for k, ns := range live.ConsensusNodes {
-		ns.ObservedShape.ProvisionerDaemonEnabled = false
+		ns.ObservedShape.Orbit.ProvisionerDaemonEnabled = false
 		live.ConsensusNodes[k] = ns
 	}
 
 	assert.Empty(t, ConsensusNode(stateWith(testScope, baselineConsensusNodeState()), live))
+}
+
+func TestConsensusNode_OrbitFieldDrift(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(o *state.ConsensusOrbitState)
+		wantField string
+	}{
+		{"daemon flag", func(o *state.ConsensusOrbitState) { o.ProvisionerDaemonEnabled = false }, "provisionerDaemonEnabled"},
+		{"ledgerId", func(o *state.ConsensusOrbitState) { o.LedgerId = "0x01" }, "ledgerId"},
+		{"chainId", func(o *state.ConsensusOrbitState) { o.ChainId = "296" }, "chainId"},
+		{"realmId", func(o *state.ConsensusOrbitState) { o.RealmId = 1 }, "realmId"},
+		{"shardId", func(o *state.ConsensusOrbitState) { o.ShardId = 2 }, "shardId"},
+		{"provisioningModel", func(o *state.ConsensusOrbitState) { o.ProvisioningModel = "InitContainerJava" }, "provisioningModel"},
+		{"requireDigestOnDeploy", func(o *state.ConsensusOrbitState) { o.RequireDigestOnDeploy = true }, "requireDigestOnDeploy"},
+		{"deploymentModel", func(o *state.ConsensusOrbitState) { o.DeploymentModel = "MultipleKubernetesClusters" }, "deploymentModel"},
+		{"external address added", func(o *state.ConsensusOrbitState) {
+			o.ExternalAddresses = []state.OrbitExternalAddress{{NodeId: 7, Digest: "abc"}}
+		}, "externalAddresses[7]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			live := stateWith(testScope, liveConsensusNodeState())
+			for k, ns := range live.ConsensusNodes {
+				tc.mutate(ns.ObservedShape.Orbit)
+				live.ConsensusNodes[k] = ns
+			}
+			got := ConsensusNode(stateWith(testScope, baselineConsensusNodeState()), live)
+			require.Len(t, got, 1)
+			assert.Equal(t, "consensus-orbit[mainnet]", got[0].Component)
+			assert.Equal(t, tc.wantField, got[0].Field)
+		})
+	}
+}
+
+func TestConsensusNode_OrbitUnreadIsNotDrift(t *testing.T) {
+	live := stateWith(testScope, liveConsensusNodeState())
+	for k, ns := range live.ConsensusNodes {
+		ns.ObservedShape.Orbit = nil
+		live.ConsensusNodes[k] = ns
+	}
+	assert.Empty(t, ConsensusNode(stateWith(testScope, baselineConsensusNodeState()), live))
+}
+
+func TestConsensusNode_EmptyChainIdEqualsZero(t *testing.T) {
+	baseline := stateWith(testScope, baselineConsensusNodeState())
+	for k, ns := range baseline.ConsensusOrbits {
+		ns.ChainId = ""
+		baseline.ConsensusOrbits[k] = ns
+	}
+	live := stateWith(testScope, liveConsensusNodeState())
+	for k, ns := range live.ConsensusNodes {
+		ns.ObservedShape.Orbit.ChainId = "0"
+		live.ConsensusNodes[k] = ns
+	}
+	live.ConsensusOrbits = baseline.ConsensusOrbits
+	assert.Empty(t, ConsensusNode(baseline, live))
 }

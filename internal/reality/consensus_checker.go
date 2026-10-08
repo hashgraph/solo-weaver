@@ -27,29 +27,28 @@ type ConsensusKubeClient interface {
 
 // CRD field names used when reading back from the live Orbit and ConsensusCapsule.
 const (
-	fieldSpec                     = "spec"
-	fieldPodProperties            = "podProperties"
-	fieldContainers               = "containers"
-	fieldConsensusNode            = "consensusNode"
-	fieldUC                       = "uc"
-	fieldSoftwareVersion          = "softwareVersion"
-	fieldRepository               = "repository"
-	fieldImageName                = "imageName"
-	fieldImageTag                 = "imageTag"
-	fieldImagePullSecrets         = "imagePullSecrets"
-	fieldProvisionerDaemonEnabled = "provisionerDaemonEnabled"
-	fieldVolumes                  = "volumes"
-	fieldPersistentVolumeClaims   = "persistentVolumeClaims"
-	fieldAdditionalVolumes        = "additionalVolumes"
-	fieldStreams                  = "streams"
-	fieldHostPath                 = "hostPath"
-	fieldPath                     = "path"
-	fieldResources                = "resources"
-	fieldRequests                 = "requests"
-	fieldStorage                  = "storage"
-	fieldStorageClassName         = "storageClassName"
-	fieldAccessModes              = "accessModes"
-	fieldName                     = "name"
+	fieldSpec                   = "spec"
+	fieldPodProperties          = "podProperties"
+	fieldContainers             = "containers"
+	fieldConsensusNode          = "consensusNode"
+	fieldUC                     = "uc"
+	fieldSoftwareVersion        = "softwareVersion"
+	fieldRepository             = "repository"
+	fieldImageName              = "imageName"
+	fieldImageTag               = "imageTag"
+	fieldImagePullSecrets       = "imagePullSecrets"
+	fieldVolumes                = "volumes"
+	fieldPersistentVolumeClaims = "persistentVolumeClaims"
+	fieldAdditionalVolumes      = "additionalVolumes"
+	fieldStreams                = "streams"
+	fieldHostPath               = "hostPath"
+	fieldPath                   = "path"
+	fieldResources              = "resources"
+	fieldRequests               = "requests"
+	fieldStorage                = "storage"
+	fieldStorageClassName       = "storageClassName"
+	fieldAccessModes            = "accessModes"
+	fieldName                   = "name"
 )
 
 type consensusChecker struct {
@@ -160,7 +159,7 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		if ns.ManagedSpec != nil {
 			if live, ok := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName); ok {
 				if err == nil && orbitExists {
-					readProvisionerDaemonEnabled(ctx, kc, apiVersion, ns.OrbitName, &live)
+					readLiveOrbit(ctx, kc, apiVersion, ns.OrbitName, &live)
 				}
 				updated.ObservedShape = liveShapeToObserved(live)
 			}
@@ -249,26 +248,18 @@ func statOwner(path string) (uid, gid int, ok bool) {
 	return int(st.Uid), int(st.Gid), true
 }
 
-// readProvisionerDaemonEnabled reads spec.provisionerDaemonEnabled from the Orbit.
-// The operator omits the key when false, so an absent key on a readable Orbit is a
-// real false (a true→false change must be reportable); only a failed read or a
-// non-bool value leaves the field unset.
-func readProvisionerDaemonEnabled(
+// readLiveOrbit reads the tracked Orbit fields from the Orbit's spec. The
+// operator omits zero values, so an absent key on a readable Orbit is a real zero
+// (a true→false change must be reportable); only a failed read leaves it nil.
+func readLiveOrbit(
 	ctx context.Context, kc ConsensusKubeClient, apiVersion, orbitName string, live *liveConsensusShape,
 ) {
 	specMap, found, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindOrbit), "", orbitName, fieldSpec)
 	if err != nil || !found {
 		return
 	}
-	v, present := specMap[fieldProvisionerDaemonEnabled]
-	if !present {
-		live.ProvisionerDaemonEnabledSet = true
-		return
-	}
-	if b, ok := v.(bool); ok {
-		live.ProvisionerDaemonEnabled = b
-		live.ProvisionerDaemonEnabledSet = true
-	}
+	orbit := state.ConsensusOrbitStateFromSpec(specMap)
+	live.Orbit = &orbit
 }
 
 // readLiveVolumes reads volume backing from spec.podProperties.volumes (hostPath)

@@ -625,34 +625,58 @@ func TestSplitConsensusImage(t *testing.T) {
 	assert.Equal(t, "consensus-node", name)
 }
 
-// --- EnsureOrbit provisioner-daemon guard ---
+// --- EnsureOrbit guard ---
 
-func TestEnsureOrbit_ExistingOrbitModeMismatchFails(t *testing.T) {
+func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
+	orbitSpec := func(daemon bool, ledger, chain string, extra map[string]interface{}) map[string]interface{} {
+		ab := map[string]interface{}{"ledgerId": ledger}
+		if chain != "" {
+			ab["chainId"] = chain
+		}
+		spec := map[string]interface{}{
+			"consensus": map[string]interface{}{"genesis": map[string]interface{}{"addressBook": ab}},
+		}
+		if daemon {
+			spec["provisionerDaemonEnabled"] = true
+		}
+		for k, v := range extra {
+			spec[k] = v
+		}
+		return spec
+	}
+	in := models.ConsensusNodeInputs{
+		Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00", ChainId: "295", ProvisionerDaemonEnabled: true,
+	}
+
 	tests := []struct {
 		name      string
-		liveSpec  map[string]interface{}
-		requested bool
-		wantFail  bool
+		live      map[string]interface{}
+		inputs    models.ConsensusNodeInputs
+		wantField string
 	}{
-		{"live true, requested false", map[string]interface{}{"provisionerDaemonEnabled": true}, false, true},
-		{"live absent (false), requested true", map[string]interface{}{}, true, true},
-		{"live true, requested true", map[string]interface{}{"provisionerDaemonEnabled": true}, true, false},
-		{"live absent (false), requested false", map[string]interface{}{}, false, false},
+		{"matches", orbitSpec(true, "0x00", "295", nil), in, ""},
+		{"daemon mode differs", orbitSpec(false, "0x00", "295", nil), in, "provisionerDaemonEnabled"},
+		{"ledgerId differs", orbitSpec(true, "0x01", "295", nil), in, "ledgerId"},
+		{"chainId differs", orbitSpec(true, "0x00", "296", nil), in, "chainId"},
+		{"orbit has a realm the install does not request", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"deploymentModel": "MultipleKubernetesClusters"}), in, "deploymentModel"},
+		{"requireDigestOnDeploy set on the Orbit", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"requireDigestOnDeploy": true}), in, "requireDigestOnDeploy"},
+		{"empty chainId equals zero", orbitSpec(false, "0x00", "0", nil),
+			models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00"}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeCapsuleClient{
 				existing: map[string]string{"orbit": "deployed"},
-				nested:   map[string]map[string]interface{}{"orbit": tc.liveSpec},
+				nested:   map[string]map[string]interface{}{"orbit": tc.live},
 			}
-			in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", ProvisionerDaemonEnabled: tc.requested}
-
-			step, err := EnsureOrbit(in, fake.provider()).Build()
+			step, err := EnsureOrbit(tc.inputs, fake.provider()).Build()
 			require.NoError(t, err)
 			rpt := step.Execute(context.Background())
-			if tc.wantFail {
+			if tc.wantField != "" {
 				assert.Equal(t, automa.StatusFailed, rpt.Status)
-				assert.Contains(t, rpt.Error.Error(), "same mode")
+				assert.Contains(t, rpt.Error.Error(), tc.wantField)
 			} else {
 				assert.Equal(t, automa.StatusSuccess, rpt.Status)
 			}
