@@ -382,11 +382,10 @@ type daemonServiceTemplateData struct {
 	ExtraReadWritePaths []string
 }
 
-// installDaemonServiceFiles renders the unit template and writes it to the sandbox
-// path, then creates the /usr/lib/systemd/system symlink that points to it.
-// sandboxPath — $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
-// symlinkPath — /usr/lib/systemd/system/solo-provisioner-daemon.service
-func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []string) error {
+// installDaemonServiceFiles renders the unit template and writes it to
+// /usr/lib/systemd/system, clearing any legacy sandbox copy left by an earlier
+// install.
+func installDaemonServiceFiles(unitPath, legacyUnitPath string, extraPaths []string) error {
 	rendered, err := templates.Render(daemonServiceTemplatePath, daemonServiceTemplateData{
 		ExtraReadWritePaths: extraPaths,
 	})
@@ -394,8 +393,8 @@ func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []str
 		return errorx.InternalError.Wrap(err, "failed to render daemon service template")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(sandboxPath), 0o755); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to create sandbox systemd directory %s", filepath.Dir(sandboxPath))
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to create systemd directory %s", filepath.Dir(unitPath))
 	}
 
 	// A granted path that does not exist fails namespace setup with
@@ -412,26 +411,24 @@ func installDaemonServiceFiles(sandboxPath, symlinkPath string, extraPaths []str
 		}
 	}
 
-	if err := os.WriteFile(sandboxPath, []byte(rendered), 0o644); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", sandboxPath)
+	// Must precede the write: on an older host this path is a symlink into the
+	// sandbox, and WriteFile follows it.
+	_ = os.Remove(unitPath)
+
+	if err := os.WriteFile(unitPath, []byte(rendered), 0o644); err != nil {
+		return errorx.InternalError.Wrap(err, "failed to write daemon service file to %s", unitPath)
 	}
 
-	// Remove any stale symlink before creating the new one.
-	_ = os.Remove(symlinkPath)
-	if err := os.Symlink(sandboxPath, symlinkPath); err != nil {
-		// Clean up the sandbox file so a failed install doesn't leave a half-installed state.
-		_ = os.Remove(sandboxPath)
-		return errorx.InternalError.Wrap(err, "failed to create systemd symlink %s -> %s", symlinkPath, sandboxPath)
-	}
+	_ = os.Remove(legacyUnitPath)
 
 	return nil
 }
 
-// removeDaemonServiceFiles removes the /usr/lib/systemd/system symlink and the
-// sandbox unit file. Errors for non-existent paths are ignored.
-func removeDaemonServiceFiles(sandboxPath, symlinkPath string) {
-	_ = os.Remove(symlinkPath)
-	_ = os.Remove(sandboxPath)
+// removeDaemonServiceFiles removes the unit file and any legacy sandbox copy.
+// Errors for non-existent paths are ignored.
+func removeDaemonServiceFiles(unitPath, legacyUnitPath string) {
+	_ = os.Remove(unitPath)
+	_ = os.Remove(legacyUnitPath)
 }
 
 // InstallDaemonServiceStep installs the solo-provisioner-daemon systemd service
@@ -442,8 +439,8 @@ func removeDaemonServiceFiles(sandboxPath, symlinkPath string) {
 // created with MkdirAll before the unit is rendered so the mount namespace setup
 // does not fail with status=226/NAMESPACE for an absent directory.
 func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []string) *automa.StepBuilder {
-	sandboxPath := paths.DaemonServiceSandboxPath
-	symlinkPath := paths.DaemonServiceSymlinkPath
+	unitPath := paths.DaemonServiceUnitPath
+	legacyUnitPath := paths.DaemonServiceLegacyUnitPath
 
 	return automa.NewStepBuilder().WithId("install-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -453,14 +450,14 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 						errorx.InternalError.Wrap(err, "failed to create ReadWritePaths directory %s", p)))
 				}
 			}
-			if err := installDaemonServiceFiles(sandboxPath, symlinkPath, extraReadWritePaths); err != nil {
+			if err := installDaemonServiceFiles(unitPath, legacyUnitPath, extraReadWritePaths); err != nil {
 				// installDaemonServiceFiles already returns an *errorx.Error; cast so we
 				// can attach resolution hints without importing a second error package.
 				var errWithHints error = err
 				if ex := errorx.Cast(err); ex != nil {
 					errWithHints = ex.WithProperty(models.ErrPropertyResolution, []string{
-						fmt.Sprintf("Ensure directory is writable: ls -la %s", filepath.Dir(sandboxPath)),
-						fmt.Sprintf("Check available disk space: df -h %s", filepath.Dir(sandboxPath)),
+						fmt.Sprintf("Ensure directory is writable: ls -la %s", filepath.Dir(unitPath)),
+						fmt.Sprintf("Check available disk space: df -h %s", filepath.Dir(unitPath)),
 						"Re-run: sudo solo-provisioner daemon service install",
 					})
 				}
@@ -468,7 +465,7 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 			}
 
 			if err := pkgos.DaemonReload(ctx); err != nil {
-				removeDaemonServiceFiles(sandboxPath, symlinkPath)
+				removeDaemonServiceFiles(unitPath, legacyUnitPath)
 				errWithHints := errorx.InternalError.Wrap(err, "daemon-reload failed after writing daemon service file").
 					WithProperty(models.ErrPropertyResolution, []string{
 						"Run manually: sudo systemctl daemon-reload",
@@ -479,12 +476,12 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 			}
 
 			if err := pkgos.EnableService(ctx, daemonServiceName); err != nil {
-				removeDaemonServiceFiles(sandboxPath, symlinkPath)
+				removeDaemonServiceFiles(unitPath, legacyUnitPath)
 				_ = pkgos.DaemonReload(ctx)
 				errWithHints := errorx.InternalError.Wrap(err, "failed to enable service %s", daemonServiceName).
 					WithProperty(models.ErrPropertyResolution, []string{
 						fmt.Sprintf("Run manually: sudo systemctl enable %s", daemonServiceName),
-						fmt.Sprintf("Check unit file: ls -la %s", symlinkPath),
+						fmt.Sprintf("Check unit file: ls -la %s", unitPath),
 						"Review journalctl: sudo journalctl -xe --no-pager | tail -30",
 					})
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errWithHints))
@@ -504,8 +501,7 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 			}
 
 			logx.As().Info().
-				Str("sandbox_path", sandboxPath).
-				Str("symlink_path", symlinkPath).
+				Str("unit_path", unitPath).
 				Msg("Solo Provisioner Daemon service installed, enabled, and started")
 			return automa.StepSuccessReport(stp.Id())
 		}).
@@ -515,7 +511,7 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
 			_ = pkgos.DisableService(ctx, daemonServiceName)
-			removeDaemonServiceFiles(sandboxPath, symlinkPath)
+			removeDaemonServiceFiles(unitPath, legacyUnitPath)
 			_ = pkgos.DaemonReload(ctx)
 			return automa.StepSuccessReport(stp.Id())
 		}).
@@ -528,11 +524,10 @@ func InstallDaemonServiceStep(paths models.WeaverPaths, extraReadWritePaths []st
 }
 
 // RemoveDaemonServiceStep stops, disables, and removes the
-// solo-provisioner-daemon systemd service — both the system symlink and the
-// sandbox unit file.
+// solo-provisioner-daemon systemd service unit file.
 func RemoveDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
-	sandboxPath := paths.DaemonServiceSandboxPath
-	symlinkPath := paths.DaemonServiceSymlinkPath
+	unitPath := paths.DaemonServiceUnitPath
+	legacyUnitPath := paths.DaemonServiceLegacyUnitPath
 
 	return automa.NewStepBuilder().WithId("remove-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -540,15 +535,14 @@ func RemoveDaemonServiceStep(paths models.WeaverPaths) *automa.StepBuilder {
 			_ = pkgos.StopService(ctx, daemonServiceName)
 			_ = pkgos.DisableService(ctx, daemonServiceName)
 
-			removeDaemonServiceFiles(sandboxPath, symlinkPath)
+			removeDaemonServiceFiles(unitPath, legacyUnitPath)
 
 			if err := pkgos.DaemonReload(ctx); err != nil {
 				logx.As().Warn().Err(err).Msg("daemon-reload failed after removing daemon service file")
 			}
 
 			logx.As().Info().
-				Str("sandbox_path", sandboxPath).
-				Str("symlink_path", symlinkPath).
+				Str("unit_path", unitPath).
 				Msg("Solo Provisioner Daemon service removed")
 			return automa.StepSuccessReport(stp.Id())
 		}).
@@ -748,41 +742,23 @@ func RestartDaemonServiceStep() *automa.StepBuilder {
 //  6. Sudoers entry exists at /etc/sudoers.d/solo-provisioner
 //  7. Unix socket responds to GET /health → HTTP 200
 func CheckDaemonServiceStep(paths models.WeaverPaths, sockPath string) *automa.StepBuilder {
-	sandboxPath := paths.DaemonServiceSandboxPath
-	symlinkPath := paths.DaemonServiceSymlinkPath
+	unitPath := paths.DaemonServiceUnitPath
 
 	return automa.NewStepBuilder().WithId("check-daemon-service").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			meta := map[string]string{}
 
-			// 1. Sandbox unit file
-			if _, err := os.Stat(sandboxPath); err != nil {
+			// 1. Unit file. Stat, not Lstat: an older host carries a symlink here whose
+			// sandbox target a cluster install has since destroyed, and a dangling link
+			// must read as missing rather than present.
+			if _, err := os.Stat(unitPath); err != nil {
 				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s", sandboxPath).
+					automa.WithError(errorx.IllegalState.New("daemon service unit file not found at %s", unitPath).
 						WithProperty(models.ErrPropertyResolution, []string{
 							"Run: sudo solo-provisioner daemon service install",
 						})))
 			}
-			meta["unit_file"] = sandboxPath
-
-			// 2. System symlink — must exist and point to the sandbox file
-			linkTarget, err := os.Readlink(symlinkPath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service symlink not found at %s", symlinkPath).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Run: sudo solo-provisioner daemon service install",
-						})))
-			}
-			if filepath.Clean(linkTarget) != filepath.Clean(sandboxPath) {
-				return automa.StepFailureReport(stp.Id(),
-					automa.WithError(errorx.IllegalState.New("daemon service symlink %s points to %s, expected %s", symlinkPath, linkTarget, sandboxPath).
-						WithProperty(models.ErrPropertyResolution, []string{
-							"Remove the stale symlink and reinstall: sudo rm " + symlinkPath,
-							"Then run: sudo solo-provisioner daemon service install",
-						})))
-			}
-			meta["symlink"] = symlinkPath
+			meta["unit_file"] = unitPath
 
 			// 3. Service enabled
 			enabled, err := pkgos.IsServiceEnabled(ctx, daemonServiceName)
