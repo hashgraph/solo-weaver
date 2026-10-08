@@ -73,6 +73,37 @@ func setMappingScalar(node *yaml.Node, key, value string) {
 	}
 }
 
+// setMappingValue sets key's value inside a MappingNode, replacing an existing
+// value or appending the key when absent. No-op when node is not a mapping.
+func setMappingValue(node *yaml.Node, key string, value *yaml.Node) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			node.Content[i+1] = value
+			return
+		}
+	}
+	node.Content = append(node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+}
+
+// ensureMapping returns key's value inside a MappingNode, first replacing it
+// with an empty mapping when it is absent or not a mapping (e.g. null).
+// Returns nil when node is not a mapping.
+func ensureMapping(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	if v := mappingValue(node, key); v != nil && v.Kind == yaml.MappingNode {
+		return v
+	}
+	m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setMappingValue(node, key, m)
+	return m
+}
+
 // renameMappingKey renames the first occurrence of oldKey to newKey inside a
 // MappingNode. Only the key node's Value is changed; the associated value node
 // is untouched. No-op when oldKey is not found or node is nil.
