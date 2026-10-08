@@ -22,23 +22,25 @@ func stateWith(scope string, ns state.ConsensusNodeState) state.State {
 	s := state.State{}
 	if scope != "" {
 		s.ConsensusNodes = map[string]state.ConsensusNodeState{scope: ns}
+		s.ConsensusOrbits = map[string]state.ConsensusOrbitState{
+			ns.OrbitName: {ProvisionerDaemonEnabled: true},
+		}
 	}
 	return s
 }
 
 func baselineManagedSpec() *state.ConsensusNodeManagedSpec {
 	return &state.ConsensusNodeManagedSpec{
-		ProvisionerDaemonEnabled: true,
-		ContainerName:            "root",
-		CPULimit:                 "4",
-		CPURequest:               "2",
-		MemoryLimit:              "16Gi",
-		MemoryRequest:            "8Gi",
-		JavaHeapMin:              "8g",
-		JavaHeapMax:              "12g",
-		JavaOpts:                 "-XX:+UseZGC",
-		UCImageRepo:              "ghcr.io/hiero/solo-operator",
-		UCImageTag:               "0.8.0",
+		ContainerName: "root",
+		CPULimit:      "4",
+		CPURequest:    "2",
+		MemoryLimit:   "16Gi",
+		MemoryRequest: "8Gi",
+		JavaHeapMin:   "8g",
+		JavaHeapMax:   "12g",
+		JavaOpts:      "-XX:+UseZGC",
+		UCImageRepo:   "ghcr.io/hiero/solo-operator",
+		UCImageTag:    "0.8.0",
 		ImagePullSecrets: models.PullSecretSelector{
 			ByHost: map[string]string{
 				"gcr.io":  "gcr-creds",
@@ -440,4 +442,35 @@ func TestConsensusNode_WarningFormatMatchesFramework(t *testing.T) {
 	s := got[0].String()
 	assert.True(t, strings.Contains(s, "differs from persisted state"), "warning should use framework format, got: %s", s)
 	assert.True(t, strings.Contains(s, "consensus["+testScope+"]"), "warning should identify the node, got: %s", s)
+}
+
+// ── Orbit-level drift ────────────────────────────────────────────────────
+
+func TestConsensusNode_OrbitDriftReportedOncePerOrbit(t *testing.T) {
+	live := stateWith(testScope, liveConsensusNodeState())
+	second := liveConsensusNodeState()
+	second.NodeId = 4
+	live.ConsensusNodes["mainnet/4"] = second
+	for k, ns := range live.ConsensusNodes {
+		ns.ObservedShape.ProvisionerDaemonEnabled = false
+		live.ConsensusNodes[k] = ns
+	}
+
+	got := ConsensusNode(stateWith(testScope, baselineConsensusNodeState()), live)
+	require.Len(t, got, 1, "two nodes on one Orbit must yield a single Orbit change")
+	assert.Equal(t, "consensus-orbit[mainnet]", got[0].Component)
+	assert.Equal(t, "provisionerDaemonEnabled", got[0].Field)
+	assert.Equal(t, "true", got[0].Persisted)
+	assert.Equal(t, "false", got[0].Live)
+}
+
+func TestConsensusNode_NoOrbitBaselineSkipsOrbitComparison(t *testing.T) {
+	live := stateWith(testScope, liveConsensusNodeState())
+	live.ConsensusOrbits = nil
+	for k, ns := range live.ConsensusNodes {
+		ns.ObservedShape.ProvisionerDaemonEnabled = false
+		live.ConsensusNodes[k] = ns
+	}
+
+	assert.Empty(t, ConsensusNode(stateWith(testScope, baselineConsensusNodeState()), live))
 }

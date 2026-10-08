@@ -126,3 +126,41 @@ func TestReadLiveConsensusShape(t *testing.T) {
 		assert.False(t, ok)
 	})
 }
+
+func TestReadProvisionerDaemonEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    map[string]interface{}
+		found   bool
+		wantSet bool
+		want    bool
+	}{
+		{"true", map[string]interface{}{"provisionerDaemonEnabled": true}, true, true, true},
+		{"explicit false", map[string]interface{}{"provisionerDaemonEnabled": false}, true, true, false},
+		{"omitted key on a readable Orbit means false", map[string]interface{}{"other": 1}, true, true, false},
+		{"non-bool value is not trusted", map[string]interface{}{"provisionerDaemonEnabled": "yes"}, true, false, false},
+		{"orbit spec not found", nil, false, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kc := orbitSpecKubeClient{spec: tc.spec, found: tc.found}
+			var live liveConsensusShape
+			readProvisionerDaemonEnabled(context.Background(), kc, "v1", "orbit", &live)
+			assert.Equal(t, tc.wantSet, live.ProvisionerDaemonEnabledSet)
+			assert.Equal(t, tc.want, live.ProvisionerDaemonEnabled)
+		})
+	}
+}
+
+// orbitSpecKubeClient serves only an Orbit's spec map.
+type orbitSpecKubeClient struct {
+	ConsensusKubeClient
+	spec  map[string]interface{}
+	found bool
+}
+
+func (c orbitSpecKubeClient) GetResourceNestedMap(
+	context.Context, string, string, string, string, ...string,
+) (map[string]interface{}, bool, error) {
+	return c.spec, c.found, nil
+}
