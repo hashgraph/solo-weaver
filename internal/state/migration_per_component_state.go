@@ -9,9 +9,10 @@
 // still assume and rewrite the single-file legacy shape — see
 // cmd/cli/commands/root.go RegisterMigrations.
 //
-// Execute never deletes state.yaml: once every component file is written, the
-// legacy file is renamed to state.yaml.pre-v1231, a safety net Rollback reads
-// back from and an operator can delete once satisfied the split is correct.
+// Once every component file is written, Execute renames the legacy file to
+// state.yaml.legacy, a safety net Rollback reads back from and an operator can
+// delete once satisfied the split is correct. It only deletes state.yaml if
+// that rename fails — see Execute.
 
 package state
 
@@ -27,7 +28,7 @@ import (
 )
 
 // legacyStateBackupSuffix names the renamed legacy file Execute leaves behind.
-const legacyStateBackupSuffix = ".pre-v1231"
+const legacyStateBackupSuffix = ".legacy"
 
 // PerComponentStateMigration splits a legacy single state.yaml into one file
 // per component.
@@ -43,7 +44,7 @@ func NewPerComponentStateMigration() *PerComponentStateMigration {
 	return &PerComponentStateMigration{}
 }
 
-func (m *PerComponentStateMigration) ID() string { return "per-component-state-v1231" }
+func (m *PerComponentStateMigration) ID() string { return "per-component-state-v1" }
 func (m *PerComponentStateMigration) Description() string {
 	return "Split the single state.yaml into one file per component (machine, cluster, blocknode, consensus, teleport)"
 }

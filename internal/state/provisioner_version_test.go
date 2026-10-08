@@ -156,8 +156,8 @@ func TestReadProvisionerVersion_FallsBackToLegacyStateFile(t *testing.T) {
 }
 
 // TestReadProvisionerVersion_PrefersMachineFileOverLegacy: once the split has
-// happened, machine.yaml is authoritative even if a stale state.yaml.pre-v1231-
-// shaped leftover is still sitting around under the legacy name.
+// happened, machine.yaml is authoritative even if a stale state.yaml is still
+// sitting around.
 func TestReadProvisionerVersion_PrefersMachineFileOverLegacy(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
