@@ -59,9 +59,12 @@ func newTestFileManager(t *testing.T) fsx.Manager {
 	return fm
 }
 
-// TestFlushWritesFile checks that FlushState writes the YAML representation to disk.
+// TestFlushWritesFile checks that FlushState writes each component's YAML
+// representation to its own file, keyed by the shared Version field (which
+// lives in the machine component's file).
 func TestFlushWritesFile(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
 
 	s := newTestState(tmp)
 	s.Version = "v1-test-flush"
@@ -78,9 +81,9 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("FlushState returned error: %v", err)
 	}
 
-	data, err := os.ReadFile(tmp)
+	data, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
 	if err != nil {
-		t.Fatalf("failed to read persisted file: %v", err)
+		t.Fatalf("failed to read persisted machine state file: %v", err)
 	}
 
 	var loaded State
@@ -93,27 +96,29 @@ func TestFlushWritesFile(t *testing.T) {
 	}
 }
 
-// TestRefreshLoadsFile checks that Refresh loads an on-disk state into the manager.
+// TestRefreshLoadsFile checks that Refresh loads each component's on-disk file
+// into the manager, keyed by the shared Version field.
 func TestRefreshLoadsFile(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
 
-	// create a state on disk
+	// Seed a state on disk through a real flush, the way production writes it.
 	onDisk := newTestState(tmp)
 	onDisk.Version = "v2-test-refresh"
-
-	b, err := yaml.Marshal(onDisk)
+	fm := newTestFileManager(t)
+	seedMgr, err := NewStateManager(WithState(onDisk), WithFileManager(fm))
 	if err != nil {
-		t.Fatalf("failed to marshal on-disk state: %v", err)
+		t.Fatalf("NewStateManager for seed returned error: %v", err)
 	}
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		t.Fatalf("failed to write on-disk state file: %v", err)
+	if err := seedMgr.FlushState(); err != nil {
+		t.Fatalf("failed to seed on-disk state: %v", err)
 	}
 
-	// Create a manager with a different in-memory state, pointing to the same file.
+	// Create a manager with a different in-memory state, pointing to the same directory.
 	mem := newTestState(tmp)
 	mem.Version = "before-refresh"
 
-	m, err := NewStateManager(WithState(mem), WithFileManager(newTestFileManager(t)))
+	m, err := NewStateManager(WithState(mem), WithFileManager(fm))
 	if err != nil {
 		t.Fatalf("NewStateManager returned error: %v", err)
 	}
@@ -132,23 +137,24 @@ func TestRefreshLoadsFile(t *testing.T) {
 // Callers are expected to call Refresh() explicitly when they want to load persisted state.
 func TestNewStateManager_DoesNotAutoRefresh(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	fm := newTestFileManager(t)
 
-	// Write a state file with a recognisable version to disk.
+	// Seed an on-disk state with a recognisable version through a real flush.
 	onDisk := newTestState(tmp)
 	onDisk.Version = "on-disk-version"
-	b, err := yaml.Marshal(onDisk)
+	seedMgr, err := NewStateManager(WithState(onDisk), WithFileManager(fm))
 	if err != nil {
-		t.Fatalf("failed to marshal on-disk state: %v", err)
+		t.Fatalf("NewStateManager for seed returned error: %v", err)
 	}
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		t.Fatalf("failed to write on-disk state file: %v", err)
+	if err := seedMgr.FlushState(); err != nil {
+		t.Fatalf("failed to seed on-disk state: %v", err)
 	}
 
-	// Construct a manager with a different in-memory version and the same file path.
+	// Construct a manager with a different in-memory version and the same directory.
 	mem := newTestState(tmp)
 	mem.Version = "in-memory-version"
 
-	m, err := NewStateManager(WithState(mem), WithFileManager(newTestFileManager(t)))
+	m, err := NewStateManager(WithState(mem), WithFileManager(fm))
 	if err != nil {
 		t.Fatalf("NewStateManager returned error: %v", err)
 	}
@@ -159,12 +165,14 @@ func TestNewStateManager_DoesNotAutoRefresh(t *testing.T) {
 	}
 }
 
-// TestHasPersistedState verifies HasPersistedState reports the presence of the state file.
+// TestHasPersistedState verifies HasPersistedState reports the presence of
+// any component's file.
 func TestHasPersistedState(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "state.yaml")
 
-	// write a file
-	if err := os.WriteFile(tmp, []byte("dummy"), 0o644); err != nil {
+	// write a component file directly
+	if err := os.WriteFile(componentFilePath(dir, ComponentMachine), []byte("dummy"), 0o644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -391,4 +399,44 @@ func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
 	if m.State().LastAction.Timestamp.IsZero() {
 		t.Error("LastAction.Timestamp is zero after AddActionHistory")
 	}
+}
+
+// TestFlushState_HandEditWithStaleHashFieldIsDetected verifies the optimistic-
+// concurrency check recomputes the on-disk hash from content rather than
+// trusting the file's own stored hash field. A hand edit naturally leaves
+// that field untouched (nobody manually recomputes a sha256), so trusting it
+// would make the edit compare equal to the stale baseline and get silently
+// overwritten — exactly what this check exists to catch.
+func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
+	dir := t.TempDir()
+	stateFile := filepath.Join(dir, "state.yaml")
+	fm := newTestFileManager(t)
+
+	s := newTestState(stateFile)
+	s.MachineState.Profile = "before"
+	m, err := NewStateManager(WithState(s), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, m.Refresh())
+	require.NoError(t, m.FlushState())
+
+	// Simulate a hand edit: change the content but leave the stored hash field
+	// exactly as it was written.
+	machineFile := componentFilePath(dir, ComponentMachine)
+	raw, err := os.ReadFile(machineFile)
+	require.NoError(t, err)
+	edited := bytes.Replace(raw, []byte("profile: before"), []byte("profile: hand-edited"), 1)
+	require.NotEqual(t, string(raw), string(edited), "precondition: the replacement must have matched something")
+	require.NoError(t, os.WriteFile(machineFile, edited, 0o644))
+
+	changed := m.State()
+	changed.MachineState.Profile = "after"
+	err = m.Set(changed).FlushState()
+	require.Error(t, err, "a hand edit with an untouched hash field must still be detected")
+	require.Contains(t, err.Error(), "changed externally on disk")
+
+	reread, err := NewStateManager(WithState(newTestState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, reread.Refresh())
+	require.Equal(t, "hand-edited", reread.State().MachineState.Profile,
+		"the hand edit must survive — it must not be silently overwritten")
 }

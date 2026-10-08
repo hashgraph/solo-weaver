@@ -21,10 +21,10 @@ var persistProvisionerVersion = state.PersistProvisionerVersion
 // instead of unconditionally reporting success.
 const metaVersionPersisted = "version_persisted"
 
-// RecordProvisionerVersion persists the running CLI version to state.yaml at the
+// RecordProvisionerVersion persists the running CLI version to machine.yaml at the
 // end of cluster install. `kube cluster install` does not flush state via the
 // BaseHandler path (unlike `block node install`), so without this a fresh cluster
-// has no state.yaml and the next invocation synthesises the 0.0.0 baseline and
+// has no machine.yaml and the next invocation synthesises the 0.0.0 baseline and
 // re-runs historical migrations.
 func RecordProvisionerVersion() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId("record-provisioner-version").

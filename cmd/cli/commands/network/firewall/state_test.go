@@ -40,10 +40,11 @@ func (f *fakeStateManager) FlushState() error {
 	f.flushed = &snapshot
 	return nil
 }
-func (f *fakeStateManager) FlushActionHistory() error { return nil }
-func (f *fakeStateManager) FlushAll() error           { return f.FlushState() }
-func (f *fakeStateManager) Refresh() error            { return f.refresh }
-func (f *fakeStateManager) FileManager() fsx.Manager  { return nil }
+func (f *fakeStateManager) FlushScoped(...state.ComponentID) error { return f.FlushState() }
+func (f *fakeStateManager) FlushActionHistory() error              { return nil }
+func (f *fakeStateManager) FlushAll() error                        { return f.FlushState() }
+func (f *fakeStateManager) Refresh() error                         { return f.refresh }
+func (f *fakeStateManager) FileManager() fsx.Manager               { return nil }
 
 // stubStateManager points the package's state seam at an in-memory manager and
 // returns it, so a test can assert on what a verb flushed.

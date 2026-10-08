@@ -4,6 +4,7 @@ package rsl
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/automa-saga/logx"
@@ -230,8 +231,29 @@ func (r *RuntimeResolver) AddActionHistory(entry state.ActionHistory) state.Writ
 
 func (r *RuntimeResolver) FlushAll(currentState state.State) error {
 	if err := r.sm.Set(currentState).FlushAll(); err != nil {
-		return errorx.IllegalState.New("failed to flush state to disk: %v", err)
+		return errorx.IllegalState.Wrap(err, "failed to flush state to disk")
 	}
 
 	return nil
+}
+
+// FlushScoped persists only the listed components' state, then flushes the
+// pending action history — the scoped equivalent of FlushAll.
+func (r *RuntimeResolver) FlushScoped(currentState state.State, ids ...state.ComponentID) error {
+	w := r.sm.Set(currentState)
+	if err := w.FlushScoped(ids...); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush scoped state to disk")
+	}
+	if err := w.FlushActionHistory(); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to flush action history")
+	}
+
+	return nil
+}
+
+// StateDir returns the directory holding every component's persisted file, for
+// callers (BaseHandler) that need to acquire per-component locks before a
+// command runs.
+func (r *RuntimeResolver) StateDir() string {
+	return filepath.Dir(r.sm.State().StateFile)
 }
