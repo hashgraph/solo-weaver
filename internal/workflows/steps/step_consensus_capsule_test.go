@@ -624,3 +624,39 @@ func TestSplitConsensusImage(t *testing.T) {
 	assert.Equal(t, "", repo)
 	assert.Equal(t, "consensus-node", name)
 }
+
+// --- EnsureOrbit provisioner-daemon guard ---
+
+func TestEnsureOrbit_ExistingOrbitModeMismatchFails(t *testing.T) {
+	tests := []struct {
+		name      string
+		liveSpec  map[string]interface{}
+		requested bool
+		wantFail  bool
+	}{
+		{"live true, requested false", map[string]interface{}{"provisionerDaemonEnabled": true}, false, true},
+		{"live absent (false), requested true", map[string]interface{}{}, true, true},
+		{"live true, requested true", map[string]interface{}{"provisionerDaemonEnabled": true}, true, false},
+		{"live absent (false), requested false", map[string]interface{}{}, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeCapsuleClient{
+				existing: map[string]string{"orbit": "deployed"},
+				nested:   map[string]map[string]interface{}{"orbit": tc.liveSpec},
+			}
+			in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", ProvisionerDaemonEnabled: tc.requested}
+
+			step, err := EnsureOrbit(in, fake.provider()).Build()
+			require.NoError(t, err)
+			rpt := step.Execute(context.Background())
+			if tc.wantFail {
+				assert.Equal(t, automa.StatusFailed, rpt.Status)
+				assert.Contains(t, rpt.Error.Error(), "same mode")
+			} else {
+				assert.Equal(t, automa.StatusSuccess, rpt.Status)
+			}
+			assert.Empty(t, fake.applied, "an existing Orbit must never be re-applied")
+		})
+	}
+}

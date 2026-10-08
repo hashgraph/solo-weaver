@@ -60,14 +60,15 @@ type State struct {
 // intentionally excluded from hashing because they are bookkeeping metadata,
 // not provisioning state.
 type StateRecord struct {
-	Version          string                        `yaml:"version" json:"version"`
-	ProvisionerState ProvisionerInfo               `yaml:"provisioner" json:"provisioner"`
-	MachineState     MachineState                  `yaml:"machineState" json:"machineState"`
-	ClusterState     ClusterState                  `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState   BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
-	ConsensusNodes   map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
-	TeleportState    TeleportState                 `yaml:"teleportState" json:"teleportState"`
-	LastAction       ActionHistory                 `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
+	Version          string                         `yaml:"version" json:"version"`
+	ProvisionerState ProvisionerInfo                `yaml:"provisioner" json:"provisioner"`
+	MachineState     MachineState                   `yaml:"machineState" json:"machineState"`
+	ClusterState     ClusterState                   `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState   BlockNodeState                 `yaml:"blockNodeState" json:"blockNodeState"`
+	ConsensusNodes   map[string]ConsensusNodeState  `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
+	ConsensusOrbits  map[string]ConsensusOrbitState `yaml:"consensusOrbits,omitempty" json:"consensusOrbits,omitempty"`
+	TeleportState    TeleportState                  `yaml:"teleportState" json:"teleportState"`
+	LastAction       ActionHistory                  `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
 }
 
 // Hashable returns a deep copy of the domain StateRecord with all reconciliation
@@ -294,6 +295,10 @@ type ConsensusNodeObservedShape struct {
 	UCImageRepo   string
 	UCImageTag    string
 
+	// ProvisionerDaemonEnabled is the flag on the node's Orbit (an Orbit-level
+	// fact read via the node's OrbitName). The drift producer compares it once per
+	// Orbit against ConsensusOrbitState, not per node. Set = the Orbit was read;
+	// an absent spec key then means false.
 	ProvisionerDaemonEnabled    bool
 	ProvisionerDaemonEnabledSet bool
 
@@ -315,6 +320,16 @@ type HostPathOwner struct {
 	GID int
 }
 
+// ConsensusOrbitState is the managed shape of an Orbit, keyed by Orbit name in
+// StateRecord.ConsensusOrbits. An Orbit is shared by every consensus node that
+// names it and is created once (by the first install), so facts that belong to
+// the Orbit live here rather than on each node's ManagedSpec. It is the baseline
+// for Orbit-level drift detection; later installs verify against it and never
+// overwrite it.
+type ConsensusOrbitState struct {
+	ProvisionerDaemonEnabled bool `yaml:"provisionerDaemonEnabled" json:"provisionerDaemonEnabled"`
+}
+
 // ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver
 // deliberately sets at install time, beyond the node's identity. It is the desired
 // (managed) shape — the `.spec` half of the Kubernetes spec/status split — as
@@ -322,21 +337,20 @@ type HostPathOwner struct {
 // lets a later re-apply, drift check, DR reinstall, or migration adopt resolve
 // the node's intended shape rather than resetting unset fields to defaults.
 type ConsensusNodeManagedSpec struct {
-	ProvisionerDaemonEnabled bool                         `yaml:"provisionerDaemonEnabled,omitempty" json:"provisionerDaemonEnabled,omitempty"`
-	ContainerName            string                       `yaml:"containerName,omitempty" json:"containerName,omitempty"`
-	CPULimit                 string                       `yaml:"cpuLimit,omitempty" json:"cpuLimit,omitempty"`
-	CPURequest               string                       `yaml:"cpuRequest,omitempty" json:"cpuRequest,omitempty"`
-	MemoryLimit              string                       `yaml:"memoryLimit,omitempty" json:"memoryLimit,omitempty"`
-	MemoryRequest            string                       `yaml:"memoryRequest,omitempty" json:"memoryRequest,omitempty"`
-	JavaHeapMin              string                       `yaml:"javaHeapMin,omitempty" json:"javaHeapMin,omitempty"`
-	JavaHeapMax              string                       `yaml:"javaHeapMax,omitempty" json:"javaHeapMax,omitempty"`
-	JavaOpts                 string                       `yaml:"javaOpts,omitempty" json:"javaOpts,omitempty"`
-	UCImageRepo              string                       `yaml:"ucImageRepo,omitempty" json:"ucImageRepo,omitempty"`
-	UCImageTag               string                       `yaml:"ucImageTag,omitempty" json:"ucImageTag,omitempty"`
-	ImagePullSecrets         models.PullSecretSelector    `yaml:"imagePullSecrets,omitempty" json:"imagePullSecrets,omitempty"`
-	Volumes                  models.ConsensusVolumeConfig `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	HostPathUID              int                          `yaml:"hostPathUid,omitempty" json:"hostPathUid,omitempty"`
-	HostPathGID              int                          `yaml:"hostPathGid,omitempty" json:"hostPathGid,omitempty"`
+	ContainerName    string                       `yaml:"containerName,omitempty" json:"containerName,omitempty"`
+	CPULimit         string                       `yaml:"cpuLimit,omitempty" json:"cpuLimit,omitempty"`
+	CPURequest       string                       `yaml:"cpuRequest,omitempty" json:"cpuRequest,omitempty"`
+	MemoryLimit      string                       `yaml:"memoryLimit,omitempty" json:"memoryLimit,omitempty"`
+	MemoryRequest    string                       `yaml:"memoryRequest,omitempty" json:"memoryRequest,omitempty"`
+	JavaHeapMin      string                       `yaml:"javaHeapMin,omitempty" json:"javaHeapMin,omitempty"`
+	JavaHeapMax      string                       `yaml:"javaHeapMax,omitempty" json:"javaHeapMax,omitempty"`
+	JavaOpts         string                       `yaml:"javaOpts,omitempty" json:"javaOpts,omitempty"`
+	UCImageRepo      string                       `yaml:"ucImageRepo,omitempty" json:"ucImageRepo,omitempty"`
+	UCImageTag       string                       `yaml:"ucImageTag,omitempty" json:"ucImageTag,omitempty"`
+	ImagePullSecrets models.PullSecretSelector    `yaml:"imagePullSecrets,omitempty" json:"imagePullSecrets,omitempty"`
+	Volumes          models.ConsensusVolumeConfig `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	HostPathUID      int                          `yaml:"hostPathUid,omitempty" json:"hostPathUid,omitempty"`
+	HostPathGID      int                          `yaml:"hostPathGid,omitempty" json:"hostPathGid,omitempty"`
 }
 
 // Hash returns a stable SHA-256 fingerprint of the managed shape. Returns "" for

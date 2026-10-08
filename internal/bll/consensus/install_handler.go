@@ -313,6 +313,17 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			LastSync:      now,
 		}
 
+		// The Orbit is shared; record its baseline once. EnsureOrbit has already
+		// verified the live Orbit agrees with this install, so never overwrite it.
+		if full.ConsensusOrbits == nil {
+			full.ConsensusOrbits = make(map[string]state.ConsensusOrbitState)
+		}
+		if _, ok := full.ConsensusOrbits[ins.OrbitName]; !ok {
+			full.ConsensusOrbits[ins.OrbitName] = state.ConsensusOrbitState{
+				ProvisionerDaemonEnabled: ins.ProvisionerDaemonEnabled,
+			}
+		}
+
 		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")
 		return nil
 	}
@@ -337,21 +348,20 @@ func buildConsensusNodeManagedSpec(ins models.ConsensusNodeInputs) *state.Consen
 	}
 
 	return &state.ConsensusNodeManagedSpec{
-		ProvisionerDaemonEnabled: ins.ProvisionerDaemonEnabled,
-		ContainerName:            valueOrDefaultStr(ins.ContainerName, models.ConsensusDefaultContainerName),
-		CPULimit:                 valueOrDefaultStr(ins.CPULimit, models.ConsensusDefaultCPULimit),
-		CPURequest:               valueOrDefaultStr(ins.CPURequest, models.ConsensusDefaultCPURequest),
-		MemoryLimit:              valueOrDefaultStr(ins.MemoryLimit, models.ConsensusDefaultMemoryLimit),
-		MemoryRequest:            valueOrDefaultStr(ins.MemoryRequest, models.ConsensusDefaultMemoryRequest),
-		JavaHeapMin:              valueOrDefaultStr(ins.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
-		JavaHeapMax:              valueOrDefaultStr(ins.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
-		JavaOpts:                 valueOrDefaultStr(ins.JavaOpts, models.ConsensusDefaultJavaOpts),
-		UCImageRepo:              valueOrDefaultStr(ins.UCImageRepo, models.ConsensusDefaultUCImageRepo),
-		UCImageTag:               valueOrDefaultStr(ins.UCImageTag, models.ConsensusDefaultUCImageTag),
-		ImagePullSecrets:         ins.ImagePullSecrets,
-		Volumes:                  volumes,
-		HostPathUID:              ins.HostPathUID,
-		HostPathGID:              ins.HostPathGID,
+		ContainerName:    valueOrDefaultStr(ins.ContainerName, models.ConsensusDefaultContainerName),
+		CPULimit:         valueOrDefaultStr(ins.CPULimit, models.ConsensusDefaultCPULimit),
+		CPURequest:       valueOrDefaultStr(ins.CPURequest, models.ConsensusDefaultCPURequest),
+		MemoryLimit:      valueOrDefaultStr(ins.MemoryLimit, models.ConsensusDefaultMemoryLimit),
+		MemoryRequest:    valueOrDefaultStr(ins.MemoryRequest, models.ConsensusDefaultMemoryRequest),
+		JavaHeapMin:      valueOrDefaultStr(ins.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
+		JavaHeapMax:      valueOrDefaultStr(ins.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
+		JavaOpts:         valueOrDefaultStr(ins.JavaOpts, models.ConsensusDefaultJavaOpts),
+		UCImageRepo:      valueOrDefaultStr(ins.UCImageRepo, models.ConsensusDefaultUCImageRepo),
+		UCImageTag:       valueOrDefaultStr(ins.UCImageTag, models.ConsensusDefaultUCImageTag),
+		ImagePullSecrets: ins.ImagePullSecrets,
+		Volumes:          volumes,
+		HostPathUID:      ins.HostPathUID,
+		HostPathGID:      ins.HostPathGID,
 	}
 }
 
