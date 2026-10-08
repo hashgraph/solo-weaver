@@ -364,3 +364,24 @@ func TestHandleIntent_DisjointHandlersDoNotBlockEachOther(t *testing.T) {
 	close(release)
 	wg.Wait()
 }
+
+// TestFlushComponentIDs_DedupesExplicitMachineRegistration covers a handler
+// that lists state.ComponentMachine in Managed explicitly (redundant with the
+// machine component flushComponentIDs always adds) — flushComponentIDs must
+// still return it once, not twice, so FlushScoped doesn't prepare and write
+// machine.yaml twice in the same call.
+func TestFlushComponentIDs_DedupesExplicitMachineRegistration(t *testing.T) {
+	h := BaseHandler[struct{}]{
+		Managed: []Component{{id: state.ComponentMachine}, Teleport},
+	}
+
+	ids := h.flushComponentIDs()
+
+	count := 0
+	for _, id := range ids {
+		if id == state.ComponentMachine {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "expected ComponentMachine exactly once, got %v", ids)
+}

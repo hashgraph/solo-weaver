@@ -35,7 +35,7 @@ const lockPollInterval = 100 * time.Millisecond
 // because they protect against different things, not because one is a
 // fallback for the other.
 func AcquireComponentLocks(dir string, ids []ComponentID, wait time.Duration) (release func(), err error) {
-	ordered := dedupeComponentIDs(ids)
+	ordered := DedupeComponentIDs(ids)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
 
 	var held []func()
@@ -54,25 +54,6 @@ func AcquireComponentLocks(dir string, ids []ComponentID, wait time.Duration) (r
 		held = append(held, unlock)
 	}
 	return release, nil
-}
-
-// dedupeComponentIDs returns ids with duplicates removed, preserving the
-// first occurrence's order. A caller that accidentally lists the same
-// component twice would otherwise try to flock it twice in the same call —
-// two separate open file descriptions on the same file conflict with each
-// other even within one process, so the second attempt would see its own
-// first lock as already held and fail or hang on itself.
-func dedupeComponentIDs(ids []ComponentID) []ComponentID {
-	seen := make(map[ComponentID]struct{}, len(ids))
-	deduped := make([]ComponentID, 0, len(ids))
-	for _, id := range ids {
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		deduped = append(deduped, id)
-	}
-	return deduped
 }
 
 func lockFilePath(dir string, id ComponentID) string {
