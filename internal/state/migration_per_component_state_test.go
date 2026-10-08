@@ -98,7 +98,7 @@ func TestPerComponentStateMigration_ExecuteSplitsAllComponentsAndBacksUpLegacy(t
 	_, err := os.Stat(legacyPath)
 	require.True(t, os.IsNotExist(err), "legacy state.yaml should be renamed out of the way")
 	_, err = os.Stat(legacyPath + legacyStateBackupSuffix)
-	require.NoError(t, err, "legacy state.yaml should survive as a .pre-v1231 backup")
+	require.NoError(t, err, "legacy state.yaml should survive as a .legacy backup")
 
 	// The split content round-trips: read it back through a real manager and
 	// confirm the owning sections landed in the right files.
@@ -151,7 +151,7 @@ func TestPerComponentStateMigration_FreshInstallNeverApplies(t *testing.T) {
 }
 
 // TestPerComponentStateMigration_RollbackRestoresTheExactBackup verifies
-// Rollback restores Execute's .pre-v1231 backup verbatim rather than
+// Rollback restores Execute's .legacy backup verbatim rather than
 // recomposing from the current component files — in particular it must not
 // stamp provisioner.version with whatever binary happens to be running
 // Rollback, and it must not pick up changes made to a component file after
@@ -197,7 +197,7 @@ func TestPerComponentStateMigration_RollbackRestoresTheExactBackup(t *testing.T)
 }
 
 // TestPerComponentStateMigration_RollbackWithoutABackupRecomposesCurrentFiles
-// covers the fallback path: no .pre-v1231 backup exists (Execute's rename
+// covers the fallback path: no .legacy backup exists (Execute's rename
 // failed and fell back to removing the legacy file, or there simply never was
 // one), so Rollback does the best it can from whatever the component files
 // currently hold.
