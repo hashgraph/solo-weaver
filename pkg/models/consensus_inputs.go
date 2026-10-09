@@ -170,6 +170,26 @@ type ImageSource struct {
 	LayerHashes  map[string][]string  `json:"layerHashes"`
 }
 
+// VersionTag returns the shared image tag of the source's candidate registries,
+// or "" when the source is nil, empty, or its candidates disagree. A
+// deterministic manifest publishes one version across every registry, so a
+// single tag identifies the source's version. Callers use it to check that the
+// source's version matches the effective (arbitrated) SoftwareVersion tag before
+// emitting the source, since the operator prefers the source over
+// SoftwareVersion and a mismatch would silently change the running version.
+func (s *ImageSource) VersionTag() string {
+	if s == nil || len(s.Repositories) == 0 {
+		return ""
+	}
+	tag := s.Repositories[0].ImageTag
+	for _, r := range s.Repositories[1:] {
+		if r.ImageTag != tag {
+			return ""
+		}
+	}
+	return tag
+}
+
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
 // via the solo-operator's ConsensusCapsule CRD.
 type ConsensusNodeInputs struct {
