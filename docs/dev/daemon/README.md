@@ -47,7 +47,7 @@ on daemon self-upgrade, #500). Keep the upgrade package **config-only** for a cl
 
 ## Prerequisites
 
-- **Operator v0.7.0+** (the solo-operator version weaver depends on). The operator
+- **Operator v0.8.0+** (the solo-operator version weaver depends on). The operator
   must let the host daemon own the `PendingInfraUpgrade` / `PendingNodeUpgrade` phase
   transitions and drive the terminal off `DaemonResult`. The `operator` task installs
   it via `kube operator install`.
@@ -76,7 +76,7 @@ on daemon self-upgrade, #500). Keep the upgrade package **config-only** for a cl
   (`node<N>-gossip-keys`) and gRPC TLS secret (`node<N>-grpc-tls-keys`) in the orbit
   namespace, plus a pull secret for private images. The `secrets` task creates these
   from the sample manifests (reuses `uat:secrets`).
-- **A solo-operator checkout at v0.7.0+ on the host** (`SOLO_OPERATOR_DIR`, defaults
+- **A solo-operator checkout at v0.8.0+ on the host** (`SOLO_OPERATOR_DIR`, defaults
   to a sibling of solo-weaver) for `beacon` and the deployment zips — the `prep` task
   git-clones it there if it is missing (needs `GITHUB_USER`/`GITHUB_ACCESS_TOKEN` in
   the root `.env`; check out the ref that carries `beacon`/`test/dev` if the default
@@ -124,7 +124,7 @@ task -d docs/dev/daemon prep            # clone solo-operator (if needed) + buil
 task -d docs/dev/daemon rebuild         # build CLI + daemon on the VM + self-install (uat:rebuild)
 task -d docs/dev/daemon cluster         # ghcr login + kube cluster install + orbit ns + hedera user + upgrade dir
 task -d docs/dev/daemon secrets         # gossip/gRPC + pull secrets (uat:secrets)
-task -d docs/dev/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
+task -d docs/dev/daemon operator        # kube operator install (v0.8.0 operator + CRDs)
 
 # a REAL v0.74.0 consensus network, in DAEMON-DELEGATED mode
 task -d docs/dev/daemon consensus # consensus node install --provisioner-daemon + genesis

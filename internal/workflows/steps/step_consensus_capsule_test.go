@@ -60,6 +60,44 @@ func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {
 	return func(context.Context) (CapsuleKubeClient, error) { return f, nil }
 }
 
+// --- PrecheckConsensusNotInstalled tests ---
+
+func TestPrecheckConsensusNotInstalled_Absent(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "absent capsule must pass without --force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsNoForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusFailed, rpt.Status, "existing capsule without --force must fail")
+	assert.Contains(t, rpt.Error.Error(), "already installed")
+	assert.Contains(t, rpt.Error.Error(), "--force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsWithForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, true, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "existing capsule with --force must pass")
+}
+
+// --- consensusInputsWithConfigs helper ---
+
 // consensusInputsWithConfigs returns inputs whose 11 config bodies are all set
 // to content and whose per-file source is all set to source.
 func consensusInputsWithConfigs(content, source string) models.ConsensusNodeInputs {
@@ -320,13 +358,10 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	capsule := findCapsule(t, fake.appliedObjs)
 	cn := capsule.Spec.PodProperties.Containers.ConsensusNode
 
-	// SoftwareVersion stays populated — it is a required CRD field even when a
-	// source is set (the operator merely prefers the source).
-	require.NotNil(t, cn.SoftwareVersion)
-	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
-	// The single SoftwareVersion resolves its secret by host (gcr.io ⇒ gcr-creds).
-	require.Len(t, cn.SoftwareVersion.ImagePullSecrets, 1)
-	assert.Equal(t, "gcr-creds", cn.SoftwareVersion.ImagePullSecrets[0].Name)
+	// SoftwareVersion is dropped when a source is set — one of the two is enough
+	// per the v0.8.0 contract (hashgraph/solo-operator#1372), and leaving a
+	// synthesized registries[0] duplicate on the CR would be misleading.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion")
 
 	src := cn.SoftwareVersionSource
 	require.NotNil(t, src)
@@ -347,8 +382,9 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	assert.Equal(t, "amd64", src.ImageVerificationSpec[0].Architecture)
 	assert.Equal(t, []string{"sha256:aaa", "sha256:bbb"}, src.ImageVerificationSpec[0].LayerHashes)
 	assert.Equal(t, "arm64", src.ImageVerificationSpec[1].Architecture)
-	// Left unset so the operator uses its --registry-order default.
-	assert.Empty(t, src.SelectionStrategy)
+	// Weaver defaults a multi-registry source to Sequential so the manifest's
+	// primary (registries[0]) is tried first — deterministic failover.
+	assert.Equal(t, "Sequential", src.SelectionStrategy)
 }
 
 func TestCreateConsensusCapsule_NoSource_SingleSoftwareVersion(t *testing.T) {
@@ -409,10 +445,13 @@ func TestCreateConsensusCapsule_PreservesExistingSourceWhenNoManifest(t *testing
 	require.NoError(t, err)
 	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 
-	src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
-	require.NotNil(t, src, "existing source must be preserved so SSA does not drop it")
-	require.Len(t, src.ImageRepositories, 2)
-	assert.Equal(t, "docker.io/hashgraph", src.ImageRepositories[1].Repository)
+	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
+	require.NotNil(t, cn.SoftwareVersionSource, "existing source must be preserved so SSA does not drop it")
+	require.Len(t, cn.SoftwareVersionSource.ImageRepositories, 2)
+	assert.Equal(t, "docker.io/hashgraph", cn.SoftwareVersionSource.ImageRepositories[1].Repository)
+	// Preserve path also drops the synthesized SoftwareVersion, keeping the CR to
+	// exactly one of the two fields.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion on the preserve path too")
 }
 
 func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
@@ -444,6 +483,9 @@ func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
 
 	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
 	assert.Nil(t, cn.SoftwareVersionSource, "an explicit pin must drop the existing source")
+	// With no source, the single SoftwareVersion is the one of the two we emit.
+	require.NotNil(t, cn.SoftwareVersion, "pinned install keeps the single SoftwareVersion")
+	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
 }
 
 func TestBuildSoftwareVersionSource(t *testing.T) {
@@ -525,36 +567,51 @@ func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
 	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
 }
 
-// TestCreateConsensusCapsule_SelectionStrategy verifies --registry-selection-strategy
-// lands on the emitted SoftwareVersionSource (empty leaves it unset, see the
-// multi-registry test above).
+// TestCreateConsensusCapsule_SelectionStrategy verifies the three-way precedence:
+// --registry-selection-strategy flag > manifest selectionStrategy > weaver
+// default (Sequential).
 func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
-	fake := &fakeCapsuleClient{existing: map[string]string{}}
-	in := models.ConsensusNodeInputs{
-		Namespace:                 "hiero-network-1",
-		OrbitName:                 "hiero-network-1",
-		NodeId:                    0,
-		AccountId:                 "0.0.3",
-		Weight:                    500,
-		ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
-		ConsensusImageTag:         "0.74.2",
-		RegistrySelectionStrategy: models.RegistrySelectionSequential,
-		ConsensusImageSource: &models.ImageSource{
-			Repositories: []models.ImageRepositoryRef{
-				{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
-				{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+	mkInputs := func(flag, manifestStrategy string) models.ConsensusNodeInputs {
+		return models.ConsensusNodeInputs{
+			Namespace:                 "hiero-network-1",
+			OrbitName:                 "hiero-network-1",
+			NodeId:                    0,
+			AccountId:                 "0.0.3",
+			Weight:                    500,
+			ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
+			ConsensusImageTag:         "0.74.2",
+			RegistrySelectionStrategy: flag,
+			ConsensusImageSource: &models.ImageSource{
+				Repositories: []models.ImageRepositoryRef{
+					{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+					{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+				},
+				LayerHashes:       map[string][]string{"linux/amd64": {"sha256:aaa"}},
+				SelectionStrategy: manifestStrategy,
 			},
-			LayerHashes: map[string][]string{"linux/amd64": {"sha256:aaa"}},
-		},
+		}
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
-	require.NoError(t, err)
-	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+	run := func(t *testing.T, flag, manifest, want string) {
+		t.Helper()
+		fake := &fakeCapsuleClient{existing: map[string]string{}}
+		step, err := CreateConsensusCapsule(mkInputs(flag, manifest), fake.provider()).Build()
+		require.NoError(t, err)
+		require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+		src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
+		require.NotNil(t, src)
+		assert.Equal(t, want, src.SelectionStrategy)
+	}
 
-	src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
-	require.NotNil(t, src)
-	assert.Equal(t, "Sequential", src.SelectionStrategy)
+	// No flag, no manifest ⇒ weaver default Sequential (deterministic failover).
+	run(t, "", "", "Sequential")
+	// Manifest alone is honoured when no flag is set.
+	run(t, "", "Random", "Random")
+	// Explicit flag beats the manifest.
+	run(t, models.RegistrySelectionRandom, "Sequential", "Random")
+	run(t, models.RegistrySelectionSequential, "Random", "Sequential")
+	// Explicit flag with no manifest.
+	run(t, models.RegistrySelectionSequential, "", "Sequential")
 }
 
 func TestSplitConsensusImage(t *testing.T) {

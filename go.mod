@@ -19,7 +19,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
-	github.com/hashgraph/solo-operator v0.7.3
+	github.com/hashgraph/solo-operator v0.8.0
 	github.com/joomcode/errorx v1.2.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
 	github.com/muesli/termenv v0.16.0

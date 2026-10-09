@@ -122,8 +122,8 @@ func ParsePullSecretSelector(values []string) (PullSecretSelector, error) {
 }
 
 // Registry selection strategies for a multi-registry SoftwareVersionSource. These
-// match the operator's SelectionStrategy enum. Empty means the operator's
-// --registry-order default.
+// match the operator's SelectionStrategy enum. Weaver defaults to Sequential when
+// emitting a source so the manifest's primary registry is tried first.
 const (
 	RegistrySelectionRandom     = "Random"
 	RegistrySelectionSequential = "Sequential"
@@ -131,7 +131,8 @@ const (
 
 // NormalizeRegistrySelectionStrategy validates and canonicalizes the
 // --registry-selection-strategy value. It accepts any case, returns the exact
-// enum the operator expects, and treats empty as "use the operator default".
+// enum the operator expects, and treats empty as "use the weaver default"
+// (applied by the capsule step when emitting a source).
 func NormalizeRegistrySelectionStrategy(s string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "":
@@ -164,10 +165,13 @@ func RegistryHost(image string) string {
 // manifest, mapped onto the operator's SoftwareVersionSource. LayerHashes is the
 // per-platform ("linux/amd64") shared set every candidate must match; only
 // deterministic images (shared hashes across registries) are representable, so a
-// nil ImageSource means "keep the single SoftwareVersion".
+// nil ImageSource means "keep the single SoftwareVersion". SelectionStrategy
+// mirrors the manifest's preference (Random/Sequential, or "" for none); the
+// capsule step applies it when no CLI override is given.
 type ImageSource struct {
-	Repositories []ImageRepositoryRef `json:"repositories"`
-	LayerHashes  map[string][]string  `json:"layerHashes"`
+	Repositories      []ImageRepositoryRef `json:"repositories"`
+	LayerHashes       map[string][]string  `json:"layerHashes"`
+	SelectionStrategy string               `json:"selectionStrategy,omitempty"`
 }
 
 // VersionTag returns the shared image tag of the source's candidate registries,
@@ -235,7 +239,7 @@ type ConsensusNodeInputs struct {
 
 	// RegistrySelectionStrategy sets SoftwareVersionSource.SelectionStrategy
 	// (Random or Sequential) when a multi-registry source is emitted. Empty uses the
-	// operator's --registry-order default.
+	// weaver default (Sequential — manifest primary first).
 	RegistrySelectionStrategy string `json:"registrySelectionStrategy,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`

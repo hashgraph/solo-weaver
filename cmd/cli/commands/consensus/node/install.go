@@ -113,7 +113,7 @@ var installCmd = &cobra.Command{
 		registryStrategy, rserr := models.NormalizeRegistrySelectionStrategy(flagRegistryStrategy)
 		if rserr != nil {
 			return errx.Decorate(rserr, reasons.InvalidArgument,
-				"Pass --registry-selection-strategy Random or Sequential (or omit it to use the operator default)")
+				"Pass --registry-selection-strategy Random or Sequential (or omit it to use the weaver default, Sequential)")
 		}
 
 		volCfg, verr := resolveVolumeConfig()
