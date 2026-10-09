@@ -76,9 +76,21 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	// the image via --image-repo/--image-tag (which would contradict a candidate
 	// list). Reality/State are not a suppression signal — keying on them would flip
 	// the CR between source and single on re-runs.
+	//
+	// Only attach it when the manifest version agrees with the effective
+	// (arbitrated) image tag. The single SoftwareVersion tag arbitrates with
+	// Reality winning (StrategyReality > StrategyConfig), so a plain re-install of
+	// an already-running node resolves ConsensusImageTag to the live version and
+	// must not upgrade. The manifest source is unarbitrated and still carries the
+	// package version; since the operator prefers SoftwareVersionSource over
+	// SoftwareVersion, emitting a newer-versioned source here would silently
+	// upgrade the node. Leaving it nil lets the capsule step preserve the live
+	// source, which is consistent with the effective version.
 	custom.ImagePinned = inputs.Custom.ConsensusImageRepo != "" || inputs.Custom.ConsensusImageTag != ""
 	if !custom.ImagePinned {
-		custom.ConsensusImageSource = h.runtime.ConsensusImageSource()
+		if src := h.runtime.ConsensusImageSource(); src.VersionTag() == custom.ConsensusImageTag {
+			custom.ConsensusImageSource = src
+		}
 	}
 
 	// Resolve the config-file contents (deployment package over embedded default).
