@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,7 @@ const (
 type CapsuleKubeClient interface {
 	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
+	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
@@ -429,11 +431,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
-									// Set on every container's SoftwareVersion; the operator merges
-									// ImagePullSecrets across containers onto the pod and the node's
-									// ServiceAccount (dedup by name), so listing the same secret on
-									// consensus-node and UC is harmless.
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									// This secret is chosen by the image's host. The operator copies
+									// these onto the pod and its service account and drops duplicates,
+									// so sharing a name with the UC image is fine.
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(inputs.ConsensusImageRepo))),
 								},
 								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
 								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
@@ -452,13 +453,36 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository:       ucRepository,
 									ImageName:        ucImageName,
 									ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(ucRepository))),
 								},
 							},
 						},
 					},
 				},
 			}
+
+			// Add a SoftwareVersionSource alongside the required SoftwareVersion when the
+			// manifest declares a multi-registry source; the operator prefers it. When
+			// this run carries no manifest source and the user did not pin the image,
+			// preserve any source already on the live CR — ApplyTyped is server-side
+			// apply, so omitting the field would otherwise silently drop it.
+			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
+			if src == nil && !inputs.ImagePinned {
+				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read existing ConsensusCapsule %s", capsuleName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity, or re-run with --deployment-package-dir so the image source is resolved from the manifest")))
+				}
+				src = existing
+			}
+			// An explicit --registry-selection-strategy overrides the operator's
+			// --registry-order default on whichever source we set.
+			if src != nil && inputs.RegistrySelectionStrategy != "" {
+				src.SelectionStrategy = inputs.RegistrySelectionStrategy
+			}
+			capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
 
 			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
 			if err := applyConsensusVolumes(capsule, inputs); err != nil {
@@ -593,6 +617,70 @@ func splitConsensusImage(full string) (repository, imageName string) {
 		return full[:i], full[i+1:]
 	}
 	return "", full
+}
+
+// buildSoftwareVersionSource turns an ImageSource into the operator's
+// SoftwareVersionSource. Each registry gets its own pull secret, picked by host,
+// and one verification entry per platform (sorted, so the output is stable).
+// Returns nil when there is nothing to build. SelectionStrategy is left empty so
+// the operator uses its own --registry-order default.
+func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.PullSecretSelector) *operatorv1alpha1.SoftwareVersionSource {
+	if src == nil || len(src.Repositories) == 0 || len(src.LayerHashes) == 0 {
+		return nil
+	}
+
+	repos := make([]operatorv1alpha1.ImageRepository, 0, len(src.Repositories))
+	for _, r := range src.Repositories {
+		repos = append(repos, operatorv1alpha1.ImageRepository{
+			Repository:       r.Repository,
+			ImageName:        r.ImageName,
+			ImageTag:         r.ImageTag,
+			ImagePullSecrets: consensusImagePullSecrets(pullSecrets.SecretForHost(models.RegistryHost(r.Repository))),
+		})
+	}
+
+	platforms := make([]string, 0, len(src.LayerHashes))
+	for p := range src.LayerHashes {
+		platforms = append(platforms, p)
+	}
+	sort.Strings(platforms)
+
+	specs := make([]operatorv1alpha1.ImageVerificationSpec, 0, len(platforms))
+	for _, p := range platforms {
+		osName, arch, ok := strings.Cut(p, "/")
+		if !ok || osName == "" || arch == "" || len(src.LayerHashes[p]) == 0 {
+			continue
+		}
+		specs = append(specs, operatorv1alpha1.ImageVerificationSpec{
+			OS:           osName,
+			Architecture: arch,
+			LayerHashes:  src.LayerHashes[p],
+		})
+	}
+	if len(specs) == 0 {
+		return nil
+	}
+
+	return &operatorv1alpha1.SoftwareVersionSource{
+		ImageRepositories:     repos,
+		ImageVerificationSpec: specs,
+	}
+}
+
+// existingConsensusSource reads the SoftwareVersionSource already set on the live
+// ConsensusCapsule's consensus-node container, or nil when the CR or field is absent.
+func existingConsensusSource(ctx context.Context, kc CapsuleKubeClient, namespace, name string) (*operatorv1alpha1.SoftwareVersionSource, error) {
+	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+	m, found, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindConsensusCapsule), namespace, name,
+		"spec", "podProperties", "containers", "consensusNode", "softwareVersionSource")
+	if err != nil || !found {
+		return nil, err
+	}
+	src := &operatorv1alpha1.SoftwareVersionSource{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, src); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "decoding existing softwareVersionSource")
+	}
+	return src, nil
 }
 
 // consensusImagePullSecrets maps an optional image-pull secret name to the

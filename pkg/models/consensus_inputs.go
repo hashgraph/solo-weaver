@@ -4,6 +4,8 @@ package models
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
@@ -49,6 +51,145 @@ const (
 	ConsensusDefaultImagePullSecret = deps.CONSENSUS_NODE_IMAGE_PULL_SECRET
 )
 
+// ImageRepositoryRef is one candidate registry for a container image.
+type ImageRepositoryRef struct {
+	Repository string `json:"repository"`
+	ImageName  string `json:"imageName"`
+	ImageTag   string `json:"imageTag"`
+}
+
+// PullSecretSelector picks a pull-secret name by registry host. ByHost holds
+// per-host names; Default is the fallback. HasDefault tells an empty default
+// (public pull) apart from no default at all.
+type PullSecretSelector struct {
+	Default    string            `json:"default,omitempty"`
+	HasDefault bool              `json:"hasDefault,omitempty"`
+	ByHost     map[string]string `json:"byHost,omitempty"`
+}
+
+// SecretForHost picks the secret for a host: the ByHost entry first, then the
+// Default, else "" (public pull).
+func (s PullSecretSelector) SecretForHost(host string) string {
+	if name, ok := s.ByHost[host]; ok {
+		return name
+	}
+	if s.HasDefault {
+		return s.Default
+	}
+	return ""
+}
+
+// Hosts returns the ByHost keys, sorted for stable error messages.
+func (s PullSecretSelector) Hosts() []string {
+	hosts := make([]string, 0, len(s.ByHost))
+	for h := range s.ByHost {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	return hosts
+}
+
+// ParsePullSecretSelector reads repeatable --image-pull-secret values. Each is
+// a bare NAME (default for all registries) or HOST=NAME (one host). Only one
+// bare NAME is allowed, and each host may appear once.
+func ParsePullSecretSelector(values []string) (PullSecretSelector, error) {
+	var sel PullSecretSelector
+	for _, v := range values {
+		host, name, keyed := strings.Cut(v, "=")
+		if !keyed {
+			if sel.HasDefault {
+				return PullSecretSelector{}, errorx.IllegalArgument.New(
+					"multiple default --image-pull-secret values (%q and %q); only one bare NAME is allowed", sel.Default, v)
+			}
+			sel.Default, sel.HasDefault = v, true
+			continue
+		}
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return PullSecretSelector{}, errorx.IllegalArgument.New(
+				"--image-pull-secret %q has an empty registry host; use HOST=NAME (e.g. ghcr.io=ghcr-creds)", v)
+		}
+		if _, dup := sel.ByHost[host]; dup {
+			return PullSecretSelector{}, errorx.IllegalArgument.New(
+				"duplicate --image-pull-secret for host %q", host)
+		}
+		if sel.ByHost == nil {
+			sel.ByHost = make(map[string]string)
+		}
+		sel.ByHost[host] = name
+	}
+	return sel, nil
+}
+
+// Registry selection strategies for a multi-registry SoftwareVersionSource. These
+// match the operator's SelectionStrategy enum. Empty means the operator's
+// --registry-order default.
+const (
+	RegistrySelectionRandom     = "Random"
+	RegistrySelectionSequential = "Sequential"
+)
+
+// NormalizeRegistrySelectionStrategy validates and canonicalizes the
+// --registry-selection-strategy value. It accepts any case, returns the exact
+// enum the operator expects, and treats empty as "use the operator default".
+func NormalizeRegistrySelectionStrategy(s string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return "", nil
+	case "random":
+		return RegistrySelectionRandom, nil
+	case "sequential":
+		return RegistrySelectionSequential, nil
+	default:
+		return "", errorx.IllegalArgument.New(
+			"invalid registry selection strategy %q (allowed: Random, Sequential)", s)
+	}
+}
+
+// RegistryHost returns the host part of an image reference, which is the text
+// before the first "/" after any scheme. For example, "ghcr.io/hashgraph/x"
+// returns "ghcr.io". A reference with no "/" is returned as-is.
+func RegistryHost(image string) string {
+	s := image
+	if i := strings.Index(s, "://"); i != -1 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexByte(s, '/'); i != -1 {
+		return s[:i]
+	}
+	return s
+}
+
+// ImageSource is the multi-registry image source resolved from the deployment
+// manifest, mapped onto the operator's SoftwareVersionSource. LayerHashes is the
+// per-platform ("linux/amd64") shared set every candidate must match; only
+// deterministic images (shared hashes across registries) are representable, so a
+// nil ImageSource means "keep the single SoftwareVersion".
+type ImageSource struct {
+	Repositories []ImageRepositoryRef `json:"repositories"`
+	LayerHashes  map[string][]string  `json:"layerHashes"`
+}
+
+// VersionTag returns the shared image tag of the source's candidate registries,
+// or "" when the source is nil, empty, or its candidates disagree. A
+// deterministic manifest publishes one version across every registry, so a
+// single tag identifies the source's version. Callers use it to check that the
+// source's version matches the effective (arbitrated) SoftwareVersion tag before
+// emitting the source, since the operator prefers the source over
+// SoftwareVersion and a mismatch would silently change the running version.
+func (s *ImageSource) VersionTag() string {
+	if s == nil || len(s.Repositories) == 0 {
+		return ""
+	}
+	tag := s.Repositories[0].ImageTag
+	for _, r := range s.Repositories[1:] {
+		if r.ImageTag != tag {
+			return ""
+		}
+	}
+	return tag
+}
+
 // ConsensusNodeInputs holds user-supplied values for deploying a consensus node
 // via the solo-operator's ConsensusCapsule CRD.
 type ConsensusNodeInputs struct {
@@ -70,15 +211,32 @@ type ConsensusNodeInputs struct {
 	ConsensusImageRepo string `json:"consensusImageRepo"`
 	ConsensusImageTag  string `json:"consensusImageTag"`
 
+	// ConsensusImageSource is the multi-registry image source for the consensus-node
+	// container, resolved from the manifest by the BLL (not a CLI flag). When set,
+	// the capsule step adds a SoftwareVersionSource alongside SoftwareVersion.
+	ConsensusImageSource *ImageSource `json:"-"`
+
+	// ImagePinned is set by the BLL when the user explicitly pinned the image via
+	// --image-repo/--image-tag. It tells the capsule step not to preserve a
+	// SoftwareVersionSource already on the live CR — an explicit pin means "run
+	// exactly this single image".
+	ImagePinned bool `json:"-"`
+
 	// UC sidecar image (repository is the full "registry/path/name"). Empty falls
 	// back to ConsensusDefaultUCImageRepo/Tag. The operator has no default UC image.
 	UCImageRepo string `json:"ucImageRepo,omitempty"`
 	UCImageTag  string `json:"ucImageTag,omitempty"`
 
-	// ImagePullSecret names a docker-registry secret in the node's namespace that
-	// the operator threads onto the consensus-node and UC containers for pulling
-	// private images. Defaults to ConsensusDefaultImagePullSecret; empty disables it.
-	ImagePullSecret string `json:"imagePullSecret,omitempty"`
+	// ImagePullSecrets is the host-keyed selector from --image-pull-secret. It names
+	// docker-registry secrets in the node's namespace. Every image (consensus, UC,
+	// each candidate registry) picks its own secret by host at build time, so a new
+	// image type needs no new field.
+	ImagePullSecrets PullSecretSelector `json:"imagePullSecrets,omitempty"`
+
+	// RegistrySelectionStrategy sets SoftwareVersionSource.SelectionStrategy
+	// (Random or Sequential) when a multi-registry source is emitted. Empty uses the
+	// operator's --registry-order default.
+	RegistrySelectionStrategy string `json:"registrySelectionStrategy,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 

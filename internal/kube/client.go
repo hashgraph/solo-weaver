@@ -611,6 +611,40 @@ func (c *Client) GetResourceNestedInt64(ctx context.Context, apiVersion, kind, n
 	return value, true, nil
 }
 
+// GetResourceNestedMap retrieves a nested object (map) from a Kubernetes resource.
+// Returns (nil, false, nil) if the resource or the field is absent.
+func (c *Client) GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, false, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			namespace = "default"
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, errorx.InternalError.Wrap(err, "failed to get %s/%s", kind, name)
+	}
+
+	m, found, err := unstructured.NestedMap(obj.Object, fields...)
+	if err != nil {
+		return nil, false, errorx.InternalError.Wrap(err, "reading nested field on %s/%s", kind, name)
+	}
+	return m, found, nil
+}
+
 // GetSecretKeys returns the keys present in a Kubernetes Secret's data field.
 // Returns nil and no error if the secret does not exist.
 func (c *Client) GetSecretKeys(ctx context.Context, namespace, name string) ([]string, error) {
