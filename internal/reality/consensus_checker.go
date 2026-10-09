@@ -4,7 +4,9 @@ package reality
 
 import (
 	"context"
+	"os"
 	"strings"
+	"syscall"
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -12,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	htime "helm.sh/helm/v3/pkg/time"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // ConsensusKubeClient is the subset of kube.Client used by the consensus checker.
@@ -19,7 +22,34 @@ type ConsensusKubeClient interface {
 	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
 	GetResourceNestedInt64(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (int64, bool, error)
+	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 }
+
+// CRD field names used when reading back from the live Orbit and ConsensusCapsule.
+const (
+	fieldSpec                   = "spec"
+	fieldPodProperties          = "podProperties"
+	fieldContainers             = "containers"
+	fieldConsensusNode          = "consensusNode"
+	fieldUC                     = "uc"
+	fieldSoftwareVersion        = "softwareVersion"
+	fieldRepository             = "repository"
+	fieldImageName              = "imageName"
+	fieldImageTag               = "imageTag"
+	fieldImagePullSecrets       = "imagePullSecrets"
+	fieldVolumes                = "volumes"
+	fieldPersistentVolumeClaims = "persistentVolumeClaims"
+	fieldAdditionalVolumes      = "additionalVolumes"
+	fieldStreams                = "streams"
+	fieldHostPath               = "hostPath"
+	fieldPath                   = "path"
+	fieldResources              = "resources"
+	fieldRequests               = "requests"
+	fieldStorage                = "storage"
+	fieldStorageClassName       = "storageClassName"
+	fieldAccessModes            = "accessModes"
+	fieldName                   = "name"
+)
 
 type consensusChecker struct {
 	sm      state.Manager
@@ -87,24 +117,24 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		// → gcr.io/hedera-registry → gcr.io), corrupting the image reference.
 		repo, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
 			ns.Namespace, capsuleName,
-			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "repository")
-		imageName, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
+			fieldSpec, fieldPodProperties, fieldContainers, fieldConsensusNode, fieldSoftwareVersion, fieldRepository)
+		imgName, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
 			ns.Namespace, capsuleName,
-			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "imageName")
-		if full := joinImageRef(repo, imageName); full != "" {
+			fieldSpec, fieldPodProperties, fieldContainers, fieldConsensusNode, fieldSoftwareVersion, fieldImageName)
+		if full := joinImageRef(repo, imgName); full != "" {
 			updated.ImageRepo = full
 		}
 		if tag, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
 			ns.Namespace, capsuleName,
-			"spec", "podProperties", "containers", "consensusNode", "softwareVersion", "imageTag"); err == nil && tag != "" {
+			fieldSpec, fieldPodProperties, fieldContainers, fieldConsensusNode, fieldSoftwareVersion, fieldImageTag); err == nil && tag != "" {
 			updated.ImageTag = tag
 		}
 		if acct, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
-			ns.Namespace, capsuleName, "spec", "accountId"); err == nil && acct != "" {
+			ns.Namespace, capsuleName, fieldSpec, "accountId"); err == nil && acct != "" {
 			updated.AccountId = acct
 		}
 		if w, found, err := kc.GetResourceNestedInt64(ctx, apiVersion, string(kube.KindConsensusCapsule),
-			ns.Namespace, capsuleName, "spec", "weight"); err == nil && found {
+			ns.Namespace, capsuleName, fieldSpec, "weight"); err == nil && found {
 			updated.Weight = int(w)
 		}
 
@@ -112,13 +142,26 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		if err == nil && orbitExists {
 			if lid, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindOrbit),
 				"", ns.OrbitName,
-				"spec", "consensus", "genesis", "addressBook", "ledgerId"); err == nil && lid != "" {
+				fieldSpec, "consensus", "genesis", "addressBook", "ledgerId"); err == nil && lid != "" {
 				updated.LedgerId = lid
 			}
 			if cid, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindOrbit),
 				"", ns.OrbitName,
-				"spec", "consensus", "genesis", "addressBook", "chainId"); err == nil && cid != "" {
+				fieldSpec, "consensus", "genesis", "addressBook", "chainId"); err == nil && cid != "" {
 				updated.ChainId = cid
+			}
+		}
+
+		// Read the live managed shape for drift comparison. The checker does NOT
+		// absorb it into ConsensusNodeState (ManagedSpec stays unchanged); it
+		// populates the transient ObservedShape so the drift.ConsensusNode
+		// producer can compare at HandleIntent time.
+		if ns.ManagedSpec != nil {
+			if live, ok := c.readLiveConsensusShape(ctx, kc, apiVersion, ns.Namespace, capsuleName); ok {
+				if err == nil && orbitExists {
+					readLiveOrbit(ctx, kc, apiVersion, ns.OrbitName, &live)
+				}
+				updated.ObservedShape = liveShapeToObserved(live)
 			}
 		}
 
@@ -126,6 +169,300 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 	}
 
 	return result, nil
+}
+
+// readLiveConsensusShape reads the managed sizing/JVM/UC fields from the live
+// capsule's consensus-node container (and UC sidecar) for drift comparison. The
+// containers are fetched once; if that read fails, ok is false and the caller
+// skips managed-spec drift entirely. Once the read succeeds, a field missing from
+// the capsule is a real "absent" value (empty string) rather than "not read", so
+// a deleted field is reported as drift. Identity fields are filled in by the
+// caller from the values it already read.
+func (c *consensusChecker) readLiveConsensusShape(
+	ctx context.Context, kc ConsensusKubeClient, apiVersion, namespace, capsuleName string,
+) (live liveConsensusShape, ok bool) {
+	containers, _, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindConsensusCapsule),
+		namespace, capsuleName, fieldSpec, fieldPodProperties, fieldContainers)
+	if err != nil {
+		logx.As().Warn().Err(err).Str("capsule", capsuleName).Msg("Failed to read capsule containers; skipping managed-spec drift")
+		return live, false
+	}
+	get := func(fields ...string) string {
+		v, _, _ := unstructured.NestedString(containers, fields...)
+		return v
+	}
+
+	cn := []string{fieldConsensusNode}
+	live.ContainerName = get(append(cn, fieldName)...)
+	live.JavaHeapMin = get(append(cn, "javaHeapMin")...)
+	live.JavaHeapMax = get(append(cn, "javaHeapMax")...)
+	live.JavaOpts = get(append(cn, "javaOpts")...)
+	live.CPULimit = get(append(cn, fieldResources, "limits", "cpu")...)
+	live.MemoryLimit = get(append(cn, fieldResources, "limits", "memory")...)
+	live.CPURequest = get(append(cn, fieldResources, fieldRequests, "cpu")...)
+	live.MemoryRequest = get(append(cn, fieldResources, fieldRequests, "memory")...)
+
+	uc := []string{fieldUC, fieldSoftwareVersion}
+	ucRepo := get(append(uc, fieldRepository)...)
+	ucName := get(append(uc, fieldImageName)...)
+	live.UCImageRepo = joinImageRef(ucRepo, ucName)
+	live.UCImageTag = get(append(uc, fieldImageTag)...)
+
+	readLiveVolumes(ctx, kc, apiVersion, namespace, capsuleName, &live)
+	readLiveImagePullSecrets(ctx, kc, apiVersion, namespace, capsuleName, &live)
+	readHostPathOwners(&live)
+
+	return live, true
+}
+
+// readHostPathOwners stats each hostpath-backed volume directory and records its
+// owner. The uid/gid weaver applies (hostPathUid/hostPathGid) is a host chown, not
+// capsule state, so the disk is the only place it can be observed. Directories
+// that cannot be stat'ed (e.g. weaver not on the node's host) are skipped.
+func readHostPathOwners(live *liveConsensusShape) {
+	for name, v := range live.Volumes.Volumes {
+		if v.Type != models.VolumeBackingHostPath || v.Path == "" {
+			continue
+		}
+		uid, gid, ok := statOwner(v.Path)
+		if !ok {
+			continue
+		}
+		if live.HostPathOwners == nil {
+			live.HostPathOwners = map[string]state.HostPathOwner{}
+		}
+		live.HostPathOwners[name] = state.HostPathOwner{UID: uid, GID: gid}
+	}
+}
+
+// statOwner returns the uid/gid owning path.
+func statOwner(path string) (uid, gid int, ok bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	st, isStat := fi.Sys().(*syscall.Stat_t)
+	if !isStat {
+		return 0, 0, false
+	}
+	return int(st.Uid), int(st.Gid), true
+}
+
+// readLiveOrbit reads the tracked Orbit fields from the Orbit's spec. The
+// operator omits zero values, so an absent key on a readable Orbit is a real zero
+// (a true→false change must be reportable); only a failed read leaves it nil.
+func readLiveOrbit(
+	ctx context.Context, kc ConsensusKubeClient, apiVersion, orbitName string, live *liveConsensusShape,
+) {
+	specMap, found, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindOrbit), "", orbitName, fieldSpec)
+	if err != nil || !found {
+		return
+	}
+	orbit := state.ConsensusOrbitStateFromSpec(specMap)
+	live.Orbit = &orbit
+}
+
+// readLiveVolumes reads volume backing from spec.podProperties.volumes (hostPath)
+// and spec.persistentVolumeClaims (PVC), normalizing into the same
+// ConsensusVolumeConfig shape that buildConsensusNodeManagedSpec persists.
+// Volumes absent from both maps are emptyDir (the operator default).
+func readLiveVolumes(
+	ctx context.Context, kc ConsensusKubeClient, apiVersion, namespace, capsuleName string, live *liveConsensusShape,
+) {
+	volMap, volFound, err := kc.GetResourceNestedMap(ctx, apiVersion,
+		string(kube.KindConsensusCapsule), namespace, capsuleName,
+		fieldSpec, fieldPodProperties, fieldVolumes)
+	if err != nil {
+		return
+	}
+	pvcMap, pvcFound, err := kc.GetResourceNestedMap(ctx, apiVersion,
+		string(kube.KindConsensusCapsule), namespace, capsuleName,
+		fieldSpec, fieldPersistentVolumeClaims)
+	if err != nil {
+		return
+	}
+	if !volFound && !pvcFound {
+		live.Volumes = models.ConsensusVolumeConfig{Volumes: map[string]models.ConsensusVolumeSpec{}}
+		for _, name := range models.ConsensusVolumeNames() {
+			live.Volumes.Volumes[name] = models.ConsensusVolumeSpec{Type: models.VolumeBackingEmptyDir}
+		}
+		live.VolumesSet = true
+		return
+	}
+
+	vols := make(map[string]models.ConsensusVolumeSpec)
+
+	// hostPath: each named field holds a corev1.Volume map with hostPath.path.
+	hostPathFields := map[string][]string{
+		models.ConsensusVolumeUpgrade: {models.ConsensusVolumeUpgrade},
+		models.ConsensusVolumeLogs:    {models.ConsensusVolumeLogs},
+		models.ConsensusVolumeStats:   {models.ConsensusVolumeStats},
+		models.ConsensusVolumeSaved:   {models.ConsensusVolumeSaved},
+		models.ConsensusVolumeBlocks:  {fieldStreams, "block"},
+		models.ConsensusVolumeRecords: {fieldStreams, "record"},
+		models.ConsensusVolumeEvents:  {fieldStreams, "events"},
+	}
+	for volName, path := range hostPathFields {
+		if hp := nestedHostPath(volMap, path); hp != "" {
+			vols[volName] = models.ConsensusVolumeSpec{Type: models.VolumeBackingHostPath, Path: hp}
+		}
+	}
+	// "state" rides AdditionalVolumes (an array).
+	if avRaw, ok := volMap[fieldAdditionalVolumes]; ok {
+		if avSlice, ok := avRaw.([]interface{}); ok {
+			for _, item := range avSlice {
+				if m, ok := item.(map[string]interface{}); ok {
+					if name, _ := m[fieldName].(string); name == models.ConsensusVolumeState {
+						if hp := extractHostPath(m); hp != "" {
+							vols[models.ConsensusVolumeState] = models.ConsensusVolumeSpec{
+								Type: models.VolumeBackingHostPath, Path: hp,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// PVC: each named field holds a PersistentVolumeClaimSpec map.
+	pvcFields := map[string][]string{
+		models.ConsensusVolumeUpgrade: {models.ConsensusVolumeUpgrade},
+		models.ConsensusVolumeLogs:    {models.ConsensusVolumeLogs},
+		models.ConsensusVolumeStats:   {models.ConsensusVolumeStats},
+		models.ConsensusVolumeSaved:   {models.ConsensusVolumeSaved},
+		models.ConsensusVolumeState:   {models.ConsensusVolumeState},
+		models.ConsensusVolumeBlocks:  {fieldStreams, "block"},
+		models.ConsensusVolumeRecords: {fieldStreams, "record"},
+		models.ConsensusVolumeEvents:  {fieldStreams, "events"},
+	}
+	for volName, path := range pvcFields {
+		if _, already := vols[volName]; already {
+			continue
+		}
+		if spec := nestedPVCSpec(pvcMap, path); spec != nil {
+			vols[volName] = *spec
+		}
+	}
+
+	// Volumes not in either map are emptyDir (operator default).
+	for _, name := range models.ConsensusVolumeNames() {
+		if _, ok := vols[name]; !ok {
+			vols[name] = models.ConsensusVolumeSpec{Type: models.VolumeBackingEmptyDir}
+		}
+	}
+
+	live.Volumes = models.ConsensusVolumeConfig{Volumes: vols}
+	live.VolumesSet = true
+}
+
+// nestedHostPath drills into a nested map along path and extracts hostPath.path.
+func nestedHostPath(m map[string]interface{}, path []string) string {
+	cur := m
+	for _, key := range path {
+		next, ok := cur[key].(map[string]interface{})
+		if !ok {
+			return ""
+		}
+		cur = next
+	}
+	return extractHostPath(cur)
+}
+
+func extractHostPath(m map[string]interface{}) string {
+	hp, ok := m[fieldHostPath].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	p, _ := hp[fieldPath].(string)
+	return p
+}
+
+// nestedPVCSpec drills into a nested map along path and extracts PVC fields.
+func nestedPVCSpec(m map[string]interface{}, path []string) *models.ConsensusVolumeSpec {
+	cur := m
+	for _, key := range path {
+		next, ok := cur[key].(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	spec := models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC}
+
+	if res, ok := cur[fieldResources].(map[string]interface{}); ok {
+		if req, ok := res[fieldRequests].(map[string]interface{}); ok {
+			if s, ok := req[fieldStorage].(string); ok {
+				spec.Size = s
+			}
+		}
+	}
+	if sc, ok := cur[fieldStorageClassName].(string); ok {
+		spec.StorageClass = sc
+	}
+	if modes, ok := cur[fieldAccessModes].([]interface{}); ok && len(modes) > 0 {
+		if am, ok := modes[0].(string); ok {
+			spec.AccessMode = am
+		}
+	}
+	return &spec
+}
+
+// readLiveImagePullSecrets reads image-pull secrets from the consensus-node and UC
+// containers' SoftwareVersion.imagePullSecrets, reconstructing a PullSecretSelector.
+func readLiveImagePullSecrets(
+	ctx context.Context, kc ConsensusKubeClient, apiVersion, namespace, capsuleName string, live *liveConsensusShape,
+) {
+	cnSV, cnFound, err := kc.GetResourceNestedMap(ctx, apiVersion,
+		string(kube.KindConsensusCapsule), namespace, capsuleName,
+		fieldSpec, fieldPodProperties, fieldContainers, fieldConsensusNode, fieldSoftwareVersion)
+	if err != nil {
+		return
+	}
+	ucSV, ucFound, err := kc.GetResourceNestedMap(ctx, apiVersion,
+		string(kube.KindConsensusCapsule), namespace, capsuleName,
+		fieldSpec, fieldPodProperties, fieldContainers, fieldUC, fieldSoftwareVersion)
+	if err != nil {
+		return
+	}
+	if !cnFound && !ucFound {
+		return
+	}
+
+	sel := models.PullSecretSelector{ByHost: map[string]string{}}
+
+	addSecret := func(svMap map[string]interface{}) {
+		if svMap == nil {
+			return
+		}
+		repo, _ := svMap[fieldRepository].(string)
+		imgName, _ := svMap[fieldImageName].(string)
+		fullRef := joinImageRef(repo, imgName)
+		if fullRef == "" {
+			return
+		}
+		host := models.RegistryHost(fullRef)
+		// Record the host even without a secret so removal of a secret is visible.
+		sel.ByHost[host] = firstPullSecretName(svMap)
+	}
+
+	addSecret(cnSV)
+	addSecret(ucSV)
+
+	live.ImagePullSecrets = sel
+	live.ImagePullSecretsSet = true
+}
+
+func firstPullSecretName(svMap map[string]interface{}) string {
+	secrets, ok := svMap[fieldImagePullSecrets].([]interface{})
+	if !ok || len(secrets) == 0 {
+		return ""
+	}
+	first, ok := secrets[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	name, _ := first[fieldName].(string)
+	return name
 }
 
 // joinImageRef reassembles the full "registry/path/name" image reference from the

@@ -624,3 +624,63 @@ func TestSplitConsensusImage(t *testing.T) {
 	assert.Equal(t, "", repo)
 	assert.Equal(t, "consensus-node", name)
 }
+
+// --- EnsureOrbit guard ---
+
+func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
+	orbitSpec := func(daemon bool, ledger, chain string, extra map[string]interface{}) map[string]interface{} {
+		ab := map[string]interface{}{"ledgerId": ledger}
+		if chain != "" {
+			ab["chainId"] = chain
+		}
+		spec := map[string]interface{}{
+			"consensus": map[string]interface{}{"genesis": map[string]interface{}{"addressBook": ab}},
+		}
+		if daemon {
+			spec["provisionerDaemonEnabled"] = true
+		}
+		for k, v := range extra {
+			spec[k] = v
+		}
+		return spec
+	}
+	in := models.ConsensusNodeInputs{
+		Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00", ChainId: "295", ProvisionerDaemonEnabled: true,
+	}
+
+	tests := []struct {
+		name      string
+		live      map[string]interface{}
+		inputs    models.ConsensusNodeInputs
+		wantField string
+	}{
+		{"matches", orbitSpec(true, "0x00", "295", nil), in, ""},
+		{"daemon mode differs", orbitSpec(false, "0x00", "295", nil), in, "provisionerDaemonEnabled"},
+		{"ledgerId differs", orbitSpec(true, "0x01", "295", nil), in, "ledgerId"},
+		{"chainId differs", orbitSpec(true, "0x00", "296", nil), in, "chainId"},
+		{"orbit has a realm the install does not request", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"deploymentModel": "MultipleKubernetesClusters"}), in, "deploymentModel"},
+		{"requireDigestOnDeploy set on the Orbit", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"requireDigestOnDeploy": true}), in, "requireDigestOnDeploy"},
+		{"empty chainId equals zero", orbitSpec(false, "0x00", "0", nil),
+			models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeCapsuleClient{
+				existing: map[string]string{"orbit": "deployed"},
+				nested:   map[string]map[string]interface{}{"orbit": tc.live},
+			}
+			step, err := EnsureOrbit(tc.inputs, fake.provider()).Build()
+			require.NoError(t, err)
+			rpt := step.Execute(context.Background())
+			if tc.wantField != "" {
+				assert.Equal(t, automa.StatusFailed, rpt.Status)
+				assert.Contains(t, rpt.Error.Error(), tc.wantField)
+			} else {
+				assert.Equal(t, automa.StatusSuccess, rpt.Status)
+			}
+			assert.Empty(t, fake.applied, "an existing Orbit must never be re-applied")
+		})
+	}
+}

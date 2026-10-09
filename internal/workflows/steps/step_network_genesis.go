@@ -47,6 +47,10 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
+			alreadyExists, _ := kc.ResourceExists(ctx,
+				kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion,
+				string(kube.KindNetworkGenesis), namespace, NetworkGenesisName)
+
 			ng := &operatorv1alpha1.NetworkGenesis{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
@@ -85,7 +89,11 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 			if genesisNetworkJSON != "" {
 				source = "deployment package (pre-built genesis-network.json)"
 			}
-			logx.As().Info().Str("orbit", orbit).Str("source", source).Msg("NetworkGenesis applied")
+			if alreadyExists {
+				logx.As().Info().Str("orbit", orbit).Msg("NetworkGenesis already exists, no changes")
+			} else {
+				logx.As().Info().Str("orbit", orbit).Str("source", source).Msg("NetworkGenesis created")
+			}
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
 				InstalledByThisStep: "true",
 			}))
