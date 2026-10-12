@@ -3,6 +3,10 @@
 package migration
 
 import (
+	"fmt"
+	"github.com/automa-saga/errx"
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/joomcode/errorx"
 )
@@ -18,10 +22,21 @@ const (
 // Execute() guard keeps it a no-op on a fresh machine.
 const BaselineCLIVersion = "0.0.0"
 
-// ResolveInstalledCLIVersion maps an absent (empty) version to BaselineCLIVersion;
-// non-empty is returned as-is.
+// ResolveInstalledCLIVersion maps a recorded on-disk CLI version to a usable
+// semver baseline. An absent (empty) version is a pre-state-tracking host; a
+// non-semver value (e.g. "dev" from an unstamped build that was accidentally
+// persisted — a test binary writing the real state file, or a plain `go build`)
+// is corrupt input we must not let brick every subsequent CLI invocation. Both
+// resolve to BaselineCLIVersion so version-boundary migrations still evaluate
+// (and, being below every boundary, stay no-ops) rather than failing to parse.
 func ResolveInstalledCLIVersion(raw string) string {
 	if raw == "" {
+		return BaselineCLIVersion
+	}
+	if _, err := semver.NewSemver(raw); err != nil {
+		logx.As().Warn().
+			Str("recordedVersion", raw).
+			Msg("Recorded on-disk CLI version is not valid semver; treating it as the baseline. This usually means an unstamped build (version \"dev\") persisted the state file. No action needed — the running version is re-recorded on this run; use a stamped build (task build) to avoid persisting \"dev\" again.")
 		return BaselineCLIVersion
 	}
 	return raw
@@ -67,22 +82,39 @@ func (v *CLIVersionMigration) Applies(mctx *Context) (bool, error) {
 	}
 
 	if currentCLIVersion == "" {
-		return false, errorx.IllegalArgument.New("current CLI version not provided in context")
+		return false, errx.Decorate(
+			errorx.IllegalState.New("current CLI version not provided in context"),
+			reasons.Internal)
 	}
 
 	installed, err := semver.NewSemver(installedCLIVersion)
 	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "invalid installed CLI version %q", installedCLIVersion)
+		// Unreachable from the normal startup path: RunStartupMigrations sanitizes
+		// the on-disk version through ResolveInstalledCLIVersion (non-semver → baseline)
+		// before populating the context, and then re-records the running version on a
+		// provisioned host — so a corrupt value self-heals without operator action.
+		// Reaching here means a direct caller set a raw installed version in the context.
+		return false, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "invalid installed CLI version %q", installedCLIVersion),
+			reasons.Internal)
 	}
 
 	current, err := semver.NewSemver(currentCLIVersion)
 	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "invalid current CLI version %q", currentCLIVersion)
+		return false, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "invalid current CLI version %q", currentCLIVersion),
+			reasons.Internal,
+			fmt.Sprintf("This binary reports version %q, which is not valid semver — it was likely built without version stamping", currentCLIVersion),
+			"Rebuild and reinstall with 'task build' (which stamps VERSION via ldflags) instead of a plain 'go build'")
 	}
 
 	minVer, err := semver.NewSemver(v.minVersion)
 	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "invalid min version %q", v.minVersion)
+		// A migration declaring a malformed minVersion is a solo-weaver bug, not an
+		// operator error — reasons.Internal, no hints.
+		return false, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "invalid min version %q for migration %q", v.minVersion, v.id),
+			reasons.Internal)
 	}
 
 	return installed.LessThan(minVer) && !current.LessThan(minVer), nil
