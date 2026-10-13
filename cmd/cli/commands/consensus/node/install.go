@@ -63,15 +63,11 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		// Derive per-node secret defaults from the (possibly prompted) node ID.
-		// A consensus node needs exactly two secrets: gossip signing keys and the
-		// gRPC TLS key/cert.
-		scope := models.ConsensusNodeScope(flagNodeId)
-		if flagGrpcTlsSecret == "" {
-			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
-		}
-		if flagSigningSecret == "" {
-			flagSigningSecret = scope + "-gossip-keys"
+		// The key secret names are resolved later, from the node's labelled secrets
+		// (see the install handler), unless --signing-secret, --grpc-tls-secret or
+		// --admin-key-secret name them. The account id defaults from the node ID.
+		if flagAccountId == "" {
+			flagAccountId = models.ConsensusDefaultAccountId(flagNodeId)
 		}
 
 		// --profile sizes the host hardware floor when this install has to
@@ -153,6 +149,7 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir:      flagDeploymentPkgDir,
 				GrpcTlsSecret:             flagGrpcTlsSecret,
 				SigningSecret:             flagSigningSecret,
+				AdminKeySecret:            flagAdminKeySecret,
 				ImagePullSecrets:          pullSecrets,
 				RegistrySelectionStrategy: registryStrategy,
 				Profile:                   flagProfile,
@@ -202,7 +199,7 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
-	installCmd.Flags().StringVar(&flagAccountId, "account-id", models.ConsensusDefaultAccountId, "Node account ID (e.g. 0.0.3)")
+	installCmd.Flags().StringVar(&flagAccountId, "account-id", "", "Node account ID (e.g. 0.0.3); defaults to 0.0.(3 + node-id)")
 	installCmd.Flags().IntVar(&flagWeight, "weight", models.ConsensusDefaultWeight, "Consensus weight for this node")
 	installCmd.Flags().StringVar(&flagLedgerId, "ledger-id", "", "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev) — extracted from deployment package if not set")
 	installCmd.Flags().StringVar(&flagChainId, "chain-id", "", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev) — extracted from deployment package if not set")
@@ -211,8 +208,9 @@ func init() {
 	installCmd.Flags().StringVar(&flagUCImageRepo, "uc-image-repo", models.ConsensusDefaultUCImageRepo, "UC (Update Coordinator) sidecar image repository (the operator's own image; no operator default)")
 	installCmd.Flags().StringVar(&flagUCImageTag, "uc-image-tag", models.ConsensusDefaultUCImageTag, "UC sidecar image tag (tracks the solo-operator version)")
 	installCmd.Flags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
-	installCmd.Flags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
-	installCmd.Flags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
+	installCmd.Flags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera.key, hedera.crt)")
+	installCmd.Flags().StringVar(&flagAdminKeySecret, "admin-key-secret", "", "Name of K8s Secret containing the node admin public key (key: admin.pub); defaults to node<N>-admin-pubkey when that Secret exists")
+	installCmd.Flags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: s-private.pem, s-public.pem)")
 	installCmd.Flags().StringArrayVar(&flagImagePullSecret, "image-pull-secret", []string{models.ConsensusDefaultImagePullSecret}, "Map a docker-registry Secret to a registry for pulling private consensus/UC images. Repeatable. Bare NAME applies to all registries (default private-registry-creds); keyed HOST=NAME overrides one registry host (e.g. ghcr.io=ghcr-creds). Empty (\"\") disables (public images). Registries come from the deployment manifest; each Secret must already exist in the namespace")
 	installCmd.Flags().StringVar(&flagRegistryStrategy, "registry-selection-strategy", "", "Order the operator probes candidate registries for a multi-registry image: Random or Sequential. Empty uses the weaver default (Sequential — manifest primary first, deterministic failover). Pass Random to spread probe traffic. Applies only when the manifest yields multiple registries")
 
