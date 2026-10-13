@@ -246,6 +246,50 @@ against its name and fingerprint label (a renamed or edited secret fails), and w
 node has several generations of a key type the failing line lists them so you can
 choose with `--fingerprint` or `--secret-suffix`.
 
+### `consensus keys inspect`
+
+Show the details of the certificates and public keys in a key folder, without needing `openssl`. It covers what `openssl x509 -text -noout`
+shows: subject, issuer, validity (with days remaining), signature algorithm, key
+type and size, SANs, key usage, SHA-256 and SHA-384 fingerprints (the SHA-384 of
+the gRPC certificate is the roster `grpc_certificate_hash`), and the admin public
+key in hex.
+
+Private key files are never read, so nothing secret is loaded into memory. To check
+that keys match their certificates, use `consensus keys verify`. Use `--output json` for
+machine-readable output. `inspect` shows the commonly needed fields. For every field (modulus, extensions,
+raw signature), use `openssl x509 -in <file> -text -noout`. To check that each
+private key matches its certificate or public key, use `consensus keys verify`;
+`inspect` never reads private keys. Text output ends with a one-line reminder of
+both.
+
+Files that are not in the folder are skipped and listed at the end. The command
+exits non-zero only if no key file is found or a file does not parse.
+
+```bash
+# Inspect a folder:
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./keys/node0
+
+# Inspect only the gRPC certificate:
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./keys/node0 --tls
+
+# Inspect what is in the cluster: export it to a folder first, then inspect.
+sudo solo-provisioner consensus keys export --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./exported
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./exported
+
+# Inspect a single certificate or admin public key file:
+sudo solo-provisioner consensus keys inspect --experimental --file ./keys/node0/hedera.crt
+```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--keys-dir` | Node key folder to inspect | — |
+| `--file` | Inspect a single certificate (PEM) or admin public key (hex) file | — |
+| `--gossip` / `--tls` / `--admin` | Select which key types to show | all when none given |
+
+`--keys-dir` and `--file` are mutually exclusive. Inspect works on disk only, so
+it never reads secrets from the cluster.
+
 ### `consensus keys init`
 
 One-shot convenience for a node whose id is already known (genesis / known
@@ -278,3 +322,93 @@ sudo solo-provisioner consensus keys init --experimental \
 `--namespace` and `--node-id` are inherited from `consensus keys`; `--node-id` is
 **required** here. The admin private key stays in `--keys-dir` (operator custody);
 only the public key is pushed to Kubernetes.
+
+### Try it: end-to-end walkthrough
+
+A quick way to see the whole `consensus keys` family working. Steps 1-3 need no
+cluster; steps 4-6 need a reachable cluster with the namespace (Orbit CR) in place.
+
+**1. Generate a node's keys**, with extra gRPC certificate details:
+
+```bash
+sudo solo-provisioner consensus keys generate --experimental --keys-dir ./keys/node0 \
+  --grpc-cn node0 --grpc-org "Example Org" \
+  --grpc-dns node0.example.org --grpc-ip 10.1.2.3 --grpc-validity-days 365
+```
+
+Expected: `Generated key material in ./keys/node0`, the `gRPC cert hash (SHA-384)`,
+and a "Next steps" list. Re-running the same command prints `nothing to generate`.
+
+**2. Inspect what was generated:**
+
+```bash
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./keys/node0
+```
+
+Expected: one section per file, headed `[s-public.pem | gossip certificate]`,
+`[hedera.crt | gRPC TLS certificate]` and `[admin.pub | admin public key]`. The gRPC
+section shows `Subject` and `Issuer` containing `CN=node0` and `O=Example Org`,
+`SANs: localhost, node0.example.org, 127.0.0.1, ::1, 10.1.2.3`, and a `Not after` date
+about 365 days away. The `SHA-384` value equals the hash printed in step 1. Compare
+with `sudo openssl x509 -in ./keys/node0/hedera.crt -text -noout` for the full dump.
+
+Missing files are skipped, not errors. Remove one and run it again:
+
+```bash
+sudo rm ./keys/node0/admin.pub
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./keys/node0
+```
+
+Expected: exit code 0 and `Not found (skipped): admin.pub`. Regenerate it with
+`keys generate --admin`.
+
+**3. Check that the keys are valid and match their certificates:**
+
+```bash
+sudo solo-provisioner consensus keys verify --experimental --keys-dir ./keys/node0
+```
+
+Expected: `[OK  ]` lines for `gossip`, `grpc` and `admin`, then `All checks passed.`
+
+**4. Create the secrets** (known node id):
+
+```bash
+sudo solo-provisioner consensus keys import --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./keys/node0
+```
+
+Expected: the command prints three secrets named like
+`node0-gossip-keys-<date>-<fp8>`, `node0-grpc-tls-keys-<date>-<fp8>` and
+`node0-admin-pubkey-<fp8>`. `kubectl -n my-orbit get secret --show-labels` lists them
+with their `solo.hiero.org/node`, `key-type` and `cert-fingerprint` labels. The
+`<date>` is the certificate's `Not before` date and `<fp8>` matches the start of the
+SHA-384 that `keys inspect` prints for the same file. Running the import again prints
+`(already up to date)`. The admin secret holds only the public key. `keys init` does
+steps 1 and 4 in one command.
+
+**5. Verify and export from the cluster:**
+
+```bash
+sudo solo-provisioner consensus keys verify --experimental \
+  --from-cluster --namespace my-orbit --node-id 0
+sudo solo-provisioner consensus keys export --experimental \
+  --namespace my-orbit --node-id 0 --keys-dir ./node0-export
+```
+
+Expected: `All checks passed.`, then a folder with the gossip and gRPC files plus
+`admin.pub` (no `admin.key`). To inspect what is in the cluster, run `keys inspect
+--keys-dir ./node0-export` on the exported folder; `inspect` never reads cluster
+secrets or private key files.
+
+**6. Check that bad input is rejected** (each command exits non-zero):
+
+```bash
+sudo solo-provisioner consensus keys generate --experimental --keys-dir ./keys/bad --tls --grpc-dns node2
+sudo solo-provisioner consensus keys generate --experimental --keys-dir ./keys/bad --tls --grpc-ip not-an-ip
+sudo solo-provisioner consensus keys generate --experimental --keys-dir ./keys/bad --tls --grpc-validity-days 99999
+sudo solo-provisioner consensus keys generate --experimental --keys-dir ./keys/bad --tls extra-arg
+sudo solo-provisioner consensus keys inspect --experimental --keys-dir ./empty-dir
+```
+
+Expected: an error for a name that is not fully qualified, an invalid IP, a validity
+out of range, an unexpected argument, and a folder with no key files.

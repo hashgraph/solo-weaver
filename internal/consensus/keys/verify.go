@@ -59,6 +59,16 @@ type material struct {
 // VerifyDir validates the selected key material in a folder.
 func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
 	sel := NormalizeSelectors(selectors)
+	m, err := loadDir(dir, sel, true)
+	if err != nil {
+		return nil, err
+	}
+	return validate(m, sel, fmt.Sprintf("folder %s", dir)), nil
+}
+
+// loadDir reads the selected key files from a folder; missing files stay nil.
+// Private key files are read only when withPrivate is true.
+func loadDir(dir string, sel Selectors, withPrivate bool) (*material, error) {
 	m := &material{}
 
 	read := func(name string) ([]byte, error) {
@@ -74,16 +84,20 @@ func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
 
 	var err error
 	if sel.Gossip {
-		if m.gossipPriv, err = read(FileGossipPrivate); err != nil {
-			return nil, err
+		if withPrivate {
+			if m.gossipPriv, err = read(FileGossipPrivate); err != nil {
+				return nil, err
+			}
 		}
 		if m.gossipCert, err = read(FileGossipCert); err != nil {
 			return nil, err
 		}
 	}
 	if sel.Grpc {
-		if m.grpcPriv, err = read(FileGrpcKey); err != nil {
-			return nil, err
+		if withPrivate {
+			if m.grpcPriv, err = read(FileGrpcKey); err != nil {
+				return nil, err
+			}
 		}
 		if m.grpcCert, err = read(FileGrpcCert); err != nil {
 			return nil, err
@@ -95,12 +109,14 @@ func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
 		}
 		// The admin private key is optional (off-cluster); verify correspondence
 		// only when it happens to be present in the folder.
-		if m.adminPriv, err = read(FileAdminPrivate); err != nil {
-			return nil, err
+		if withPrivate {
+			if m.adminPriv, err = read(FileAdminPrivate); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	return validate(m, sel, fmt.Sprintf("folder %s", dir)), nil
+	return m, nil
 }
 
 // VerifyCluster validates the selected per-node secrets in the cluster. When a
