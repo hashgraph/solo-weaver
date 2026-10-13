@@ -246,19 +246,20 @@ type ConfigHashEntry struct {
 
 // ConsensusNodeState represents the persisted state of a single consensus node.
 type ConsensusNodeState struct {
-	Namespace     string                     `yaml:"namespace" json:"namespace"`
-	OrbitName     string                     `yaml:"orbitName" json:"orbitName"`
-	NodeId        int64                      `yaml:"nodeId" json:"nodeId"`
-	AccountId     string                     `yaml:"accountId" json:"accountId"`
-	Weight        int                        `yaml:"weight" json:"weight"`
-	ImageRepo     string                     `yaml:"imageRepo" json:"imageRepo"`
-	ImageTag      string                     `yaml:"imageTag" json:"imageTag"`
-	LedgerId      string                     `yaml:"ledgerId" json:"ledgerId"`
-	ChainId       string                     `yaml:"chainId,omitempty" json:"chainId,omitempty"`
-	DeploymentPkg string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
-	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
-	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
-	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
+	Namespace      string                     `yaml:"namespace" json:"namespace"`
+	OrbitName      string                     `yaml:"orbitName" json:"orbitName"`
+	NodeId         int64                      `yaml:"nodeId" json:"nodeId"`
+	AccountId      string                     `yaml:"accountId" json:"accountId"`
+	Weight         int                        `yaml:"weight" json:"weight"`
+	ImageRepo      string                     `yaml:"imageRepo" json:"imageRepo"`
+	ImageTag       string                     `yaml:"imageTag" json:"imageTag"`
+	LedgerId       string                     `yaml:"ledgerId" json:"ledgerId"`
+	ChainId        string                     `yaml:"chainId,omitempty" json:"chainId,omitempty"`
+	DeploymentPkg  string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
+	GrpcTlsSecret  string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
+	SigningSecret  string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
+	AdminKeySecret string                     `yaml:"adminKeySecret,omitempty" json:"adminKeySecret,omitempty"`
+	ConfigHashes   map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
 
 	// ManagedSpec records the deliberate install-time shape of the ConsensusCapsule
 	// beyond identity (sizing, JVM, images, volume backing, mode). A pointer so old
