@@ -62,15 +62,11 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		// Derive per-node secret defaults from the (possibly prompted) node ID.
-		// A consensus node needs exactly two secrets: gossip signing keys and the
-		// gRPC TLS key/cert.
-		scope := models.ConsensusNodeScope(flagNodeId)
-		if flagGrpcTlsSecret == "" {
-			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
-		}
-		if flagSigningSecret == "" {
-			flagSigningSecret = scope + "-gossip-keys"
+		// The key secret names are resolved later, from the node's labelled secrets
+		// (see the install handler), unless --signing-secret, --grpc-tls-secret or
+		// --admin-key-secret name them. The account id defaults from the node ID.
+		if flagAccountId == "" {
+			flagAccountId = models.ConsensusDefaultAccountId(flagNodeId)
 		}
 
 		// --profile sizes the host hardware floor when this install has to
@@ -140,6 +136,7 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir:     flagDeploymentPkgDir,
 				GrpcTlsSecret:            flagGrpcTlsSecret,
 				SigningSecret:            flagSigningSecret,
+				AdminKeySecret:           flagAdminKeySecret,
 				ImagePullSecret:          flagImagePullSecret,
 				Profile:                  flagProfile,
 				SkipHardwareChecks:       skipHardwareChecks,

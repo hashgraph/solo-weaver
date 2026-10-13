@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"os"
 	"strconv"
 	"strings"
@@ -470,23 +471,28 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				if inputs.GrpcTlsSecret != "" {
 					sr.GrpcTlsPrivateKey = operatorv1alpha1.KeyReference{
 						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    fmt.Sprintf("hedera-%s.key", scope),
+						KeyName:    cnkeys.FileGrpcKey,
 					}
 					sr.GrpcTlsPublicCertificate = operatorv1alpha1.KeyReference{
 						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    fmt.Sprintf("hedera-%s.crt", scope),
+						KeyName:    cnkeys.FileGrpcCert,
 					}
 				}
 				if inputs.SigningSecret != "" {
 					sr.SigningPrivateKey = operatorv1alpha1.KeyReference{
 						SecretName: inputs.SigningSecret,
-						KeyName:    "private.pem",
+						KeyName:    cnkeys.FileGossipPrivate,
 					}
 					sr.SigningPublicCertificate = operatorv1alpha1.KeyReference{
 						SecretName: inputs.SigningSecret,
-						KeyName:    "public.pem",
+						KeyName:    cnkeys.FileGossipCert,
 					}
 				}
+				adminRef, aerr := adminKeyReference(ctx, kc, inputs)
+				if aerr != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(aerr))
+				}
+				sr.AdminPublicKey = adminRef
 				capsule.Spec.Secrets = &operatorv1alpha1.ConsensusSecrets{
 					SecretResources: sr,
 				}
@@ -854,4 +860,30 @@ func intOrDefault(v, def int) int {
 		return def
 	}
 	return v
+}
+
+// adminKeyReference returns the AdminPublicKey reference for the capsule, or nil
+// when none was resolved. The install handler fills AdminKeySecret from the node's
+// labelled secrets or from --admin-key-secret; a named secret must exist, because
+// the operator fails genesis on a reference to a missing secret.
+func adminKeyReference(ctx context.Context, kc CapsuleKubeClient, inputs models.ConsensusNodeInputs) (*operatorv1alpha1.KeyReference, error) {
+	name := inputs.AdminKeySecret
+	if name == "" {
+		logx.As().Info().Msg("No admin public key secret; the capsule will not reference one")
+		return nil, nil
+	}
+	exists, err := kc.ResourceExists(ctx, "v1", "Secret", inputs.Namespace, name)
+	if err != nil {
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "failed to check admin key Secret %s", name),
+			reasons.PreconditionNotMet,
+			"Verify cluster connectivity and that your kubeconfig has RBAC to read Secrets")
+	}
+	if !exists {
+		return nil, errx.Decorate(
+			errorx.IllegalState.New("admin key Secret %q not found in namespace %s", name, inputs.Namespace),
+			reasons.PreconditionNotMet,
+			"Create it with `consensus keys import --admin`, or drop --admin-key-secret")
+	}
+	return &operatorv1alpha1.KeyReference{SecretName: name, KeyName: cnkeys.FileAdminPublic}, nil
 }
