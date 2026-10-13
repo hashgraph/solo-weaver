@@ -55,13 +55,28 @@ type material struct {
 
 // VerifyDir validates the selected key material in a folder.
 func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
-	sel := selectors
-	if !sel.Any() {
-		// No selector: the admin public key is checked only when the operator has
-		// placed one in the folder (it is created in an external wallet).
-		_, statErr := os.Stat(filepath.Join(dir, FileAdminPublic))
-		sel = Selectors{Gossip: true, Grpc: true, Admin: statErr == nil}
+	sel := dirSelectors(dir, selectors)
+	m, err := loadDir(dir, sel, true)
+	if err != nil {
+		return nil, err
 	}
+	return validate(m, sel, fmt.Sprintf("folder %s", dir)), nil
+}
+
+// dirSelectors resolves the selectors for a key folder. With no selector the
+// admin public key is included only when the operator has placed admin.pub in
+// the folder (it is created in an external wallet, never generated here).
+func dirSelectors(dir string, selectors Selectors) Selectors {
+	if selectors.Any() {
+		return selectors
+	}
+	_, err := os.Stat(filepath.Join(dir, FileAdminPublic))
+	return Selectors{Gossip: true, Grpc: true, Admin: err == nil}
+}
+
+// loadDir reads the selected key files from a folder; missing files stay nil.
+// Private key files are read only when withPrivate is true.
+func loadDir(dir string, sel Selectors, withPrivate bool) (*material, error) {
 	m := &material{}
 
 	read := func(name string) ([]byte, error) {
@@ -77,16 +92,20 @@ func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
 
 	var err error
 	if sel.Gossip {
-		if m.gossipPriv, err = read(FileGossipPrivate); err != nil {
-			return nil, err
+		if withPrivate {
+			if m.gossipPriv, err = read(FileGossipPrivate); err != nil {
+				return nil, err
+			}
 		}
 		if m.gossipCert, err = read(FileGossipCert); err != nil {
 			return nil, err
 		}
 	}
 	if sel.Grpc {
-		if m.grpcPriv, err = read(FileGrpcKey); err != nil {
-			return nil, err
+		if withPrivate {
+			if m.grpcPriv, err = read(FileGrpcKey); err != nil {
+				return nil, err
+			}
 		}
 		if m.grpcCert, err = read(FileGrpcCert); err != nil {
 			return nil, err
@@ -98,7 +117,7 @@ func VerifyDir(dir string, selectors Selectors) (*VerifyReport, error) {
 		}
 	}
 
-	return validate(m, sel, fmt.Sprintf("folder %s", dir)), nil
+	return m, nil
 }
 
 // VerifyCluster validates the selected per-node secrets in the cluster. When a
