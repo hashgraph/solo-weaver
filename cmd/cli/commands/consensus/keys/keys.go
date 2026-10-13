@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package keys implements the `consensus keys` command family: generate, import,
-// export, verify, and init the cryptographic material a consensus node needs, and
+// export, verify, inspect, and init the cryptographic material a consensus node needs, and
 // materialize it as the Kubernetes secrets the solo-operator consumes. This file
 // wires the command group; each verb lives in its own file.
 package keys
@@ -44,6 +44,7 @@ func init() {
 	keysCmd.AddCommand(importCmd)
 	keysCmd.AddCommand(exportCmd)
 	keysCmd.AddCommand(verifyCmd)
+	keysCmd.AddCommand(inspectCmd)
 	keysCmd.AddCommand(initCmd)
 }
 
