@@ -87,7 +87,9 @@ Related commands, all reading or editing the index only:
 | `solo-provisioner kube cluster info <alias>` | Origin, server, the components managed there (block node, consensus node and so on) and their state, and the current lease holders (section 5.5). Runs the identity check in report-only mode, so it pairs with `doctor` and `diagnose` (#1110). |
 | `solo-provisioner kube cluster disconnect <alias>` | Remove the index entry. State files are left in place until an explicit prune (section 12). Later work. |
 
-A command that is given an unregistered cluster:
+A cluster that passes the provisioned proof (section 5.1) registers automatically: `solo-provisioner kube cluster install` does it for new installs, and the gate does it on its first successful pass for older installs (section 5.4). No `connect` is needed. The rule below applies to every other cluster, which is external.
+
+A command that is given an unregistered external cluster:
 
 - Interactive: stops with a hint to run `solo-provisioner kube cluster connect`.
 - Non-interactive (`--non-interactive`, CI): registers the cluster implicitly with the same steps, so a Kind lane needs no extra step.
@@ -156,7 +158,7 @@ Diagnostic commands (`doctor` and `diagnose`, epic #1110) are **not** exempt, be
 A strict gate must not lock operators out of clusters that older versions installed. Two things could be missing on such a machine, and neither needs a separate migration:
 
 - **Recorded hashes.** Software state records only the name, version, `Installed` and `Configured`; it has never held a binary hash. The gate does not need one. The embedded catalog has the expected checksum for each software, version and platform, which the installer already checks at download. The gate verifies that the sandbox binary on disk matches the catalog checksum for the version recorded in state, and that the running process is that binary.
-- **The cluster ID.** `hosts/local/host.yaml` has none on an older install. The first time all the checks in 5.1 pass, the gate records the live cluster ID. This is trust on first use, and it is safe because the binary, process, `admin.conf` and IP checks have already passed.
+- **The cluster ID.** `hosts/local/host.yaml` has none on an older install. The first time all the checks in 5.1 pass, the gate records the live cluster ID. This is trust on first use, and it is safe because the binary, process, `admin.conf` and IP checks have already passed. Running `solo-provisioner kube cluster connect` is an optional way to register eagerly and see each check reported (section 4.1); nothing stops working if it is skipped.
 
 Catalog gaps: the catalog is refreshed and split over time (#1262), so an old kubelet or CRI-O version may no longer be in it. If the recorded version is not in the catalog, the checksum check is skipped with a warning, and the gate relies on the other checks: the binary is in the sandbox path and the running process is that binary. A version that is in the catalog but does not match its checksum still stops the command.
 
