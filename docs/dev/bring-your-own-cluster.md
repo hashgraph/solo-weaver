@@ -25,6 +25,7 @@ Goals:
 3. Keep state separate per cluster, so switching between clusters, or forgetting a flag, can never mix or reset state.
 4. One place decides which kubeconfig is used.
 5. Leave room to manage several VMs from macOS later.
+6. Stop two operators (or an operator and the daemon) from changing the same component of the same cluster at the same time.
 
 Non-goals for now:
 
@@ -105,6 +106,25 @@ Diagnostic commands (`doctor` and `diagnose`, epic #1110) are **not** exempt, be
 ### 5.4 Clusters installed by older versions
 
 Old installs may lack the hashes or metadata the gate checks, and a strict gate would lock operators out of their own clusters. A one-time backfill records the missing metadata and the cluster ID when the weaker but still conclusive checks pass: local sandbox kubelet and CRI-O running, `admin.conf` present, IP match. This must ship together with the gate.
+
+### 5.5 Cluster-side lock
+
+The per-component `flock` files (#1235) only protect one machine. Two operators on different machines (for example a laptop in external mode and a CLI on the VM) can still change the same cluster at once. A Lease object in the cluster closes that gap. The idea follows the lease in `hiero-ledger/solo` (`src/core/lock/`), with a different renewal and loss model.
+
+Decisions:
+
+- **Object.** A `coordination.k8s.io/v1` Lease, one per component per cluster, named `weaver-<component>` (for example `weaver-blocknode`), in the **component's own namespace**. Per-component leases mirror the per-component state locks, so disjoint components (for example consensus and teleport) do not block each other. The lease disappears with the namespace on uninstall.
+- **Both modes.** Every mutating command takes the lease as soon as the cluster is reachable, whether the cluster is `provisioned` or `external`. Read-only commands do not. Order: cluster lease first, then the local component `flock`.
+- **Library.** `k8s.io/client-go/tools/leaderelection`, wrapped in a small internal package, `internal/kube/lease`. It handles the compare-and-swap on `resourceVersion`, renewal, and loss detection. Adding it needs `go mod vendor`, as for any dependency.
+- **Wrapper API.** `TryAcquire(ctx, component)` returns a handle with a context that is cancelled when the lease is lost, and `Release()`.
+- **Fail fast.** Before starting the elector, read the Lease. If it is held and not expired, stop and print the holder: user, host (machine ID), command line, start time and weaver version, taken from the holder identity (JSON), and how long until it expires. If the elector loses a race, a short acquire timeout turns that into the same error.
+- **Fencing.** If renewal fails past the renew deadline, the wrapper cancels the workflow's context and the command aborts. A laptop that sleeps past expiry can therefore not resume and keep changing a cluster another operator now holds.
+- **Expiry only.** The lease is taken over only after it expires, because a live holder keeps renewing. There is no other automatic takeover. An explicit override flag (name to be decided) lets an operator remove a lease they know is dead.
+- **Timings.** Starting values: lease duration 30 seconds, renew deadline 20 seconds, retry period 5 seconds. To be tuned against slow API servers.
+- **First install.** The cluster or the component namespace may not exist yet. Cluster install is covered by the local `flock` only. For a component namespace that does not exist, create the namespace first (an `AlreadyExists` error is fine) and then take the lease. The race window is only the namespace creation.
+- **RBAC.** External operators need `get`, `create`, `update` and `delete` on `leases` in the component namespace. The preflight checks this with `SelfSubjectAccessReview` and fails with a clear hint.
+- **Daemon.** The daemon takes the same lease when it writes consensus state, so it excludes CLI runs.
+- **Diagnostics.** `doctor` and `diagnose` show current lease holders as a finding.
 
 ## 6. State layout
 
@@ -250,9 +270,10 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 ## 11. Delivery plan
 
 1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the identity gate (including the legacy backfill rules). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
-2. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, the cluster-scoped component files for `clusters/<uid>/`, the splits in section 6.2, and `clusters/index.yaml`.
-3. External-mode workflows, block node first, with the StorageClass storage path.
-4. CI: Kind lane using `--kubeconfig`, and the test split by required privilege.
+2. Cluster-side lock (`internal/kube/lease`) and its use in the mutating commands (section 5.5). It needs the resolved cluster from step 1 and nothing from the state work.
+3. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, the cluster-scoped component files for `clusters/<uid>/`, the splits in section 6.2, and `clusters/index.yaml`.
+4. External-mode workflows, block node first, with the StorageClass storage path.
+5. CI: Kind lane using `--kubeconfig`, and the test split by required privilege.
 
 ## 12. Decisions
 
@@ -261,15 +282,17 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 
    If `solo-provisioner kube cluster install` finds that `hosts/local` records a cluster ID that differs from the live one (or a cluster that no longer exists), it **stops and does not touch the state**. Weaver cannot tell why: a `kubeadm reset` by hand, a failed or older uninstall, a rebuilt VM with surviving state, or the wrong kubeconfig all look the same, so moving the state automatically would be a guess. The error names the recorded and live cluster IDs and tells the operator to review and clean up the state by hand. The hint lists the files to move or remove and the paths they live in.
 
-3. **External state is a local cache.** Almost all of it can be re-derived from the cluster, and the cluster wins when they disagree. Storing state in the cluster is a follow-up with its own design (RBAC, ownership).
-4. **Garbage collection.** Nothing is deleted automatically, since a cluster that is only unreachable for a moment must not lose its state. A later `solo-provisioner state prune` lists clusters that are unreachable or whose ID no longer exists, and asks before deleting.
-5. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State lives in `~/.solo-weaver/state`.
+3. **Cluster-side lock.** A Lease per component per cluster, in the component's namespace, in both modes, built on `leaderelection` (section 5.5).
+4. **External state is a local cache.** Almost all of it can be re-derived from the cluster, and the cluster wins when they disagree. Storing state in the cluster is a follow-up with its own design (RBAC, ownership).
+5. **Garbage collection.** Nothing is deleted automatically, since a cluster that is only unreachable for a moment must not lose its state. A later `solo-provisioner state prune` lists clusters that are unreachable or whose ID no longer exists, and asks before deleting.
+6. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State lives in `~/.solo-weaver/state`.
 
 ## 13. Still open
 
 - What `solo-provisioner kube cluster uninstall` does with state today. This decides whether archive-at-uninstall is new behaviour or a fix.
 - Whether to offer an explicit command for the manual cleanup after a stale-state stop, so operators do not edit files by hand.
 - How to split or gate the mixed host and cluster fields in section 6.2, and whether that belongs in #1245's follow-ups or in this work.
+- The lease timings, and the name of the explicit override flag for removing a dead lease.
 - The detail of report-only mode for `doctor` and `diagnose` (epic #1110).
 - The design of in-cluster state storage, if we want it.
 - The `solo-provisioner state prune` command and its safety rules.
