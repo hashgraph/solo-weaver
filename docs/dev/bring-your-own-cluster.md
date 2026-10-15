@@ -348,6 +348,28 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 | Host-level (provisioned) | Hosted runner or privileged systemd container | Network, mount, sysctl, systemd tests and the full cluster install UAT |
 | Real VM | `kvm-runner`, nightly or on path filters | Boot-order and reboot tests, one full Debian lifecycle |
 
+### 10.1 Rollout order and baseline
+
+What this design gives CI:
+
+- Most PR jobs stop booting a KVM VM. Today the PR gate boots five (four UAT jobs and the integration job), and three of the UAT jobs repeat the full cluster install.
+- Jobs become isolated and parallel. A Kind cluster per job replaces the shared `/opt/solo` and one serial integration run. Where several jobs do share a cluster, the lease (section 5.5) keeps them from interfering.
+- Most tests no longer need privileged runners.
+- External mode is tested on every PR. One useful check comes with it: a Kind cluster on the same machine must be classified as `external` and refused as `provisioned`, which covers the IP-only trap in section 5.1.
+
+What it does not do:
+
+- Host-level tests (nft, tc, sysctl, swap, mounts, systemd, the full install and uninstall, `uat:compat`, and the block node scenarios that migrate hostPath storage) cannot run on Kind. They need the separate privileged container or hosted runner lane in the table above.
+- Splitting runs by lane needs finer test tags or capability gates than `integration`. That is test infrastructure work and does not depend on this design.
+- Block node on Kind depends on the StorageClass storage path (delivery step 4).
+
+Order:
+
+1. **Baseline first.** Record the current duration of each PR job (`integration`, `compat`, `lifecycle`, `purge-storage`, `plugin-preset-upgrade`) and the VM minutes used, so the gain can be measured. No timings have been taken yet.
+2. **Kind lane, first candidates.** These need only the API and do not wait for block node storage: the kube client integration tests (`TestWithCluster_*`), the Helm manager and cluster checker tests, and the alloy, teleport cluster, solo-operator and ESO scenarios. Whether a scenario belongs here is confirmed one by one.
+3. **Block node on Kind.** The plugin-preset upgrade scenario first, once external mode and StorageClass storage work for block node. Scenarios that touch hostPath stay host-level.
+4. **Host-level lane and tag split.** This can run in parallel with steps 2 and 3. Move the host-level tests to a privileged container or hosted runner, and keep KVM for the nightly run and path-filtered jobs.
+
 ## 11. Delivery plan
 
 1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the identity gate (including the handling of older installs in section 5.4). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
