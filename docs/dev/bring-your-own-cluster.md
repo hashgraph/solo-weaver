@@ -2,6 +2,8 @@
 
 Status: **Draft for review.** Nothing in this document is implemented yet.
 
+Depends on the per-component state files work: #1231 (PR #1235) and #1245. This design is written in terms of those component files and should be built after they merge. See section 6.
+
 ## 1. Problem
 
 `solo-provisioner` assumes one machine runs exactly one cluster, and that the cluster is the one it installed. The code does not check this.
@@ -10,7 +12,7 @@ Status: **Draft for review.** Nothing in this document is implemented yet.
 - `clusterChecker.RefreshState` then sets `ClusterState.Created = true` for any reachable cluster.
 - `bll/blocknode` and `bll/consensus` install handlers branch on `Created`. A block node install can run against whatever cluster the operator's shell points at, and still run host-level steps (firewall, tc shaping, bind mounts, weaver user).
 - Kubeconfig resolution is duplicated in `loadKubeConfig`, `resolveKubeconfigPath`, `step_daemon_provision.newTypedClient`, Helm's own settings, the daemon (`kubeconfigPath` in six places), and two hard-coded `/etc/kubernetes/admin.conf` constants.
-- All state lives in one file, `/opt/solo/weaver/state/state.yaml`, so a second cluster would overwrite the first one's state.
+- State has no notion of which cluster it describes. Today it is one file, `/opt/solo/weaver/state/state.yaml` (being split into per-component files by #1231), so a second cluster would overwrite the first one's state.
 
 We also want to run most UAT against a cluster we did not install (for example Kind), so CI does not need KVM or privileged runners for every test.
 
@@ -106,26 +108,58 @@ Old installs may lack the hashes or metadata the gate checks, and a strict gate 
 
 ## 6. State layout
 
-State is grouped by host. A cluster with no host on this machine gets its own directory.
+### 6.0 What it builds on
+
+State is moving from one `state.yaml` to per-component files, each with its own hash and lock:
+
+- #1231 / PR #1235: `machine.yaml`, `cluster.yaml`, `blocknode.yaml`, `consensus.yaml`, `teleport.yaml`, with a startup migration.
+- #1245: `machine.yaml` split further into `profile`, `firewall` and `system`.
+
+We build on that and do not change it. The per-component files are what make the host and cluster split structural.
+
+### 6.1 Layout
+
+State is grouped by host. A cluster with no host on this machine gets its own directory holding only the cluster-scoped component files.
 
 ```
 /opt/solo/weaver/state/
 ├── hosts/
-│   └── local/state.yaml           # this machine + the cluster it provisioned (content unchanged)
+│   └── local/                     # this machine + the cluster it provisioned
+│       ├── machine.yaml           # host components (later profile, firewall, system)
+│       ├── cluster.yaml
+│       ├── blocknode.yaml
+│       ├── consensus.yaml
+│       └── teleport.yaml
 └── clusters/
-    ├── <kube-system-uid>/state.yaml   # one per cluster with no host here; API-only state type
-    └── index.yaml                     # complete view of every known cluster
+    ├── <kube-system-uid>/         # one per cluster with no host here
+    │   ├── cluster.yaml           # cluster-scoped components only
+    │   ├── blocknode.yaml
+    │   ├── consensus.yaml
+    │   └── teleport.yaml
+    └── index.yaml                 # complete view of every known cluster
 ```
 
 Rules:
 
-- `hosts/local/state.yaml` keeps today's content: machine, software, hardware, firewall, shaping, and the provisioned cluster's workloads. It also records the provisioned cluster's ID.
-- `clusters/<uid>/state.yaml` uses a **separate type with API-level fields only** (cluster info, Helm releases, block node release and plugin settings, consensus node specs, teleport cluster agent). It has no machine, firewall, shaping or hostPath fields, so external-mode code cannot touch host state by accident.
+- `hosts/local/` keeps today's component files and content. `cluster.yaml` also records the provisioned cluster's ID.
+- `clusters/<uid>/` holds **only cluster-scoped components**. Host components (`machine`, and later `profile`, `firewall`, `system`) never exist there, so external-mode code cannot reach host state. Hashes and locks work per file, as in #1235.
 - Each file records its own `clusterId` and `origin`, and the loader checks them against the live cluster. A copied file is rejected.
 - External runs never write `hosts/local`. Provisioned runs never write `clusters/<uid>`.
 - The key is the cluster ID, not the IP, the context name or a user-supplied name. A rebuilt cluster gets a new ID and therefore fresh state.
 
-### 6.1 `clusters/index.yaml`
+### 6.2 Components that mix host and cluster fields
+
+Some component files hold both kinds of fields. They have to be split, or the host fields made optional and never written in external mode, before a cluster directory can hold them:
+
+| File | Host-bound fields | Cluster-level fields |
+|---|---|---|
+| `blocknode.yaml` | `Shaping`, `TrafficShapingDisabled`, `Storage` (hostPath) | Helm release info, plugin preset and list, retention |
+| `consensus.yaml` | `HostPathOwners` | Node identity, images, config hashes, secrets, managed spec |
+| `teleport.yaml` | Node agent | Cluster agent |
+
+The daemon writes `consensus.yaml` and is released separately, so it has to follow any path or layout change.
+
+### 6.3 `clusters/index.yaml`
 
 The index lists **every** cluster, including the provisioned one, so it is the complete view. A cluster with `state: hosts/local` has no `clusters/<uid>/` directory.
 
@@ -163,7 +197,7 @@ The alias binds to a cluster ID on first use. If the alias later points at a dif
 
 A developer can create a Kind cluster on their own machine (including a Mac) and use it with weaver. It does not need SSH delegation (section 9).
 
-- Weaver did not install it, so it is `origin: external`. It gets `clusters/<kube-system-uid>/state.yaml` and an index entry with the context (for example `kind-dev`) and a `127.0.0.1` server address.
+- Weaver did not install it, so it is `origin: external`. It gets a `clusters/<kube-system-uid>/` directory and an index entry with the context (for example `kind-dev`) and a `127.0.0.1` server address.
 - Use it with `--kubeconfig` and `--context`. Only API-level work runs. Storage comes from Kind's default StorageClass.
 - Each `kind create cluster` gets a new cluster ID, so a recreated cluster starts with clean state. If the same alias is reused for the new cluster, `--rebind` is needed.
 - The same flow is what the CI Kind lane uses (section 10).
@@ -175,21 +209,21 @@ Prerequisites for running this on macOS:
 
 ## 8. Migration of existing deployments
 
-Add a startup migration, `state-hosts-layout`, registered first in `RegisterMigrations()` (`cmd/cli/commands/root.go`). See `docs/dev/migration-framework.md`.
+Add a startup migration, `state-hosts-layout`, registered in `RegisterMigrations()` (`cmd/cli/commands/root.go`) **after** the migration that splits `state.yaml` into component files (#1231). See `docs/dev/migration-framework.md`. The chain is: `unified-state`, then per-component split, then `state-hosts-layout`. Each step is idempotent.
 
-- `Applies`: `state/state.yaml` exists and `state/hosts/local/state.yaml` does not.
-- `Execute`: create `hosts/local/` with the same owner and mode, copy the file, verify the hash, rename atomically, and keep the original as `state.yaml.pre-hosts-layout`.
-- If both files exist, prefer the new one, leave the legacy one untouched, and log a warning. Never overwrite.
+- `Applies`: component files exist directly under `state/` and `state/hosts/local/` does not.
+- `Execute`: create `hosts/local/` with the same owner and mode, move the component files (and their lock and hash companions) into it, and keep a backup of the originals as `state/.pre-hosts-layout/`. It moves files and does not rewrite their content.
+- If both locations have files, prefer `hosts/local/`, leave the legacy files untouched, and log a warning. Never overwrite.
 - Idempotent and crash-safe. `Rollback` restores the backup on a best-effort basis.
 - It runs before anything opens the state manager, and before the identity gate. Migration is pure filesystem work and needs no cluster.
-- All code that builds the state path (`NewState`, `state_reader.go`, the `helm-release-schema-v2` and `mgmt-ports-v1` migrations, `testutil`) moves to one resolver.
+- All code that builds a state path (the state manager, `state_reader.go`, the existing state migrations, `testutil`, the daemon) moves to one resolver.
 
 Risks to settle:
 
-1. The `StateFile` field is serialized inside `state.yaml`. After the move it must be rewritten, and the loader should force it to the path actually loaded, or a later flush could write to the old location.
-2. Downgrade: an older binary looks at the old path and sees a fresh machine. Migrations are one-way today; document it. A symlink does not help, because the atomic write replaces it.
-3. The daemon is a separate binary. Check whether it reads the state path.
-4. Two concurrent invocations during the move need a lock, or an atomic rename plus a re-check.
+1. Any path stored inside a state file (the old `StateFile` field is the known case) must be rewritten, and the loader should use the path it actually loaded from, or a later flush could write to the old location.
+2. Downgrade: an older binary looks at the old path and sees a fresh machine. Migrations are one-way today; document it. A symlink does not help, because atomic writes replace it.
+3. The daemon is a separate binary with its own release schedule. It must read the new location, and a daemon older than the CLI must not see an empty state.
+4. Two concurrent invocations during the move need a lock, or an atomic rename plus a re-check. The per-component `flock` files from #1235 move together with the state files, so the move must hold all of them.
 5. The legacy-cluster backfill in section 5.4 ships with this change.
 
 ## 9. Later: several VMs from macOS
@@ -216,20 +250,26 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 ## 11. Delivery plan
 
 1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the identity gate (including the legacy backfill rules). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
-2. State layout: `state-hosts-layout` migration, the single path resolver, the external state type and `clusters/index.yaml`.
+2. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, the cluster-scoped component files for `clusters/<uid>/`, the splits in section 6.2, and `clusters/index.yaml`.
 3. External-mode workflows, block node first, with the StorageClass storage path.
 4. CI: Kind lane using `--kubeconfig`, and the test split by required privilege.
 
 ## 12. Decisions
 
 1. **Gate exemptions.** The list in section 5.3 is the rule. Diagnostic commands run the gate in report-only mode.
-2. **Reinstall.** When `solo-provisioner kube cluster install` finds that `hosts/local` records a different cluster ID, the old cluster section moves to `hosts/local/archive/<old-uid>-<timestamp>.yaml`. Host-scoped data (software, firewall) stays. Nothing is deleted, and the new cluster starts with an empty cluster section.
+2. **Uninstall and reinstall.** The normal path is at uninstall: `solo-provisioner kube cluster uninstall` moves the cluster-scoped component files (`cluster`, `blocknode`, `consensus` and the cluster half of `teleport`) to `hosts/local/archive/<uid>-<timestamp>/`. Host-scoped components (software, firewall, shaping) stay, because the machine is still provisioned. A later `solo-provisioner kube cluster install` then starts clean. Nothing is deleted.
+
+   If `solo-provisioner kube cluster install` finds that `hosts/local` records a cluster ID that differs from the live one (or a cluster that no longer exists), it **stops and does not touch the state**. Weaver cannot tell why: a `kubeadm reset` by hand, a failed or older uninstall, a rebuilt VM with surviving state, or the wrong kubeconfig all look the same, so moving the state automatically would be a guess. The error names the recorded and live cluster IDs and tells the operator to review and clean up the state by hand. The hint lists the files to move or remove and the paths they live in.
+
 3. **External state is a local cache.** Almost all of it can be re-derived from the cluster, and the cluster wins when they disagree. Storing state in the cluster is a follow-up with its own design (RBAC, ownership).
 4. **Garbage collection.** Nothing is deleted automatically, since a cluster that is only unreachable for a moment must not lose its state. A later `solo-provisioner state prune` lists clusters that are unreachable or whose ID no longer exists, and asks before deleting.
 5. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State lives in `~/.solo-weaver/state`.
 
 ## 13. Still open
 
+- What `solo-provisioner kube cluster uninstall` does with state today. This decides whether archive-at-uninstall is new behaviour or a fix.
+- Whether to offer an explicit command for the manual cleanup after a stale-state stop, so operators do not edit files by hand.
+- How to split or gate the mixed host and cluster fields in section 6.2, and whether that belongs in #1245's follow-ups or in this work.
 - The detail of report-only mode for `doctor` and `diagnose` (epic #1110).
 - The design of in-cluster state storage, if we want it.
 - The `solo-provisioner state prune` command and its safety rules.
