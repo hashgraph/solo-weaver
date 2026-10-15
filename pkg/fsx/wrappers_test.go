@@ -96,7 +96,7 @@ func TestSyncDir_MissingDirectory(t *testing.T) {
 	err := SyncDir(missing)
 
 	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, FileWriteError), "got %v", err)
+	require.True(t, errorx.IsOfType(err, FileSyncError), "got %v", err)
 	require.Contains(t, err.Error(), missing)
 }
 

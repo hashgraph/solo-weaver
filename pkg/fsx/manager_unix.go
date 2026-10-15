@@ -528,7 +528,7 @@ func (m *unixManager) AppendToFile(path string, payload []byte) error {
 	}
 
 	if err := file.Sync(); err != nil {
-		return FileWriteError.New("failed to fsync file %q", path).WithUnderlyingErrors(err)
+		return FileSyncError.New("failed to fsync file %q", path).WithUnderlyingErrors(err)
 	}
 
 	return m.syncDir(filepath.Dir(path))

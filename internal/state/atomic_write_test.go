@@ -45,6 +45,23 @@ func TestAtomicWriteFile_DirectorySyncFailure(t *testing.T) {
 	require.Len(t, entries, 1)
 }
 
+func TestAtomicWriteFile_ParentSyncFailure(t *testing.T) {
+	syncErr := errors.New("disk gone")
+	dir := t.TempDir()
+	orig := syncDir
+	t.Cleanup(func() { syncDir = orig })
+	syncDir = func(d string) error {
+		if d == filepath.Dir(dir) {
+			return syncErr
+		}
+		return nil
+	}
+
+	err := atomicWriteFile(filepath.Join(dir, "state.yaml"), []byte("new"))
+
+	require.ErrorIs(t, err, syncErr)
+}
+
 func TestAtomicWriteFile_NewDirectorySyncsParent(t *testing.T) {
 	synced := recordDirSyncs(t, nil)
 	parent := t.TempDir()

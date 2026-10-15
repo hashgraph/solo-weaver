@@ -40,8 +40,8 @@ var syncDir = fsx.SyncDir
 // The parent directory is created with mode 0o755 if it does not exist.
 // The temporary file is created in the same directory as path so the final
 // os.Rename is guaranteed to be atomic (same filesystem). The directory and
-// its parent are fsynced after the rename; an error from either sync leaves
-// the new content in place.
+// its parent are fsynced after the rename; a failure of either sync is an
+// fsx.FileSyncError and leaves the new content in place.
 func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
