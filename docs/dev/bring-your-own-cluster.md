@@ -281,7 +281,9 @@ Add a startup migration, `state-hosts-layout`, registered in `RegisterMigrations
 - If both locations have files, prefer `hosts/local/`, leave the legacy files untouched, and log a warning. Never overwrite.
 - Idempotent and crash-safe. `Rollback` restores the backup on a best-effort basis.
 - It runs before anything opens the state manager, and before the identity gate. Migration is pure filesystem work and needs no cluster.
-- All code that builds a state path (the state manager, `state_reader.go`, the existing state migrations, `testutil`, the daemon) moves to one resolver.
+- All code that builds a state path (the state manager, `state_reader.go`, the existing state migrations, `testutil`, the daemon) moves to one resolver. #1235 already builds component paths from a directory (`ComponentFilePath(dir, id)`, `RuntimeResolver.StateDir()`), so for most callers the change is what that directory is (`state/` becomes `state/hosts/local/`). A few callers still use `models.Paths().StateDir` directly, such as the startup-migrations lock and some tests.
+- The migration runs under the same startup-migrations lock that #1235 takes on the state directory.
+- The split migration from #1235 can leave `state.yaml.legacy` and `state.yaml.diverged-*` files in `state/`. They stay where they are: the layout migration moves only the component files, and does not touch or delete them.
 
 Risks to settle:
 
