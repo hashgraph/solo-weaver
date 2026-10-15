@@ -119,7 +119,7 @@ The gate separates evidence that needs no API from evidence that needs it, so a 
 
 The address check alone is not enough. A Kind or minikube cluster on the same machine points at `127.0.0.1` and would pass it. The binary and process checks rule those out.
 
-**Recorded identity** (also no API needed). `hosts/local/host.yaml` records, after the first successful pass, the cluster ID, the server address and the CA certificate fingerprint of the cluster this host provisioned. A kubeconfig **matches the recorded identity** when its CA fingerprint equals the recorded one. The server address is a fallback, used only when no fingerprint is recorded, which can happen on an older install. The fingerprint is the real identity. A server address can be reused: a different cluster rebuilt on the same `IP:6443` would match on the address alone, so weaver would route it through the "this is our cluster" branch (rules 2 to 5) and report it as "rebuilt, state stale" (rule 3) instead of as external (rule 9). The live cluster-ID check still stops any state corruption in that case. Preferring the fingerprint only makes the message the operator sees correct. This works while the cluster is down, which the cluster ID alone cannot.
+**Recorded identity** (also no API needed). `hosts/local/host.yaml` records, after the first successful pass, the cluster ID, the server address and the CA certificate fingerprint of the cluster this host provisioned. A kubeconfig **matches the recorded identity** when its CA fingerprint equals the recorded one. The server address is a fallback, used only when no fingerprint is recorded, which can happen on an older install. The fingerprint is the real identity. A server address can be reused: a different cluster rebuilt on the same `IP:6443` would match on the address alone, so weaver would route it through the "this is our cluster" branch (branch A) and report it as "rebuilt, state stale" (rule A.4) instead of as external (rule C.1). The live cluster-ID check still stops any state corruption in that case. Preferring the fingerprint only makes the message the operator sees correct. This works while the cluster is down, which the cluster ID alone cannot.
 
 **Live identity** (needs the API). The cluster ID, the UID of the `kube-system` namespace, read from the live cluster.
 
@@ -129,26 +129,43 @@ Assumption, to be confirmed against the kubeadm workflow: a host runs one single
 
 ### 5.2 Outcomes
 
-The rules are checked in order. The first one that applies wins.
+Only the needs that reach the live cluster, `api` and `host+api` (section 5.3), evaluate these rules. The `host`, `install` and `connect` needs run a reduced check that never reads the API, so the "API unreachable" leaves do not apply to them. Section 5.3 says exactly what each need checks.
 
-Only the needs that reach the live cluster, `api` and `host+api` (section 5.3), evaluate this full table. The `host`, `install` and `connect` needs run a reduced check that never reads the API, so the "API unreachable" half of rules 3, 4 and 8 does not apply to them. Section 5.3 says exactly what each need checks.
+The outcomes fall into three branches: the target matches the recorded identity, nothing is recorded yet, or the target is not this host's cluster. One precondition is checked before all of them. Within a branch the rows are checked in order and the first match wins. The `#` column (for example A.1) is the stable rule id used elsewhere in this document.
 
-| # | Situation | Result |
+**Precondition (all branches):**
+
+| # | Condition | Result |
 |---|---|---|
-| 1 | The recorded `machineId` in `host.yaml` does not match this machine (for example the directory was copied) | Stop. Hint: the state belongs to another machine |
-| 2 | The target matches the recorded identity, local evidence passes, the API is reachable, and the live cluster ID matches the recorded one | `provisioned`, host `local`, state in `hosts/local` |
-| 3 | The target matches the recorded identity, local evidence passes, the API is reachable, but the live cluster ID differs | Stop. The cluster was rebuilt and the state is stale (decision 2 in section 12) |
-| 4 | The target matches the recorded identity, but a local check fails or the API is unreachable | Stop. The hint names the failing piece (for example kubelet is installed but not running). **Never** fall back to `external` |
-| 5 | The target matches the recorded identity, but a check could not be read (for example no root) | Stop. Hint: run with `sudo` |
-| 6 | Nothing is recorded, local evidence passes (an older install, section 5.4), and the live cluster ID has no `clusters/<uid>` state | `provisioned`. Record the identity |
-| 7 | Nothing is recorded, local evidence passes, and the live cluster ID already has `clusters/<uid>` state | Stop. Needs an explicit step; it is never adopted silently (see below) |
-| 8 | Nothing is recorded, local evidence passes, but the API is unreachable | Stop. The cluster ID cannot be read. Hint: start the cluster, or run `solo-provisioner kube cluster connect` once it is up |
-| 9 | The target is not this host's cluster, and `--kubeconfig` was given | `external`, state in `clusters/<uid>`. The cluster must be registered (section 4.1): an interactive run stops with a hint to run `solo-provisioner kube cluster connect`, a non-interactive run registers it first |
-| 10 | The target is not this host's cluster, and no `--kubeconfig` was given | Stop. If nothing is installed here, the hint is to run `solo-provisioner kube cluster install` or pass `--kubeconfig` for an external cluster. If a provisioned install is only partly present, the hint names what is missing |
+| P.1 | The recorded `machineId` in `host.yaml` does not match this machine (for example the directory was copied) | Stop. Hint: the state belongs to another machine |
 
-Rules 3 and 7 prevent split-brain between the state locations. Rule 4 is the one that keeps a broken local cluster from being treated as someone else's.
+**Branch A — the target matches the recorded identity** (CA fingerprint; server address only as a fallback). Reads the API.
 
-#### Rule 7: a cluster that was external and now passes the local proof
+| # | Condition | Result |
+|---|---|---|
+| A.1 | A local check fails, or the API is unreachable | Stop. The hint names the failing piece (for example kubelet is installed but not running). **Never** fall back to `external` |
+| A.2 | A local check could not be read (for example no root) | Stop. Hint: run with `sudo` |
+| A.3 | Local evidence passes, the API is reachable, and the live cluster ID matches the recorded one | `provisioned`, host `local`, state in `hosts/local` |
+| A.4 | Local evidence passes, the API is reachable, but the live cluster ID differs | Stop. The cluster was rebuilt and the state is stale (decision 2 in section 12) |
+
+**Branch B — nothing is recorded, but local evidence passes** (an older install, section 5.4; trust on first use). Reads the API.
+
+| # | Condition | Result |
+|---|---|---|
+| B.1 | The API is unreachable | Stop. The cluster ID cannot be read. Hint: start the cluster, or run `solo-provisioner kube cluster connect` once it is up |
+| B.2 | The live cluster ID already has `clusters/<uid>` state | Stop. Needs an explicit step; it is never adopted silently (see below) |
+| B.3 | The live cluster ID has no `clusters/<uid>` state | `provisioned`. Record the identity |
+
+**Branch C — the target is not this host's cluster** (an identity is recorded but the target does not match it, or nothing is recorded and local evidence does not pass). Decided from `--kubeconfig`; no API needed.
+
+| # | Condition | Result |
+|---|---|---|
+| C.1 | `--kubeconfig` was given | `external`, state in `clusters/<uid>`. The cluster must be registered (section 4.1): an interactive run stops with a hint to run `solo-provisioner kube cluster connect`, a non-interactive run registers it first |
+| C.2 | No `--kubeconfig` was given | Stop. If nothing is installed here, the hint is to run `solo-provisioner kube cluster install` or pass `--kubeconfig` for an external cluster. If a provisioned install is only partly present, the hint names what is missing |
+
+Branches A and C together prevent split-brain between the state locations: a cluster that does not match the recorded identity can only become `external`, never overwrite `hosts/local`. Rules A.4 and B.2 cover the two ways one cluster ID could end up described twice. Rule A.1 is the one that keeps a broken local cluster from being treated as someone else's.
+
+#### Rule B.2: a cluster that was external and now passes the local proof
 
 This can happen when a cluster on the machine was not recognised at first (for example kubelet was down, or it was built by hand), so a command with `--kubeconfig` treated it as `external` and created `clusters/<uid>/`. Later the proof passes and the same cluster ID now qualifies as `provisioned`. Two places could then describe one cluster, and the records may disagree. Picking one silently could ignore the block node and consensus information in the other, and merging automatically could overwrite newer facts with older ones. So weaver stops and asks.
 
@@ -167,8 +184,8 @@ A fixed exempt list does not fit, so each command declares what it needs, and th
 |---|---|---|---|
 | `none` | No cluster and no host evidence | `solo-provisioner install`, `solo-provisioner uninstall`, `solo-provisioner version`, `solo-provisioner demo`, `--help`, `solo-provisioner kube cluster list` | Nothing |
 | `connect` | Classifies the target itself | `solo-provisioner kube cluster connect` | Runs the evidence and outcomes in 5.1 and 5.2 to classify the target, and registers it instead of stopping |
-| `install` | Creates the cluster | `solo-provisioner kube cluster install` | Allows no cluster, or stale state (rule 3, which this command resolves). Refuses when a cluster that is not ours is already on this host, which means `/etc/kubernetes/admin.conf` exists but the evidence does not show it is ours |
-| `host` | Host-level work that does not need the API, and must also work on a broken cluster | `solo-provisioner kube cluster uninstall`, `solo-provisioner network firewall\|shape\|policy ...`, `solo-provisioner teleport node ...` | Offline check only: the machine ID matches (rule 1), and the run is not in external mode (no `--kubeconfig` points elsewhere). It never reads the API, so a down or unhealthy local cluster does not stop it. Rules 2 to 10 are not evaluated |
+| `install` | Creates the cluster | `solo-provisioner kube cluster install` | Allows no cluster, or stale state (rule A.4, which this command resolves). Refuses when a cluster that is not ours is already on this host, which means `/etc/kubernetes/admin.conf` exists but the evidence does not show it is ours |
+| `host` | Host-level work that does not need the API, and must also work on a broken cluster | `solo-provisioner kube cluster uninstall`, `solo-provisioner network firewall\|shape\|policy ...`, `solo-provisioner teleport node ...` | Offline check only: the machine ID matches (rule P.1), and the run is not in external mode (no `--kubeconfig` points elsewhere). It never reads the API, so a down or unhealthy local cluster does not stop it. Branches A, B and C are not evaluated |
 | `api` | Work through the Kubernetes API in either mode | Block node, consensus node, alloy, ESO and teleport cluster commands that do not touch the host | The full outcomes in 5.2. The result may be `provisioned` or `external` |
 | `host+api` | Provisioned-only work that also needs the cluster | Commands that run host steps and API steps, such as block node install on a provisioned host | The full outcomes in 5.2, and the result must be `provisioned` |
 
@@ -181,7 +198,7 @@ The exact assignment of each command is made when the gate is built, from the co
 A strict gate must not lock operators out of clusters that older versions installed. Two things could be missing on such a machine, and neither needs a separate migration:
 
 - **Recorded hashes.** Software state records only the name, version, `Installed` and `Configured`; it has never held a binary hash. The gate does not need one. The embedded catalog has the expected checksum for each software, version and platform, which the installer already checks at download. The gate verifies that the sandbox binary on disk matches the catalog checksum for the version recorded in state, and that the running process is that binary.
-- **The recorded identity.** `hosts/local/host.yaml` has no cluster ID, server address or CA fingerprint on an older install. The first time all the local evidence passes and the live cluster ID can be read (rule 6), the gate records all three. This is trust on first use, and it is safe because the binary, process, `admin.conf` and address checks have already passed. Running `solo-provisioner kube cluster connect` is an optional way to register eagerly and see each check reported (section 4.1); nothing stops working if it is skipped.
+- **The recorded identity.** `hosts/local/host.yaml` has no cluster ID, server address or CA fingerprint on an older install. The first time all the local evidence passes and the live cluster ID can be read (rule B.3), the gate records all three. This is trust on first use, and it is safe because the binary, process, `admin.conf` and address checks have already passed. Running `solo-provisioner kube cluster connect` is an optional way to register eagerly and see each check reported (section 4.1); nothing stops working if it is skipped.
 
 Catalog gaps: the catalog is refreshed and split over time (#1262), so an old kubelet or CRI-O version may no longer be in it. If the recorded version is not in the catalog, the checksum check is skipped with a warning, and the gate relies on the other checks: the binary is in the sandbox path and the running process is that binary. A version that is in the catalog but does not match its checksum still stops the command.
 
