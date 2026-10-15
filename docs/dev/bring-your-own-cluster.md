@@ -346,7 +346,7 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 | Unprivileged | `solo-linux-medium` | Unit tests, installer download and verify tests |
 | Kind (external mode) | `solo-linux-medium` with `dind` | API-level UAT: chart and plugin-preset upgrade, kube client, alloy, teleport cluster, solo-operator |
 | Host-level (provisioned) | Hosted runner or privileged systemd container | Network, mount, sysctl, systemd tests and the full cluster install UAT |
-| Real VM | `kvm-runner`, nightly or on path filters | Boot-order and reboot tests, one full Debian lifecycle |
+| Real VM | `kvm-runner`, nightly, and enabled by hand for a PR when needed | Boot-order and reboot tests, one full Debian lifecycle |
 
 ### 10.1 Rollout order and baseline
 
@@ -368,7 +368,7 @@ Order:
 1. **Baseline first.** Record the current duration of each PR job (`integration`, `compat`, `lifecycle`, `purge-storage`, `plugin-preset-upgrade`) and the VM minutes used, so the gain can be measured. No timings have been taken yet.
 2. **Kind lane, first candidates.** These need only the API and do not wait for block node storage: the kube client integration tests (`TestWithCluster_*`), the Helm manager and cluster checker tests, and the alloy, teleport cluster, solo-operator and ESO scenarios. Whether a scenario belongs here is confirmed one by one.
 3. **Block node on Kind.** The plugin-preset upgrade scenario first, once external mode and StorageClass storage work for block node. Scenarios that touch hostPath stay host-level.
-4. **Host-level lane and tag split.** This can run in parallel with steps 2 and 3. Move the host-level tests to a privileged container or hosted runner, and keep KVM for the nightly run and path-filtered jobs.
+4. **Host-level lane and tag split.** This can run in parallel with steps 2 and 3. Move the host-level tests to a privileged container or hosted runner. KVM is no longer part of the default PR gate: it runs nightly, and a maintainer enables it by hand for a PR that touches something only a real VM can check (for example a manual workflow dispatch or a PR label). Path filters can later suggest when to enable it, but do not start it automatically.
 
 ## 11. Delivery plan
 
