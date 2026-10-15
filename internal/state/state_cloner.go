@@ -47,7 +47,28 @@ func (s *HardwareState) Clone() (*HardwareState, error) {
 // Clone creates a deep copy of BlockNodeState
 func (b *BlockNodeState) Clone() (*BlockNodeState, error) {
 	clone := *b
+	clone.MetalLBPool = clonePtr(b.MetalLBPool)
+	if b.Shaping != nil {
+		shaping := *b.Shaping
+		if b.Shaping.ShapeOverrides != nil {
+			shaping.ShapeOverrides = make(map[string]models.ShapeOverride, len(b.Shaping.ShapeOverrides))
+			for class, override := range b.Shaping.ShapeOverrides {
+				override.Prio = clonePtr(override.Prio)
+				shaping.ShapeOverrides[class] = override
+			}
+		}
+		clone.Shaping = &shaping
+	}
 	return &clone, nil
+}
+
+// clonePtr returns a pointer to a copy of *p, or nil for a nil p.
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // Clone creates a deep copy of ClusterNodeState

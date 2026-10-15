@@ -34,9 +34,11 @@ func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 // host stands in for the live system: the checkers read teleport from it, and
 // the workflow can change it as a real install would. A non-nil teleportProbe
 // swaps in the real Teleport checker with that cluster probe and no Helm releases.
+// A nil blockNode reads the block node back as persisted.
 type host struct {
 	teleport      state.TeleportState
 	teleportProbe reality.ClusterProbe
+	blockNode     *state.BlockNodeState
 }
 
 type noReleases struct{}
@@ -81,8 +83,13 @@ func newFileManager(t *testing.T) fsx.Manager {
 
 func writeState(t *testing.T, stateFile string, teleport state.TeleportState) {
 	t.Helper()
+	writeStateWith(t, stateFile, func(s *state.State) { s.TeleportState = teleport })
+}
+
+func writeStateWith(t *testing.T, stateFile string, set func(*state.State)) {
+	t.Helper()
 	s := state.NewState(stateFile)
-	s.TeleportState = teleport
+	set(&s)
 	sm, err := state.NewStateManager(state.WithState(s), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.FlushState())
@@ -121,6 +128,9 @@ func handleBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopI
 			return sm.State().MachineState, nil
 		}),
 		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
+			if h.blockNode != nil {
+				return *h.blockNode, nil
+			}
 			return sm.State().BlockNodeState, nil
 		}),
 		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
@@ -199,6 +209,34 @@ func TestHandleIntent_NoStateFileHasNoWarning(t *testing.T) {
 
 	require.Empty(t, ui.CollectWarnings(report))
 	require.Equal(t, configuredNodeAgent().NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
+}
+
+func blockNodeWithPool(pool bool) state.BlockNodeState {
+	bn := state.NewBlockNodeState()
+	bn.ReleaseInfo.Name = "block-node"
+	bn.ReleaseInfo.Status = release.StatusDeployed
+	bn.ServiceTopology = state.ServiceTopologySingle
+	bn.MetalLBPool = &pool
+	return bn
+}
+
+// A hand-run helm upgrade that drops the MetalLB pool is reported once, then
+// flushed like any other live value.
+func TestHandleIntent_ReportsBlockNodeChangeThenPersistsLiveState(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = blockNodeWithPool(true) })
+	live := blockNodeWithPool(false)
+	h := &host{blockNode: &live}
+
+	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
+
+	require.Equal(t, []string{
+		`block node metallbPool differs from persisted state: state.yaml has "true", live is "false"`,
+	}, ui.CollectWarnings(report))
+	require.False(t, *readState(t, stateFile).BlockNodeState.MetalLBPool)
+
+	second := runBlockNodeIntent(t, stateFile, h, noopIntent{})
+	require.Empty(t, ui.CollectWarnings(second))
 }
 
 func installedClusterAgent() state.TeleportState {
