@@ -58,9 +58,41 @@ New root persistent flags:
 |---|---|
 | `--kubeconfig <path>` | Kubeconfig to use. Without it, only the cluster this host provisioned is considered. |
 | `--context <name>` | Context inside the kubeconfig. |
-| `--cluster-name <alias>` | Optional human label, stored in `clusters/index.yaml`. Defaults to the context name. Never used as a key. |
+| `--cluster-name <alias>` | Optional human label, stored in `clusters/index.yaml` when the cluster is registered (section 4.1). Defaults to the context name. Never used as a key. |
 
 Without `--kubeconfig`, ambient `$KUBECONFIG` and `~/.kube/config` are not trusted on their own. Weaver already copies `admin.conf` to `~/.kube/config` for root and the sudo user (`internal/kube/admin.go`), so that file can be ours, but the identity check, not the path, proves it.
+
+### 4.1 Registering a cluster
+
+A cluster is registered once, by one command, and the rest of the commands refer to it:
+
+```bash
+solo-provisioner kube cluster connect --kubeconfig <path> [--context <name>] [--cluster-name <alias>]
+```
+
+`connect` does these steps, in order:
+
+1. Load the kubeconfig and test the connection with a short deadline. If it fails, stop with a clear error.
+2. Read the cluster ID (the `kube-system` UID).
+3. Classify the cluster with the identity check in section 5.1: provisioned on this host, or external.
+4. Check the permissions it can check at this point, with `SelfSubjectAccessReview`: API access, and creating namespaces and leases. Checks in a component's own namespace run later, when a command needs them, because that namespace may not exist yet.
+5. Bind the alias to the cluster ID. If the alias is already bound to a different cluster ID, stop unless `--rebind` is given.
+6. Write the `clusters/index.yaml` entry. State files are not created here. They are created when a component is first managed in that cluster.
+
+Related commands, all reading or editing the index only:
+
+| Command | Purpose |
+|---|---|
+| `solo-provisioner kube cluster list` | Print every known cluster: alias, short ID, origin, server, last used. |
+| `solo-provisioner kube cluster info <alias>` | Origin, server, the components managed there (block node, consensus node and so on) and their state, and the current lease holders (section 5.5). Runs the identity check in report-only mode, so it pairs with `doctor` and `diagnose` (#1110). |
+| `solo-provisioner kube cluster disconnect <alias>` | Remove the index entry. State files are left in place until an explicit prune (section 12). Later work. |
+
+A command that is given an unregistered cluster:
+
+- Interactive: stops with a hint to run `solo-provisioner kube cluster connect`.
+- Non-interactive (`--non-interactive`, CI): registers the cluster implicitly with the same steps, so a Kind lane needs no extra step.
+
+`connect` is idempotent. Running it again for the same cluster ID refreshes the context, server and last-used time.
 
 ## 5. Identity gate
 
@@ -85,7 +117,7 @@ The IP check alone is not enough. A Kind or minikube cluster on the same machine
 | Situation | Result |
 |---|---|
 | All checks pass | `provisioned`, host `local`, state in `hosts/local` |
-| Checks fail, `--kubeconfig` given | `external`, state in `clusters/<uid>` |
+| Checks fail, `--kubeconfig` given | `external`, state in `clusters/<uid>`. The cluster must be registered (section 4.1): an interactive run stops with a hint to run `solo-provisioner kube cluster connect`, a non-interactive run registers it first |
 | Checks fail, no `--kubeconfig` | Stop. Hint: run `solo-provisioner kube cluster install`, or pass `--kubeconfig` for an external cluster |
 | Cluster ID matches the one recorded in `hosts/local/host.yaml`, but a local check fails (for example kubelet is down) | Stop. Hint: fix the local cluster. **Never** fall back to `external` |
 | Cluster ID already has `clusters/<uid>` state and now passes the local proof | Stop. Needs an explicit step; it is never adopted silently |
@@ -113,6 +145,7 @@ These commands expect no cluster yet, so they skip the gate:
 - `solo-provisioner demo`
 - `solo-provisioner --help` (and `--help` on any subcommand)
 - `solo-provisioner kube cluster install`
+- `solo-provisioner kube cluster connect` (it is the step that registers any cluster) and `solo-provisioner kube cluster list` (it reads the index only)
 
 `solo-provisioner kube cluster install` still has to refuse to proceed when a foreign cluster is configured.
 
@@ -245,7 +278,7 @@ The cluster ID is the UID of the `kube-system` namespace, a random UUID that say
 
 Every message, log line and diagnostic shows them together, for example `perfnet-eu (7c1e9a04) at https://k8s.perfnet-eu.example:6443`. On disk, `clusters/<uid>/` stays a plain UID directory, because putting the alias in the name would mean renaming it when the alias changes. The index maps one to the other, and a read-only list command prints it (section 13).
 
-The alias binds to a cluster ID on first use. If the alias later points at a different cluster ID, the command stops with an error. `--rebind` overrides it explicitly. An alias alone can never create state.
+The alias binds to a cluster ID when the cluster is registered with `solo-provisioner kube cluster connect` (section 4.1). If the alias later points at a different cluster ID, the command stops with an error. `--rebind` overrides it explicitly. An alias alone can never create state.
 
 ## 7. External mode: API only
 
@@ -263,7 +296,7 @@ The alias binds to a cluster ID on first use. If the alias later points at a dif
 A developer can create a Kind cluster on their own machine (including a Mac) and use it with weaver. It does not need SSH delegation (section 9).
 
 - Weaver did not install it, so it is `origin: external`. It gets a `clusters/<kube-system-uid>/` directory and an index entry with the context (for example `kind-dev`) and a `127.0.0.1` server address.
-- Use it with `--kubeconfig` and `--context`. Only API-level work runs. Storage comes from Kind's default StorageClass.
+- Register it once with `solo-provisioner kube cluster connect`, or let a non-interactive run register it. Use it with `--kubeconfig` and `--context`. Only API-level work runs. Storage comes from Kind's default StorageClass.
 - Each `kind create cluster` gets a new cluster ID, so a recreated cluster starts with clean state. If the same alias is reused for the new cluster, `--rebind` is needed.
 - The same flow is what the CI Kind lane uses (section 10).
 
@@ -317,7 +350,7 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 
 1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the identity gate (including the handling of older installs in section 5.4). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
 2. Cluster-side lock (`internal/kube/lease`) and its use in the mutating commands (section 5.5). It needs the resolved cluster from step 1 and nothing from the state work.
-3. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, `provisioner.yaml`, `hosts/local/host.yaml`, the cluster-scoped component files for `clusters/<uid>/`, the host-bound field guard in section 6.2, and `clusters/index.yaml`.
+3. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, `provisioner.yaml`, `hosts/local/host.yaml`, the cluster-scoped component files for `clusters/<uid>/`, the host-bound field guard in section 6.2, `clusters/index.yaml`, and the `kube cluster connect`, `list` and `info` commands.
 4. External-mode workflows, block node first, with the StorageClass storage path.
 5. CI: Kind lane using `--kubeconfig`, and the test split by required privilege.
 
@@ -334,15 +367,28 @@ External mode is what makes a Kind lane possible on the ARC runners (`solo-linux
 6. **Older installs.** No separate backfill. The gate checks binaries against the catalog checksum and records the cluster ID on its first successful pass (section 5.4).
 7. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State, including `provisioner.yaml`, lives in `~/.solo-weaver/state`.
 
+8. **Cluster registration.** One explicit command, `solo-provisioner kube cluster connect`, registers a cluster. Non-interactive runs register implicitly. `list` and `info` read the index and the cluster. `disconnect` is later work (section 4.1).
+
 ## 13. Still open
 
 - What `solo-provisioner kube cluster uninstall` does with state today. This decides whether archive-at-uninstall is new behaviour or a fix.
 - Whether to offer explicit commands so operators do not edit state by hand: one for cleanup after a stale-state stop, and one to discard or adopt external state for a cluster that now passes the local proof (section 5.2), for example `solo-provisioner state adopt`.
-- A read-only `solo-provisioner kube cluster list` that prints `clusters/index.yaml` (section 6.3).
+- Details of `solo-provisioner kube cluster info` (which component states it shows) and of `disconnect` (what it does with state files). Both belong with the diagnostics work (#1110) and the prune command.
 - Whether the writer guard in section 6.2 is enough, or the files should be split by owner, and whether that belongs in #1245's follow-ups or in this work.
 - Where the action history (`LastAction` and `action_history.yaml`, #1244) lives. It is probably per target (host or cluster), but that needs a look.
 - Agreeing the `ProvisionerState` and `Version` move out of `system` with #1245.
 - The lease timings, and the name of the explicit override flag for removing a dead lease.
 - The detail of report-only mode for `doctor` and `diagnose` (epic #1110).
-- The design of in-cluster state storage, if we want it.
+- The design of in-cluster state storage, if we want it. Prior art in section 14: a labelled ConfigMap with `lastUpdatedBy` and `lastUpdatedAt` (the lease holder identity already carries user, host and command), and a validator that checks the recorded components against the live cluster.
+- Whether a grouping of clusters is ever needed (Solo's deployments span several clusters). It may matter for consensus orbits that span clusters. Out of scope here.
 - The `solo-provisioner state prune` command and its safety rules.
+
+## 14. Prior art: hiero-ledger/solo
+
+Solo (`hiero-ledger/solo`) solves part of this problem. We do not adopt its code, but we use some of its ideas.
+
+- **Alias to context map.** A Solo "cluster reference" is a user-chosen alias mapped to a kubeconfig context name, kept in a local config file. Commands: `cluster-ref config connect | disconnect | list | info`. `connect` first tests the connection. This is the model behind `kube cluster connect`, `list` and `info` in section 4.1.
+- **State in the cluster.** Solo keeps component state in a labelled ConfigMap (`solo-remote-config`) with history and `lastUpdatedAt` and `lastUpdatedBy`, and a validator checks the recorded components against the live cluster (Helm releases, pods). That is the shape of the later in-cluster state work in section 13.
+- **Deployments.** A Solo deployment groups a namespace and one or more cluster aliases. We leave that out for now.
+- **What we avoid.** The alias is Solo's only identity. Nothing checks which cluster a context really points at, `connect` can silently remap an alias, and kubeconfig context names are mutable. Here the key is the cluster ID, an alias binds to one ID, and rebinding needs `--rebind`. Solo also has no notion of whether a cluster was installed by Solo.
+- **Lease.** Solo's lock is a Lease with a holder identity, renewed in the background. Section 5.5 adapts it.
