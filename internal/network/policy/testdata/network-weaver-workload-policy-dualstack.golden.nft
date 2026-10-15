@@ -24,9 +24,13 @@ table inet weaver-workload-policy {
 	# hierarchy: a packet no rule matches falls through carrying no
 	# `meta priority` and lands in the HTB default class. The deny tier in the
 	# chains below is the exception — those rules drop.
+	#
+	# The counter here is total traffic this table saw; with the per-class
+	# counters below it lets `network reassert` tell quiet traffic from
+	# traffic that skipped this table. The comment tags the render format.
 	chain forward {
 		type filter hook forward priority 0; policy accept;
-		meta nfproto vmap { ipv4 : jump forward_ipv4, ipv6 : jump forward_ipv6 }
+		counter meta nfproto vmap { ipv4 : jump forward_ipv4, ipv6 : jump forward_ipv6 } comment "weaver:format=2"
 	}
 
 	chain forward_ipv4 {
@@ -44,16 +48,16 @@ table inet weaver-workload-policy {
 		# the classification tiers: on the reply the addresses are reversed, so a
 		# broad fallthrough rule below would otherwise claim the packet and stamp
 		# it with the forward class instead of the reply class.
-		ct direction reply ct mark 0x20 meta priority set 0x10020 accept
+		ct direction reply ct mark 0x20 counter meta priority set 0x10020 accept comment "weaver:class=backfill-response"
 
 		# Classification — specific matches.
-		ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept
-		ip saddr 10.4.0.0/24 ip daddr @bn-partner-out tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
-		ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept
+		ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill counter ct mark set 0x20 meta priority set 0x10060 accept comment "weaver:class=reserve-egress"
+		ip saddr 10.4.0.0/24 ip daddr @bn-partner-out tcp sport @bn-partner-out_ports counter meta priority set 0x10040 accept comment "weaver:class=partner"
+		ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports counter meta priority set 0x10010 accept comment "weaver:class=publisher"
 
 		# Classification — fallthrough (any source/dest).
-		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
-		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
+		ip saddr 10.4.0.0/24 tcp sport @bn-public-out_ports counter meta priority set 0x10050 accept comment "weaver:class=public"
+		ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports counter meta priority set 0x10030 accept comment "weaver:class=reserve-ingress"
 	}
 
 	chain forward_ipv6 {
@@ -71,15 +75,15 @@ table inet weaver-workload-policy {
 		# the classification tiers: on the reply the addresses are reversed, so a
 		# broad fallthrough rule below would otherwise claim the packet and stamp
 		# it with the forward class instead of the reply class.
-		ct direction reply ct mark 0x20 meta priority set 0x10020 accept
+		ct direction reply ct mark 0x20 counter meta priority set 0x10020 accept comment "weaver:class=backfill-response"
 
 		# Classification — specific matches.
-		ip6 saddr 2001:db8:c0de::/64 ip6 daddr . tcp dport @bn-backfill6 ct mark set 0x20 meta priority set 0x10060 accept
-		ip6 saddr 2001:db8:c0de::/64 ip6 daddr @bn-partner-out6 tcp sport @bn-partner-out_ports meta priority set 0x10040 accept
-		ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6 tcp dport @bn-publisher_ports meta priority set 0x10010 accept
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr . tcp dport @bn-backfill6 counter ct mark set 0x20 meta priority set 0x10060 accept comment "weaver:class=reserve-egress"
+		ip6 saddr 2001:db8:c0de::/64 ip6 daddr @bn-partner-out6 tcp sport @bn-partner-out_ports counter meta priority set 0x10040 accept comment "weaver:class=partner"
+		ip6 daddr 2001:db8:c0de::/64 ip6 saddr @bn-publisher6 tcp dport @bn-publisher_ports counter meta priority set 0x10010 accept comment "weaver:class=publisher"
 
 		# Classification — fallthrough (any source/dest).
-		ip6 saddr 2001:db8:c0de::/64 tcp sport @bn-public-out_ports meta priority set 0x10050 accept
-		ip6 daddr 2001:db8:c0de::/64 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept
+		ip6 saddr 2001:db8:c0de::/64 tcp sport @bn-public-out_ports counter meta priority set 0x10050 accept comment "weaver:class=public"
+		ip6 daddr 2001:db8:c0de::/64 tcp dport @bn-subscriber-in_ports counter meta priority set 0x10030 accept comment "weaver:class=reserve-ingress"
 	}
 }

@@ -57,6 +57,8 @@ type Report struct {
 	// Type is always ReportType.
 	Type      string           `json:"type"`
 	Artifacts []ArtifactStatus `json:"artifacts"`
+	// Checks is whether the live rules and lanes are right, not just present.
+	Checks *Checks `json:"checks,omitempty"`
 }
 
 // Reasserted returns the artifacts a repair was attempted for.
@@ -112,6 +114,7 @@ type Reasserter struct {
 	qdiscExists    func(ctx context.Context, nic string) (bool, error)
 	restartNft     func(ctx context.Context) error
 	restartShaper  func(ctx context.Context) error
+	verify         func(ctx context.Context, scope verifyScope) *Checks
 }
 
 // Config customises a Reasserter. Unset fields take their production defaults.
@@ -133,6 +136,8 @@ type Config struct {
 	QdiscExists    func(ctx context.Context, nic string) (bool, error)
 	RestartNft     func(ctx context.Context) error
 	RestartShaper  func(ctx context.Context) error
+	// Verify runs the correctness checks; nil means the live kernel.
+	Verify func(ctx context.Context, scope verifyScope) *Checks
 }
 
 // New returns a Reasserter wired to the live kernel and production paths.
@@ -155,6 +160,7 @@ func NewWithConfig(cfg Config) *Reasserter {
 		qdiscExists:    cfg.QdiscExists,
 		restartNft:     cfg.RestartNft,
 		restartShaper:  cfg.RestartShaper,
+		verify:         cfg.Verify,
 	}
 	if r.hostNftPath == "" {
 		r.hostNftPath = firewall.HostNftPath
@@ -202,6 +208,9 @@ func NewWithConfig(cfg Config) *Reasserter {
 	if r.restartShaper == nil {
 		r.restartShaper = shape.RestartTcEgressService
 	}
+	if r.verify == nil {
+		r.verify = newKernelVerifier().verify
+	}
 	return r
 }
 
@@ -209,16 +218,20 @@ func NewWithConfig(cfg Config) *Reasserter {
 type probeResult struct {
 	status ArtifactStatus
 	unit   string
+	// nic is the shaped NIC, set on the egress-qdisc probe when shaping is provisioned.
+	nic string
 }
 
-// Check probes all three artifacts without locking or changing anything.
-func (r *Reasserter) Check(ctx context.Context) Report {
-	return reportOf(r.probeAll(ctx, openPlaneLock(), openPlaneLock()))
-}
+// Check probes and verifies without changing anything.
+func (r *Reasserter) Check(ctx context.Context) Report { return r.run(ctx, false) }
 
 // Reassert probes all three artifacts, restarts each unit with a missing
-// artifact once, then re-probes. Both plane locks are held for the whole run.
-func (r *Reasserter) Reassert(ctx context.Context) Report {
+// artifact once, then re-probes.
+func (r *Reasserter) Reassert(ctx context.Context) Report { return r.run(ctx, true) }
+
+// run holds both plane locks for the whole run, taken without waiting, so it
+// never reads an operator's change half done. Only a repair run writes.
+func (r *Reasserter) run(ctx context.Context, repair bool) Report {
 	// The deadline lives here because this process holds the locks.
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -228,8 +241,52 @@ func (r *Reasserter) Reassert(ctx context.Context) Report {
 	shapeLock := r.lockPlane(r.shapeLockPath)
 	defer shapeLock.release()
 
-	before := r.probeAll(ctx, nftLock, shapeLock)
+	probes := r.probeAll(ctx, nftLock, shapeLock)
+	report := Report{Type: ReportType, Artifacts: statusesOf(probes)}
+	if repair {
+		report.Artifacts, probes = r.repairMissing(ctx, nftLock, shapeLock, probes)
+	}
+	report.Checks = r.runChecks(ctx, nftLock, shapeLock, probes, repair)
+	return report
+}
 
+// runChecks verifies the live rules and lanes against the latest probes, but
+// only while holding both locks. refresh lets it reload rules an older render
+// format wrote.
+func (r *Reasserter) runChecks(ctx context.Context, nftLock, shapeLock planeLock, probes []probeResult, refresh bool) *Checks {
+	for _, l := range []planeLock{nftLock, shapeLock} {
+		if l.err != nil {
+			return &Checks{
+				Rules:   RulesCheck{Status: CheckUnknown, Detail: "cannot determine: " + l.err.Error()},
+				Filters: FiltersCheck{Status: CheckUnknown, Detail: "cannot determine: " + l.err.Error()},
+			}
+		}
+		if !l.acquired {
+			return skippedChecks("skipped: an apply is in progress (" + l.path + " is held)")
+		}
+	}
+
+	scope := verifyScope{refreshOlderFormat: refresh}
+	for _, p := range probes {
+		a := p.status
+		live := a.Expected && a.Present && !a.ProbeFailed
+		switch a.Artifact {
+		case ArtifactWorkloadPolicy:
+			scope.policyLive = live
+		case ArtifactEgressQdisc:
+			if live {
+				scope.egressNIC = p.nic
+			}
+			scope.shapedNIC = p.nic
+			scope.nicUnknown = a.Expected && p.nic == ""
+		}
+	}
+	return r.verify(ctx, scope)
+}
+
+// repairMissing restarts each unit with a missing artifact once, then
+// re-probes. It returns the merged statuses and the latest probes.
+func (r *Reasserter) repairMissing(ctx context.Context, nftLock, shapeLock planeLock, before []probeResult) ([]ArtifactStatus, []probeResult) {
 	// At most one restart per unit, in probe order.
 	repaired := make(map[string]error, 2)
 	for _, p := range before {
@@ -242,7 +299,7 @@ func (r *Reasserter) Reassert(ctx context.Context) Report {
 		repaired[p.unit] = r.repair(ctx, p.unit)
 	}
 	if len(repaired) == 0 {
-		return reportOf(before)
+		return statusesOf(before), before
 	}
 
 	// probeAll has a fixed order, so index i is the same artifact in both passes.
@@ -252,8 +309,7 @@ func (r *Reasserter) Reassert(ctx context.Context) Report {
 		st := p.status
 		if p.unit != "" {
 			st.Reasserted = true
-			// Present is live state, so it comes from the re-probe wherever
-			// that answered — the pre-repair false would outlive the repair.
+			// Present is live state: take the re-probe's answer, or the stale pre-repair false lingers.
 			if !after[i].status.ProbeFailed {
 				st.Present = after[i].status.Present
 			}
@@ -274,7 +330,7 @@ func (r *Reasserter) Reassert(ctx context.Context) Report {
 		}
 		out[i] = st
 	}
-	return Report{Type: ReportType, Artifacts: out}
+	return out, after
 }
 
 // repair restarts the named unit.
@@ -319,7 +375,7 @@ func (r *Reasserter) probeNftTable(
 	}
 	st.Expected = true
 
-	// Checked first so a missing binary gets a clear message, not a bare exec error.
+	// Checked first so a missing binary gives a clear message, not a bare exec error.
 	if bin, ok := r.nftBinary(); !ok {
 		st.ProbeFailed = true
 		st.Detail = "cannot determine: no nft binary found (looked for " + bin + ")"
@@ -373,22 +429,22 @@ func (r *Reasserter) probeEgressQdisc(ctx context.Context, lock planeLock) probe
 	if err != nil {
 		st.ProbeFailed = true
 		st.Detail = withDetail(st.Detail, "cannot determine: "+err.Error())
-		return probeResult{status: st}
+		return probeResult{status: st, nic: nic}
 	}
 	st.Present = present
 	if present {
-		return probeResult{status: st}
+		return probeResult{status: st, nic: nic}
 	}
-	return probeResult{status: st, unit: shape.TcEgressService}
+	return probeResult{status: st, nic: nic, unit: shape.TcEgressService}
 }
 
-// reportOf projects probe results into a Report.
-func reportOf(probes []probeResult) Report {
+// statusesOf projects probe results into artifact statuses.
+func statusesOf(probes []probeResult) []ArtifactStatus {
 	out := make([]ArtifactStatus, len(probes))
 	for i, p := range probes {
 		out[i] = p.status
 	}
-	return Report{Type: ReportType, Artifacts: out}
+	return out
 }
 
 // probeCause returns the cause behind a failed probe's "cannot determine" clause.
