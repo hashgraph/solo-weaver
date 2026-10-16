@@ -127,6 +127,38 @@ The gate reads only `hosts/local/host.yaml` and the software records, read-only 
 
 The gate resolves the **Target**, compares its **ClusterIdentity** against the **provision record** for this **HostIdentity**, and returns an **Origin** (or stops).
 
+### 5.0 Startup order and where the gate sits
+
+"Before any state loading" means before the state manager, RSL and reality layer open — not before any file is read. Weaver's state access comes in three tiers, and the gate is confined to the lowest one:
+
+| Tier | What it is | Side effects | Gate uses it? |
+|---|---|---|---|
+| File readers | field- and file-level disk reads (`state_reader.go`, #1235's `ComponentFilePath`) | none; pure, lock-free, no cluster | **Yes** — the only tier the gate touches |
+| State manager | `NewStateManager` + `Refresh` + `Flush*` | writes (stamps the running version), takes `flock`s, loads one resolved target | No |
+| RSL + reality | runtime spec and hardware/cluster detection | probes the machine and cluster | No |
+
+The full sequence on every invocation:
+
+1. **Load `provisioner.yaml`** (file-reader tier; no host or cluster chosen yet). Gives the recorded state-model version the migration runner gates on. The read tolerates both the pre-migration location and `provisioner.yaml`, because step 3 creates it.
+2. **Take the startup-migrations lock** on the state directory (#1235).
+3. **Run the filesystem startup migrations** (`ScopeStartup`): `unified-state`, the per-component split (#1231), then `state-hosts-layout` (section 8). Pure filesystem, idempotent, no cluster. This creates `hosts/local/` and `provisioner.yaml`, so it must finish before the gate can read them.
+4. **Release the migration lock.**
+5. **Run the provenance gate** (file-reader tier only). Reads `provisioner.yaml`, `hosts/local/host.yaml` and the software records, recomputes binary checksums against the embedded catalog (no hash is persisted, section 5.4), and reads the live `ClusterIdentity` when the need requires the API. On its first successful pass the trust-on-first-use provision record is written through the normal state path (not inside the gate, which stays read-only).
+6. **Run the post-gate cluster migrations** (`ScopeStartupCluster`, section 8) — only when the gate resolved `provisioned`. These may touch the cluster, because the target is now proven ours.
+7. **Run the command body.** Only now do the state manager, RSL and reality open, the per-component `flock`s get taken, and the cluster-side lease (section 5.5) is acquired.
+
+**Why the gate is pinned in the middle.** Two dependencies point in opposite directions, so there is no single point where all migrations can run on one side of the gate:
+
+```
+filesystem migrations ──(gate reads their output)──▶ gate ──(cluster work needs a verified target)──▶ cluster migrations
+     (ScopeStartup)                                 (step 5)                                        (ScopeStartupCluster)
+```
+
+- The gate **depends on** the filesystem migrations: it reads `hosts/local/host.yaml`, which `state-hosts-layout` creates. A gate running before that migration would look at the old `state/` root and misclassify a provisioned host as "nothing recorded".
+- The cluster migrations **depend on** the gate: they must not touch a cluster until the gate has proved it is ours and which one.
+
+So the gate cannot move earlier (its state dependency) and cluster-touching work cannot stay before it (the safety it exists to provide). Splitting the startup migrations around the gate is the only order that satisfies both. This is why `ScopeStartup` **must stay filesystem-only** — see section 8.
+
 ### 5.1 Evidence
 
 The gate separates evidence that needs no API from evidence that needs it, so a broken local cluster can still be recognised as ours.
@@ -385,6 +417,16 @@ Add a startup migration, `state-hosts-layout`, registered in `RegisterMigrations
 - The migration runs under the same startup-migrations lock that #1235 takes on the state directory.
 - The split migration from #1235 can leave `state.yaml.legacy` and `state.yaml.diverged-*` files in `state/`. They stay where they are: the layout migration moves only the component files, and does not touch or delete them.
 
+### 8.1 Startup migrations split around the gate
+
+The provenance gate (section 5.0) runs between two groups of startup migrations, so the startup scope is split by what a migration touches.
+
+- **`ScopeStartup` — filesystem only, before the gate.** These reshape on-disk state and never read or write the cluster: `unified-state`, the per-component split (#1231), `state-hosts-layout`, and the existing host-level migrations (crio socket drop-in, network nft/shaper units, sysctl tuning, shell completion, legacy binary). The gate reads their output, so they must run first. This is an invariant: **a `ScopeStartup` migration must not take a kube client.** That is what lets the whole pre-gate phase have no dependency on the gate's verdict.
+
+- **`ScopeStartupCluster` — cluster-touching, after the gate.** A new scope for startup migrations that read or write the cluster. They run only when the gate resolved `provisioned`, against the resolved client, and are skipped in external mode (weaver touches nothing it did not create). The three Cilium migrations (`cilium-acceleration`, `cilium-agent-restart`, `cilium-host-legacy-routing`), today registered as `ScopeStartup`, move here: they reconfigure `kube-system/cilium-config` and the agent, which is cluster work on the cluster this host provisioned.
+
+This split is not optional. A cluster-touching migration left in `ScopeStartup` would run before the gate has proved the target is ours — exactly the wrong-cluster accident the gate prevents — and once external mode exists it could reconfigure Cilium on a cluster weaver does not own. The rule for any future migration is the same: if it needs the cluster, it is `ScopeStartupCluster`, not `ScopeStartup`.
+
 Risks to settle:
 
 1. Any path stored inside a state file (the old `StateFile` field is the known case) must be rewritten, and the loader should use the path it actually loaded from, or a later flush could write to the old location.
@@ -442,7 +484,7 @@ Order:
 
 ## 11. Delivery plan
 
-1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the provenance gate (including the handling of older installs in section 5.4). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
+1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, the provenance gate (including the handling of older installs in section 5.4), and its placement in the startup order (section 5.0), including moving the cluster-touching Cilium startup migrations to `ScopeStartupCluster` (section 8.1). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
 2. Cluster-side lock (`internal/kube/lease`) and its use in the mutating commands (section 5.5). It needs the resolved cluster from step 1 and nothing from the state work.
 3. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, `provisioner.yaml`, `hosts/local/host.yaml`, the cluster-scoped component files for `clusters/<uid>/`, the host-bound field guard in section 6.2, `clusters/index.yaml`, and the `kube cluster connect`, `list` and `info` commands. This step also gives the daemon write access to its own section of `provisioner.yaml` under the #1235 lock (section 6.1); the daemon is a separate binary, so that change ships on its release schedule, not the CLI's.
 4. External-mode workflows, block node first, with the StorageClass storage path.
@@ -488,3 +530,21 @@ Solo (`hiero-ledger/solo`) solves part of this problem. We do not adopt its code
 - **Deployments.** A Solo deployment groups a namespace and one or more cluster aliases. We leave that out for now.
 - **What we avoid.** The alias is Solo's only identity. Nothing checks which cluster a context really points at, `connect` can silently remap an alias, and kubeconfig context names are mutable. Here the key is the cluster ID, an alias binds to one ID, and rebinding needs `--rebind`. Solo also has no notion of whether a cluster was installed by Solo.
 - **Lease.** Solo's lock is a Lease with a holder identity, renewed in the background. Section 5.5 adapts it.
+
+## 15. FAQ
+
+**Why does the provenance gate run *after* migrations, not before?** Because the gate reads `hosts/local/host.yaml`, and the `state-hosts-layout` migration is what creates that file and moves state into it. A gate running first would read the old `state/` root and misclassify a provisioned host as "nothing recorded". So the filesystem migrations run first, then the gate (sections 5.0 and 8.1).
+
+**Then can a startup migration talk to the cluster?** No — not in `ScopeStartup`. That scope is filesystem-only, precisely so the whole pre-gate phase has no dependency on the gate's verdict. A migration that reads or writes the cluster runs in `ScopeStartupCluster`, after the gate, and only when the target resolved `provisioned`. The three Cilium migrations move there (section 8.1). The rule for any new migration: if it needs the cluster, it is `ScopeStartupCluster`.
+
+**Is the gate a security boundary?** No. It prevents *accidents* — running against the wrong cluster, or against state left by another one. A user with root can fake any of its evidence. It is about provenance and state-safety, not authorization.
+
+**Why "provenance" and not "identity"?** "Identity" was overloaded across the host, the cluster, the recorded host-to-cluster binding, and the target. The gate's job is to establish whether this host *provisioned* the target — its provenance — and return an `Origin`. "Identity" named only the comparison, not the decision. The vocabulary is fixed in section 5: `HostIdentity`, `ClusterIdentity`, provision record, Target, Origin.
+
+**What is `SOLO_PROVISIONER_ALLOWED_ORIGINS`, and can it bypass the gate?** It is a host-owned allowlist of the origins weaver may operate in (`provisioned`, `external`). It can only **narrow**: it is applied after the gate has classified the target, so it can turn an allowed origin into a refusal, but it can never grant an origin the gate did not verify, and never turns a stop into a pass. An unknown value fails closed. There is no runtime override that forces a verdict or skips the checks (section 5.5 of the implementation; the env var is the safe inverse of a bypass).
+
+**Is external mode a supported way to run in production?** No. It is experimental and provisioner-test-only: it exists to test `solo-provisioner` against a throwaway cluster (such as Kind) without a KVM or privileged runner. It is gated behind `--experimental` / `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER` and we do not encourage operators to use it in their own CI or clusters (see the banner at the top and section 7).
+
+**What happens on a machine with no cluster, or on macOS?** With no provisioned install and no `--kubeconfig`, a gated command stops at rule C.2 with a hint to run `kube cluster install` or pass `--kubeconfig`. On macOS there is no provisioned host, so `hosts/local` is never created and every cluster is `external` (decision 7 in section 12).
+
+**How does a command get gated?** It declares a need with `SetProvenanceNeed(cmd, need)`; the shared pre-run reads it (inherited from a parent command if set there) and runs the gate after migrations. Commands that declare nothing default to `NeedNone` and are not gated. A gated command must not also skip the global pre-run checks. The need vocabulary and what each checks is in section 5.3.
