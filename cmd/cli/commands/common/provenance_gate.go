@@ -57,34 +57,36 @@ func ProvenanceNeed(cmd *cobra.Command) provenance.Need {
 	return provenance.NeedNone
 }
 
-// RunProvenanceGate runs the cluster provenance gate for the given need. It
-// returns a non-nil error when the command must be stopped: the target cluster is
+// RunProvenanceGate runs the cluster provenance gate for the given need. On
+// success it returns the resolved Origin (provisioned or external) and a nil
+// error; the caller uses the Origin to decide which post-gate startup migrations
+// to run. A non-nil error means the command must be stopped: the target cluster is
 // not safely this host's own, or the host's SOLO_PROVISIONER_ALLOWED_ORIGINS
-// allowlist forbids the resolved origin. A nil error means the command may
-// proceed. It is called from the shared pre-run, after startup migrations, for any
-// command that declared a need (see SetProvenanceNeed). Design section 5.
-func RunProvenanceGate(cmd *cobra.Command, need provenance.Need) error {
+// allowlist forbids the resolved origin. It is called from the shared pre-run,
+// after the filesystem migrations, for any command that declared a need (see
+// SetProvenanceNeed). Design section 5.
+func RunProvenanceGate(cmd *cobra.Command, need provenance.Need) (provenance.Origin, error) {
 	in, err := collectProvenanceInput(cmd, need)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	out := provenance.Gate(need, in)
 	if out.Stopped() {
-		return out.Err
+		return out.Origin, out.Err
 	}
 
 	// Apply the operator allowlist last. It can only narrow: an origin the gate
 	// passed may still be refused here, but nothing the gate stopped is reopened.
 	allowed, err := provenance.ParseAllowedOrigins(os.Getenv(allowedOriginsEnv))
 	if err != nil {
-		return err
+		return out.Origin, err
 	}
 	if !provenance.OriginAllowed(allowed, out.Origin) {
-		return provenance.RestrictedError(allowed, out.Origin)
+		return out.Origin, provenance.RestrictedError(allowed, out.Origin)
 	}
 
-	return nil
+	return out.Origin, nil
 }
 
 // collectProvenanceInput gathers the gate Input from real collection.

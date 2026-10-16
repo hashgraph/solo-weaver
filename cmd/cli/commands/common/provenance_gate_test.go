@@ -51,7 +51,9 @@ func TestRunProvenanceGate_ProvisionedPasses(t *testing.T) {
 		LiveClusterID: "u1", ProvisionedClusterID: "u1",
 	})
 	cmd := &cobra.Command{Use: "install"}
-	require.NoError(t, RunProvenanceGate(cmd, provenance.NeedHostAPI))
+	origin, err := RunProvenanceGate(cmd, provenance.NeedHostAPI)
+	require.NoError(t, err)
+	require.Equal(t, provenance.Provisioned, origin)
 }
 
 func TestRunProvenanceGate_StopSurfacesError(t *testing.T) {
@@ -63,7 +65,8 @@ func TestRunProvenanceGate_StopSurfacesError(t *testing.T) {
 		LiveClusterID: "u-new", ProvisionedClusterID: "u-old",
 	})
 	cmd := &cobra.Command{Use: "install"}
-	require.Error(t, RunProvenanceGate(cmd, provenance.NeedHostAPI))
+	_, err := RunProvenanceGate(cmd, provenance.NeedHostAPI)
+	require.Error(t, err)
 }
 
 func TestRunProvenanceGate_AllowlistNarrows(t *testing.T) {
@@ -73,9 +76,12 @@ func TestRunProvenanceGate_AllowlistNarrows(t *testing.T) {
 		KubeconfigGiven: true, APIReachable: true, LiveClusterID: "u-ext",
 	})
 	cmd := &cobra.Command{Use: "upgrade"}
-	require.NoError(t, RunProvenanceGate(cmd, provenance.NeedAPI))
+	origin, err := RunProvenanceGate(cmd, provenance.NeedAPI)
+	require.NoError(t, err)
+	require.Equal(t, provenance.External, origin)
 
 	// ...but refused when the host allowlist permits provisioned only.
 	t.Setenv(allowedOriginsEnv, "provisioned")
-	require.Error(t, RunProvenanceGate(cmd, provenance.NeedAPI))
+	_, err = RunProvenanceGate(cmd, provenance.NeedAPI)
+	require.Error(t, err)
 }
