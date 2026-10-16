@@ -389,7 +389,8 @@ External mode is experimental and provisioner-test-only (see the banner at the t
 - Storage: hostPath PVs refer to a node filesystem weaver cannot own, so they are not used. Storage comes from the cluster through a `storageClassName` per volume (flag or values file). Weaver creates PVCs only, never PVs. The hostPath templates (`storage-config.yaml`, `optional-storage.yaml`) are provisioned-only.
 - Preflight checks API-level facts only: server version range, access via `SelfSubjectAccessReview`, and that the CNI and StorageClass exist.
 - Provisioned-only commands fail in external mode with a reason code and hint: `solo-provisioner kube cluster install`, `solo-provisioner kube cluster uninstall`, `solo-provisioner teleport node ...`, and `solo-provisioner network firewall|shape|policy ...`.
-- Uninstall and reset remove only what weaver created in that cluster, tracked by labels or state. Cluster-level components are never touched.
+- Uninstall and reset remove only what weaver created in that cluster. **Ownership is authoritative on the resources themselves**: every weaver-created resource carries `app.kubernetes.io/managed-by: weaver` (plus `ownerReferences` where applicable), written with the resource. Uninstall deletes only labeled resources and **never touches anything unlabeled** — which is how an existing Helm release weaver did not create (it carries Helm's own `managed-by: Helm`) or any other foreign resource is left alone.
+- A per-cluster `weaver-remote-config` ConfigMap is the **audit log** (who did what, when), not the ownership authority — a central ledger can drift (a failed write orphans a resource; an out-of-band delete leaves a phantom entry), so the labels on the resources are the source of truth and the log sits on top. Writes to it are made under the per-component lease (section 5.5).
 - This also applies on a provisioned host: pointing it at a remote cluster with `--kubeconfig` runs external mode and skips the host steps.
 
 ### 7.1 Local development with Kind
@@ -500,7 +501,17 @@ Order:
    If `solo-provisioner kube cluster install` finds that `hosts/local/host.yaml` records a cluster ID that differs from the live one (or a cluster that no longer exists), it **stops and does not touch the state**. Weaver cannot tell why: a `kubeadm reset` by hand, a failed or older uninstall, a rebuilt VM with surviving state, or the wrong kubeconfig all look the same, so moving the state automatically would be a guess. The error names the recorded and live cluster IDs and tells the operator to review and clean up the state by hand. The hint lists the files to move or remove and the paths they live in.
 
 3. **Cluster-side lock.** A Lease per component per cluster, in the component's namespace, in both modes, built on `leaderelection` (section 5.5).
-4. **External state is a local cache.** Almost all of it can be re-derived from the cluster, and the cluster wins when they disagree. Storing state in the cluster is a follow-up with its own design (RBAC, ownership).
+4. **All state is a last-known cache; there is no desired state.** Weaver stores only what it last observed. Reality — the cluster *and* the host — is the source of truth, and every field is re-derivable by reading it: cluster state from the cluster (Helm releases, CRs, pods), host state from the host (tc, nft, sysctl, mounts). Operator intent lives in reality too, not in the cache (for example a consensus `desiredRunState` is a field on a cluster CR), so weaver does not maintain a separate desired state. A remote-Git / GitOps desired state is a possible future, explicitly out of scope here.
+
+   Reconciliation (reality vs cache) therefore has **three** outcomes, not two:
+
+   | Result | Action |
+   |---|---|
+   | reality matches the cache | proceed |
+   | reality is **confirmed different** (resource gone, or a value changed) | drift — stop and ask the operator to overwrite the cache or investigate |
+   | reality is **unobservable** (API down, RBAC denied, timeout) | error and stop — never assume "gone" (this is the missing-vs-unobservable distinction from #1193) |
+
+   The unobservable-is-an-error rule applies only to commands that must read the cluster (`api` / `host+api`). The offline `host`-need recovery and uninstall path never reaches reconciliation, so a down cluster does not block it (section 5.3). Storing state in the cluster is a separate follow-up with its own design (RBAC, ownership).
 5. **Garbage collection.** Nothing is deleted automatically, since a cluster that is only unreachable for a moment must not lose its state. A later `solo-provisioner state prune` lists clusters that are unreachable or whose ID no longer exists, and asks before deleting.
 6. **Older installs.** No separate backfill. The gate checks binaries against the catalog checksum and writes the provision record (cluster ID, server address and CA fingerprint) on its first successful pass (section 5.4).
 7. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State, including `provisioner.yaml`, lives in `~/.solo-weaver/state`.
@@ -550,3 +561,7 @@ Solo (`hiero-ledger/solo`) solves part of this problem. We do not adopt its code
 **What happens on a machine with no cluster, or on macOS?** With no provisioned install and no `--kubeconfig`, a gated command stops at rule C.2 with a hint to run `kube cluster install` or pass `--kubeconfig`. On macOS there is no provisioned host, so `hosts/local` is never created and every cluster is `external` (decision 7 in section 12).
 
 **How does a command get gated?** It declares a need with `SetProvenanceNeed(cmd, need)`; the shared pre-run reads it (inherited from a parent command if set there) and runs the gate after migrations. Commands that declare nothing default to `NeedNone` and are not gated. A gated command must not also skip the global pre-run checks. The need vocabulary and what each checks is in section 5.3.
+
+**Does weaver keep a desired state?** No. All state is a last-known cache; reality (cluster + host) is the source of truth, and intent lives in reality (for example a cluster CR), not in a separate desired-state store. Drift is reality not matching the cache. See decision 4 for the three reconcile outcomes (match, confirmed-drift, unobservable-error).
+
+**What if reality can't be observed during reconcile?** It is an error — weaver stops and never treats "can't observe" as "gone", so a transient outage can't make the cache drop real state. This is separate from the offline `host`-need path (uninstall, recovery), which does not read the cluster and so is not blocked when the API is down.
