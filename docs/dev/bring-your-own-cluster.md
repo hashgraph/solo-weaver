@@ -141,23 +141,23 @@ The full sequence on every invocation:
 
 1. **Load `provisioner.yaml`** (file-reader tier; no host or cluster chosen yet). Gives the recorded state-model version the migration runner gates on. The read tolerates both the pre-migration location and `provisioner.yaml`, because step 3 creates it.
 2. **Take the startup-migrations lock** on the state directory (#1235).
-3. **Run the filesystem startup migrations** (`ScopeStartup`): `unified-state`, the per-component split (#1231), then `state-hosts-layout` (section 8). Pure filesystem, idempotent, no cluster. This creates `hosts/local/` and `provisioner.yaml`, so it must finish before the gate can read them.
+3. **Run the filesystem startup migrations** (`ScopeStartupFilesystem`): `unified-state`, the per-component split (#1231), then `state-hosts-layout` (section 8). Pure filesystem, idempotent, no cluster. This creates `hosts/local/` and `provisioner.yaml`, so it must finish before the gate can read them.
 4. **Release the migration lock.**
 5. **Run the provenance gate** (file-reader tier only). Reads `provisioner.yaml`, `hosts/local/host.yaml` and the software records, recomputes binary checksums against the embedded catalog (no hash is persisted, section 5.4), and reads the live `ClusterIdentity` when the need requires the API. On its first successful pass the trust-on-first-use provision record is written through the normal state path (not inside the gate, which stays read-only).
-6. **Run the post-gate cluster migrations** (`ScopeStartupCluster`, section 8) — only when the gate resolved `provisioned`. These may touch the cluster, because the target is now proven ours.
+6. **Run the post-gate migrations** (section 8.1) — only when the gate resolved `provisioned`: `ScopeStartupHost` (host-system work, needs only a verified host), then `ScopeStartupCluster` (cluster work, for `api` / `host+api` needs that verified the live cluster).
 7. **Run the command body.** Only now do the state manager, RSL and reality open, the per-component `flock`s get taken, and the cluster-side lease (section 5.5) is acquired.
 
 **Why the gate is pinned in the middle.** Two dependencies point in opposite directions, so there is no single point where all migrations can run on one side of the gate:
 
 ```
 filesystem migrations ──(gate reads their output)──▶ gate ──(cluster work needs a verified target)──▶ cluster migrations
-     (ScopeStartup)                                 (step 5)                                        (ScopeStartupCluster)
+     (ScopeStartupFilesystem)                       (step 5)                              (ScopeStartupHost, ScopeStartupCluster)
 ```
 
 - The gate **depends on** the filesystem migrations: it reads `hosts/local/host.yaml`, which `state-hosts-layout` creates. A gate running before that migration would look at the old `state/` root and misclassify a provisioned host as "nothing recorded".
 - The cluster migrations **depend on** the gate: they must not touch a cluster until the gate has proved it is ours and which one.
 
-So the gate cannot move earlier (its state dependency) and cluster-touching work cannot stay before it (the safety it exists to provide). Splitting the startup migrations around the gate is the only order that satisfies both. This is why `ScopeStartup` **must stay filesystem-only** — see section 8.
+So the gate cannot move earlier (its state dependency) and cluster-touching work cannot stay before it (the safety it exists to provide). Splitting the startup migrations around the gate is the only order that satisfies both. This is why the pre-gate scope (`ScopeStartupFilesystem`) **must stay filesystem-only** — see section 8.1.
 
 ### 5.1 Evidence
 
@@ -422,13 +422,17 @@ Add a startup migration, `state-hosts-layout`, registered in `RegisterMigrations
 
 ### 8.1 Startup migrations split around the gate
 
-The provenance gate (section 5.0) runs between two groups of startup migrations, so the startup scope is split by what a migration touches.
+The provenance gate (section 5.0) runs between groups of startup migrations, so the single `ScopeStartup` is split three ways by what a migration touches and what it needs verified:
 
-- **`ScopeStartup` — filesystem only, before the gate.** These reshape on-disk state and never read or write the cluster: `unified-state`, the per-component split (#1231), `state-hosts-layout`, and the existing host-level migrations (crio socket drop-in, network nft/shaper units, sysctl tuning, shell completion, legacy binary). The gate reads their output, so they must run first. This is an invariant: **a `ScopeStartup` migration must not take a kube client.** That is what lets the whole pre-gate phase have no dependency on the gate's verdict.
+- **`ScopeStartupFilesystem` — on-disk state, before the gate.** Reshapes weaver's state and never reads the cluster or mutates the host system: `unified-state`, the per-component split (#1231), `state-hosts-layout`, `helm-release-schema-v2`, `mgmt-ports-v1`. The gate reads their output, so they run first. Invariant: **a filesystem migration must not take a kube client.** This is what lets the whole pre-gate phase have no dependency on the gate's verdict.
 
-- **`ScopeStartupCluster` — cluster-touching, after the gate.** A new scope for startup migrations that read or write the cluster. They run only when the gate resolved `provisioned`, against the resolved client, and are skipped in external mode (weaver touches nothing it did not create). The three Cilium migrations (`cilium-acceleration`, `cilium-agent-restart`, `cilium-host-legacy-routing`), today registered as `ScopeStartup`, move here: they reconfigure `kube-system/cilium-config` and the agent, which is cluster work on the cluster this host provisioned.
+- **`ScopeStartupHost` — host-system work, after the gate.** systemd units, sysctl, host files, binaries: `legacy-binary`, `crio-socket-dropin`, the network nft/shaper units, `shell-completion`, `sysctl-network-tuning`. These need only a verified host (P.1), not the cluster, so they run after the gate resolves `provisioned` and work even when the API is down.
 
-This split is not optional. A cluster-touching migration left in `ScopeStartup` would run before the gate has proved the target is ours — exactly the wrong-cluster accident the gate prevents — and once external mode exists it could reconfigure Cilium on a cluster weaver does not own. The rule for any future migration is the same: if it needs the cluster, it is `ScopeStartupCluster`, not `ScopeStartup`.
+- **`ScopeStartupCluster` — cluster-touching, after the gate.** Reads or writes the cluster: the three Cilium migrations (`cilium-acceleration`, `cilium-agent-restart`, `cilium-host-legacy-routing`), which reconfigure `kube-system/cilium-config` and the agent. They run only when the gate resolved `provisioned` and the command's need verified the live cluster (`api` / `host+api`), against the resolved client, and are skipped in external mode (weaver touches nothing it did not create).
+
+Ordering in the root pre-run: filesystem migrations → gate → host migrations → cluster migrations. The running version is recorded only after the full provisioned + cluster set has run, so a host-only invocation cannot mark cluster boundary migrations done before they run. `solo-provisioner install` (self-install) skips the pre-run, so it runs the filesystem and host migrations explicitly; it has no cluster, so it runs no cluster migrations.
+
+This split is not optional. A cluster-touching migration left in a pre-gate scope would run before the gate has proved the target is ours — the wrong-cluster accident the gate prevents — and once external mode exists it could reconfigure Cilium on a cluster weaver does not own. The rule for any future migration: filesystem if it only reshapes state, `ScopeStartupHost` if it touches the host system, `ScopeStartupCluster` if it needs the cluster.
 
 Risks to settle:
 
@@ -548,7 +552,7 @@ Solo (`hiero-ledger/solo`) solves part of this problem. We do not adopt its code
 
 **Why does the provenance gate run *after* migrations, not before?** Because the gate reads `hosts/local/host.yaml`, and the `state-hosts-layout` migration is what creates that file and moves state into it. A gate running first would read the old `state/` root and misclassify a provisioned host as "nothing recorded". So the filesystem migrations run first, then the gate (sections 5.0 and 8.1).
 
-**Then can a startup migration talk to the cluster?** No — not in `ScopeStartup`. That scope is filesystem-only, precisely so the whole pre-gate phase has no dependency on the gate's verdict. A migration that reads or writes the cluster runs in `ScopeStartupCluster`, after the gate, and only when the target resolved `provisioned`. The three Cilium migrations move there (section 8.1). The rule for any new migration: if it needs the cluster, it is `ScopeStartupCluster`.
+**Then can a startup migration talk to the cluster?** Not before the gate. The pre-gate scope `ScopeStartupFilesystem` is filesystem-only, precisely so the whole pre-gate phase has no dependency on the gate's verdict. Work that touches the host system runs in `ScopeStartupHost` and work that reads or writes the cluster runs in `ScopeStartupCluster` — both after the gate, only when the target resolved `provisioned`. The three Cilium migrations are `ScopeStartupCluster` (section 8.1). The rule for any new migration: filesystem if it only reshapes state, host if it touches the host system, cluster if it needs the cluster.
 
 **Is the gate a security boundary?** No. It prevents *accidents* — running against the wrong cluster, or against state left by another one. A user with root can fake any of its evidence. It is about provenance and state-safety, not authorization.
 
