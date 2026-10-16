@@ -18,7 +18,7 @@ func TestEvaluate_Outcomes(t *testing.T) {
 	tests := []struct {
 		name       string
 		in         Input
-		wantRule   string
+		wantRule   Rule
 		wantStop   bool
 		wantOrigin Origin // checked when not a stop
 		wantReason errx.Reason
@@ -26,87 +26,87 @@ func TestEvaluate_Outcomes(t *testing.T) {
 		{
 			name:       "P.1 copied state dir",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: false, HasProvisionRecord: true, TargetMatchesProvisionRecord: true},
-			wantRule:   "P.1",
+			wantRule:   RuleMachineMismatch,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "A.1 broken local cluster, never external",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidenceFailed: true, APIReachable: false},
-			wantRule:   "A.1",
+			wantRule:   RuleEvidenceFailed,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "A.1 API unreachable on our cluster",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidencePasses: true, APIReachable: false},
-			wantRule:   "A.1",
+			wantRule:   RuleEvidenceFailed,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "A.2 needs sudo",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidenceUnreadable: true, APIReachable: true},
-			wantRule:   "A.2",
+			wantRule:   RuleEvidenceUnreadable,
 			wantStop:   true,
 			wantReason: reasons.PermissionDenied,
 		},
 		{
 			name:       "A.3 provisioned, ids match",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidencePasses: true, APIReachable: true, LiveClusterID: "u1", ProvisionedClusterID: "u1"},
-			wantRule:   "A.3",
+			wantRule:   RuleProvisionedMatch,
 			wantOrigin: Provisioned,
 		},
 		{
 			name:       "A.4 rebuilt, stale state",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidencePasses: true, APIReachable: true, LiveClusterID: "u-new", ProvisionedClusterID: "u-old"},
-			wantRule:   "A.4",
+			wantRule:   RuleRebuilt,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "A.1 wins over A.2 when both fail and unreadable",
 			in:         Input{RecordedMachineIDPresent: true, MachineIDMatches: true, HasProvisionRecord: true, TargetMatchesProvisionRecord: true, LocalEvidenceFailed: true, LocalEvidenceUnreadable: true, APIReachable: true},
-			wantRule:   "A.1",
+			wantRule:   RuleEvidenceFailed,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "B.1 nothing recorded, API down",
 			in:         Input{HasProvisionRecord: false, LocalEvidencePasses: true, APIReachable: false},
-			wantRule:   "B.1",
+			wantRule:   RuleAPIUnreachable,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "B.2 needs adopt/discard",
 			in:         Input{HasProvisionRecord: false, LocalEvidencePasses: true, APIReachable: true, LiveClusterID: "u2", ExternalStateExists: true},
-			wantRule:   "B.2",
+			wantRule:   RuleNeedsAdoption,
 			wantStop:   true,
 			wantReason: reasons.PreconditionNotMet,
 		},
 		{
 			name:       "B.3 adopt on first use",
 			in:         Input{HasProvisionRecord: false, LocalEvidencePasses: true, APIReachable: true, LiveClusterID: "u3"},
-			wantRule:   "B.3",
+			wantRule:   RuleFirstUse,
 			wantOrigin: Provisioned,
 		},
 		{
 			name:       "C.1 external with kubeconfig",
 			in:         Input{HasProvisionRecord: false, LocalEvidencePasses: false, KubeconfigGiven: true},
-			wantRule:   "C.1",
+			wantRule:   RuleExternal,
 			wantOrigin: External,
 		},
 		{
 			name:       "C.1 external even on a provisioned host pointed elsewhere",
 			in:         Input{HasProvisionRecord: true, TargetMatchesProvisionRecord: false, KubeconfigGiven: true},
-			wantRule:   "C.1",
+			wantRule:   RuleExternal,
 			wantOrigin: External,
 		},
 		{
 			name:       "C.2 nothing here, no kubeconfig",
 			in:         Input{HasProvisionRecord: false, LocalEvidencePasses: false, KubeconfigGiven: false},
-			wantRule:   "C.2",
+			wantRule:   RuleNoCluster,
 			wantStop:   true,
 			wantReason: reasons.NotInstalled,
 		},
@@ -143,7 +143,7 @@ func TestGate_HostAPI_RefusesExternal(t *testing.T) {
 
 	got := Gate(NeedHostAPI, ext)
 	require.True(t, got.Stopped(), "host+api refuses external")
-	require.Equal(t, "host+api", got.Rule)
+	require.Equal(t, RuleNeedHostAPIExt, got.Rule)
 	rsn, ok := errx.ReasonOf(got.Err)
 	require.True(t, ok)
 	require.Equal(t, reasons.PreconditionNotMet, rsn)
