@@ -23,8 +23,10 @@ the design rationale, the startup order, and the full outcome table, see
 `RunProvenanceGate` (in the `common` package) is the entry point; the
 `internal/provenance` box is the gate itself, and the migration phases around it
 are run by the shared pre-run. Filesystem migrations run before the gate (it reads
-their output); host and cluster migrations run after it, only on a provisioned
-target (section 8.1 of the design doc). Data flows one way through the gate: the
+their output); host migrations run after it on a provisioned target, and cluster
+migrations run after it on any verified, reachable cluster — provisioned or
+external — because they migrate weaver's own cluster components (section 8.1 of the
+design doc). Data flows one way through the gate: the
 machine and cluster become an `Input`, the `Input` becomes an `Outcome`, and the
 `Outcome` is either an `Origin` (proceed) or an `Err` (stop).
 
@@ -45,8 +47,8 @@ flowchart TD
     allow -->|stop / not allowed| stop["Stop: doctor message + hint"]
     allow -->|external| clustermig["Cluster migrations<br/>ScopeStartupCluster (api / host+api)"]
     allow -->|provisioned| hostmig["Host migrations<br/>ScopeStartupHost"]
-    hostmig --> clustermig["Cluster migrations<br/>ScopeStartupCluster (api / host+api)"]
-    clustermig --> bll
+    hostmig --> clustermig
+    clustermig --> bll["BLL handles the intent<br/>command proceeds"]
 ```
 
 A stop can originate in three places — a `Gate` policy refusal, an `Evaluate` rule,
