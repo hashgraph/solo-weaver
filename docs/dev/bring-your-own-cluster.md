@@ -188,6 +188,8 @@ Only the needs that reach the live cluster, `api` and `host+api` (section 5.3), 
 
 The outcomes fall into three branches: the target matches the provision record, nothing is recorded yet, or the target is not this host's cluster. One precondition is checked before all of them. Within a branch the rows are checked in order and the first match wins. The `#` column (for example A.1) is the stable rule id used elsewhere in this document.
 
+**Rule ids are frozen.** An id appears in logs, hints and this document, so once shipped it is never renumbered or reused. A new rule takes the next free number in its branch (`A.5`, `B.4`, …) and is placed in its evaluation position in the table, even when that number is out of sequence — the numeric suffix is allocation order, not evaluation order. The branch letter (A/B/C) stays meaningful; the number is just a label. In code these ids are typed constants (`internal/provenance/rules.go`), compared on by name, with a guard test that keeps them unique.
+
 **Precondition (all branches):**
 
 | # | Condition | Result |
