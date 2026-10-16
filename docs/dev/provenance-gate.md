@@ -38,7 +38,7 @@ flowchart TD
     fsmig --> rpg["RunProvenanceGate<br/>common helper"]
     rpg --> collect
     subgraph prov ["internal/provenance"]
-        collect["osCollector.Collect<br/>reads host + cluster into Input"] --> gate["Gate(need, Input)<br/>need policy"]
+        collect["Collector.Collect<br/>host + cluster probes to Input"] --> gate["Gate(need, Input)<br/>need policy"]
         gate --> eval["Evaluate(Input)<br/>P.1 then branch A/B/C"]
         eval --> allow["Allowlist (modes.go)<br/>narrow only"]
     end
@@ -89,7 +89,7 @@ renumbering existing ids. In code they are typed constants in `rules.go`.
 | Piece | File |
 |---|---|
 | `RunProvenanceGate`, `SetProvenanceNeed`, `ProvenanceNeed`, allowlist wiring | `cmd/cli/commands/common/provenance_gate.go` |
-| `osCollector.Collect` (machine-id, `/etc/kubernetes/*`, software state, `ProbeCluster`, kube-system UID) | `internal/provenance/collector.go` |
+| `defaultCollector` + probes (`hostProbe`, `clusterProbe`, `recordedIdentityProbe`) — machine-id, `/etc/kubernetes/*`, software state, `ProbeCluster`, kube-system UID | `internal/provenance/collector.go` |
 | `Gate(need, Input)` | `internal/provenance/gate.go` |
 | `Evaluate` and branches A/B/C | `internal/provenance/evaluate.go` |
 | Allowlist: `ParseAllowedOrigins`, `OriginAllowed`, `RestrictedError` | `internal/provenance/modes.go` |

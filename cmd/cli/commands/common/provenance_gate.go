@@ -30,7 +30,7 @@ const keyProvenanceNeed = "provenanceNeed"
 // environment. The gate is a safety check, so its evidence must always come from
 // real collection in a shipped binary — there is no runtime override that could
 // force a verdict and skip the checks.
-var provenanceCollector = provenance.NewOSCollector()
+var provenanceCollector = provenance.NewCollector()
 
 // SetProvenanceNeed declares what a command needs from the provenance gate. The
 // shared pre-run (RunPersistentPreRun) reads it and runs the gate accordingly,
