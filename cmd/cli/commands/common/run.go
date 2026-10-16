@@ -360,22 +360,25 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Post-gate startup migrations (section 8.1). Host migrations need only a
-	// verified host; cluster migrations also need the live cluster, so they run for
-	// needs that verified it. Both are provisioned-only and skipped for external.
-	if origin != provenance.Provisioned {
-		return nil
-	}
-	if err := RunStartupHostMigrations(cmd.Context()); err != nil {
-		return err
+	// Post-gate startup migrations (section 8.1):
+	//   - Host migrations are provisioned-only — there is no host in external mode.
+	//   - Cluster migrations run against any verified, reachable cluster (an `api`
+	//     or `host+api` need), provisioned OR external, because they migrate
+	//     weaver's own cluster components. Each cluster migration's Applies() is
+	//     ownership-aware, so it never touches a resource weaver did not create (the
+	//     Cilium migrations therefore stay effectively provisioned-only).
+	if origin == provenance.Provisioned {
+		if err := RunStartupHostMigrations(cmd.Context()); err != nil {
+			return err
+		}
 	}
 	if need == provenance.NeedAPI || need == provenance.NeedHostAPI {
 		if err := RunStartupClusterMigrations(cmd.Context()); err != nil {
 			return err
 		}
-		// Record the running version only after the full provisioned + cluster set
-		// has run, so a host-only invocation can't mark cluster boundary migrations
-		// as done before they have run.
+		// Record the running version after the cluster migrations have run. It
+		// self-gates on a provisioned host (KubernetesInstalled), so it no-ops in
+		// external mode and after a host-only invocation.
 		recordProvisionerVersionIfChanged()
 	}
 
