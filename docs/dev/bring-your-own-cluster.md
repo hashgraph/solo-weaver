@@ -57,7 +57,7 @@ Non-goals for now:
 | Origin `provisioned` | `solo-provisioner` installed this cluster (kubeadm, CRI-O, kubelet) on a host. |
 | Origin `external` | Someone else's cluster. We only talk to its API. |
 
-The mode is **derived, not declared**. The `--kubeconfig` flag only chooses which cluster to look at. The identity check (section 5) decides whether it is `provisioned` on this host or `external`. This is what stops flag flip-flopping from corrupting state.
+The mode is **derived, not declared**. The `--kubeconfig` flag only chooses which cluster to look at. The provenance check (section 5) decides whether it is `provisioned` on this host or `external`. This is what stops flag flip-flopping from corrupting state.
 
 ## 4. Cluster resolution
 
@@ -71,7 +71,7 @@ New root persistent flags:
 | `--context <name>` | Context inside the kubeconfig. |
 | `--cluster-name <alias>` | Optional human label, stored in `clusters/index.yaml` when the cluster is registered (section 4.1). Defaults to the context name. Never used as a key. |
 
-Without `--kubeconfig`, ambient `$KUBECONFIG` and `~/.kube/config` are not trusted on their own. Weaver already copies `admin.conf` to `~/.kube/config` for root and the sudo user (`internal/kube/admin.go`), so that file can be ours, but the identity check, not the path, proves it.
+Without `--kubeconfig`, ambient `$KUBECONFIG` and `~/.kube/config` are not trusted on their own. Weaver already copies `admin.conf` to `~/.kube/config` for root and the sudo user (`internal/kube/admin.go`), so that file can be ours, but the provenance check, not the path, proves it.
 
 ### 4.1 Registering a cluster
 
@@ -95,7 +95,7 @@ Related commands, all reading or editing the index only:
 | Command | Purpose |
 |---|---|
 | `solo-provisioner kube cluster list` | Print every known cluster: alias, short ID, origin, server, last used. |
-| `solo-provisioner kube cluster info <alias>` | Origin, server, the components managed there (block node, consensus node and so on) and their state, and the current lease holders (section 5.5). Runs the identity check in report-only mode, so it pairs with `doctor` and `diagnose` (#1110). |
+| `solo-provisioner kube cluster info <alias>` | Origin, server, the components managed there (block node, consensus node and so on) and their state, and the current lease holders (section 5.5). Runs the provenance check in report-only mode, so it pairs with `doctor` and `diagnose` (#1110). |
 | `solo-provisioner kube cluster disconnect <alias>` | Remove the index entry. State files are left in place until an explicit prune (section 12). Later work. |
 
 A cluster that passes the provisioned proof (section 5.1) registers automatically: `solo-provisioner kube cluster install` does it for new installs, and the gate does it on its first successful pass for older installs (section 5.4). No `connect` is needed. The rule below applies to every other cluster, which is external.
@@ -107,13 +107,25 @@ A command that is given an unregistered external cluster:
 
 `connect` is idempotent. Running it again for the same cluster ID refreshes the context, server and last-used time.
 
-## 5. Identity gate
+## 5. Provenance gate
 
-A check in the root pre-run, **before** any RSL or reality check. It decides which cluster a command is about and whether that cluster is this host's own. If the answer is unsafe, the command stops with a reason code and a hint. This is how we know reality and state can be trusted.
+A check in the root pre-run, **before** any RSL or reality check. It decides which cluster a command is about and whether this host provisioned it. If the answer is unsafe, the command stops with a reason code and a hint. This is how we know reality and state can be trusted.
 
 The gate prevents accidents: running against the wrong cluster, or against state left behind by another one. It is not a security boundary. A user with root can fake any of its evidence.
 
 The gate reads only `hosts/local/host.yaml` and the software records, read-only and without locks. It does not go through RSL, reality or the state manager, but it reads these files through #1235's component loader (`ComponentFilePath`), not a second parser, so the on-disk format has one reader. Atomic writes (#1235 replaces each file by rename) make a lock-free read safe.
+
+**Terms.** "Identity" is overloaded, so this design uses one noun per thing and never the bare word:
+
+| Term | Meaning |
+|---|---|
+| **HostIdentity** | the machine — `/etc/machine-id` |
+| **ClusterIdentity** | the cluster — the `kube-system` UID (plus server address and CA fingerprint) |
+| **Provision record** | what this host recorded about the cluster it provisioned — that cluster's `ClusterIdentity`, bound to this `HostIdentity`, in `hosts/local/host.yaml` |
+| **Target** | the cluster a command is pointed at (via `--kubeconfig`, or the host's own cluster by default) |
+| **Origin** | the verdict: `provisioned` or `external`. A refusal is not an origin — it is a stop |
+
+The gate resolves the **Target**, compares its **ClusterIdentity** against the **provision record** for this **HostIdentity**, and returns an **Origin** (or stops).
 
 ### 5.1 Evidence
 
@@ -130,9 +142,9 @@ The gate separates evidence that needs no API from evidence that needs it, so a 
 
 The address check alone is not enough. A Kind or minikube cluster on the same machine points at `127.0.0.1` and would pass it. The binary and process checks rule those out.
 
-**Recorded identity** (also no API needed). `hosts/local/host.yaml` records, after the first successful pass, the cluster ID, the server address and the CA certificate fingerprint of the cluster this host provisioned. A kubeconfig **matches the recorded identity** when its CA fingerprint equals the recorded one. The server address is a fallback, used only when no fingerprint is recorded, which can happen on an older install. The fingerprint is the real identity. A server address can be reused: a different cluster rebuilt on the same `IP:6443` would match on the address alone, so weaver would route it through the "this is our cluster" branch (branch A) and report it as "rebuilt, state stale" (rule A.4) instead of as external (rule C.1). The live cluster-ID check still stops any state corruption in that case. Preferring the fingerprint only makes the message the operator sees correct. This works while the cluster is down, which the cluster ID alone cannot.
+**Provision record** (also no API needed). `hosts/local/host.yaml` records, after the first successful pass, the cluster ID, the server address and the CA certificate fingerprint of the cluster this host provisioned. A kubeconfig **matches the provision record** when its CA fingerprint equals the recorded one. The server address is a fallback, used only when no fingerprint is recorded, which can happen on an older install. The fingerprint is the real cluster identity. A server address can be reused: a different cluster rebuilt on the same `IP:6443` would match on the address alone, so weaver would route it through the "this is our cluster" branch (branch A) and report it as "rebuilt, state stale" (rule A.4) instead of as external (rule C.1). The live cluster-ID check still stops any state corruption in that case. Preferring the fingerprint only makes the message the operator sees correct. This works while the cluster is down, which the cluster ID alone cannot.
 
-**Live identity** (needs the API). The cluster ID, the UID of the `kube-system` namespace, read from the live cluster.
+**Live cluster identity** (needs the API). The `ClusterIdentity`, the UID of the `kube-system` namespace, read from the live cluster.
 
 Reading evidence can fail for a reason other than a mismatch. For example, checking the running executable (`/proc/<pid>/exe`) generally needs root. The gate keeps "cannot read" apart from "does not match": an unreadable check is never taken as proof that a cluster is not ours.
 
@@ -142,7 +154,7 @@ Assumption, to be confirmed against the kubeadm workflow: a host runs one single
 
 Only the needs that reach the live cluster, `api` and `host+api` (section 5.3), evaluate these rules. The `host`, `install` and `connect` needs run a reduced check that never reads the API, so the "API unreachable" leaves do not apply to them. Section 5.3 says exactly what each need checks.
 
-The outcomes fall into three branches: the target matches the recorded identity, nothing is recorded yet, or the target is not this host's cluster. One precondition is checked before all of them. Within a branch the rows are checked in order and the first match wins. The `#` column (for example A.1) is the stable rule id used elsewhere in this document.
+The outcomes fall into three branches: the target matches the provision record, nothing is recorded yet, or the target is not this host's cluster. One precondition is checked before all of them. Within a branch the rows are checked in order and the first match wins. The `#` column (for example A.1) is the stable rule id used elsewhere in this document.
 
 **Precondition (all branches):**
 
@@ -150,7 +162,7 @@ The outcomes fall into three branches: the target matches the recorded identity,
 |---|---|---|
 | P.1 | The recorded `machineId` in `host.yaml` does not match this machine (for example the directory was copied) | Stop. Hint: the state belongs to another machine |
 
-**Branch A — the target matches the recorded identity** (CA fingerprint; server address only as a fallback). Reads the API.
+**Branch A — the target matches the provision record** (CA fingerprint; server address only as a fallback). Reads the API.
 
 | # | Condition | Result |
 |---|---|---|
@@ -165,16 +177,16 @@ The outcomes fall into three branches: the target matches the recorded identity,
 |---|---|---|
 | B.1 | The API is unreachable | Stop. The cluster ID cannot be read. Hint: start the cluster, or run `solo-provisioner kube cluster connect` once it is up |
 | B.2 | The live cluster ID already has `clusters/<uid>` state | Stop. Needs an explicit step; it is never adopted silently (see below) |
-| B.3 | The live cluster ID has no `clusters/<uid>` state | `provisioned`. Record the identity |
+| B.3 | The live cluster ID has no `clusters/<uid>` state | `provisioned`. Write the provision record |
 
-**Branch C — the target is not this host's cluster** (an identity is recorded but the target does not match it, or nothing is recorded and local evidence does not pass). Decided from `--kubeconfig`; no API needed.
+**Branch C — the target is not this host's cluster** (a provision record exists but the target does not match it, or nothing is recorded and local evidence does not pass). Decided from `--kubeconfig`; no API needed.
 
 | # | Condition | Result |
 |---|---|---|
 | C.1 | `--kubeconfig` was given | `external`, state in `clusters/<uid>`. The cluster must be registered (section 4.1): an interactive run stops with a hint to run `solo-provisioner kube cluster connect`, a non-interactive run registers it first |
 | C.2 | No `--kubeconfig` was given | Stop. If nothing is installed here, the hint is to run `solo-provisioner kube cluster install` or pass `--kubeconfig` for an external cluster. If a provisioned install is only partly present, the hint names what is missing |
 
-Branches A and C together prevent split-brain between the state locations: a cluster that does not match the recorded identity can only become `external`, never overwrite `hosts/local`. Rules A.4 and B.2 cover the two ways one cluster ID could end up described twice. Rule A.1 is the one that keeps a broken local cluster from being treated as someone else's.
+Branches A and C together prevent split-brain between the state locations: a cluster that does not match the provision record can only become `external`, never overwrite `hosts/local`. Rules A.4 and B.2 cover the two ways one cluster ID could end up described twice. Rule A.1 is the one that keeps a broken local cluster from being treated as someone else's.
 
 #### Rule B.2: a cluster that was external and now passes the local proof
 
@@ -209,7 +221,7 @@ The exact assignment of each command is made when the gate is built, from the co
 A strict gate must not lock operators out of clusters that older versions installed. Two things could be missing on such a machine, and neither needs a separate migration:
 
 - **Recorded hashes.** Software state records only the name, version, `Installed` and `Configured`; it has never held a binary hash. The gate does not need one. The embedded catalog has the expected checksum for each software, version and platform, which the installer already checks at download. The gate verifies that the sandbox binary on disk matches the catalog checksum for the version recorded in state, and that the running process is that binary.
-- **The recorded identity.** `hosts/local/host.yaml` has no cluster ID, server address or CA fingerprint on an older install. The first time all the local evidence passes and the live cluster ID can be read (rule B.3), the gate records all three. This is trust on first use, and it is safe because the binary, process, `admin.conf` and address checks have already passed. Running `solo-provisioner kube cluster connect` is an optional way to register eagerly and see each check reported (section 4.1); nothing stops working if it is skipped.
+- **The provision record.** `hosts/local/host.yaml` has no cluster ID, server address or CA fingerprint on an older install. The first time all the local evidence passes and the live cluster ID can be read (rule B.3), the gate records all three. This is trust on first use, and it is safe because the binary, process, `admin.conf` and address checks have already passed. Running `solo-provisioner kube cluster connect` is an optional way to register eagerly and see each check reported (section 4.1); nothing stops working if it is skipped.
 
 Catalog gaps: the catalog is refreshed and split over time (#1262), so an old kubelet or CRI-O version may no longer be in it. If the recorded version is not in the catalog, the checksum check is skipped with a warning, and the gate relies on the other checks: the binary is in the sandbox path and the running process is that binary. A version that is in the catalog but does not match its checksum still stops the command.
 
@@ -254,7 +266,7 @@ State is grouped by host. A cluster with no host on this machine gets its own di
 ├── provisioner.yaml               # binary-level: cli and daemon sections, each with version, commit, executable, state model version
 ├── hosts/
 │   └── local/                     # this machine + the cluster it provisioned
-│       ├── host.yaml              # identity: name, machine ID, the cluster this host provisioned
+│       ├── host.yaml              # host identity + provision record: name, machine ID, the cluster this host provisioned
 │       ├── profile.yaml           # host components
 │       ├── firewall.yaml
 │       ├── system.yaml
@@ -274,7 +286,7 @@ State is grouped by host. A cluster with no host on this machine gets its own di
 Rules:
 
 - `provisioner.yaml` describes the binaries, not a host or a cluster. It is always loadable, the binary reads it first before choosing a host or a cluster, and it exists on every machine, including a Mac with only external clusters (`~/.solo-weaver/state/provisioner.yaml`). Startup migrations depend on the recorded provisioner version, and without this file a machine with no `hosts/local` would have nowhere to record it. Host and cluster state never write it. The file holds one section per binary, `cli` and `daemon`, each with that binary's version, commit, executable path and state-model version. The CLI and the daemon ship and upgrade on their own schedules, and the daemon can self-upgrade (epic #500) to a version the CLI never installed, so each binary is the authority on its own version: each writes only its own section and reads the other's. This gives both binaries a reliable view of each other's version and existence, so either can warn on a skew. Because two binaries write one file, a write is a read-modify-write under the file's lock (#1235), not a blind atomic replace, so neither section clobbers the other; reads stay lock-free. The daemon section is empty until a daemon is installed. Startup migrations are a CLI concern and target the version in the `cli` section.
-- `hosts/local/host.yaml` is a small identity file that the identity gate reads first, before any component file, so it needs no component lock. It holds the host `name`, `kind` (`local`; `remote` later), the `machineId` from `/etc/machine-id`, and the identity of the cluster this host provisioned (empty when none): `managedClusterId`, `serverAddress` and `caFingerprint`, which the gate uses to recognise it even when its API is down (section 5.1). A later remote host (section 9) uses the same file with extra registry fields. If the recorded `machineId` no longer matches the machine, for example because the directory was copied, the command stops. If the machine has no usable `/etc/machine-id` (some containers), the check is skipped and no ID is recorded.
+- `hosts/local/host.yaml` is a small host-identity file that the provenance gate reads first, before any component file, so it needs no component lock. It holds the host `name`, `kind` (`local`; `remote` later), the `machineId` from `/etc/machine-id`, and the provision record of the cluster this host provisioned (empty when none): `managedClusterId`, `serverAddress` and `caFingerprint`, which the gate uses to recognise it even when its API is down (section 5.1). A later remote host (section 9) uses the same file with extra registry fields. If the recorded `machineId` no longer matches the machine, for example because the directory was copied, the command stops. If the machine has no usable `/etc/machine-id` (some containers), the check is skipped and no ID is recorded.
 - `hosts/local/` otherwise keeps today's component files and content.
 - `clusters/<uid>/` holds **only cluster-scoped components**. Host components (`profile`, `firewall`, `system`) never exist there, so external-mode code cannot reach host state. Hashes and locks work per file, as in #1235.
 - Each file records its own `clusterId` and `origin`, and the loader checks them against the live cluster. A copied file is rejected.
@@ -368,7 +380,7 @@ Add a startup migration, `state-hosts-layout`, registered in `RegisterMigrations
 - `Execute`: create `hosts/local/` with the same owner and mode, move the component files (and their lock and hash companions) into it, and keep a backup of the originals as `state/.pre-hosts-layout/`. It moves files and does not rewrite their content, with one exception: it copies `ProvisionerState` and `Version` out of the machine-level file into the `cli` section of `state/provisioner.yaml` (the `daemon` section stays empty until a daemon writes it, section 6.1), and writes `hosts/local/host.yaml` (name, kind, machine ID, and the cluster ID if one is already recorded).
 - If both locations have files, prefer `hosts/local/`, leave the legacy files untouched, and log a warning. Never overwrite.
 - Idempotent and crash-safe. `Rollback` restores the backup on a best-effort basis.
-- It runs before anything opens the state manager, and before the identity gate. Migration is pure filesystem work and needs no cluster.
+- It runs before anything opens the state manager, and before the provenance gate. Migration is pure filesystem work and needs no cluster.
 - All code that builds a state path (the state manager, `state_reader.go`, the existing state migrations, `testutil`, the daemon) moves to one resolver. #1235 already builds component paths from a directory (`ComponentFilePath(dir, id)`, `RuntimeResolver.StateDir()`), so for most callers the change is what that directory is (`state/` becomes `state/hosts/local/`). A few callers still use `models.Paths().StateDir` directly, such as the startup-migrations lock and some tests.
 - The migration runs under the same startup-migrations lock that #1235 takes on the state directory.
 - The split migration from #1235 can leave `state.yaml.legacy` and `state.yaml.diverged-*` files in `state/`. They stay where they are: the layout migration moves only the component files, and does not touch or delete them.
@@ -430,7 +442,7 @@ Order:
 
 ## 11. Delivery plan
 
-1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the identity gate (including the handling of older installs in section 5.4). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
+1. Resolver, `--kubeconfig`, `--context`, `--cluster-name`, and the provenance gate (including the handling of older installs in section 5.4). Unit-testable on macOS with fake kubeconfigs. Update `docs/reference/global-flags.md`.
 2. Cluster-side lock (`internal/kube/lease`) and its use in the mutating commands (section 5.5). It needs the resolved cluster from step 1 and nothing from the state work.
 3. State layout, **after** #1231 / #1235 and #1245 merge: `state-hosts-layout` migration, the single path resolver, `provisioner.yaml`, `hosts/local/host.yaml`, the cluster-scoped component files for `clusters/<uid>/`, the host-bound field guard in section 6.2, `clusters/index.yaml`, and the `kube cluster connect`, `list` and `info` commands. This step also gives the daemon write access to its own section of `provisioner.yaml` under the #1235 lock (section 6.1); the daemon is a separate binary, so that change ships on its release schedule, not the CLI's.
 4. External-mode workflows, block node first, with the StorageClass storage path.
@@ -446,7 +458,7 @@ Order:
 3. **Cluster-side lock.** A Lease per component per cluster, in the component's namespace, in both modes, built on `leaderelection` (section 5.5).
 4. **External state is a local cache.** Almost all of it can be re-derived from the cluster, and the cluster wins when they disagree. Storing state in the cluster is a follow-up with its own design (RBAC, ownership).
 5. **Garbage collection.** Nothing is deleted automatically, since a cluster that is only unreachable for a moment must not lose its state. A later `solo-provisioner state prune` lists clusters that are unreachable or whose ID no longer exists, and asks before deleting.
-6. **Older installs.** No separate backfill. The gate checks binaries against the catalog checksum and records the cluster identity (ID, server address and CA fingerprint) on its first successful pass (section 5.4).
+6. **Older installs.** No separate backfill. The gate checks binaries against the catalog checksum and writes the provision record (cluster ID, server address and CA fingerprint) on its first successful pass (section 5.4).
 7. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State, including `provisioner.yaml`, lives in `~/.solo-weaver/state`.
 
 8. **Cluster registration.** One explicit command, `solo-provisioner kube cluster connect`, registers a cluster. Non-interactive runs register implicitly. `list` and `info` read the index and the cluster. `disconnect` is later work (section 4.1).
