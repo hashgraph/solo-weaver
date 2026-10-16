@@ -20,25 +20,33 @@ the design rationale, the startup order, and the full outcome table, see
 
 ## Pipeline: one command through the gate
 
-`RunProvenanceGate` (in the `common` package) is the only entry point; everything
-below it is the `provenance` package. Data flows one way: the machine and cluster
-become an `Input`, the `Input` becomes an `Outcome`, and the `Outcome` is either an
-`Origin` (proceed) or an `Err` (stop).
+`RunProvenanceGate` (in the `common` package) is the entry point; the
+`internal/provenance` box is the gate itself, and the migration phases around it
+are run by the shared pre-run. Filesystem migrations run before the gate (it reads
+their output); host and cluster migrations run after it, only on a provisioned
+target (section 8.1 of the design doc). Data flows one way through the gate: the
+machine and cluster become an `Input`, the `Input` becomes an `Outcome`, and the
+`Outcome` is either an `Origin` (proceed) or an `Err` (stop).
+
 
 ```mermaid
 flowchart TD
-    cmd["Command, e.g. block node install<br/>declares need: host+api"] --> prerun["Shared pre-run<br/>after startup migrations"]
-    prerun --> rpg["RunProvenanceGate<br/>common helper"]
+    cmd["Command, e.g. block node install<br/>declares need: host+api"] --> prerun["Shared pre-run<br/>root PersistentPreRunE"]
+    prerun --> fsmig["Filesystem migrations<br/>ScopeStartupFilesystem"]
+    fsmig --> rpg["RunProvenanceGate<br/>common helper"]
     rpg --> collect
     subgraph prov ["internal/provenance"]
-      collect["osCollector.Collect<br/>reads host + cluster into Input"] --> gate["Gate(need, Input)<br/>need policy"]
-      gate --> eval["Evaluate(Input)<br/>P.1 then branch A/B/C"]
-      eval --> allow["Allowlist (modes.go)<br/>narrow only"]
+        collect["osCollector.Collect<br/>reads host + cluster into Input"] --> gate["Gate(need, Input)<br/>need policy"]
+        gate --> eval["Evaluate(Input)<br/>P.1 then branch A/B/C"]
+        eval --> allow["Allowlist (modes.go)<br/>narrow only"]
     end
-    allow -->|origin allowed| proceed["Command proceeds"]
-    allow -->|Err| stop["Stop: doctor message + hint"]
     gate -. policy stop .-> stop
     eval -. rule stop .-> stop
+    allow -->|stop / not allowed| stop["Stop: doctor message + hint"]
+    allow -->|external| clustermig["Cluster migrations<br/>ScopeStartupCluster (api / host+api)"]
+    allow -->|provisioned| hostmig["Host migrations<br/>ScopeStartupHost"]
+    hostmig --> clustermig["Cluster migrations<br/>ScopeStartupCluster (api / host+api)"]
+    clustermig --> bll
 ```
 
 A stop can originate in three places — a `Gate` policy refusal, an `Evaluate` rule,
