@@ -46,7 +46,7 @@ func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime,
 		Steps(
 			preflight,
 			KubernetesSetupWorkflow(mr),
-			// Record the CLI version so a fresh cluster has a state.yaml; without it the next invocation synthesises the 0.0.0 baseline and re-runs historical startup migrations.
+			// Record the CLI version so a fresh cluster has a machine.yaml; without it the next invocation synthesises the 0.0.0 baseline and re-runs historical startup migrations.
 			steps.RecordProvisionerVersion(),
 		)
 }

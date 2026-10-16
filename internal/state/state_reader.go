@@ -29,18 +29,50 @@ func unmarshalStateDoc(data []byte, doc interface{}) error {
 	return nil
 }
 
-// readStateFileBytes returns the raw bytes of the on-disk state file.
-// If the file does not exist it returns (nil, nil) so callers can
-// treat a missing file as "empty state" without error handling.
-func readStateFileBytes() ([]byte, error) {
-	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
+// readComponentOrLegacyBytes returns id's persisted file if it exists, else
+// falls back to a legacy single state.yaml so these readers also work on a
+// host that has not run the per-component split migration yet. This matters
+// because ReadProvisionerVersionFromDisk is read to decide which startup
+// migrations apply — including the split migration itself — before any
+// migration for this invocation has run, so the component file may not exist
+// yet even though the host has a perfectly good recorded version in the
+// legacy file. The two files share the same YAML shape (both marshal a
+// State), so parsing either with the same doc type works unchanged.
+func readComponentOrLegacyBytes(id ComponentID) ([]byte, error) {
+	data, err := readComponentFileBytes(id)
+	if err != nil || data != nil {
+		return data, err
+	}
+	return readLegacyStateFileBytes()
+}
 
-	data, err := os.ReadFile(stateFile)
+// readComponentFileBytes returns the raw bytes of one component's persisted
+// file. If the file does not exist it returns (nil, nil) so callers can treat
+// an unrecorded component as "empty state" without error handling.
+func readComponentFileBytes(id ComponentID) ([]byte, error) {
+	path := componentFilePath(models.Paths().StateDir, id)
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, errorx.InternalError.Wrap(err, "failed to read state file at %s", stateFile)
+		return nil, errorx.InternalError.Wrap(err, "failed to read %s state file at %s", id, path)
+	}
+	return data, nil
+}
+
+// readLegacyStateFileBytes returns the raw bytes of the pre-split single state
+// file, or (nil, nil) if it doesn't exist.
+func readLegacyStateFileBytes() ([]byte, error) {
+	path := filepath.Join(models.Paths().StateDir, StateFileName)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, errorx.InternalError.Wrap(err, "failed to read legacy state file at %s", path)
 	}
 	return data, nil
 }
@@ -116,10 +148,11 @@ type SoftwareVersionsDoc struct {
 	} `yaml:"state"`
 }
 
-// ReadProvisionerVersionFromDisk extracts the provisioner version from the on-disk state file
-// without loading the full state into memory. Returns an empty string when no state file exists.
+// ReadProvisionerVersionFromDisk extracts the provisioner version from the
+// on-disk machine state file without loading the full state into memory.
+// Returns an empty string when that file does not exist.
 func ReadProvisionerVersionFromDisk() (string, error) {
-	data, err := readStateFileBytes()
+	data, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -133,10 +166,11 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 }
 
 // ReadSoftwareVersionFromDisk reads a single host component's recorded version
-// (by catalog artifact name) from the on-disk state file without loading the
-// full state. Returns an empty string when the state file or component is absent.
+// (by catalog artifact name) from the on-disk machine state file without
+// loading the full state. Returns an empty string when that file or the
+// component is absent.
 func ReadSoftwareVersionFromDisk(name string) (string, error) {
-	data, err := readStateFileBytes()
+	data, err := readComponentOrLegacyBytes(ComponentMachine)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -200,24 +234,41 @@ type PromptDefaults struct {
 	Firewall *models.HostConfig
 }
 
-// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields from the
-// on-disk state file in a single read + YAML parse.  This avoids the overhead
-// of reading and parsing the same file twice when both BlockNodeSelectPrompts
-// and BlockNodeInputPrompts run in the same prompt flow.
-// Returns a zero-value struct when no state file exists.
+// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields with one
+// read + YAML parse per component file (machine for Profile/Firewall, block
+// node for the rest). Each file is decoded into its own PromptDefaultsDoc —
+// not a shared one — because every component file is a marshaled State, so
+// blockNodeData's non-owned machineState section is present too (just zero-
+// valued, since MachineState has no omitempty tag). Decoding both files into
+// one doc would let the second unmarshal silently overwrite the Profile/
+// Firewall the first one just loaded. A component whose file does not exist
+// leaves its doc at its zero value, so this returns a zero-value struct only
+// when neither file exists.
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
-	data, err := readStateFileBytes()
-	if err != nil || data == nil {
+	var machineDoc, blockNodeDoc PromptDefaultsDoc
+
+	machineData, err := readComponentOrLegacyBytes(ComponentMachine)
+	if err != nil {
 		return PromptDefaults{}, err
 	}
+	if machineData != nil {
+		if err := unmarshalStateDoc(machineData, &machineDoc); err != nil {
+			return PromptDefaults{}, err
+		}
+	}
 
-	var doc PromptDefaultsDoc
-	if err := unmarshalStateDoc(data, &doc); err != nil {
+	blockNodeData, err := readComponentOrLegacyBytes(ComponentBlockNode)
+	if err != nil {
 		return PromptDefaults{}, err
+	}
+	if blockNodeData != nil {
+		if err := unmarshalStateDoc(blockNodeData, &blockNodeDoc); err != nil {
+			return PromptDefaults{}, err
+		}
 	}
 
 	var firewall *models.HostConfig
-	if fw := doc.State.MachineState.Firewall; fw != nil {
+	if fw := machineDoc.State.MachineState.Firewall; fw != nil {
 		firewall = &models.HostConfig{
 			Disabled:        fw.Disabled,
 			ManagementCIDRs: fw.ManagementCIDRs,
@@ -228,14 +279,14 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		}
 	}
 
-	bn := doc.State.BlockNodeState
+	bn := blockNodeDoc.State.BlockNodeState
 	var egressInterface, linkRate string
 	if bn.Shaping != nil {
 		egressInterface = bn.Shaping.EgressInterface
 		linkRate = bn.Shaping.LinkRate
 	}
 	return PromptDefaults{
-		Profile:  doc.State.MachineState.Profile,
+		Profile:  machineDoc.State.MachineState.Profile,
 		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
 			ReleaseName:            bn.Name,

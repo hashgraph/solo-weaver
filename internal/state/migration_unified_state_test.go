@@ -3,12 +3,14 @@
 package state
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -101,6 +103,95 @@ func TestUnifiedState_YAMLMarshal(t *testing.T) {
 	assert.Equal(t, "3.14.0", helm.Version)
 	assert.True(t, helm.Installed)
 	assert.False(t, helm.Configured)
+}
+
+// TestUnifiedStateMigration_Execute_PreservesExistingStateFile covers a host
+// where legacy *.installed/*.configured marker files coexist with an
+// already-written state.yaml (e.g. marker-file removal failed on a prior
+// run). Execute must merge the marker files' software entries into the
+// existing cluster/block-node data, not overwrite it with defaults.
+func TestUnifiedStateMigration_Execute_PreservesExistingStateFile(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
+
+	existing := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
+	existing.ClusterState.Created = true
+	existing.ClusterState.Host = "existing-cluster"
+	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
+	b, err := yaml.Marshal(existing)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(models.Paths().StateDir, "cilium.installed"),
+		[]byte("installed at version 1.16.0\n"), 0o644))
+
+	m := NewUnifiedStateMigration()
+	applies, err := m.Applies(&migration.Context{})
+	require.NoError(t, err)
+	require.True(t, applies, "precondition: the marker file must be found")
+
+	require.NoError(t, m.Execute(context.Background(), &migration.Context{}))
+
+	// The merge lands in state.yaml itself, for the later startup migrations
+	// and the per-component split to pick up.
+	for _, id := range AllComponentIDs {
+		_, statErr := os.Stat(componentFilePath(models.Paths().StateDir, id))
+		require.Truef(t, os.IsNotExist(statErr), "%s state file must not be written while state.yaml exists", id)
+	}
+	b, err = os.ReadFile(filepath.Join(models.Paths().StateDir, StateFileName))
+	require.NoError(t, err)
+	var got State
+	require.NoError(t, yaml.Unmarshal(b, &got))
+
+	assert.True(t, got.ClusterState.Created, "existing cluster data must survive the marker-file merge")
+	assert.Equal(t, "existing-cluster", got.ClusterState.Host)
+	assert.Equal(t, "existing-block-node", got.BlockNodeState.ReleaseInfo.Name)
+	cilium := GetSoftwareState(got, "cilium")
+	assert.Equal(t, "1.16.0", cilium.Version)
+	assert.True(t, cilium.Installed)
+}
+
+// TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly covers
+// marker files on a host with no state.yaml: the software entries are merged
+// into machine.yaml, no state.yaml is created, and other component files are
+// left as they were.
+func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	existing := NewState(filepath.Join(dir, StateFileName))
+	existing.MachineState.Profile = "mainnet"
+	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
+	sm, err := NewStateManager(WithState(existing))
+	require.NoError(t, err)
+	require.NoError(t, sm.FlushScoped(ComponentMachine, ComponentBlockNode))
+	blockNodeBefore, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cilium.installed"), []byte("installed at version 1.16.0\n"), 0o644))
+
+	require.NoError(t, NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{}))
+
+	_, err = os.Stat(filepath.Join(dir, StateFileName))
+	require.True(t, os.IsNotExist(err), "no state.yaml must be created on an already-split host")
+
+	b, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	require.NoError(t, err)
+	var machine State
+	require.NoError(t, yaml.Unmarshal(b, &machine))
+	assert.True(t, GetSoftwareState(machine, "cilium").Installed)
+	assert.Equal(t, "mainnet", machine.MachineState.Profile, "existing machine data must survive the merge")
+
+	blockNodeAfter, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
+	require.NoError(t, err)
+	assert.Equal(t, string(blockNodeBefore), string(blockNodeAfter), "blocknode.yaml must not be rewritten")
+
+	_, err = os.Stat(filepath.Join(dir, "cilium.installed"))
+	assert.True(t, os.IsNotExist(err), "the marker file is removed once merged")
 }
 
 func TestRegisterMigrations_State(t *testing.T) {

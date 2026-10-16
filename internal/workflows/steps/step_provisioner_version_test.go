@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -18,18 +17,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// the cluster install tail step writes a state.yaml whose provisioner.version is
-// the running binary's version, which the next invocation's reader then observes
-// instead of synthesising the 0.0.0 baseline.
+// the cluster install tail step writes a machine.yaml whose provisioner.version
+// is the running binary's version, which the next invocation's reader then
+// observes instead of synthesising the 0.0.0 baseline.
 func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
-	// A provisioned host has the state dir (created at install) but no state.yaml.
+	// A provisioned host has the state dir (created at install) but no machine.yaml.
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
 
-	stateFile := filepath.Join(models.Paths().StateDir, state.StateFileName)
-	_, statErr := os.Stat(stateFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: state file must not exist yet")
+	machineFile := state.ComponentFilePath(models.Paths().StateDir, state.ComponentMachine)
+	_, statErr := os.Stat(machineFile)
+	require.True(t, os.IsNotExist(statErr), "precondition: machine state file must not exist yet")
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
@@ -37,8 +36,8 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error, "step must succeed")
 
-	_, statErr = os.Stat(stateFile)
-	require.NoError(t, statErr, "state file should now exist")
+	_, statErr = os.Stat(machineFile)
+	require.NoError(t, statErr, "machine state file should now exist")
 
 	recorded, err := state.ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
