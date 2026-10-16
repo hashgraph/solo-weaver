@@ -375,9 +375,11 @@ func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
 	}
 }
 
-// TestActionHistory_LastActionUpdatedInState verifies that AddActionHistory also updates
-// the LastAction field of the in-memory state so it can be flushed into state.yaml.
-func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
+// TestActionHistory_EntryRecordedWithProvenance verifies that AddActionHistory
+// stamps the entry's timestamp and that FlushActionHistory persists it — with
+// the components it wrote — to the append-only action_history.yaml, the single
+// record of what changed the state after LastAction was dropped from State (#1242).
+func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "state.yaml")
 
@@ -388,17 +390,31 @@ func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
 	}
 
 	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
-		Inputs: map[string]any{"key": "value"},
+		Intent:     models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
+		Inputs:     map[string]any{"key": "value"},
+		Components: []ComponentID{ComponentMachine, ComponentBlockNode},
 	})
+	if err := m.FlushActionHistory(); err != nil {
+		t.Fatalf("FlushActionHistory: %v", err)
+	}
 
-	if m.State().LastAction.Intent.Action != models.ActionInstall {
-		t.Errorf("LastAction.Intent.Action: got %q, want %q",
-			m.State().LastAction.Intent.Action, models.ActionInstall)
+	b, err := os.ReadFile(filepath.Join(dir, "action_history.yaml"))
+	if err != nil {
+		t.Fatalf("read action_history.yaml: %v", err)
 	}
-	if m.State().LastAction.Timestamp.IsZero() {
-		t.Error("LastAction.Timestamp is zero after AddActionHistory")
+
+	var entry ActionHistory
+	if err := yaml.Unmarshal(b, &entry); err != nil {
+		t.Fatalf("unmarshal action_history.yaml: %v", err)
 	}
+	if entry.Intent.Action != models.ActionInstall {
+		t.Errorf("Intent.Action: got %q, want %q", entry.Intent.Action, models.ActionInstall)
+	}
+	if entry.Timestamp.IsZero() {
+		t.Error("Timestamp is zero after AddActionHistory")
+	}
+	require.Equal(t, []ComponentID{ComponentMachine, ComponentBlockNode}, entry.Components,
+		"action_history entry must record which components the action wrote")
 }
 
 // TestFlushState_HandEditWithStaleHashFieldIsDetected verifies the optimistic-
