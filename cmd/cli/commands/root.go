@@ -154,23 +154,30 @@ func init() {
 // Migrations are listed in chronological order of introduction so that when a user upgrades
 // from an older version, all applicable migrations run in the correct sequence.
 //
-// Scopes:
-//   - migration.ScopeStartup ("startup"):    runs before every command in RunPersistentPreRun.
-//   - migration.ScopeBlockNode ("block-node"): runs explicitly during block node upgrades.
+// Scopes (startup migrations are split around the provenance gate — see
+// docs/dev/bring-your-own-cluster.md 8.1):
+//   - migration.ScopeStartupFilesystem: on-disk state reshaping; runs before the gate.
+//   - migration.ScopeStartupHost:        host-system work; runs after the gate on a verified host.
+//   - migration.ScopeStartupCluster:     Kubernetes-API work; runs after the gate on a verified cluster.
+//   - migration.ScopeBlockNode:          runs explicitly during block node upgrades.
 func RegisterMigrations() {
-	// ── Startup migrations (run before every CLI invocation) ─────────────────
-	migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
-	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
-	migration.Register(migration.ScopeStartup, state.NewMgmtPortsV1Migration())
-	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewCiliumHostLegacyRoutingMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewCrioSocketDropInMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewNetworkNftUnitMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewNetworkShaperUnitMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewShellCompletionMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewSysctlNetworkTuningMigration())
+	// ── Filesystem startup migrations (reshape on-disk state; run before the gate) ─
+	migration.Register(migration.ScopeStartupFilesystem, state.NewUnifiedStateMigration())
+	migration.Register(migration.ScopeStartupFilesystem, state.NewHelmReleaseSchemaV2Migration())
+	migration.Register(migration.ScopeStartupFilesystem, state.NewMgmtPortsV1Migration())
+
+	// ── Host startup migrations (host-system work; run after the gate, no API) ─
+	migration.Register(migration.ScopeStartupHost, workflows.NewLegacyBinaryMigration())
+	migration.Register(migration.ScopeStartupHost, workflows.NewCrioSocketDropInMigration())
+	migration.Register(migration.ScopeStartupHost, workflows.NewNetworkNftUnitMigration())
+	migration.Register(migration.ScopeStartupHost, workflows.NewNetworkShaperUnitMigration())
+	migration.Register(migration.ScopeStartupHost, workflows.NewShellCompletionMigration())
+	migration.Register(migration.ScopeStartupHost, workflows.NewSysctlNetworkTuningMigration())
+
+	// ── Cluster startup migrations (Kubernetes API; run after the gate, provisioned-only) ─
+	migration.Register(migration.ScopeStartupCluster, workflows.NewCiliumAccelerationMigration())
+	migration.Register(migration.ScopeStartupCluster, workflows.NewCiliumAgentRestartMigration())
+	migration.Register(migration.ScopeStartupCluster, workflows.NewCiliumHostLegacyRoutingMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
