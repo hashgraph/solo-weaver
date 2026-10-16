@@ -152,11 +152,11 @@ type Input struct {
 
 // Outcome is the result of Evaluate and Gate. On success Err is nil and Origin is
 // the resolved operating mode; on a refusal Err is the decorated error to return
-// and Origin is unset. Rule is the rule id that fired (for example "A.4"), for
+// and Origin is unset. Rule is the rule that fired (for example RuleRebuilt), for
 // diagnostics in both cases.
 type Outcome struct {
 	Origin Origin
-	Rule   string
+	Rule   Rule
 	Err    error
 }
 

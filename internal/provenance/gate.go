@@ -14,25 +14,25 @@ import (
 func Gate(need Need, in Input) Outcome {
 	switch need {
 	case NeedNone:
-		return pass("none", Provisioned)
+		return pass(RuleNeedNone, Provisioned)
 
 	case NeedHost:
 		// Offline check only: HostIdentity matches (P.1) and the run is not
 		// external. It never reads the API, so a down or unhealthy local cluster
 		// does not stop it, and branches A/B/C are not evaluated.
 		if in.RecordedMachineIDPresent && !in.MachineIDMatches {
-			return stop("P.1", errorx.IllegalState.New("state belongs to another machine"),
+			return stop(RuleMachineMismatch, errorx.IllegalState.New("state belongs to another machine"),
 				reasons.PreconditionNotMet,
 				"This state directory was provisioned on a different machine.",
 				"Do not copy the state directory between machines.")
 		}
 		if in.KubeconfigGiven {
-			return stop("host", errorx.IllegalState.New("host-level command cannot run against an external cluster"),
+			return stop(RuleNeedHost, errorx.IllegalState.New("host-level command cannot run against an external cluster"),
 				reasons.PreconditionNotMet,
 				"This command does host-level work and does not apply to an external cluster.",
 				"Run it on the provisioned host without --kubeconfig.")
 		}
-		return pass("host", Provisioned)
+		return pass(RuleNeedHost, Provisioned)
 
 	case NeedAPI:
 		// Either provisioned or external is acceptable.
@@ -42,7 +42,7 @@ func Gate(need Need, in Input) Outcome {
 		// Provisioned-only work that also needs the cluster. External is a stop.
 		out := Evaluate(in)
 		if !out.Stopped() && out.Origin == External {
-			return stop("host+api", errorx.IllegalState.New("this command needs a provisioned host, but the target is external"),
+			return stop(RuleNeedHostAPIExt, errorx.IllegalState.New("this command needs a provisioned host, but the target is external"),
 				reasons.PreconditionNotMet,
 				"Block node install runs host steps (firewall, shaping, storage) that only apply to a cluster weaver provisioned on this host.",
 				"Run it on the provisioned host, or use an API-only command for an external cluster.")
@@ -50,6 +50,6 @@ func Gate(need Need, in Input) Outcome {
 		return out
 
 	default:
-		return stop("internal", errorx.AssertionFailed.New("unknown need: %d", need), reasons.Internal)
+		return stop(RuleInternal, errorx.AssertionFailed.New("unknown need: %d", need), reasons.Internal)
 	}
 }
