@@ -2,6 +2,17 @@
 
 Status: **Draft for review.** Nothing in this document is implemented yet.
 
+> **IMPORTANT: external-cluster support is a provisioner-test-only feature.**
+> Pointing weaver at a cluster it did not provision (`--kubeconfig`, "external
+> mode") exists so we can test `solo-provisioner` itself against a throwaway
+> cluster such as Kind, without a KVM or a privileged runner. It is **not** a
+> supported way to run block node, consensus node or any other component in
+> production, and we do not encourage operators to use it in their own CI or
+> against their own clusters. It is gated behind the experimental feature flag
+> (`--experimental` / `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER`) and refuses to
+> run without it. The provisioned, single-node path on a Linux host stays the
+> only supported way to operate a real deployment.
+
 Depends on the per-component state files work: #1231 (PR #1235) and #1245. This design is written in terms of those component files and should be built after they merge. See section 6.
 
 ## 1. Problem
@@ -21,7 +32,7 @@ We also want to run most UAT against a cluster we did not install (for example K
 Goals:
 
 1. Never trust a cluster as ours unless we can prove we installed it on this machine. Check this as early as possible, and stop if the proof fails.
-2. Let an operator explicitly point the CLI at any cluster (`--kubeconfig`) and use it for API-level work: install, upgrade and uninstall of block node, consensus node and the other cluster components.
+2. For testing `solo-provisioner` itself only, and behind the experimental gate, let the CLI point at a cluster it did not provision (`--kubeconfig`) and do API-level work there: install, upgrade and uninstall of block node, consensus node and the other cluster components. This is not for production use (see the banner above).
 3. Keep state separate per cluster, so switching between clusters, or forgetting a flag, can never mix or reset state.
 4. One place decides which kubeconfig is used.
 5. Leave room to manage several VMs from macOS later.
@@ -64,10 +75,10 @@ Without `--kubeconfig`, ambient `$KUBECONFIG` and `~/.kube/config` are not trust
 
 ### 4.1 Registering a cluster
 
-A cluster is registered once, by one command, and the rest of the commands refer to it:
+A cluster is registered once, by one command, and the rest of the commands refer to it. `connect` is part of the experimental, provisioner-test-only external-cluster feature (see the banner at the top), so it is hidden from `--help` and refuses to run without `--experimental` or `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER`:
 
 ```bash
-solo-provisioner kube cluster connect --kubeconfig <path> [--context <name>] [--cluster-name <alias>]
+solo-provisioner kube cluster connect --experimental --kubeconfig <path> [--context <name>] [--cluster-name <alias>]
 ```
 
 `connect` does these steps, in order:
@@ -326,6 +337,8 @@ The alias binds to a cluster ID when the cluster is registered with `solo-provis
 
 > In external mode weaver only talks to the Kubernetes API. It touches nothing on the host.
 
+External mode is experimental and provisioner-test-only (see the banner at the top). It is reached only when the experimental gate is on, through the hidden `--experimental` flag or `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER=1`, reusing `common.GateExperimental` (`cmd/cli/commands/common/experimental_gate.go`). Without the gate, `--kubeconfig` pointing at a cluster that is not this host's own is refused with a reason code and a hint, and `solo-provisioner kube cluster connect` is hidden from `--help`.
+
 - Skipped: node setup, kubeadm setup, network setup (nft, tc), bind mounts, sysctl, swap, weaver user, daemon config.
 - Storage: hostPath PVs refer to a node filesystem weaver cannot own, so they are not used. Storage comes from the cluster through a `storageClassName` per volume (flag or values file). Weaver creates PVCs only, never PVs. The hostPath templates (`storage-config.yaml`, `optional-storage.yaml`) are provisioned-only.
 - Preflight checks API-level facts only: server version range, access via `SelfSubjectAccessReview`, and that the CNI and StorageClass exist.
@@ -335,7 +348,7 @@ The alias binds to a cluster ID when the cluster is registered with `solo-provis
 
 ### 7.1 Local development with Kind
 
-A developer can create a Kind cluster on their own machine (including a Mac) and use it with weaver. It does not need SSH delegation (section 9).
+To test `solo-provisioner` itself, a developer can create a Kind cluster on their own machine (including a Mac) and use it with weaver, behind the experimental gate. It does not need SSH delegation (section 9). This is for exercising weaver against a throwaway cluster, not for running a real deployment on Kind.
 
 - Weaver did not install it, so it is `origin: external`. It gets a `clusters/<kube-system-uid>/` directory and an index entry with the context (for example `kind-dev`) and a `127.0.0.1` server address.
 - Register it once with `solo-provisioner kube cluster connect`, or let a non-interactive run register it. Use it with `--kubeconfig` and `--context`. Only API-level work runs. Storage comes from Kind's default StorageClass.
@@ -379,7 +392,7 @@ Not in scope now, but the layout leaves room.
 
 ## 10. Effect on CI
 
-External mode is what makes a Kind lane possible on the ARC runners (`solo-linux-medium`) without privileged pods. Tests then split into:
+This section is about `solo-provisioner`'s own CI, which is the one place external mode is meant to run. It is not a recommendation for operators' pipelines. External mode is what makes a Kind lane possible on the ARC runners (`solo-linux-medium`) without privileged pods. Tests then split into:
 
 | Lane | Runner | Content |
 |---|---|---|
@@ -437,6 +450,8 @@ Order:
 7. **macOS.** There is no provisioned host on darwin, so `hosts/local` is never created and every cluster is `external`. Provisioned-only commands fail with a message that they configure a Linux host. State, including `provisioner.yaml`, lives in `~/.solo-weaver/state`.
 
 8. **Cluster registration.** One explicit command, `solo-provisioner kube cluster connect`, registers a cluster. Non-interactive runs register implicitly. `list` and `info` read the index and the cluster. `disconnect` is later work (section 4.1).
+
+9. **External mode is experimental and provisioner-test-only.** External mode exists to test `solo-provisioner` against a throwaway cluster (such as Kind) without a KVM or privileged runner. It is not supported for running real deployments, and we do not encourage operators to use it in their own CI or clusters. It is gated with `common.GateExperimental` (feature `external-cluster`): `--kubeconfig` against a non-provisioned cluster, and `solo-provisioner kube cluster connect`, both require `--experimental` or `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER`, and are refused otherwise. The provisioned single-node Linux path is unaffected and needs no flag.
 
 ## 13. Still open
 
