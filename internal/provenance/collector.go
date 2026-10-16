@@ -14,13 +14,48 @@ import (
 )
 
 // Collector gathers the Input the gate evaluates: local evidence (section 5.1),
-// the ProvisionRecord from the state files, and the live cluster ID.
+// the provision record from the state files, and the live cluster ID.
 type Collector interface {
 	Collect(ctx context.Context, need Need, kubeconfigGiven bool) (Input, error)
 }
 
-// Paths the local-evidence checks look at. kubeadm writes all of these on a
-// control-plane node.
+// probe fills its own part of the Input from one evidence source. The default
+// collector runs a fixed set of probes and fuses their output into one Input.
+// Probes here are scoped to provenance (is this our cluster, and the host it?);
+// broad reality probes (helm releases, secrets, disk) belong to the drift and
+// diagnostics layers, not the gate.
+type probe interface {
+	collect(ctx context.Context, need Need, in *Input) error
+}
+
+// defaultCollector is the real collector: it runs the provenance probes against
+// this machine and the live cluster. Tests swap in a fake Collector instead.
+type defaultCollector struct {
+	probes []probe
+}
+
+// NewCollector returns the default collector, composing the provenance probes.
+func NewCollector() Collector {
+	return defaultCollector{
+		probes: []probe{
+			recordedIdentityProbe{},
+			hostProbe{},
+			clusterProbe{},
+		},
+	}
+}
+
+func (c defaultCollector) Collect(ctx context.Context, need Need, kubeconfigGiven bool) (Input, error) {
+	in := Input{KubeconfigGiven: kubeconfigGiven}
+	for _, p := range c.probes {
+		if err := p.collect(ctx, need, &in); err != nil {
+			return in, err
+		}
+	}
+	return in, nil
+}
+
+// Paths the host probe looks at. kubeadm writes all of these on a control-plane node.
 const (
 	adminConfPath = "/etc/kubernetes/admin.conf"
 	manifestsPath = "/etc/kubernetes/manifests"
@@ -28,47 +63,53 @@ const (
 	machineIDPath = "/etc/machine-id"
 )
 
-// osCollector reads real evidence from this machine and the live cluster.
+// recordedIdentityProbe reads what this host recorded about the cluster it
+// provisioned (the provision record) and the recorded HostIdentity.
 //
-// It implements the parts that can be read today: the kubeadm control-plane
-// files, the recorded kubelet/CRI-O install state, the live HostIdentity, and the
-// live ClusterIdentity. Two pieces are not yet wired and are called out inline:
-//
-//   - TODO(#1235): the ProvisionRecord (cluster ID, server address, CA
-//     fingerprint) and the recorded HostIdentity live in hosts/local/host.yaml,
-//     which does not exist until the per-component state work lands. Until then
-//     nothing is recorded, so a provisioned host is classified through branch B
-//     (trust on first use), which is the intended path for older installs.
-//   - TODO: binary provenance (the running executable is the sandbox binary and
-//     matches the catalog checksum) and the server-address-resolves-to-this-host
-//     check are Linux/root-only and not folded into LocalEvidencePasses yet.
-type osCollector struct{}
+// TODO(#1235): the provision record and recorded machine ID live in
+// hosts/local/host.yaml, and ExternalStateExists is whether clusters/<uid>/ holds
+// state — none of which exists until the per-component state work lands. Until
+// then nothing is recorded, so these stay false and a provisioned host flows
+// through branch B (trust on first use), the intended path for older installs.
+type recordedIdentityProbe struct{}
 
-// NewOSCollector returns a collector that probes this machine and cluster.
-func NewOSCollector() Collector { return osCollector{} }
-
-func (osCollector) Collect(ctx context.Context, _ Need, kubeconfigGiven bool) (Input, error) {
-	in := Input{KubeconfigGiven: kubeconfigGiven}
-
-	// Live machine ID. Absent on machines without /etc/machine-id (macOS, some
-	// containers); the design skips the check there.
-	_ = readMachineID() // live id; compared against the recorded one once #1235 lands.
-
-	// TODO(#1235): the ProvisionRecord + recorded HostIdentity come from host.yaml.
-	// Nothing is recorded yet, so these stay false/empty and a provisioned host
-	// flows through branch B.
+func (recordedIdentityProbe) collect(_ context.Context, _ Need, in *Input) error {
 	in.RecordedMachineIDPresent = false
 	in.HasProvisionRecord = false
+	in.ExternalStateExists = false
+	return nil
+}
 
-	// Local evidence (the slice readable today: control-plane files + recorded
-	// install state).
+// hostProbe reads local host evidence: the kubeadm control-plane files and the
+// recorded kubelet/CRI-O install state. It needs no cluster API.
+//
+// TODO: binary provenance (the running executable is the sandbox binary and
+// matches the catalog checksum) and the server-address-resolves-to-this-host
+// check are Linux/root-only and not folded into LocalEvidencePasses yet.
+type hostProbe struct{}
+
+func (hostProbe) collect(_ context.Context, _ Need, in *Input) error {
+	// Live machine ID, for comparison against the recorded one once #1235 lands.
+	// Absent on machines without /etc/machine-id (macOS, some containers).
+	_ = readMachineID()
+
 	passes, failed, unreadable, piece := collectLocalEvidence()
 	in.LocalEvidencePasses = passes
 	in.LocalEvidenceFailed = failed
 	in.LocalEvidenceUnreadable = unreadable
 	in.FailingPiece = piece
+	return nil
+}
 
-	// Live cluster: reachability and the kube-system UID.
+// clusterProbe reads the live cluster: reachability and the kube-system UID
+// (the ClusterIdentity). It is skipped for a host-only need, which never reads
+// the API, so an offline host command does not probe the cluster at all.
+type clusterProbe struct{}
+
+func (clusterProbe) collect(ctx context.Context, need Need, in *Input) error {
+	if need == NeedHost {
+		return nil
+	}
 	_, reachable := kube.ProbeCluster()
 	in.APIReachable = reachable
 	if reachable {
@@ -76,12 +117,7 @@ func (osCollector) Collect(ctx context.Context, _ Need, kubeconfigGiven bool) (I
 			in.LiveClusterID = uid
 		}
 	}
-
-	// TODO(#1235): ExternalStateExists is whether clusters/<uid>/ already holds
-	// state. That directory does not exist on this branch, so it stays false.
-	in.ExternalStateExists = false
-
-	return in, nil
+	return nil
 }
 
 // collectLocalEvidence stats the kubeadm control-plane files and reads the

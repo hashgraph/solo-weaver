@@ -16,7 +16,7 @@
 //     is an error, not an Origin.
 //
 // Evaluate is the pure outcome table (section 5.2); Gate applies a command's
-// declared Need (section 5.3); osCollector (collector.go) gathers the real
+// declared Need (section 5.3); the default Collector (collector.go) gathers the real
 // evidence. Two inputs are not yet wired and are marked TODO(#1235) in the
 // collector: the ProvisionRecord and the deep binary-provenance checks.
 package provenance
