@@ -22,6 +22,7 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/internal/provenance"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -341,6 +342,17 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 	// Run any pending startup migrations before any command executes.
 	if err := RunStartupMigrations(cmd.Context()); err != nil {
 		return err
+	}
+
+	// Provenance gate (design sections 5 and 5.0): runs AFTER migrations, so the
+	// state files it reads are already in their migrated location and format, and
+	// before the command body opens RSL, reality or the state manager. Commands
+	// opt in by declaring a Need with SetProvenanceNeed; the rest default to
+	// NeedNone and are not gated.
+	if need := ProvenanceNeed(cmd); need != provenance.NeedNone {
+		if err := RunProvenanceGate(cmd, need); err != nil {
+			return err
+		}
 	}
 
 	return nil
