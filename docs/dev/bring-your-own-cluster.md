@@ -569,3 +569,62 @@ Solo (`hiero-ledger/solo`) solves part of this problem. We do not adopt its code
 **Does weaver keep a desired state?** No. All state is a last-known cache; reality (cluster + host) is the source of truth, and intent lives in reality (for example a cluster CR), not in a separate desired-state store. Drift is reality not matching the cache. See decision 4 for the three reconcile outcomes (match, confirmed-drift, unobservable-error).
 
 **What if reality can't be observed during reconcile?** It is an error — weaver stops and never treats "can't observe" as "gone", so a transient outage can't make the cache drop real state. This is separate from the offline `host`-need path (uninstall, recovery), which does not read the cluster and so is not blocked when the API is down.
+
+## 16. Story breakdown
+
+Derived from the delivery plan (section 11) and the spike (design PR #1288, code PR #1298). Grouped into milestones with dependencies and where each is testable (macOS vs the UTM VM). This is a living plan — update it as stories are created and linked to the epic.
+
+### Milestone 1 - Provenance gate foundation (mostly spiked; macOS-testable)
+
+| # | Story | Scope | Depends on |
+|---|---|---|---|
+| 1 | Cluster resolver + root flags | `kube.ResolveCluster`, `--kubeconfig` / `--context` / `--cluster-name`; one place resolves the target. Update `global-flags.md`. | - |
+| 2 | Provenance gate core | `internal/provenance` (Evaluate outcome table, Need, Outcome, allowlist, rule constants) + `common.RunProvenanceGate` wired into `block node install`. Replace the spike's placeholder collector with real evidence (kubelet/CRI-O running, `/proc` exe, catalog checksum). | 1 |
+| 3 | Startup migration scope split | `ScopeStartupFilesystem/Host/Cluster`, re-registration, phased pre-run around the gate, self-install wiring (section 8.1). | 2 |
+
+Stories 2-3 exist in the spike; this milestone productionizes them. Gate decision logic is unit-tested on macOS; real host/cluster evidence and the host/cluster migration phases need the VM.
+
+### Milestone 2 - Per-cluster state layout (critical path; gated on #1231 / #1235 / #1245)
+
+| # | Story | Scope | Depends on |
+|---|---|---|---|
+| 4 | `provisioner.yaml` + path resolver | binary-level file (cli + daemon sections), single path resolver all callers use. | #1231/#1235 |
+| 5 | `hosts/local/` + `host.yaml` + layout migration | identity + provision record; `state-hosts-layout` migration; gate reads the real provision record. | 4, #1245 |
+| 6 | `clusters/<uid>/` + `index.yaml` + host-bound guard | cluster-scoped component files, cluster index, the section 6.2 writer guard. | 5 |
+
+This chain gates everything cluster-aware; it cannot start until the per-component state work merges.
+
+### Milestone 3 - Coordination and registration
+
+| # | Story | Scope | Depends on |
+|---|---|---|---|
+| 7 | Cluster-side lease | `internal/kube/lease` (leaderelection), taken by mutating commands; fencing. | 1 |
+| 8 | `kube cluster connect` / `list` / `info` | registration, alias binding, read-only views. | 6 |
+
+### Milestone 4 - External mode, ownership, drift
+
+| # | Story | Scope | Depends on | MVP? |
+|---|---|---|---|---|
+| 9 | External-mode gating + workflow skips | experimental feature flag; skip host steps for external targets. | 2, 6 | later |
+| 10 | StorageClass storage path (block node) | PVC-only, no hostPath, for external clusters. | 9 | later |
+| 11 | Resource ownership | `managed-by: weaver` labels + ownerReferences; `weaver-remote-config` audit log (lease-protected); uninstall deletes only labeled. | 6, 7 | MVP |
+| 12 | Drift / reconcile (3 outcomes) | match / confirmed-drift / unobservable-error; integrate with #1193. | 6 | later |
+
+### Milestone 5 - Rollout and CI
+
+| # | Story | Scope | Depends on |
+|---|---|---|---|
+| 13 | Assign `Need` to all commands | per-command section 5.3 mapping (today only block node install is wired). | 2 |
+| 14 | CI Kind lane + test split | external-mode Kind lane, privilege-based split, KVM path-filter lane. | 9, 10 |
+
+### Later / out of scope (separate epic or backlog)
+
+- Multi-VM from macOS (`--host`, SSH delegation) - section 9.
+- In-cluster state storage - section 13.
+- `state prune`, `state adopt` / discard, stale-state cleanup commands - section 13.
+
+### Sequencing notes
+
+- Critical path: #1231 / #1235 / #1245 -> story 4 -> 5 -> 6 -> (8, 9, 11, 12). Nothing cluster-state-aware starts until the per-component state work lands.
+- Can run now, in parallel, on the spike branch: stories 1-3 and 7 (the lease needs only the resolver, not the state work; see section 11.2). Story 13 is incremental once story 2 is in.
+- Correctness-bearing MVP: milestone 1 plus resource ownership (11) and the three-outcome reconcile (12). External mode (9-10) and the Kind CI lane (14) are the payoff and can follow.
