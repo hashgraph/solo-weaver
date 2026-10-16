@@ -37,11 +37,6 @@ func (c Change) String() string {
 // than reported as changed.
 type Producer func(baseline, live state.State) []Change
 
-// DefaultProducers returns the producer of every component wired for detection.
-func DefaultProducers() []Producer {
-	return []Producer{Teleport}
-}
-
 // Detect runs every producer against the same baseline and live state, keeping
 // the producers' order.
 func Detect(baseline, live state.State, producers ...Producer) []Change {

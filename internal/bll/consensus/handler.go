@@ -20,6 +20,7 @@ type Handlers struct {
 func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 	base, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
 		bll.WithProfileExtractor(func(i models.ConsensusNodeInputs) string { return i.Profile }),
+		bll.WithManagedComponents[models.ConsensusNodeInputs](bll.ConsensusNode),
 	)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create BaseHandler")
