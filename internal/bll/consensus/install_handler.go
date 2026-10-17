@@ -70,6 +70,20 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	custom.LedgerId = h.runtime.LedgerId().Get().Val()
 	custom.ChainId = h.runtime.ChainId().Get().Val()
 
+	// Find the key secrets the operator did not name, by their labels.
+	ctx, cancel := lookupContext()
+	defer cancel()
+	cluster, err := newKeyCluster()
+	if err != nil {
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "cannot connect to the Kubernetes cluster"),
+			reasons.PreconditionNotMet,
+			"Verify your kubeconfig and that 'kubectl get nodes' works")
+	}
+	if err := resolveKeySecrets(ctx, cluster, custom); err != nil {
+		return nil, err
+	}
+
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
 
@@ -238,20 +252,21 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 		addHash(models.ConfigKeyBlockNodes, ins.ConfigBlockNodes)
 
 		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
-			Namespace:     ins.Namespace,
-			OrbitName:     ins.OrbitName,
-			NodeId:        ins.NodeId,
-			AccountId:     ins.AccountId,
-			Weight:        ins.Weight,
-			ImageRepo:     ins.ConsensusImageRepo,
-			ImageTag:      ins.ConsensusImageTag,
-			LedgerId:      ins.LedgerId,
-			ChainId:       ins.ChainId,
-			DeploymentPkg: ins.DeploymentPackageDir,
-			GrpcTlsSecret: ins.GrpcTlsSecret,
-			SigningSecret: ins.SigningSecret,
-			ConfigHashes:  configHashes,
-			LastSync:      now,
+			Namespace:      ins.Namespace,
+			OrbitName:      ins.OrbitName,
+			NodeId:         ins.NodeId,
+			AccountId:      ins.AccountId,
+			Weight:         ins.Weight,
+			ImageRepo:      ins.ConsensusImageRepo,
+			ImageTag:       ins.ConsensusImageTag,
+			LedgerId:       ins.LedgerId,
+			ChainId:        ins.ChainId,
+			DeploymentPkg:  ins.DeploymentPackageDir,
+			GrpcTlsSecret:  ins.GrpcTlsSecret,
+			SigningSecret:  ins.SigningSecret,
+			AdminKeySecret: ins.AdminKeySecret,
+			ConfigHashes:   configHashes,
+			LastSync:       now,
 		}
 
 		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")
