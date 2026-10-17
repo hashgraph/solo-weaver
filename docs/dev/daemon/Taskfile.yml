@@ -79,6 +79,17 @@ vars:
   # staging/*.zip to rebuild after changing the version.
   PROVISIONER_VERSION: '{{.PROVISIONER_VERSION | default .VERSION | default "0.0.0"}}'
 
+  # Multi-registry shape of the packages built by `zip` (forwarded to solo-operator's
+  # test/dev build). By default the manifest gets a decoy registry FIRST (a public
+  # image that is intentionally not published), so the operator must fail over to the
+  # real registry and the capsule carries a softwareVersionSource instead of a single
+  # softwareVersion — the shape that exercises the upgrade's source handling. A real
+  # mirror is added as well when it publishes the same version with identical layers.
+  # Set CN_DECOY_REGISTRY="" for a plain single-registry package.
+  CN_DECOY_REGISTRY: '{{.CN_DECOY_REGISTRY | default "docker.io/hashgraph/consensus-node:0.0.0-invalid"}}'
+  CN_DECOY_POSITION_0: '{{.CN_DECOY_POSITION_0 | default "true"}}'
+  CN_SELECTION_STRATEGY: '{{.CN_SELECTION_STRATEGY | default ""}}'
+
   # Orbit namespace where the CN + NetworkUpgradeExecute CRs live.
   NS: '{{.NS | default "hiero-network-1"}}'
   # Operator namespace (where `kube operator install` deploys + reads its pull secret).
@@ -407,6 +418,7 @@ tasks:
     desc: "Host: ensure solo-operator is checked out on SOLO_OPERATOR_REF (default main; clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
+      - task: clean
       - task: zip
       - task: package
       - task: beacon:build
@@ -450,11 +462,23 @@ tasks:
         fi
         echo "✓ solo-operator on $REF at $(git -C "$DIR" rev-parse --short HEAD)"
 
+  clean:
+    desc: "Host: delete the staged v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} zips and the weaver test/data copies so `prep` always rebuilds them (the `zip` task skips when zips exist, which silently reuses stale packages). Source downloads in solo-operator test/dev are kept."
+    cmds:
+      - |
+        set -e
+        for v in {{.BASE_VERSION}} {{.UPGRADE_VERSION}}; do
+          rm -f  "{{.STAGING}}/build-v${v}.zip" "{{.WEAVER_ROOT}}/test/data/build-v${v}.zip"
+          rm -rf "{{.WEAVER_ROOT}}/test/data/build-v${v}"
+        done
+        echo "✓ removed staged and synced packages for {{.BASE_VERSION}} and {{.UPGRADE_VERSION}}"
+
   zip:
     desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"
     status:
       # Idempotent: skip when both zips are already built. Remove them (or the
-      # staging dir) to force a rebuild.
+      # staging dir, or run the `clean` task — `prep` does) to force a rebuild — required after changing CN_DECOY_REGISTRY /
+      # CN_DECOY_POSITION_0 / CN_SELECTION_STRATEGY, since a skipped build ignores them.
       - test -f "{{.STAGING}}/build-v{{.BASE_VERSION}}.zip"
       - test -f "{{.ZIP_SRC}}"
     cmds:
@@ -468,7 +492,10 @@ tasks:
         # build's 0.0.0) rather than hardcoded in solo-operator's Taskfile.
         task build \
           PROVISIONER_DAEMON_VERSION={{.PROVISIONER_VERSION}} \
-          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}}   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
+          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}} \
+          CN_DECOY_REGISTRY="{{.CN_DECOY_REGISTRY}}" \
+          CN_DECOY_POSITION_0={{.CN_DECOY_POSITION_0}} \
+          CN_SELECTION_STRATEGY="{{.CN_SELECTION_STRATEGY}}"   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
 
   package:
     desc: "Host: stage the base package (unzipped) + the upgrade zip into the weaver checkout's test/data (synced into the VM by `vm:sync`)"
