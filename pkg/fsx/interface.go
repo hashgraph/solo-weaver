@@ -96,6 +96,8 @@ type Manager interface {
 	AtomicWriteFile(path string, payload []byte, perm fs.FileMode) error
 
 	// AppendToFile appends payload to a file. If the file does not exist, it will be created.
+	// The file and then its directory are fsynced after the write. A FileSyncError
+	// means payload was appended but may not survive a power cut.
 	AppendToFile(path string, payload []byte) error
 
 	// RemoveAll removes the path and its contents

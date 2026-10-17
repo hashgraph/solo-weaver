@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -391,4 +392,137 @@ func TestActionHistory_LastActionUpdatedInState(t *testing.T) {
 	if m.State().LastAction.Timestamp.IsZero() {
 		t.Error("LastAction.Timestamp is zero after AddActionHistory")
 	}
+}
+
+// TestFlushState_DirectorySyncFailureAdvancesBaseline verifies that a flush whose directory
+// sync fails still replaced the file, so the next flush doesn't see it as an external change.
+func TestFlushState_DirectorySyncFailureAdvancesBaseline(t *testing.T) {
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(t.TempDir(), "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, m.FlushState())
+
+	syncErr := fsx.FileSyncError.New("disk gone")
+	recordDirSyncs(t, syncErr)
+	s := m.State()
+	s.MachineState.Profile = "local"
+	require.ErrorIs(t, m.Set(s).FlushState(), syncErr)
+
+	recordDirSyncs(t, nil)
+	s.MachineState.Profile = "perfnet"
+	require.NoError(t, m.Set(s).FlushState())
+}
+
+// TestFlushAll_DirectorySyncFailureStillAppendsHistory verifies that a state flush whose
+// directory sync fails still records its action, since the new state is on disk.
+func TestFlushAll_DirectorySyncFailureStillAppendsHistory(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
+	syncErr := fsx.FileSyncError.New("disk gone")
+	recordDirSyncs(t, syncErr)
+
+	require.ErrorIs(t, m.FlushAll(), syncErr)
+
+	require.Len(t, decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml")), 1)
+}
+
+// unsyncedAppender is an fsx.Manager whose first AppendToFile writes the payload and
+// then reports a failed sync.
+type unsyncedAppender struct {
+	fsx.Manager
+	err error
+}
+
+func (a *unsyncedAppender) AppendToFile(path string, payload []byte) error {
+	if err := a.Manager.AppendToFile(path, payload); err != nil {
+		return err
+	}
+	err := a.err
+	a.err = nil
+	return err
+}
+
+// TestFlushActionHistory_SyncFailureClearsPending verifies that entries appended before a
+// failed sync are not appended again by the next flush.
+func TestFlushActionHistory_SyncFailureClearsPending(t *testing.T) {
+	dir := t.TempDir()
+	syncErr := fsx.FileSyncError.New("disk gone")
+	fm := &unsyncedAppender{Manager: newTestFileManager(t), err: syncErr}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
+	require.NoError(t, err)
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
+
+	require.ErrorIs(t, m.FlushActionHistory(), syncErr)
+	require.NoError(t, m.FlushActionHistory())
+
+	require.Len(t, decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml")), 1)
+}
+
+// TestFlushActionHistory_NothingPendingWritesNothing verifies that a flush with no pending
+// entries doesn't create the history file.
+func TestFlushActionHistory_NothingPendingWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+
+	require.NoError(t, m.FlushActionHistory())
+
+	require.NoFileExists(t, filepath.Join(dir, "action_history.yaml"))
+}
+
+// TestFlushActionHistory_AfterTornEntryStartsOnNewLine verifies that an entry appended after
+// one a full disk cut short still decodes on its own.
+func TestFlushActionHistory_AfterTornEntryStartsOnNewLine(t *testing.T) {
+	dir := t.TempDir()
+	historyFile := filepath.Join(dir, "action_history.yaml")
+	require.NoError(t, os.WriteFile(historyFile, []byte("---\nintent:\n  action: [inst"), 0o644))
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}})
+
+	require.NoError(t, m.FlushActionHistory())
+
+	got, err := os.ReadFile(historyFile)
+	require.NoError(t, err)
+	docs := strings.Split(string(got), "\n---\n")
+	var last ActionHistory
+	require.NoError(t, yaml.Unmarshal([]byte(docs[len(docs)-1]), &last))
+	require.Equal(t, models.ActionUninstall, last.Intent.Action)
+}
+
+// concurrentAdder is an fsx.Manager whose AppendToFile runs add after writing, as if
+// another goroutine added an entry while the append ran.
+type concurrentAdder struct {
+	fsx.Manager
+	add func()
+}
+
+func (a *concurrentAdder) AppendToFile(path string, payload []byte) error {
+	err := a.Manager.AppendToFile(path, payload)
+	if a.add != nil {
+		a.add()
+		a.add = nil
+	}
+	return err
+}
+
+// TestFlushActionHistory_KeepsEntriesAddedDuringAppend verifies that a flush clears only
+// the entries it appended.
+func TestFlushActionHistory_KeepsEntriesAddedDuringAppend(t *testing.T) {
+	dir := t.TempDir()
+	fm := &concurrentAdder{Manager: newTestFileManager(t)}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
+	require.NoError(t, err)
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
+	fm.add = func() {
+		m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}})
+	}
+
+	require.NoError(t, m.FlushActionHistory())
+	require.NoError(t, m.FlushActionHistory())
+
+	entries := decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml"))
+	require.Len(t, entries, 2)
+	require.Equal(t, models.ActionUninstall, entries[1].Intent.Action)
 }

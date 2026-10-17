@@ -63,12 +63,28 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 		return nil
 	}
 
+	installed, err := ReadProvisionerVersionFromDisk()
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to read provisioner version before unified-state migration")
+	}
+
 	sm, err := NewStateManager()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
 	}
+	// A run that failed after writing state.yaml left it behind; merge into it.
+	if err := sm.Refresh(); err != nil && !errorx.IsOfType(err, NotFoundError) {
+		return errorx.IllegalState.Wrap(err, "failed to read state before unified-state migration")
+	}
 
 	current := sm.State()
+	if current.Version != ModelVersion {
+		return errorx.IllegalState.New(
+			"state.yaml is at model version %q, not %q; cannot merge legacy state files into it",
+			current.Version, ModelVersion)
+	}
+	// RunStartupMigrations records the running version once every startup migration has run.
+	current.ProvisionerState.Version = installed
 
 	for _, fp := range files {
 		base := filepath.Base(fp)

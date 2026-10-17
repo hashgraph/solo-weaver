@@ -18,21 +18,30 @@
 //  5. Chmod — apply final permissions to the temp file before rename so the target
 //     is never transiently visible with incorrect permissions.
 //  6. Rename — atomically replace the target path.
-//  7. Cleanup on failure — remove the temp file if any step fails.
+//  7. Sync the directory — fsync it so the rename survives a power cut, then its
+//     parent so a directory step 1 created does too.
+//  8. Cleanup on failure — remove the temp file if any step before the rename fails.
 
 package state
 
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 )
+
+// syncDir fsyncs a directory. It is a variable so tests can make it fail.
+var syncDir = fsx.SyncDir
 
 // atomicWriteFile writes data to path using a write-to-temp-then-rename strategy,
 // ensuring that readers never observe a partially-written file.
 //
 // The parent directory is created with mode 0o755 if it does not exist.
 // The temporary file is created in the same directory as path so the final
-// os.Rename is guaranteed to be atomic (same filesystem).
+// os.Rename is guaranteed to be atomic (same filesystem). The directory and
+// its parent are fsynced after the rename; a failure of either sync is an
+// fsx.FileSyncError and leaves the new content in place.
 func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -72,5 +81,10 @@ func atomicWriteFile(path string, data []byte) error {
 		return err
 	}
 	success = true
-	return nil
+
+	if err := syncDir(dir); err != nil {
+		return err
+	}
+	// Ancestors above the parent that MkdirAll may have created are not synced.
+	return syncDir(filepath.Dir(dir))
 }

@@ -3,12 +3,16 @@
 package state
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -118,4 +122,54 @@ func TestRegisterMigrations_State(t *testing.T) {
 	}
 	_, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
 	require.NoError(t, err)
+}
+
+// TestUnifiedStateMigration_RetryAfterSyncFailure verifies that the next run completes a
+// migration whose state directory sync failed, leaving state.yaml and the legacy files,
+// and that neither run records the running CLI version.
+func TestUnifiedStateMigration_RetryAfterSyncFailure(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	stateDir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	legacy := filepath.Join(stateDir, "cilium.installed")
+	require.NoError(t, os.WriteFile(legacy, []byte("installed at version 1.16.0\n"), 0o644))
+	m := NewUnifiedStateMigration()
+	mctx := &migration.Context{Component: migration.ScopeStartup}
+
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+	require.Error(t, m.Execute(context.Background(), mctx))
+	require.NoError(t, m.Rollback(context.Background(), mctx))
+	recorded, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	require.Empty(t, recorded)
+
+	recordDirSyncs(t, nil)
+	require.NoError(t, m.Execute(context.Background(), mctx))
+	require.NoFileExists(t, legacy)
+	recorded, err = ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	require.Empty(t, recorded)
+}
+
+// TestUnifiedStateMigration_RefusesOlderSchemaStateFile verifies that legacy files are not
+// merged into a state.yaml that helm-release-schema-v2 has yet to convert.
+func TestUnifiedStateMigration_RefusesOlderSchemaStateFile(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	stateDir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	stateFile := filepath.Join(stateDir, StateFileName)
+	v1 := strings.Replace(v1StateYAML, "stateFile: /opt/solo/weaver/state/state.yaml", "stateFile: "+stateFile, 1)
+	require.NoError(t, os.WriteFile(stateFile, []byte(v1), 0o644))
+	legacy := filepath.Join(stateDir, "cilium.installed")
+	require.NoError(t, os.WriteFile(legacy, []byte("installed at version 1.16.0\n"), 0o644))
+
+	err := NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{Component: migration.ScopeStartup})
+
+	require.Error(t, err)
+	got, readErr := os.ReadFile(stateFile)
+	require.NoError(t, readErr)
+	require.Equal(t, v1, string(got))
+	require.FileExists(t, legacy)
 }
