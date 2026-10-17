@@ -401,3 +401,97 @@ func FlagDaemonVersion() FlagDefinition[string] {
 		Default:     version.Get().Version,
 	}
 }
+
+// Flags of `diagnose logs`.
+
+func FlagLogsSource() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "source",
+		ShortName:   "",
+		Description: "Log to read (cli, daemon, all); all merges both by timestamp",
+		Default:     "cli",
+	}
+}
+
+func FlagLogsTail() FlagDefinition[int] {
+	return FlagDefinition[int]{
+		Name:        "tail",
+		ShortName:   "n",
+		Description: "Show the last N entries that match; 0 shows none (useful with --follow)",
+		Default:     50,
+	}
+}
+
+func FlagLogsHead() FlagDefinition[int] {
+	return FlagDefinition[int]{
+		Name:        "head",
+		ShortName:   "",
+		Description: "Show the first N entries that match instead of the last",
+		Default:     0,
+	}
+}
+
+func FlagLogsFollow() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "follow",
+		ShortName:   "f",
+		Description: "Keep streaming new entries, and keep following across log rotation",
+		Default:     false,
+	}
+}
+
+func FlagLogsLevel() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "level",
+		ShortName:   "",
+		Description: "Show entries at this level and above (trace, debug, info, warn, error, fatal, panic)",
+		Default:     "",
+	}
+}
+
+func FlagLogsSince() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "since",
+		ShortName:   "",
+		Description: "Show entries newer than a duration (10m, 2h) or an RFC3339 time",
+		Default:     "",
+	}
+}
+
+func FlagLogsGrep() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "grep",
+		ShortName:   "",
+		Description: "Show entries whose caller, message or key=value fields match this regular expression",
+		Default:     "",
+	}
+}
+
+func FlagLogsMessage() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "message",
+		ShortName:   "",
+		Description: "Show entries whose message matches this regular expression (fields are not searched)",
+		Default:     "",
+	}
+}
+
+// FlagLogsField is registered as a repeatable string flag by the command; the
+// Default is unused.
+func FlagLogsField() FlagDefinition[string] {
+	return FlagDefinition[string]{
+		Name:        "field",
+		ShortName:   "",
+		Description: "Show entries where a field equals a value, as key=value; repeat to require several (dotted keys reach nested fields)",
+		Default:     "",
+	}
+}
+
+func FlagLogsLastError() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "last-error",
+		ShortName:   "",
+		Description: "Show the most recent error in full (stack trace, reason, hints), as -V would have; combine with --source, --since, --grep, --message or --field",
+		Default:     false,
+	}
+}

@@ -194,7 +194,7 @@ At this level, `StepStart` is rendered as an inline (transient) line that shows
     1. Run the command with 'sudo': `sudo solo-provisioner block node install`
 
   See logs: /opt/solo/weaver/logs/solo-provisioner.log
-  Use -V for full diagnostics
+  Use -V for full diagnostics, or run 'solo-provisioner diagnose logs --last-error' afterwards
 ```
 
 **With `-V`:**
