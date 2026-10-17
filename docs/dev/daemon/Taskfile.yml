@@ -79,6 +79,17 @@ vars:
   # staging/*.zip to rebuild after changing the version.
   PROVISIONER_VERSION: '{{.PROVISIONER_VERSION | default .VERSION | default "0.0.0"}}'
 
+  # Multi-registry shape of the packages built by `zip` (forwarded to solo-operator's
+  # test/dev build). By default the manifest gets a decoy registry FIRST (a public
+  # image that is intentionally not published), so the operator must fail over to the
+  # real registry and the capsule carries a softwareVersionSource instead of a single
+  # softwareVersion — the shape that exercises the upgrade's source handling. A real
+  # mirror is added as well when it publishes the same version with identical layers.
+  # Set CN_DECOY_REGISTRY="" for a plain single-registry package.
+  CN_DECOY_REGISTRY: '{{.CN_DECOY_REGISTRY | default "docker.io/hashgraph/consensus-node:0.0.0-invalid"}}'
+  CN_DECOY_POSITION_0: '{{.CN_DECOY_POSITION_0 | default "true"}}'
+  CN_SELECTION_STRATEGY: '{{.CN_SELECTION_STRATEGY | default ""}}'
+
   # Orbit namespace where the CN + NetworkUpgradeExecute CRs live.
   NS: '{{.NS | default "hiero-network-1"}}'
   # Operator namespace (where `kube operator install` deploys + reads its pull secret).
@@ -385,24 +396,41 @@ tasks:
         sudo solo-provisioner daemon service check || true
 
   daemon:logs:
-    desc: "Inside VM: tail the daemon log file (LEAVE RUNNING in its own terminal)"
+    desc: "Inside VM: follow the daemon journal (LEAVE RUNNING in its own terminal)"
     cmds:
-      # The daemon logs to a file via lumberjack, NOT journald — `journalctl -u ...`
-      # shows nothing for the provisioner user (needs sudo / systemd-journal group).
-      # -F follows across lumberjack's log rotation. For service start/crash output,
-      # use: sudo journalctl -u solo-provisioner-daemon.service -e
-      #
-      # For local foreground debugging, switch the daemon to human-friendly console
-      # logging instead of the production NDJSON file log. In daemon.yaml set:
-      #   log:
-      #     level: debug
-      #     consoleLogging: true
-      #     fileLogging: false
-      #     utc: true
-      #     includeCaller: true
-      #     includePackage: true
-      # and then run: `solo-provisioner-daemon --log-level=debug --config=/path/to/daemon-local.yaml`
-      - tail -F /opt/solo/weaver/logs/solo-provisioner-daemon.log
+      # The daemon's stdout goes to journald as human-readable console output, which is
+      # the readable view for local debugging; -o cat drops the journal prefix. The
+      # file /opt/solo/weaver/logs/solo-provisioner-daemon.log is always NDJSON (the
+      # logx file sink), so it is for machine consumption, not for tailing. Needs sudo
+      # (or the systemd-journal group) to read the unit's journal.
+      - sudo journalctl -fu solo-provisioner-daemon -o cat
+
+  provisioner:logs:
+    desc: "Inside VM: follow the CLI log (solo-provisioner.log) as readable lines (LEAVE RUNNING in its own terminal)"
+    cmds:
+      # The CLI log file is always NDJSON and the CLI has no journal, so render it like
+      # the daemon's console output (colored level, `>` before the message, sorted
+      # key=value fields) with jq while tailing. A non-JSON line is passed through as-is
+      # so the stream survives it. Needs sudo only if the file is not world-readable.
+      - |
+        sudo tail -n 50 -F /opt/solo/weaver/logs/solo-provisioner.log \
+          | jq -R -r '
+              def c($n; $s): "\u001b[\($n)m\($s)\u001b[0m";
+              def lvl: {trace: ["TRC", 35], debug: ["DBG", 33], info: ["INF", 32],
+                        warn: ["WRN", 31], error: ["ERR", 31], fatal: ["FTL", 31],
+                        panic: ["PNC", 31]}[(.level // "") | ascii_downcase]
+                       // [((.level // "???") | ascii_upcase), 0];
+              (fromjson? // null) as $o
+              | if $o == null then . else
+                  $o | lvl as $l
+                  | (del(.time, .level, .caller, .message) | to_entries | sort_by(.key)
+                     | map(c(36; .key + "=") + (.value | if type == "string" then . else tojson end))
+                     | join(" ")) as $fields
+                  | [c(90; .time // ""), c($l[1]; $l[0]), c(1; .caller // ""), c(36; ">"),
+                     (.message // ""), $fields]
+                  | map(select(. != "" and . != c(90; "") and . != c(1; "")))
+                  | join(" ")
+                end'
 
   daemon:check:
     desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
@@ -417,6 +445,7 @@ tasks:
     desc: "Host: ensure solo-operator is checked out on SOLO_OPERATOR_REF (default main; clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
+      - task: clean
       - task: zip
       - task: package
       - task: beacon:build
@@ -460,11 +489,23 @@ tasks:
         fi
         echo "✓ solo-operator on $REF at $(git -C "$DIR" rev-parse --short HEAD)"
 
+  clean:
+    desc: "Host: delete the staged v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} zips and the weaver test/data copies so `prep` always rebuilds them (the `zip` task skips when zips exist, which silently reuses stale packages). Source downloads in solo-operator test/dev are kept."
+    cmds:
+      - |
+        set -e
+        for v in {{.BASE_VERSION}} {{.UPGRADE_VERSION}}; do
+          rm -f  "{{.STAGING}}/build-v${v}.zip" "{{.WEAVER_ROOT}}/test/data/build-v${v}.zip"
+          rm -rf "{{.WEAVER_ROOT}}/test/data/build-v${v}"
+        done
+        echo "✓ removed staged and synced packages for {{.BASE_VERSION}} and {{.UPGRADE_VERSION}}"
+
   zip:
     desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"
     status:
       # Idempotent: skip when both zips are already built. Remove them (or the
-      # staging dir) to force a rebuild.
+      # staging dir, or run the `clean` task — `prep` does) to force a rebuild — required after changing CN_DECOY_REGISTRY /
+      # CN_DECOY_POSITION_0 / CN_SELECTION_STRATEGY, since a skipped build ignores them.
       - test -f "{{.STAGING}}/build-v{{.BASE_VERSION}}.zip"
       - test -f "{{.ZIP_SRC}}"
     cmds:
@@ -478,7 +519,10 @@ tasks:
         # build's 0.0.0) rather than hardcoded in solo-operator's Taskfile.
         task build \
           PROVISIONER_DAEMON_VERSION={{.PROVISIONER_VERSION}} \
-          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}}   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
+          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}} \
+          CN_DECOY_REGISTRY="{{.CN_DECOY_REGISTRY}}" \
+          CN_DECOY_POSITION_0={{.CN_DECOY_POSITION_0}} \
+          CN_SELECTION_STRATEGY="{{.CN_SELECTION_STRATEGY}}"   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
 
   package:
     desc: "Host: stage the base package (unzipped) + the upgrade zip into the weaver checkout's test/data (synced into the VM by `vm:sync`)"
