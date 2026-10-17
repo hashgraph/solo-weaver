@@ -83,6 +83,9 @@ vars:
   # The consensus node account id (0.0.3) — the v0.74.0 genesis has node0 account 0.0.3, which is the default payer for beacon's config.yaml.
   ACCOUNT_ID: '{{.ACCOUNT_ID | default "0.0.3"}}'  # node0 account in the v0.74.0 genesis
 
+  # Where `keys init` writes node<N>'s key material (admin private key stays here).
+  KEYS_DIR: '{{.KEYS_DIR | default (printf "/tmp/cn-keys/node%s" .NODE_ID)}}'
+
   # Daemon upgrade staging dir — daemon reads the extracted package here; the CN pod
   # extracts special file 0.0.150 into the same path (shared on a single host).
   UPGRADE_DIR: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
@@ -163,7 +166,8 @@ tasks:
           # substrate: the daemon's real install path (single-node k8s)
           T1  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
           T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
-          T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
+          T3  task -d docs/dev/daemon secrets        # pull secrets (reuses uat:secrets)
+          T3b task -d docs/dev/daemon keys           # consensus keys init + verify (gossip/gRPC/admin secrets)
           T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.1 operator + CRDs)
               #  ── how to run solo-operator (pick one) ──
               #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
@@ -240,17 +244,33 @@ tasks:
         sudo usermod -aG hedera weaver
         sudo -u weaver touch {{.UPGRADE_DIR}}/.probe && sudo -u weaver rm {{.UPGRADE_DIR}}/.probe && echo "✓ weaver can write {{.UPGRADE_DIR}}"
 
-  # ── 3. secrets: pull secret (operator+orbit ns) + node0 gossip/gRPC ──────────
+  # ── 3. secrets: pull secret (operator + orbit ns) ────────────────────────────
   secrets:
-    desc: "Inside VM: create the private-registry pull secret (operator + orbit ns) and node0 gossip/gRPC secrets (reuses uat:secrets)"
+    desc: "Inside VM: create the private-registry pull secret (operator + orbit ns); node keys come from `keys` (reuses uat:secrets)"
     cmds:
-      # uat:secrets rewrites the sample manifests' namespace to NS and applies the
-      # node0-gossip-keys / node0-grpc-tls-keys secrets `consensus node install` expects.
+      # SAMPLE_KEYS=false: skip the fixed sample node secrets; `keys` creates real ones.
+      # Pass SAMPLE_KEYS=true to use the sample secrets instead.
       - task: uat:secrets
         vars:
           NS: "{{.NS}}"
           OPERATOR_NS: "{{.OPERATOR_NS}}"
           NODE: "node{{.NODE_ID}}"
+          SAMPLE_KEYS: "{{.SAMPLE_KEYS | default \"false\"}}"
+
+  # ── 3b. keys: generate node keys + create their labelled secrets ─────────────
+  keys:
+    desc: "Inside VM: generate node{{.NODE_ID}}'s gossip/gRPC/admin keys into KEYS_DIR and create the dated, labelled secrets (consensus keys init)"
+    cmds:
+      - |
+        set -e
+        echo "▶ consensus keys init (node{{.NODE_ID}}, keys in {{.KEYS_DIR}})"
+        sudo solo-provisioner consensus keys init --experimental \
+          --namespace {{.NS}} --node-id {{.NODE_ID}} --keys-dir {{.KEYS_DIR}}
+        echo "▶ consensus keys verify --from-cluster"
+        sudo solo-provisioner consensus keys verify --experimental \
+          --namespace {{.NS}} --node-id {{.NODE_ID}} --from-cluster
+        echo "✓ node{{.NODE_ID}} secrets (install finds them by label):"
+        sudo kubectl -n {{.NS}} get secret -l solo.hiero.org/node=node{{.NODE_ID}} --show-labels
 
   # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
   operator:
@@ -327,9 +347,9 @@ tasks:
           --namespace {{.NS}} --node-id {{.NODE_ID}} --account-id {{.ACCOUNT_ID}} --profile local \
           --provisioner-daemon \
           --default-volume-type hostpath \
-          --deployment-package-dir {{.PKG}} \
-          --signing-secret node{{.NODE_ID}}-gossip-keys \
-          --grpc-tls-secret node{{.NODE_ID}}-grpc-tls-keys
+          --deployment-package-dir {{.PKG}}
+        # No --signing-secret/--grpc-tls-secret/--admin-key-secret: install resolves the
+        # labelled secrets that `keys` created (pass them explicitly to override).
 
         echo "▶ consensus network genesis"
         sudo solo-provisioner consensus network genesis --experimental --namespace {{.NS}}
