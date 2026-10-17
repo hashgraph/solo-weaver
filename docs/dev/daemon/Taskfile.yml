@@ -364,13 +364,14 @@ tasks:
         esac
         DAEMON_BIN=/mnt/solo-weaver/bin/solo-provisioner-daemon-linux-${ARCH}
 
-        echo "▶ daemon service install (--cn-orbit is aliased by --cn-namespace)"
+        echo "▶ daemon service install from local dev config"
         # --daemon-bin points at the freshly built dev binary (auto-download of the
-        # 0.0.0 placeholder version has no GitHub release and would fail).
+        # 0.0.0 placeholder version has no GitHub release and would fail). The
+        # from-config file pins the local CN namespace/node_id values for a repeatable
+        # dev run; the command-line flags are intentionally omitted because the file is
+        # the authoritative config in this path.
         sudo solo-provisioner daemon service install \
-          --components consensus-node \
-          --cn-node-id {{.NODE_ID}} \
-          --cn-orbit {{.NS}} \
+          --from-config "{{.WEAVER_ROOT}}/test/config/daemon-local.yaml" \
           --daemon-bin "$DAEMON_BIN" \
           --non-interactive
 
@@ -390,6 +391,17 @@ tasks:
       # shows nothing for the provisioner user (needs sudo / systemd-journal group).
       # -F follows across lumberjack's log rotation. For service start/crash output,
       # use: sudo journalctl -u solo-provisioner-daemon.service -e
+      #
+      # For local foreground debugging, switch the daemon to human-friendly console
+      # logging instead of the production NDJSON file log. In daemon.yaml set:
+      #   log:
+      #     level: debug
+      #     consoleLogging: true
+      #     fileLogging: false
+      #     utc: true
+      #     includeCaller: true
+      #     includePackage: true
+      # and then run: `solo-provisioner-daemon --log-level=debug --config=/path/to/daemon-local.yaml`
       - tail -F /opt/solo/weaver/logs/solo-provisioner-daemon.log
 
   daemon:check:
@@ -546,6 +558,7 @@ tasks:
     desc: "Write {{.BEACON_HOME}} config.yaml + the 0.0.2 payer key (copied from solo-operator docs/beacon)"
     cmds:
       - mkdir -p {{.BEACON_HOME}}/keys
+      - sudo apt install -y xxd || true
       - |
         # 0.0.2 genesis key as an unencrypted PEM (+ empty passphrase file).
         { echo "-----BEGIN PRIVATE KEY-----"; \

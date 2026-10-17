@@ -1,0 +1,11 @@
+schemaVersion: 1
+components:
+  consensus_node:
+    enabled: true
+    kubeconfig: /opt/solo/weaver/config/daemon-cn.kubeconfig
+    node_id: "0"
+    orbit: "hiero-network-1"
+    upgrade_dir: /opt/hgcapp/services-hedera/HapiApp2.0/data/upgrade/current
+    monitors:
+      upgrade: true
+      migration: true
