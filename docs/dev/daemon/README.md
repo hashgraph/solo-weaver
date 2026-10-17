@@ -132,6 +132,7 @@ task -d docs/dev/daemon consensus # consensus node install --provisioner-daemon 
 # install + run the host daemon (the execute-phase performer)
 task -d docs/dev/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
 task -d docs/dev/daemon daemon:logs     # journalctl -f — LEAVE RUNNING in its own terminal
+task -d docs/dev/daemon provisioner:logs # CLI solo-provisioner.log as readable lines (jq) — optional, own terminal
 
 # drive the upgrade with beacon (synced from the host prep)
 task -d docs/dev/daemon config          # write beacon config.yaml + 0.0.2 payer key

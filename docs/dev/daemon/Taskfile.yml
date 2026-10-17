@@ -405,6 +405,33 @@ tasks:
       # (or the systemd-journal group) to read the unit's journal.
       - sudo journalctl -fu solo-provisioner-daemon -o cat
 
+  provisioner:logs:
+    desc: "Inside VM: follow the CLI log (solo-provisioner.log) as readable lines (LEAVE RUNNING in its own terminal)"
+    cmds:
+      # The CLI log file is always NDJSON and the CLI has no journal, so render it like
+      # the daemon's console output (colored level, `>` before the message, sorted
+      # key=value fields) with jq while tailing. A non-JSON line is passed through as-is
+      # so the stream survives it. Needs sudo only if the file is not world-readable.
+      - |
+        sudo tail -n 50 -F /opt/solo/weaver/logs/solo-provisioner.log \
+          | jq -R -r '
+              def c($n; $s): "\u001b[\($n)m\($s)\u001b[0m";
+              def lvl: {trace: ["TRC", 35], debug: ["DBG", 33], info: ["INF", 32],
+                        warn: ["WRN", 31], error: ["ERR", 31], fatal: ["FTL", 31],
+                        panic: ["PNC", 31]}[(.level // "") | ascii_downcase]
+                       // [((.level // "???") | ascii_upcase), 0];
+              (fromjson? // null) as $o
+              | if $o == null then . else
+                  $o | lvl as $l
+                  | (del(.time, .level, .caller, .message) | to_entries | sort_by(.key)
+                     | map(c(36; .key + "=") + (.value | if type == "string" then . else tojson end))
+                     | join(" ")) as $fields
+                  | [c(90; .time // ""), c($l[1]; $l[0]), c(1; .caller // ""), c(36; ">"),
+                     (.message // ""), $fields]
+                  | map(select(. != "" and . != c(90; "") and . != c(1; "")))
+                  | join(" ")
+                end'
+
   daemon:check:
     desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
     cmds:
