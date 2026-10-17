@@ -25,7 +25,7 @@ inputs:
   go-version:
     description: "Go version installed inside the VM"
     required: false
-    default: "1.26.5"
+    default: "1.26.9"
   vm-ready-timeout-minutes:
     description: "Timeout waiting for VM SSH to accept connections"
     required: false

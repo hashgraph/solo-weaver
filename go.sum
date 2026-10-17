@@ -34,8 +34,8 @@ github.com/automa-saga/daemonkit v0.4.0 h1:htV7m1sIjmkvJEVW1UA+7mMXn4OQnEbvqRSHT
 github.com/automa-saga/daemonkit v0.4.0/go.mod h1:qVU+rZyBQdx2IGEghC7K5z/wsVWtm+bCVwjSL4FJveU=
 github.com/automa-saga/errx v1.0.0 h1:2VDWBD2toBp3YmGF8P9+RTR1aaevkLMbB3qm2yzktBs=
 github.com/automa-saga/errx v1.0.0/go.mod h1:b2x9NigWF35P0Nnv6QtY5lmHGFmGY7/DallDeZCgscI=
-github.com/automa-saga/logx v0.10.0 h1:7Wiyg6KNRuiX7cNfis8bQaicGCZicTqYnXg0o5ipQfw=
-github.com/automa-saga/logx v0.10.0/go.mod h1:6NygU8Q4ocmnWfnhIh8RZr23PD+0en6Rp6Nlb1QMrRs=
+github.com/automa-saga/logx v0.10.1 h1:Tq3PCfkRNVeJm+X3ywVrcdMLGTuk9Ch1/ZuciaQF9eI=
+github.com/automa-saga/logx v0.10.1/go.mod h1:Pu0pkINsPgv/EaoaciaVstedj9z57kmPeik2/QzUUnw=
 github.com/automa-saga/version v1.0.1 h1:mD/mJaDN3a/DtZP1SR5YWJIu/xLyIiffzi85VZDkfn0=
 github.com/automa-saga/version v1.0.1/go.mod h1:mIfObF4OX15sq4FkH9UfJxlpjSQ3eTYpBZzSUxXvCgg=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
