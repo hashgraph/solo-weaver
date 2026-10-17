@@ -416,7 +416,7 @@ func checkErrCompact(resp *ErrorDiagnosis) {
 		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
 	}
 	fmt.Fprintf(os.Stderr, "  %sBuild:%s %s (commit %s)\n", Gray, Reset, resp.Version, version.Info{Commit: resp.Commit}.ShortCommit(12))
-	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics%s\n", Gray, Reset)
+	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics, or run 'solo-provisioner diagnose logs --last-error' afterwards%s\n", Gray, Reset)
 }
 
 // checkErrVerbose prints the full legacy error output with stacktrace and profiling.

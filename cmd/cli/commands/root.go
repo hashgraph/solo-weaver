@@ -19,6 +19,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/diagnose"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network"
@@ -140,6 +141,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 	rootCmd.AddCommand(daemon.GetCmd())
+	rootCmd.AddCommand(diagnose.GetCmd())
 
 	if common.DetectShortNameCollisions(rootCmd) {
 		logx.As().Warn().Msg("flag short name collisions detected among commands; consider using unique short names " +
