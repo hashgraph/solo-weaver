@@ -176,3 +176,40 @@ func TestVerifyInstalledExecutables_UnopenableBinaryIsNotReportedMissing(t *test
 		})
 	}
 }
+
+func TestMixedVersionBinarySetMatchesNoVersion(t *testing.T) {
+	// cri-o style: every file matches some release, but no single release
+	// matches them all. That is not a known install, whatever the record says.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "crio"), []byte("crio-new"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "crun"), []byte("crun-old"), 0o755))
+	_, crioOld := writeTempBinary(t, "crio-old")
+	_, crunOld := writeTempBinary(t, "crun-old")
+	_, crioNew := writeTempBinary(t, "crio-new")
+	_, crunNew := writeTempBinary(t, "crun-new")
+
+	artifact := (&ArtifactMetadata{
+		Name: "cri-o",
+		Versions: map[Version]VersionDetails{
+			olderVersion: {Binaries: []BinaryDetail{
+				{Name: "crio", PlatformChecksum: linuxAmd64Checksum("sha256", crioOld)},
+				{Name: "crun", PlatformChecksum: linuxAmd64Checksum("sha256", crunOld)},
+			}},
+			defaultVersion: {Binaries: []BinaryDetail{
+				{Name: "crio", PlatformChecksum: linuxAmd64Checksum("sha256", crioNew)},
+				{Name: "crun", PlatformChecksum: linuxAmd64Checksum("sha256", crunNew)},
+			}},
+		},
+	}).withPlatform("linux", "amd64")
+	resolve := func(name string) string { return filepath.Join(dir, name) }
+
+	got, err := identifyArtifactVersions(artifact, resolve)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	for _, recorded := range []string{"", olderVersion, defaultVersion} {
+		err := verifyInstalledExecutables(artifact, recorded, resolve)
+		require.Error(t, err, "recorded %q", recorded)
+		assert.True(t, errorx.IsOfType(err, ChecksumError), "recorded %q: expected ChecksumError, got %v", recorded, err)
+	}
+}
