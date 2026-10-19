@@ -7,6 +7,9 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/ui"
+	pkgconfig "github.com/hashgraph/solo-weaver/pkg/config"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -190,4 +193,45 @@ func TestOutputIsJSON(t *testing.T) {
 
 	OutputFormat = ""
 	require.False(t, OutputIsJSON())
+}
+
+// TestAddReportWarnings_NoneLeavesReportUnchanged: a run without warnings
+// keeps its summary as it was.
+func TestAddReportWarnings_NoneLeavesReportUnchanged(t *testing.T) {
+	r := automa.StepSuccessReport("root")
+
+	addReportWarnings(r, nil)
+
+	require.NotContains(t, r.Metadata, models.ReportMetaWarning)
+	require.Empty(t, ui.CollectWarnings(r))
+}
+
+// TestAddReportWarnings_AppendsAfterExisting keeps a warning the report already
+// has and lists the new ones after it.
+func TestAddReportWarnings_AppendsAfterExisting(t *testing.T) {
+	r := automa.StepSuccessReport("root",
+		automa.WithMetadata(automa.StringMap{models.ReportMetaWarning: "existing"}))
+
+	addReportWarnings(r, []string{"first", "second"})
+
+	require.Equal(t, []string{"existing", "first", "second"}, ui.CollectWarnings(r))
+}
+
+// TestFinalizeWorkflowReport_AddsStateWarnings: the warnings the state package
+// recorded during the run reach the report the summary reads.
+func TestFinalizeWorkflowReport_AddsStateWarnings(t *testing.T) {
+	saved := pkgconfig.Get()
+	t.Cleanup(func() { _ = pkgconfig.Set(&saved) })
+	cfg := pkgconfig.Get()
+	cfg.Log.Directory = t.TempDir()
+	require.NoError(t, pkgconfig.Set(&cfg))
+
+	orig := takeStateWarnings
+	t.Cleanup(func() { takeStateWarnings = orig })
+	takeStateWarnings = func() []string { return []string{"state warning"} }
+
+	r := automa.StepSuccessReport("root")
+	require.NoError(t, finalizeWorkflowReport(r))
+
+	require.Equal(t, []string{"state warning"}, ui.CollectWarnings(r))
 }

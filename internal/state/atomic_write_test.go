@@ -45,21 +45,27 @@ func TestAtomicWriteFile_DirectorySyncFailure(t *testing.T) {
 	require.Len(t, entries, 1)
 }
 
-func TestAtomicWriteFile_ParentSyncFailure(t *testing.T) {
-	syncErr := errors.New("disk gone")
+func TestAtomicWriteFile_ParentSyncFailureIsBestEffort(t *testing.T) {
 	dir := t.TempDir()
+	path := filepath.Join(dir, "state.yaml")
+	emptyWarnings(t)
 	orig := syncDir
 	t.Cleanup(func() { syncDir = orig })
 	syncDir = func(d string) error {
 		if d == filepath.Dir(dir) {
-			return syncErr
+			return errors.New("disk gone")
 		}
 		return nil
 	}
 
-	err := atomicWriteFile(filepath.Join(dir, "state.yaml"), []byte("new"))
+	require.NoError(t, atomicWriteFile(path, []byte("new")))
 
-	require.ErrorIs(t, err, syncErr)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "new", string(got))
+	warnings := TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], filepath.Dir(dir))
 }
 
 func TestAtomicWriteFile_NewDirectorySyncsParent(t *testing.T) {
@@ -73,6 +79,7 @@ func TestAtomicWriteFile_NewDirectorySyncsParent(t *testing.T) {
 }
 
 func TestAtomicWriteFile_ExistingDirectorySyncsParent(t *testing.T) {
+	emptyWarnings(t)
 	synced := recordDirSyncs(t, nil)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.yaml")
@@ -86,4 +93,5 @@ func TestAtomicWriteFile_ExistingDirectorySyncsParent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o640), info.Mode().Perm())
 	require.Equal(t, []string{dir, filepath.Dir(dir)}, *synced)
+	require.Empty(t, TakeWarnings())
 }
