@@ -52,9 +52,12 @@ func TestCiliumAccelerationMigration_Applies(t *testing.T) {
 
 func TestCiliumAccelerationMigration_Execute(t *testing.T) {
 	origK8s, origState, origReconfigure, origShell, origVerify := kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, verifyCiliumExecutable
+	origVersion := installedCiliumVersion
 	t.Cleanup(func() {
 		kubernetesInstalled, readCiliumState, reconfigureCiliumConfig, runShell, verifyCiliumExecutable = origK8s, origState, origReconfigure, origShell, origVerify
+		installedCiliumVersion = origVersion
 	})
+	installedCiliumVersion = func(context.Context) (string, error) { return "1.18.1", nil }
 
 	m := NewCiliumAccelerationMigration()
 	mctx := newMctx("0.18.1", ciliumAccelerationMinVersion)

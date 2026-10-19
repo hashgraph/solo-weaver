@@ -28,10 +28,13 @@ import (
 	"os"
 
 	"github.com/automa-saga/automa/automa_steps"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/cilium"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 )
@@ -56,6 +59,7 @@ var (
 	kubernetesInstalled     = defaultKubernetesInstalled
 	readCiliumState         = defaultReadCiliumState
 	verifyCiliumExecutable  = func() error { return software.VerifyExecutables("cilium") }
+	installedCiliumVersion  = defaultInstalledCiliumVersion
 )
 
 // CiliumAccelerationMigration re-renders cilium-config.yaml and runs `cilium upgrade`
@@ -77,7 +81,7 @@ func NewCiliumAccelerationMigration() *CiliumAccelerationMigration {
 }
 
 // Execute re-renders cilium-config.yaml from the updated template and applies it
-// with `cilium upgrade --values <config> --wait`.
+// with `cilium upgrade --version <deployed> --values <config> --wait`.
 //
 // It is self-guarding and idempotent: it no-ops when no live cilium-config is
 // reachable (the node has no cluster) or when acceleration is already "disabled"
@@ -107,6 +111,11 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 		return nil
 	}
 
+	version, err := prepareCiliumUpgrade(ctx)
+	if err != nil {
+		return err
+	}
+
 	configPath, err := reconfigureCiliumConfig()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to re-render cilium-config.yaml")
@@ -114,20 +123,12 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 
 	logx.As().Info().
 		Str("config", configPath).
+		Str("ciliumVersion", version).
 		Str("from", acc).
 		Str("to", disabledAcceleration).
 		Msg("Applying cilium-config (loadBalancer.acceleration=disabled) to existing cluster via 'cilium upgrade'")
 
-	// Verify the cilium binary before executing it.
-	if err := verifyCiliumExecutable(); err != nil {
-		return err
-	}
-
-	upgrade := []string{
-		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --values %s --wait",
-			models.Paths().SandboxBinDir, configPath),
-	}
-	if _, err := runShell(upgrade, ""); err != nil {
+	if _, err := runShell(ciliumUpgradeCommand(version, configPath), ""); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to run 'cilium upgrade' to apply disabled LB acceleration")
 	}
 
@@ -179,4 +180,38 @@ func defaultReadCiliumState(ctx context.Context) (installed bool, acceleration s
 		return true, "", err
 	}
 	return true, acc, nil
+}
+
+// prepareCiliumUpgrade checks what a Cilium migration needs before it touches
+// anything: the deployed chart version to pin, and a verified cilium binary.
+// Without --version, `cilium upgrade` moves the cluster to the CLI's own default
+// release, so a newer CLI would silently upgrade the agent.
+func prepareCiliumUpgrade(ctx context.Context) (string, error) {
+	version, err := installedCiliumVersion(ctx)
+	if err != nil {
+		return "", errorx.Decorate(err, "cannot determine the deployed Cilium version, so 'cilium upgrade' was not run")
+	}
+
+	if err := verifyCiliumExecutable(); err != nil {
+		return "", err
+	}
+
+	return version, nil
+}
+
+// ciliumUpgradeCommand pins the upgrade to version so it changes values only.
+func ciliumUpgradeCommand(version, configPath string) []string {
+	return []string{
+		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --version %q --values %s --wait",
+			models.Paths().SandboxBinDir, version, configPath),
+	}
+}
+
+func defaultInstalledCiliumVersion(ctx context.Context) (string, error) {
+	kc, err := kube.NewClient()
+	if err != nil {
+		return "", errx.Decorate(err, reasons.K8sAPIFailed,
+			"Check that the admin kubeconfig exists and is valid: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")
+	}
+	return cilium.InstalledVersion(ctx, kc.Dyn)
 }
