@@ -386,7 +386,7 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		"metallb":                  {ChartTypeClassic, "0.15.2"},
 		"metrics-server":           {ChartTypeClassic, "3.13.0"},
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},
-		"node-exporter":            {ChartTypeOCI, "4.5.19"},
+		"node-exporter":            {ChartTypeOCI, "4.59.0"},
 		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
 		// solo-operator is intentionally excluded: its version is not pinned in this
 		// map because it is owned by deps.SOLO_OPERATOR_VERSION (injected as the

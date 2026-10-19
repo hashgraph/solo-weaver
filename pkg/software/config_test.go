@@ -1036,10 +1036,10 @@ func Test_Config_InfrastructureCatalog_GetClusterComponent(t *testing.T) {
 			{
 				Name:    "node-exporter",
 				Type:    ChartTypeOCI,
-				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
-				Default: "4.5.19",
+				Chart:   "oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter",
+				Default: "4.59.0",
 				Versions: map[Version]Checksum{
-					"4.5.19": {Algorithm: "sha256", Value: "def"},
+					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
 		},
@@ -1170,12 +1170,12 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 			chart: ChartMetadata{
 				Name:      "node-exporter",
 				Type:      ChartTypeOCI,
-				Chart:     "oci://registry-1.docker.io/bitnamicharts/node-exporter",
+				Chart:     "oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter",
 				Namespace: "monitoring",
 				Release:   "node-exporter",
-				Default:   "4.5.19",
+				Default:   "4.59.0",
 				Versions: map[Version]Checksum{
-					"4.5.19": {Algorithm: "sha256", Value: "def"},
+					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
 		},
@@ -1224,10 +1224,10 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Name:    "node-exporter",
 				Type:    ChartTypeOCI,
 				Repo:    "https://example.com",
-				Chart:   "oci://registry-1.docker.io/bitnamicharts/node-exporter",
-				Default: "4.5.19",
+				Chart:   "oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter",
+				Default: "4.59.0",
 				Versions: map[Version]Checksum{
-					"4.5.19": {Algorithm: "sha256", Value: "def"},
+					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
 			expectedErr: "oci chart must not declare a repo",

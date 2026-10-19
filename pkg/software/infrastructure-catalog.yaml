@@ -382,14 +382,14 @@ cluster:
 
 - name: node-exporter
   type: oci
-  chart: 'oci://registry-1.docker.io/bitnamicharts/node-exporter'
+  chart: 'oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter'
   namespace: 'node-exporter'
   release: 'node-exporter'
-  default: "4.5.19"
+  default: "4.59.0"
   versions:
-    4.5.19:
+    4.59.0:
       algorithm: 'sha256'
-      checksum: '2d782dc996bda9424a80f060481ab137865a6f89f56ddbe777e82f3e9e513214'
+      checksum: '0c165486b33927be2df4e258a399b129a57800786819ae308ae87d5217bd1997'
 
 - name: prometheus-operator-crds
   type: oci
