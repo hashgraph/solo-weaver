@@ -220,8 +220,29 @@ host:
               checksum: '26bcae69dd653838db00a0e777aa52e87877c325a06ad6f625857604c02e9efc'
 
 - name: cilium
-  default: "0.18.7"
+  default: "0.20.1"
   versions:
+    0.20.1:
+      archives:
+        - name: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://github.com/cilium/cilium-cli/releases/download/v{{.VERSION}}/cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61' # from https://github.com/cilium/cilium-cli/releases/download/v0.20.1/cilium-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'd237550b882af6f2e01e8985e1e024d57c0774611c0a527c7a20dcee7dc4fd07' # from https://github.com/cilium/cilium-cli/releases/download/v0.20.1/cilium-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: 'cilium'
+          archive: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '1409138d78f4215fb342949233ea91dde4847a4923910255e78ac52a0bdf54aa'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '822ca5d2a5f3d793f83d4c7b09ab39b5b687ab74c543985e521d0603b8f202c1'
     0.18.7:
       archives:
         - name: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'

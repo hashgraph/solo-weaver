@@ -198,8 +198,8 @@ constant.
 | `K8sAPIFailed` | A Kubernetes API operation failed (ConfigMaps, ServiceAccounts, …) | reserved — `internal/kube`, cluster steps |
 | `HelmOperationFailed` | A Helm install/upgrade/uninstall/render failed | reserved — `pkg/helm`, workflow steps |
 | `ServiceOperationFailed` | A systemd unit operation failed, or a unit is in the wrong state | reserved — `pkg/os`, daemon/service steps |
-| `DownloadFailed` | An artifact download failed: network error, HTTP status, truncated body — retrying is reasonable | reserved — `pkg/software` |
-| `IntegrityCheckFailed` | A checksum, signature or tamper check failed on a downloaded or installed artifact — do **not** retry; report it | reserved — `pkg/software`, `pkg/helm` |
+| `DownloadFailed` | An artifact download failed: network error, HTTP status, truncated body — retrying is reasonable | **declared** — `internal/workflows/steps` (Cilium chart); reserved for `pkg/software` |
+| `IntegrityCheckFailed` | A checksum, signature or tamper check failed on a downloaded or installed artifact — do **not** retry; report it | **declared** — `internal/workflows/steps` (Cilium chart); reserved for `pkg/software`, `pkg/helm` |
 | `PreflightFailed` | A hardware/OS validation floor was not met (memory, storage, OS version) | reserved — `internal/workflows` preflight, `pkg/hardware` |
 | `ResourceNotReady` | A Kubernetes resource did not converge in time (pod/CRD/PVC); the API call itself succeeded | reserved — `internal/kube`, `internal/blocknode`, workflow steps |
 | `StateOperationFailed` | Reading, writing, refreshing or migrating the application state file failed | reserved — `internal/state`, `internal/rsl`, `internal/bll` |
