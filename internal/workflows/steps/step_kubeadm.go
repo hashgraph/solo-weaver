@@ -5,15 +5,18 @@ package steps
 import (
 	"context"
 	"fmt"
+	"path"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -275,11 +278,20 @@ func ResetCluster() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster reset successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Teardown is best-effort: if the kubeadm binary fails verification,
-			// skip the reset and continue rather than execute a tampered binary.
+			// An absent kubeadm means there is nothing to reset with, so teardown
+			// continues. Any other verification failure must stop the uninstall:
+			// reporting success would claim a reset that never ran.
 			if err := verifyExecutables("kubeadm"); err != nil {
-				logx.As().Warn().Err(err).Msg("kubeadm checksum verification failed, skipping kubeadm reset and continuing with teardown")
-				return automa.SuccessReport(stp)
+				kubeadmPath := path.Join(models.Paths().SandboxBinDir, "kubeadm")
+				if errorx.IsOfType(err, software.FileNotFoundError) {
+					logx.As().Warn().Err(err).Msg("kubeadm binary not found, skipping kubeadm reset and continuing with teardown")
+					return automa.SuccessReport(stp)
+				}
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.Decorate(err, "kubeadm failed verification, so the Kubernetes reset was not run"),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Check '%s': it does not match a known kubeadm release, so it was not run", kubeadmPath),
+					"Replace it with the official kubeadm binary for the installed Kubernetes version, then re-run 'solo-provisioner kube cluster uninstall'")))
 			}
 
 			scripts := []string{
