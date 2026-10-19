@@ -389,6 +389,11 @@ func RunStartupMigrations(ctx context.Context) error {
 		logx.As().Info().Msg("Running startup migrations...")
 		report := wf.Execute(ctx)
 		if report.Error != nil {
+			// The workflow error only names the failed step; the migration's own
+			// error carries the reason and hints the operator needs.
+			if err := doctor.DeepestFailureError(report); err != nil {
+				return err
+			}
 			return report.Error
 		}
 		logx.As().Info().Msg("Startup migrations completed successfully")

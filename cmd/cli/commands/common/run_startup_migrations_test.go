@@ -8,11 +8,14 @@ import (
 	"os"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,4 +163,41 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 		"a failed version record must not fail startup")
 	assert.Equal(t, 1, persistCalled, "the version record must have been attempted")
 	assert.Equal(t, 1, *applied, "the migration must still have executed despite the persist failure")
+}
+
+// failingStartupMigration always applies and fails with err.
+type failingStartupMigration struct{ err error }
+
+func (m *failingStartupMigration) ID() string                                        { return "failing-startup-v1" }
+func (m *failingStartupMigration) Description() string                               { return "failing startup migration" }
+func (m *failingStartupMigration) Applies(*migration.Context) (bool, error)          { return true, nil }
+func (m *failingStartupMigration) Execute(context.Context, *migration.Context) error { return m.err }
+func (m *failingStartupMigration) Rollback(context.Context, *migration.Context) error {
+	return nil
+}
+
+// TestRunStartupMigrations_FailureKeepsReasonAndHints: the operator sees the
+// failing migration's reason and hints, and the version is not recorded so the
+// migration runs again next time.
+func TestRunStartupMigrations_FailureKeepsReasonAndHints(t *testing.T) {
+	registerFakeStartupMigration(t)
+	cause := errx.Decorate(errorx.IllegalState.New("deployed version unknown"), reasons.PreconditionNotMet, "kubectl -n kube-system get daemonset cilium")
+	migration.Register(migration.ScopeStartup, &failingStartupMigration{err: cause})
+
+	origK8s := workflows.KubernetesInstalled
+	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
+	workflows.KubernetesInstalled = func() bool { return true }
+
+	err := RunStartupMigrations(context.Background())
+
+	require.ErrorIs(t, err, cause)
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, _ := errx.Hints(err)
+	assert.Equal(t, []string{"kubectl -n kube-system get daemonset cilium"}, hints)
+
+	recorded, rerr := state.ReadProvisionerVersionFromDisk()
+	require.NoError(t, rerr)
+	assert.Empty(t, recorded, "a failed migration must not record the version")
 }

@@ -195,7 +195,7 @@ constant.
 | `PermissionDenied` | Superuser privilege required, or file/resource ownership or access denied | **declared** — `pkg/sanity` |
 | `NotInstalled` | A component is absent; the operator must run its install command first | **declared** — `internal/workflows`; reserved for `internal/bll` handlers, `internal/network` ("run `… create` first") |
 | `Unreachable` | An endpoint did not respond: K8s API server, daemon socket, block-node health | reserved — `internal/kube`, daemon steps, `internal/blocknode` |
-| `K8sAPIFailed` | A Kubernetes API operation failed (ConfigMaps, ServiceAccounts, …) | reserved — `internal/kube`, cluster steps |
+| `K8sAPIFailed` | A Kubernetes API operation failed (ConfigMaps, ServiceAccounts, …) | **declared** — `internal/cilium`; reserved for `internal/kube`, cluster steps |
 | `HelmOperationFailed` | A Helm install/upgrade/uninstall/render failed | reserved — `pkg/helm`, workflow steps |
 | `ServiceOperationFailed` | A systemd unit operation failed, or a unit is in the wrong state | reserved — `pkg/os`, daemon/service steps |
 | `DownloadFailed` | An artifact download failed: network error, HTTP status, truncated body — retrying is reasonable | **declared** — `internal/workflows/steps` (Cilium chart); reserved for `pkg/software` |
