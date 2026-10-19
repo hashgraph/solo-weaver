@@ -26,8 +26,10 @@ import (
 
 func fakeCluster(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		secretsGVR:    "SecretList",
-		daemonSetsGVR: "DaemonSetList",
+		configMapsGVR:  "ConfigMapList",
+		secretsGVR:     "SecretList",
+		daemonSetsGVR:  "DaemonSetList",
+		deploymentsGVR: "DeploymentList",
 	}, objs...)
 }
 
@@ -39,6 +41,10 @@ func object(apiVersion, kind, name string) *unstructured.Unstructured {
 	u.SetName(name)
 	return u
 }
+
+func ciliumConfig() *unstructured.Unstructured { return object("v1", "ConfigMap", configMapName) }
+
+func operator() *unstructured.Unstructured { return object("apps/v1", "Deployment", operatorName) }
 
 // agentDaemonSet mirrors the chart's DaemonSet: init containers and the agent
 // all use the cilium image, so only the container name identifies the agent.
@@ -73,6 +79,54 @@ func releaseSecret(revision int, status, chartVersion string) *unstructured.Unst
 }
 
 const image1181 = "quay.io/cilium/cilium:v1.18.1@sha256:65ab17c052d8758b2ad157ce766285e04173722df59bdee1ea6d5fda7149f0e9"
+
+func TestDetectInstallation(t *testing.T) {
+	cases := map[string]struct {
+		objs []runtime.Object
+		want []string
+	}{
+		"fresh cluster":                {},
+		"complete install":             {objs: []runtime.Object{ciliumConfig(), agentDaemonSet(image1181, image1181), operator(), releaseSecret(1, "deployed", "1.18.1")}, want: []string{"configmaps/cilium-config", "daemonsets/cilium", "deployments/cilium-operator", "helm-release/cilium"}},
+		"config map only":              {objs: []runtime.Object{ciliumConfig()}, want: []string{"configmaps/cilium-config"}},
+		"daemonset without config map": {objs: []runtime.Object{agentDaemonSet(image1181, image1181)}, want: []string{"daemonsets/cilium"}},
+		"operator only":                {objs: []runtime.Object{operator()}, want: []string{"deployments/cilium-operator"}},
+		"failed helm release only":     {objs: []runtime.Object{releaseSecret(1, "failed", "1.18.1")}, want: []string{"helm-release/cilium"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := DetectInstallation(context.Background(), fakeCluster(tc.objs...))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Resources)
+			assert.Equal(t, len(tc.want) > 0, got.Found())
+		})
+	}
+}
+
+func TestDetectInstallation_APIErrorIsNotAbsence(t *testing.T) {
+	cases := map[string]struct {
+		verb, resource string
+		err            error
+	}{
+		"forbidden":         {"get", "configmaps", kerrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, configMapName, fmt.Errorf("rbac"))},
+		"timeout":           {"get", "daemonsets", kerrors.NewTimeoutError("deadline exceeded", 1)},
+		"unreachable":       {"get", "deployments", fmt.Errorf("dial tcp 10.0.0.1:6443: connect: connection refused")},
+		"secret list fails": {"list", "secrets", kerrors.NewServiceUnavailable("etcd down")},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dyn := fakeCluster()
+			dyn.PrependReactor(tc.verb, tc.resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, tc.err
+			})
+
+			got, err := DetectInstallation(context.Background(), dyn)
+
+			require.Error(t, err)
+			assert.False(t, got.Found())
+			assertDecorated(t, err, reasons.K8sAPIFailed)
+		})
+	}
+}
 
 func TestInstalledVersion(t *testing.T) {
 	t.Run("agent image and deployed release agree", func(t *testing.T) {
