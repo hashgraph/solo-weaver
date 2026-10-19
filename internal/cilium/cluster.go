@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package cilium reads the Cilium deployment in kube-system through the
-// Kubernetes API, so callers can learn which chart version an existing
-// deployment runs without executing the cilium CLI.
+// Kubernetes API, so callers can decide whether to install Cilium and which
+// chart version an existing deployment runs without executing the cilium CLI.
 package cilium
 
 import (
@@ -29,19 +29,65 @@ import (
 const (
 	Namespace = "kube-system"
 
+	configMapName      = "cilium-config"
 	daemonSetName      = "cilium"
+	operatorName       = "cilium-operator"
 	releaseName        = "cilium"
 	agentContainerName = "cilium-agent"
 )
 
 var (
-	secretsGVR    = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
-	daemonSetsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
+	configMapsGVR  = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	secretsGVR     = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	daemonSetsGVR  = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
+	deploymentsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 
 	// releaseVersion accepts a plain release version such as 1.18.1 or
 	// v1.20.0-rc.1, never a moving tag like "latest" or "stable".
 	releaseVersion = regexp.MustCompile(`^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$`)
 )
+
+// Installation lists the Cilium resources found in kube-system. Any one of them
+// means Cilium is installed, even if it is incomplete or unhealthy.
+type Installation struct {
+	Resources []string
+}
+
+func (i Installation) Found() bool { return len(i.Resources) > 0 }
+
+// DetectInstallation looks for the resources a Cilium install leaves in
+// kube-system: the cilium-config ConfigMap, the agent DaemonSet, the operator
+// Deployment and the Helm release. It never treats a failed lookup as absence:
+// any error other than NotFound is returned.
+func DetectInstallation(ctx context.Context, dyn dynamic.Interface) (Installation, error) {
+	var found Installation
+	for _, r := range []struct {
+		gvr  schema.GroupVersionResource
+		name string
+	}{
+		{configMapsGVR, configMapName},
+		{daemonSetsGVR, daemonSetName},
+		{deploymentsGVR, operatorName},
+	} {
+		_, err := dyn.Resource(r.gvr).Namespace(Namespace).Get(ctx, r.name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			found.Resources = append(found.Resources, r.gvr.Resource+"/"+r.name)
+		case !kerrors.IsNotFound(err):
+			return Installation{}, apiError(err, "failed to check for %s %s/%s", r.gvr.Resource, Namespace, r.name)
+		}
+	}
+
+	releases, err := releaseSecrets(ctx, dyn, "")
+	if err != nil {
+		return Installation{}, err
+	}
+	if len(releases) > 0 {
+		found.Resources = append(found.Resources, "helm-release/"+releaseName)
+	}
+
+	return found, nil
+}
 
 // InstalledVersion returns the chart version of the deployed Cilium, without a
 // leading "v". The cilium-agent container image tag in the agent DaemonSet and

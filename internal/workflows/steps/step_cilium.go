@@ -16,6 +16,7 @@ import (
 	"github.com/joomcode/errorx"
 
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/internal/cilium"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -205,7 +206,7 @@ const (
 
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		installCiliumCNI(newClusterCilium),
+		installCiliumCNI(newClusterCilium, kube.NewClient),
 		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -220,8 +221,13 @@ func StartCilium() *automa.WorkflowBuilder {
 		})
 }
 
+// installCiliumCNI installs Cilium only on a cluster with no trace of it. Any
+// existing Cilium resource, healthy or not, means an install already happened,
+// and installing again could overwrite or duplicate it. A failed lookup is
+// never read as "absent".
+//
 // TODO to be replaced with helm invocation
-func installCiliumCNI(release ciliumRelease) *automa.StepBuilder {
+func installCiliumCNI(release ciliumRelease, newClient kube.ClientProvider) *automa.StepBuilder {
 	version := release.Version
 
 	return automa.NewStepBuilder().WithId("install-cilium-cni").
@@ -230,25 +236,38 @@ func installCiliumCNI(release ciliumRelease) *automa.StepBuilder {
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			// Decide from the Kubernetes API before touching the cilium binary, so
+			// an existing cluster is left alone even if the CLI is missing or bad.
+			kc, err := newClient()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.Decorate(err, "cannot reach the Kubernetes API to check for an existing Cilium, so 'cilium install' was not run"),
+					reasons.K8sAPIFailed,
+					"Check that the admin kubeconfig exists and the API server is up: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))
+			}
+
+			existing, err := cilium.DetectInstallation(ctx, kc.Dyn)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.Decorate(err, "cannot tell whether Cilium is already installed, so 'cilium install' was not run")))
+			}
+			if existing.Found() {
+				meta[AlreadyInstalled] = "true"
+				meta[CiliumResources] = strings.Join(existing.Resources, ",")
+				logx.As().Info().Str("step_id", stp.Id()).Strs("resources", existing.Resources).
+					Msg("Cilium is already installed; leaving it unchanged")
+				return automa.SkippedReport(stp,
+					automa.WithDetail(fmt.Sprintf("Cilium is already installed (found %s); leaving it unchanged", strings.Join(existing.Resources, ", "))),
+					automa.WithMetadata(meta))
+			}
+
 			logx.As().Info().Str("step_id", stp.Id()).Str("software", "cilium-cni").Str("version", version).Msgf("cilium-cni version: %s", version)
 
 			// Verify the cilium binary before executing it.
 			if err := verifyExecutables("cilium"); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
-			}
-
-			// Prepare metadata for reporting
-			meta := map[string]string{}
-
-			// Check if Cilium CNI is already installed/running using cilium status
-			statusCheck := []string{
-				fmt.Sprintf("%s/cilium status", models.Paths().SandboxBinDir),
-			}
-			output, err := runCiliumScript(statusCheck, "")
-			if err == nil && output != "" {
-				// If cilium status succeeds, Cilium is already installed and running
-				meta[AlreadyInstalled] = "true"
-				return automa.SkippedReport(stp, automa.WithDetail("Cilium CNI is already installed and running"), automa.WithMetadata(meta))
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 
 			chartDir, err := fetchCiliumChart(ctx, release)

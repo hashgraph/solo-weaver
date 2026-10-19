@@ -10,7 +10,7 @@
 // node's public IP (#669).
 //
 // The Cilium setup steps are guarded — configureCilium skips on the persisted
-// IsConfigured flag, and installCiliumCNI skips when `cilium status` succeeds —
+// IsConfigured flag, and installCiliumCNI skips when Cilium is already deployed —
 // so an already-provisioned cluster never re-renders or re-applies the template
 // and keeps best-effort native XDP. This startup migration closes that gap: on
 // the first provisioner run after upgrading across the version boundary it

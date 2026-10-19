@@ -34,4 +34,8 @@ const (
 	// cilium-config ConfigMap value ("true"/"false"/"" when unset) recorded by
 	// the guard step in StartCilium.
 	BandwidthManagerStatus = "bandwidthManagerStatus"
+
+	// CiliumResources lists the existing Cilium resources that made
+	// install-cilium-cni skip the install.
+	CiliumResources = "ciliumResources"
 )
