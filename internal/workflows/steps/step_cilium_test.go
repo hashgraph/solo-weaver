@@ -4,6 +4,8 @@ package steps
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -36,27 +38,99 @@ func Test_bandwidthManagerEnabled(t *testing.T) {
 	}
 }
 
-// The install-cilium-cni step verifies the cilium binary before shelling out to
-// it on both install and rollback. These cases pin that a failed checksum aborts
-// before the binary is executed.
+const verifiedChartDir = "/opt/solo/weaver/downloads/charts/cilium-1.20.2/cilium"
+
+// ciliumCNIHarness records every cilium CLI command, binary verification and
+// chart download. `cilium status` fails, as it does on a cluster without Cilium.
+type ciliumCNIHarness struct {
+	scripts  []string
+	verified *[]string
+	charts   []ciliumRelease
+	chartErr error
+}
+
+func newCiliumCNIHarness(t *testing.T, verify func(string) error) *ciliumCNIHarness {
+	t.Helper()
+	h := &ciliumCNIHarness{}
+	h.verified = stubVerifyExecutables(t, verify)
+	origRun, origFetch := runCiliumScript, fetchCiliumChart
+	runCiliumScript = func(scripts []string, _ string) (string, error) {
+		joined := strings.Join(scripts, " ")
+		if strings.HasSuffix(joined, "cilium status") {
+			return "", fmt.Errorf("cilium is not installed")
+		}
+		h.scripts = append(h.scripts, joined)
+		return "", nil
+	}
+	fetchCiliumChart = func(_ context.Context, release ciliumRelease) (string, error) {
+		h.charts = append(h.charts, release)
+		if h.chartErr != nil {
+			return "", h.chartErr
+		}
+		return verifiedChartDir, nil
+	}
+	t.Cleanup(func() { runCiliumScript, fetchCiliumChart = origRun, origFetch })
+	return h
+}
+
+func TestInstallCiliumCNI_FreshClusterInstallsPinnedVersion(t *testing.T) {
+	h := newCiliumCNIHarness(t, func(string) error { return nil })
+
+	step, err := installCiliumCNI(newClusterCilium).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+
+	require.NoError(t, report.Error)
+	assert.Equal(t, automa.StatusSuccess, report.Status)
+	assert.Equal(t, []string{"cilium"}, *h.verified)
+	assert.Equal(t, []ciliumRelease{newClusterCilium}, h.charts)
+	require.Len(t, h.scripts, 1)
+	assert.Contains(t, h.scripts[0], `cilium install --wait --version "1.20.2" --chart-directory `+verifiedChartDir+` --values `)
+	installed, _ := step.State().Local().Bool(InstalledByThisStep)
+	assert.True(t, installed)
+}
+
+func TestInstallCiliumCNI_UnverifiedChartIsNotInstalled(t *testing.T) {
+	h := newCiliumCNIHarness(t, func(string) error { return nil })
+	h.chartErr = assert.AnError
+
+	step, err := installCiliumCNI(newClusterCilium).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+
+	require.ErrorIs(t, report.Error, assert.AnError)
+	assert.Equal(t, automa.StatusFailed, report.Status)
+	assert.Empty(t, h.scripts, "cilium install must not run without a verified chart")
+	installed, _ := step.State().Local().Bool(InstalledByThisStep)
+	assert.False(t, installed)
+
+	rollback := step.Rollback(context.Background())
+	assert.Equal(t, automa.StatusSkipped, rollback.Status)
+	assert.Empty(t, h.scripts)
+}
+
+// The step verifies the cilium binary before shelling out to it on both install
+// and rollback, so a failed checksum aborts before the binary is executed.
 
 func TestInstallCiliumCNI_FailsWhenCiliumVerificationFails(t *testing.T) {
-	calls := stubVerifyExecutables(t, func(string) error { return assert.AnError })
+	h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
 
-	step, err := installCiliumCNI("1.16.5").Build()
+	step, err := installCiliumCNI(newClusterCilium).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
 	require.Error(t, report.Error)
 	assert.Equal(t, automa.StatusFailed, report.Status)
 	require.ErrorIs(t, report.Error, assert.AnError)
-	assert.Equal(t, []string{"cilium"}, *calls)
+	assert.Equal(t, []string{"cilium"}, *h.verified)
+	assert.Empty(t, h.charts)
+	assert.Empty(t, h.scripts)
 }
 
 func TestInstallCiliumCNI_RollbackFailsWhenCiliumVerificationFails(t *testing.T) {
-	stubVerifyExecutables(t, func(string) error { return assert.AnError })
+	h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
 
-	step, err := installCiliumCNI("1.16.5").Build()
+	step, err := installCiliumCNI(newClusterCilium).Build()
 	require.NoError(t, err)
 
 	// Rollback is a no-op unless this step performed the install; mark it so
@@ -67,4 +141,5 @@ func TestInstallCiliumCNI_RollbackFailsWhenCiliumVerificationFails(t *testing.T)
 	require.Error(t, report.Error)
 	assert.Equal(t, automa.StatusFailed, report.Status)
 	require.ErrorIs(t, report.Error, assert.AnError)
+	assert.Empty(t, h.scripts)
 }
