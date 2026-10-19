@@ -57,15 +57,23 @@ func (m *machineChecker) RefreshState(_ context.Context) (state.MachineState, er
 	current := m.sm.State()
 
 	ms := current.MachineState
-	ms.Software = m.refreshSoftwareState()
+	ms.Software = m.refreshSoftwareState(current.MachineState.Software)
 	ms.Hardware = m.refreshHardwareState()
 	ms.LastSync = htime.Now()
 
 	return ms, nil
 }
 
+// identifyInstalledVersions and isCatalogVersion are package vars so tests can
+// stub them without real binaries or the embedded catalog.
+var (
+	identifyInstalledVersions = software.IdentifyInstalledVersions
+	isCatalogVersion          = software.IsCatalogVersion
+)
+
 // refreshSoftwareState checks the presence and versions of relevant software binaries on the host.
-func (m *machineChecker) refreshSoftwareState() map[string]state.SoftwareState {
+// persisted is the previously recorded software state, keyed like the result.
+func (m *machineChecker) refreshSoftwareState(persisted map[string]state.SoftwareState) map[string]state.SoftwareState {
 	result := make(map[string]state.SoftwareState)
 	for name, inst := range m.softwareInstallers {
 		st, err := inst.VerifyInstallation()
@@ -74,12 +82,71 @@ func (m *machineChecker) refreshSoftwareState() map[string]state.SoftwareState {
 			continue
 		}
 
+		if st.Installed {
+			prev, found := recordedSoftware(persisted, name, st.Name)
+			st.Version = installedVersion(st.Name, prev, found)
+		}
+
 		result[name] = *st
 	}
 
 	logx.As().Debug().Any("result", result).Msg("Refreshed software state")
 
 	return result
+}
+
+// installedVersion returns the version to record for an installed artifact.
+// VerifyInstallation reports the running provisioner's catalog default, which is
+// wrong for a binary an older provisioner installed. So a valid recorded version
+// is kept without hashing, and anything else is identified by checksum. An empty
+// result means the version is unknown; VerifyExecutables then refuses to run the
+// binary, so only commands that need it fail.
+func installedVersion(artifact string, prev state.SoftwareState, found bool) string {
+	recorded := ""
+	if found && prev.Installed {
+		recorded = prev.Version
+	}
+
+	if recorded != "" {
+		ok, err := isCatalogVersion(artifact, recorded)
+		if err == nil && ok {
+			return recorded
+		}
+	}
+
+	matches, err := identifyInstalledVersions(artifact)
+	switch {
+	case err != nil:
+		logx.As().Warn().Err(err).Str("software", artifact).Str("recordedVersion", recorded).
+			Msg("Could not identify the installed version by checksum")
+	case len(matches) == 1:
+		logx.As().Info().Str("software", artifact).Str("version", matches[0]).
+			Msg("Identified the installed version by checksum")
+		return matches[0]
+	case len(matches) == 0:
+		logx.As().Warn().Str("software", artifact).Str("recordedVersion", recorded).
+			Msg("Installed binaries match no version in the infrastructure catalog")
+	default:
+		logx.As().Warn().Str("software", artifact).Strs("matchingVersions", matches).
+			Msg("Installed binaries match several catalog versions; not recording a version")
+	}
+
+	// Keep a record the catalog no longer lists rather than guess a version.
+	return recorded
+}
+
+// recordedSoftware finds a component's persisted entry by its result key, or by
+// artifact name for entries keyed differently (e.g. "crio" vs "cri-o").
+func recordedSoftware(persisted map[string]state.SoftwareState, key, artifact string) (state.SoftwareState, bool) {
+	if prev, ok := persisted[key]; ok {
+		return prev, true
+	}
+	for _, prev := range persisted {
+		if prev.Name == artifact {
+			return prev, true
+		}
+	}
+	return state.SoftwareState{}, false
 }
 
 // refreshHardwareState collects current host hardware metrics.

@@ -82,9 +82,9 @@ func TestVerifyArtifactExecutables_MissingFileFails(t *testing.T) {
 	require.True(t, errorx.IsOfType(err, FileNotFoundError), "expected FileNotFoundError, got %v", err)
 }
 
-func TestVerifyArtifactExecutables_SkipsUnlistedPlatform(t *testing.T) {
-	// linux/amd64-only checksum but running platform is darwin/arm64 → skipped,
-	// resolver never called.
+func TestVerifyArtifactExecutables_UnlistedPlatformFails(t *testing.T) {
+	// linux/amd64-only checksum but running platform is darwin/arm64: there is
+	// nothing to verify against, so the binary must not pass.
 	artifact := newTestArtifact("darwin", "arm64", BinaryDetail{
 		Name:             "tool",
 		PlatformChecksum: linuxAmd64Checksum("sha256", "deadbeef"),
@@ -95,8 +95,9 @@ func TestVerifyArtifactExecutables_SkipsUnlistedPlatform(t *testing.T) {
 		resolved = true
 		return "/nonexistent"
 	})
-	require.NoError(t, err)
-	require.False(t, resolved, "resolver must not be called for an unlisted platform")
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, PlatformNotFoundError), "expected PlatformNotFoundError, got %v", err)
+	require.False(t, resolved, "nothing must be hashed for an unlisted platform")
 }
 
 func TestVerifyArtifactExecutables_VerifiesAllBinaries(t *testing.T) {
@@ -166,16 +167,6 @@ func stubReadSoftwareVersion(t *testing.T, fn func(string) (string, error)) {
 	orig := readSoftwareVersion
 	readSoftwareVersion = fn
 	t.Cleanup(func() { readSoftwareVersion = orig })
-}
-
-func TestVerifyExecutables_SkipsWhenRecordedVersionNotInCatalog(t *testing.T) {
-	// A host running a version the catalog no longer lists cannot be verified;
-	// verification must be skipped (nil error) rather than failing closed.
-	stubReadSoftwareVersion(t, func(string) (string, error) { return "0.0.0-delisted", nil })
-
-	// "cilium" is a real host artifact, so resolution reaches the version guard.
-	err := VerifyExecutables("cilium")
-	require.NoError(t, err, "verification must be skipped, not fail closed, for a delisted version")
 }
 
 func TestVerifyExecutables_PropagatesStateReadError(t *testing.T) {
