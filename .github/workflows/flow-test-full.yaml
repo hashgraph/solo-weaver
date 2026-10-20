@@ -62,6 +62,34 @@ concurrency:
 # The five job names below are matched by prefix in the gate (flow-pull-request-
 # checks.yaml). Keep the two in sync.
 jobs:
+  # With every job switched off the run would skip everything and still end
+  # green, which looks like a pass but tested nothing. Fail it instead.
+  validate-inputs:
+    name: Validate inputs
+    runs-on: solo-linux-medium
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Require at least one job
+        env:
+          RUN_INTEGRATION: ${{ inputs.run-integration }}
+          RUN_COMPAT: ${{ inputs.run-compat }}
+          RUN_LIFECYCLE: ${{ inputs.run-lifecycle }}
+          RUN_PURGE_STORAGE: ${{ inputs.run-purge-storage }}
+          RUN_PLUGIN_PRESET_UPGRADE: ${{ inputs.run-plugin-preset-upgrade }}
+        run: |
+          set -euo pipefail
+          for selected in "${RUN_INTEGRATION}" "${RUN_COMPAT}" "${RUN_LIFECYCLE}" "${RUN_PURGE_STORAGE}" "${RUN_PLUGIN_PRESET_UPGRADE}"; do
+            if [ "${selected}" = "true" ]; then
+              exit 0
+            fi
+          done
+          echo "::error::No job is selected, so this run would test nothing. Tick at least one of: run-integration, run-compat, run-lifecycle, run-purge-storage, run-plugin-preset-upgrade."
+          exit 1
+
   integration-tests:
     name: Integration Tests
     if: inputs.run-integration

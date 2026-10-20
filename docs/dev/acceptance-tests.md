@@ -517,7 +517,7 @@ If the full run on the top PR fails:
      -f run-purge-storage=false -f run-plugin-preset-upgrade=false
    ```
 
-   That runs only `compat`. The inputs are `run-integration`, `run-compat`, `run-lifecycle`, `run-purge-storage` and `run-plugin-preset-upgrade`, all `true` by default.
+   That runs only `compat`. The inputs are `run-integration`, `run-compat`, `run-lifecycle`, `run-purge-storage` and `run-plugin-preset-upgrade`, all `true` by default. At least one must be selected: with all five switched off, the run fails at once in a `Validate inputs` job instead of ending green having tested nothing.
 
 A run with any job switched off is for diagnosis only. It does not satisfy the gate and does not re-run it. The gate needs one run in which all five jobs passed; results from different runs are not combined. To clear a gate after a failure, use "Re-run failed jobs" on the full run, not a separate partial run.
 
