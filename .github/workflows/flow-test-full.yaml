@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Full VM Tests"
+on:
+  workflow_dispatch:
+    inputs:
+      vm-os:
+        description: "VM OS to test"
+        required: true
+        default: "debian"
+        type: choice
+        options:
+          - debian
+          - ubuntu
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+# A newer dispatch on the same branch supersedes an older one: the older run
+# is for a commit that is no longer the branch head.
+concurrency:
+  group: full-vm-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+# Runs the same VM jobs the PR Checks workflow used to run on every push. Run it
+# from the branch to validate (the top PR of a stack):
+#
+#   gh workflow run flow-test-full.yaml --ref <branch>
+#
+# The "Full VM Tests Gate" job in PR Checks passes once this workflow has
+# succeeded for the PR's current head commit.
+jobs:
+  integration-tests:
+    name: Integration Tests
+    uses: ./.github/workflows/zxc-integration-test.yaml
+    secrets: inherit
+    with:
+      custom-job-label: Standard
+      vm-os: ${{ inputs.vm-os }}
+
+  uat-compat:
+    name: UAT Backward Compatibility
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
+    with:
+      custom-job-label: UAT Compat
+      uat-scenario: compat
+      vm-os: ${{ inputs.vm-os }}
+      vm-cpus: 2
+
+  uat-core:
+    name: UAT Core Lifecycle
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
+    with:
+      custom-job-label: UAT Core
+      uat-scenario: lifecycle
+      vm-os: ${{ inputs.vm-os }}
+      vm-cpus: 2
+
+  uat-purge-storage:
+    name: UAT Purge Storage
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
+    with:
+      custom-job-label: UAT Purge Storage
+      uat-scenario: purge-storage
+      vm-os: ${{ inputs.vm-os }}
+      vm-cpus: 2
+
+  uat-plugin-preset-upgrade:
+    name: UAT Plugin Preset Upgrade
+    uses: ./.github/workflows/zxc-uat-test.yaml
+    secrets: inherit
+    with:
+      custom-job-label: UAT Plugin Preset Upgrade
+      uat-scenario: plugin-preset-upgrade
+      vm-os: ${{ inputs.vm-os }}
+      vm-cpus: 2
+
+  # The gate in PR Checks ran when the PR was pushed, before this run existed,
+  # so it is red. Once everything here has passed, re-run just that job so it
+  # picks up the result. Best effort: a failure here is only a warning.
+  recheck-gate:
+    name: Re-check PR gate
+    needs:
+      - integration-tests
+      - uat-compat
+      - uat-core
+      - uat-purge-storage
+      - uat-plugin-preset-upgrade
+    runs-on: solo-linux-medium
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Re-run the Full VM Tests Gate job
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            try {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id: 'flow-pull-request-checks.yaml',
+                head_sha: context.sha,
+                event: 'pull_request',
+                per_page: 100,
+              });
+              const latest = runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+              if (!latest) {
+                core.notice('No PR Checks run for this commit, so there is no gate to re-check.');
+                return;
+              }
+              if (latest.status !== 'completed') {
+                core.notice(`PR Checks run ${latest.html_url} is still ${latest.status}. Re-run its "Full VM Tests Gate" job once it finishes.`);
+                return;
+              }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner,
+                repo,
+                run_id: latest.id,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const gate = jobs.find((j) => j.name === 'Full VM Tests Gate');
+              if (!gate || gate.conclusion !== 'failure') {
+                core.notice('The gate job is not failed (it passed, was skipped, or does not exist), so nothing to re-run.');
+                return;
+              }
+              await github.rest.actions.reRunJobForWorkflowRun({ owner, repo, job_id: gate.id });
+              core.notice(`Re-ran the gate job: ${latest.html_url}`);
+            } catch (error) {
+              core.warning(`Could not re-run the gate job automatically: ${error.message}. Re-run it from the PR Checks run.`);
+            }

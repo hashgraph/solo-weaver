@@ -63,74 +63,67 @@ jobs:
     with:
       custom-job-label: Standard
 
-  uat-compat:
-    name: UAT Backward Compatibility
-    uses: ./.github/workflows/zxc-uat-test.yaml
-    secrets: inherit
-    needs:
-      - changes
-      - build
-      - unit-tests
-    if: needs.changes.outputs.non_docs == 'true'
-    with:
-      custom-job-label: UAT Compat
-      uat-scenario: compat
-      vm-os: debian
-      vm-cpus: 2
+  # The VM jobs (integration and UAT) no longer run on every push. Run them
+  # on demand with the "Full VM Tests" workflow, normally on the top PR of a
+  # stack. This job passes once that workflow has succeeded for this PR's
+  # current head commit. For a PR below the top of a stack, add the
+  # skip-kvm-runner label instead.
+  full-vm-gate:
+    name: Full VM Tests Gate
+    needs: changes
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      needs.changes.outputs.non_docs == 'true'
+    runs-on: solo-linux-medium
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
 
-  uat-core:
-    name: UAT Core Lifecycle
-    uses: ./.github/workflows/zxc-uat-test.yaml
-    secrets: inherit
-    needs:
-      - changes
-      - build
-      - unit-tests
-    if: needs.changes.outputs.non_docs == 'true'
-    with:
-      custom-job-label: UAT Core
-      uat-scenario: lifecycle
-      vm-os: debian
-      vm-cpus: 2
+      - name: Require a passing Full VM Tests run for this commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const sha = pr.head.sha;
+            const short = sha.slice(0, 8);
+            const skipLabel = 'skip-kvm-runner';
 
-  uat-purge-storage:
-    name: UAT Purge Storage
-    uses: ./.github/workflows/zxc-uat-test.yaml
-    secrets: inherit
-    needs:
-      - changes
-      - build
-      - unit-tests
-    if: needs.changes.outputs.non_docs == 'true'
-    with:
-      custom-job-label: UAT Purge Storage
-      uat-scenario: purge-storage
-      vm-os: debian
-      vm-cpus: 2
+            if (pr.labels.some((label) => label.name === skipLabel)) {
+              core.notice(`Label '${skipLabel}' is set, so full VM tests are skipped for this PR. They must pass on the top PR of the stack.`);
+              return;
+            }
 
-  uat-plugin-preset-upgrade:
-    name: UAT Plugin Preset Upgrade
-    uses: ./.github/workflows/zxc-uat-test.yaml
-    secrets: inherit
-    needs:
-      - changes
-      - build
-      - unit-tests
-    if: needs.changes.outputs.non_docs == 'true'
-    with:
-      custom-job-label: UAT Plugin Preset Upgrade
-      uat-scenario: plugin-preset-upgrade
-      vm-os: debian
-      vm-cpus: 2
+            let runs;
+            try {
+              runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'flow-test-full.yaml',
+                head_sha: sha,
+                status: 'success',
+                per_page: 100,
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                core.setFailed('The Full VM Tests workflow (flow-test-full.yaml) is not on the default branch yet, so it cannot be run or checked.');
+                return;
+              }
+              throw error;
+            }
+            if (runs.length > 0) {
+              core.notice(`Full VM Tests passed for ${short}: ${runs[0].html_url}`);
+              return;
+            }
 
-  integration-tests:
-    name: Integration Tests
-    uses: ./.github/workflows/zxc-integration-test.yaml
-    secrets: inherit
-    needs:
-      - changes
-      - build
-    if: needs.changes.outputs.non_docs == 'true'
-    with:
-      custom-job-label: Standard
-      vm-os: debian
+            core.setFailed(
+              `No successful Full VM Tests run for commit ${short}. ` +
+                `Run it on this branch: gh workflow run flow-test-full.yaml --ref ${pr.head.ref} ` +
+                `(or Actions > Full VM Tests > Run workflow). This check re-runs by itself when the run passes. ` +
+                `For a PR below the top of a stack, add the '${skipLabel}' label instead.`
+            );

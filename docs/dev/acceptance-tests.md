@@ -486,6 +486,32 @@ Expected (both F1 and F2):
 
 ---
 
+## Full VM tests in pull request CI
+
+The VM jobs (integration tests and the four UAT scenarios) no longer run on every push to a pull request. A push runs build and unit tests, plus the **Full VM Tests Gate** job.
+
+The gate passes in one of two ways:
+
+- The **Full VM Tests** workflow has succeeded for the PR's current head commit.
+- The PR has the `skip-kvm-runner` label.
+
+Run the full set on the branch to validate, normally the top PR of a stack:
+
+```bash
+gh workflow run flow-test-full.yaml --ref <branch>
+```
+
+Or use Actions > Full VM Tests > Run workflow and pick the branch. It runs the same five jobs the PR workflow used to run (integration, `compat`, `lifecycle`, `purge-storage`, `plugin-preset-upgrade`). When they all pass, the workflow re-runs the gate job by itself.
+
+Notes:
+
+- The gate is red on a ready PR until the full run has passed. Draft PRs and docs-only changes skip it.
+- A passing run covers one commit. Any later push needs a new run.
+- For a stack, run it on the top PR and label the PRs below it with `skip-kvm-runner`. Rebase or merge each parent's latest commit into its child and push first, so the top PR contains everything beneath it.
+- A passing top PR does not prove each lower PR on its own. For infrastructure changes, run `Test UAT` or `Test Integration Setup` by hand on the lower PR.
+- Starting a new run on the same branch cancels an older one still in progress.
+- To run a single UAT scenario or a single test, use the `Test UAT` and `Test Integration Setup` workflows.
+
 ## Quick Reference
 
 | Scenario | Duration | Dependencies |
