@@ -9,18 +9,25 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+      - labeled
+      - unlabeled
 
 defaults:
   run:
     shell: bash
 
+# Label events for labels other than skip-kvm-runner get a unique group so they
+# never cancel an in-flight run.
 concurrency:
-  group: pr-checks-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: pr-checks-${{ github.workflow }}-${{ github.head_ref || github.run_id }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'skip-kvm-runner' && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect Changes
+    if: >
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'skip-kvm-runner'
     runs-on: solo-linux-medium
     outputs:
       non_docs: ${{ steps.filter.outputs.non_docs }}
