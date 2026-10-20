@@ -37,7 +37,7 @@ var (
 
 func SetupMetalLB() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupMetalLBStepId).Steps(
-		installMetalLB(),
+		installMetalLB(newHelmManager),
 		isMetalLBPodsReady(), // ensure metallb pods are ready before applying config
 		configureMetalLB(metalLBConfigFilePath),
 	).
@@ -53,58 +53,79 @@ func SetupMetalLB() *automa.WorkflowBuilder {
 		})
 }
 
-func installMetalLB() automa.Builder {
+// metalLBHelmValues keeps MetalLB in L2 mode. Chart 0.16 deploys frr-k8s as
+// its BGP backend unless frrk8s.enabled is false.
+func metalLBHelmValues() []string {
+	return []string{
+		"speaker.frr.enabled=false",
+		"frrk8s.enabled=false",
+	}
+}
+
+// installMetalLBChart installs the MetalLB chart unless its release already
+// exists, and reports whether it installed it.
+func installMetalLBChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) (bool, error) {
+	isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+	if err != nil {
+		return false, err
+	}
+	if isInstalled {
+		return false, nil
+	}
+
+	if _, err := hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{}); err != nil {
+		return false, err
+	}
+
+	localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+	if err != nil {
+		return false, err
+	}
+
+	if _, err := hm.InstallChart(
+		ctx,
+		spec.Release,
+		localChart,
+		"",
+		spec.Namespace,
+		helm.InstallChartOptions{
+			ValueOpts: &values.Options{
+				Values: metalLBHelmValues(),
+			},
+			CreateNamespace: true,
+			Atomic:          true,
+			Wait:            true,
+			Timeout:         helm.DefaultTimeout, // 5 minutes
+		},
+	); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func installMetalLB(newManager func() (helm.Manager, error)) automa.Builder {
 	spec := chartSpec("metallb")
 	return automa.NewStepBuilder().WithId(InstallMetalLBStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
 			l.Info().Str("step_id", stp.Id()).Str("software", "metallb").Str("version", spec.Version).Msgf("metallb version: %s", spec.Version)
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			installed, err := installMetalLBChart(ctx, hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if !installed {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("MetalLB is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-			}
-
-			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			_, err = hm.InstallChart(
-				ctx,
-				spec.Release,
-				localChart,
-				"",
-				spec.Namespace,
-				helm.InstallChartOptions{
-					ValueOpts: &values.Options{
-						Values: []string{"speaker.frr.enabled=false"},
-					},
-					CreateNamespace: true,
-					Atomic:          true,
-					Wait:            true,
-					Timeout:         helm.DefaultTimeout, // 5 minutes
-				},
-			)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta[InstalledByThisStep] = "true"
@@ -117,7 +138,7 @@ func installMetalLB() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

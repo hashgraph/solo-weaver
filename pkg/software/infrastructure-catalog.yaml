@@ -489,11 +489,14 @@ cluster:
   chart: 'metallb/metallb'
   namespace: 'metallb-system'
   release: 'metallb'
-  default: "0.15.2"
+  default: "0.16.1"
   versions:
     0.15.2:
       algorithm: 'sha256'
       checksum: '4f0fc313cd97819a1c78fff0a389dfe1c9f98bc490f33f521317475df1d7b873'
+    0.16.1:
+      algorithm: 'sha256'
+      checksum: 'fb06bb584fcb7856f15733b2a6a2aff5b61b5c350687e341c163ae24a5938adc'
 
 - name: metrics-server
   type: classic
