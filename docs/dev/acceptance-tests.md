@@ -24,6 +24,31 @@ task uat:teardown      # Uninstall everything
 These tasks are designed to run inside any Linux VM — both the local UTM VM
 (via `task vm:ssh:proxy`) and CI QEMU VMs (via the `zxc-uat-test.yaml` workflow).
 
+## Full UAT in pull request CI
+
+Full UAT (`uat-compat`, `uat-core`, `uat-purge-storage`, `uat-plugin-preset-upgrade`) runs on a PR
+only when it is **not a draft** and does **not** carry the `skip-full-uat` label. Build, unit and
+integration tests always run. The manual `Test UAT` workflow ignores both.
+
+| PR state | `skip-full-uat` | Full UAT |
+|---|---|---|
+| Draft | any | Skip |
+| Ready | Yes | Skip |
+| Ready | No | Run |
+
+For a stack of PRs, the top PR's full UAT covers every PR below it.
+
+- Intermediate PR: open as Draft, add `skip-full-uat`, then mark Ready.
+- Top PR: open as Draft, leave the label off, then mark Ready.
+- Label first, Ready last, so UAT cannot start before the label exists.
+- Adding or removing `skip-full-uat` re-runs the checks. Other labels do nothing.
+
+Before relying on the top PR's UAT:
+
+- Rebase or merge the parent's latest commit into the child and push. A push to the parent does not trigger the child.
+- After a parent merges and the child is retargeted to `main`, push again to get a fresh run.
+- A passing top PR does not prove each lower PR on its own. For infrastructure changes, run `Test UAT` by hand on the lower PR.
+
 ## Prerequisites
 
 - UTM VM set up (`task vm:start`)
