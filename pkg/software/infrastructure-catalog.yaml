@@ -34,7 +34,7 @@ host:
 
 - name: cri-o
   url: 'https://storage.googleapis.com/cri-o/artifacts/cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
-  default: "1.33.4"
+  default: "1.36.7"
   versions:
     1.33.4:
       archives:
@@ -111,9 +111,84 @@ host:
             arm64:
               algorithm: 'sha256'
               checksum: 'adcd45619f1f57eb38f8596bf65def237c53fb00b9f42b963f8a1556bb0918bb'
+    1.36.7:
+      archives:
+        - name: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          url: 'https://storage.googleapis.com/cri-o/artifacts/cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'f53a462b04cc70306203c5a2ed34865bb38532e3184b4650ff1e6a62deb71246' # from https://storage.googleapis.com/cri-o/artifacts/cri-o.amd64.v1.36.7.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: '40ea2ee961b51b3da33122cd207116db50a69e9a142fe5613205e6a8f9580edb' # from https://storage.googleapis.com/cri-o/artifacts/cri-o.arm64.v1.36.7.tar.gz.sha256sum
+      binaries:
+        - name: 'cri-o/bin/crio'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'f052f460c9c38fe8be825978f38f0c41b0cf28828263e4f3d1130b0ab1679cae'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '4a751768d9743625a040ed2a1ac0328f25fe9ee915e03eaa1b17233cfc415279'
+        - name: 'cri-o/bin/crun'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '86d1e6a0e76945975d3aebfab39cbc6a26eea15f1c3fc66b6776d19e5dc346a0'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '0ef30b0fbb494dc9c5303d46b091a84e27cb8ac99c985123fb1eb339854b69ea'
+        - name: 'cri-o/bin/conmonrs'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '68494e60d5a78be045962345a6e377c8cbf15728222b59c8b89abde2e55ad52f'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'e324643834431a788b59ef910b3877697fc6e0c4f711afe5f1905a0b3f2c3939'
+        - name: 'cri-o/bin/conmon'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '1d97294c14c43d477e0a0826e9cd0f2a2af373ddfafe6f10252e8a3c43f32be6'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'c2fa62b3555eb0a729d853df23c5784d970f46050f2fb5f9931ded1bf455d216'
+        - name: 'cri-o/bin/runc'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '599f6f94ff8c5057241eff0d54c3c74f95c34935b6457b33fe545defc61e9488'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'd10ecae898361832a059be2089bab92d158aec54661b18ed7346ed79628b46b0'
+        - name: 'cri-o/bin/pinns'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'a8d54954b633526eed7fdc7a4dc4752d16ed781eee371f5ae9006a820e3d5d7e'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'a26f8fd49b75a0c197863a5b2f34ad85178c59cd74a7d5fe42716779148f4ab3'
+        - name: 'cri-o/bin/crictl'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '8329d8bca6d1ca8357ec2ee45495002e2b5676945bafb1480853ab763dbc26b4'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '9211ea896a017ed760b2478d019d51799e800016e0e597109e48632665cc10f2'
 
 - name: kubelet
-  default: "1.33.4"
+  default: "1.36.5"
   versions:
     1.33.4:
       binaries:
@@ -131,11 +206,27 @@ host:
           url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubelet/kubelet.service'
           algorithm: 'sha512'
           checksum: 'acef6a645ec2e682b136b086961495895049194aaa498b3f4ae760d3448642015ac0c1ba5836ee7406e0bbbd6461bf7843019eaa3630c003b5cad64e8f87e5cd'
+    1.36.5:
+      binaries:
+        - name: 'kubelet'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubelet'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: 'd0a5426781b2d7eecdb2c439d903457bf3c9a8ffacb060fcf88febfad817362031e76fc85e8fb56262823e8d64ad6baa3a44bed29ad5ef13f3dbf1a8bc66df73' # from https://dl.k8s.io/release/v1.36.5/bin/linux/amd64/kubelet.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: '134ef6f8c5424b35da043b823240c4658644c6e47d03a8586b0ad51883921e80fce8077a3b6aaf2a698cb1c2e7f5a3384f152b2f8ada6f83ae2241e4182fb46f' # from https://dl.k8s.io/release/v1.36.5/bin/linux/arm64/kubelet.sha512
+      configs:
+        - name: 'kubelet.service'
+          url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubelet/kubelet.service'
+          algorithm: 'sha512'
+          checksum: 'acef6a645ec2e682b136b086961495895049194aaa498b3f4ae760d3448642015ac0c1ba5836ee7406e0bbbd6461bf7843019eaa3630c003b5cad64e8f87e5cd'
 
 - name: kubeadm
   url:
   filename: 'kubeadm'
-  default: "1.33.4"
+  default: "1.36.5"
   versions:
     1.33.4:
       binaries:
@@ -153,9 +244,25 @@ host:
           url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf'
           algorithm: 'sha512'
           checksum: 'aafd152fa9ef8a2b2dde2b643ffb2a8694412bdfef0ff46afdca775a2d31d13d25bd2ff69d29bf3112d17d2d929b0aa7cf519c8b41058102a0cead4e66be1415'
+    1.36.5:
+      binaries:
+        - name: 'kubeadm'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubeadm'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: 'eb937a3d8641b144684ff52f3398c6017f3d50423bc9c385ffb31da9dec551870b5a99cfa0108a0b885ad6609b8fb7728208a526d993377ba372efe5d7fa16c9' # from https://dl.k8s.io/release/v1.36.5/bin/linux/amd64/kubeadm.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: '22431a54518a325a49543dc09d957d7c18b7569eb34b6853c26fb1504d2cca38d5a8588e109f573dd64ef7d6a02f45b673fd82128260b4bef7d4fc60863ee371' # from https://dl.k8s.io/release/v1.36.5/bin/linux/arm64/kubeadm.sha512
+      configs:
+        - name: '10-kubeadm.conf'
+          url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf'
+          algorithm: 'sha512'
+          checksum: 'aafd152fa9ef8a2b2dde2b643ffb2a8694412bdfef0ff46afdca775a2d31d13d25bd2ff69d29bf3112d17d2d929b0aa7cf519c8b41058102a0cead4e66be1415'
 
 - name: kubectl
-  default: "1.33.4"
+  default: "1.36.5"
   versions:
     1.33.4:
       binaries:
@@ -168,6 +275,17 @@ host:
             arm64:
               algorithm: 'sha512'
               checksum: 'f76edb18df3e807ae664c2b3833e210f29ba2fe5ff53624f0787b47989dfc00d71da43c208a06b4f548f857893f19003e34523cb09bf588f81b3f06610b13337' # from https://dl.k8s.io/release/v1.33.4/bin/linux/arm64/kubectl.sha512
+    1.36.5:
+      binaries:
+        - name: 'kubectl'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubectl'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: '37b9a3952c0a6d1f0f5b356762810dd214879afc6f20b4f3bfea808ac7ac049cbb8dfb03e14b5c95e48256a9da17bc9f3900760ce990f885a62bbe55ac644eca' # from https://dl.k8s.io/release/v1.36.5/bin/linux/amd64/kubectl.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: '9dcdd5ef0e38287bdbab49163d746ab6db5917c2baf721165124145637e3c94e4e645de288fe4b29fb564ea2cbf69de780e65d5b42cdaa9692709735c5d86a97' # from https://dl.k8s.io/release/v1.36.5/bin/linux/arm64/kubectl.sha512
 
 - name: helm
   default: "3.18.6"
