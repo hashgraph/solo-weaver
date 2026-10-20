@@ -131,10 +131,22 @@ runs:
         # a sibling runner's temp dir are therefore swept too, but only once they are
         # older than STALE_AGE_MINUTES (longer than any job can run), so a sibling that
         # is starting a job right now is never touched.
+        # Where this host keeps its runner directories. Sibling runners are only ever
+        # swept under it; any other layout turns the sibling sweep off.
+        HOST_ROOT="/home/github-runner"
         PREFIX="${TEMP_ROOT}/weaver-vm-"
         SIBLING_ROOT=""
         case "${TEMP_ROOT}" in
-          */_work/_temp) SIBLING_ROOT="$(dirname "$(dirname "$(dirname "${TEMP_ROOT}")")")/" ;;
+          "${HOST_ROOT}"/*/_work/_temp)
+            # Only <host root>/<one runner dir>/_work/_temp qualifies. A "*" in a case
+            # pattern also matches "/", so check the runner dir is a single component.
+            RUNNER_DIR="${TEMP_ROOT#"${HOST_ROOT}"/}"
+            RUNNER_DIR="${RUNNER_DIR%/_work/_temp}"
+            case "${RUNNER_DIR}" in
+              "" | */*) ;;
+              *) SIBLING_ROOT="${HOST_ROOT}/" ;;
+            esac
+            ;;
         esac
 
         etime_minutes() {
