@@ -504,11 +504,14 @@ cluster:
   chart: 'metrics-server/metrics-server'
   namespace: 'kube-system'
   release: 'metrics-server'
-  default: "3.13.0"
+  default: "3.14.0"
   versions:
     3.13.0:
       algorithm: 'sha256'
       checksum: 'fb929902e3b7565663cdd1734f31d63735c932be1541a7228b5aeef6d2348a1f'
+    3.14.0:
+      algorithm: 'sha256'
+      checksum: 'c2ca1185c01e6e7f53dd1b7d131f0c9b3fa50e003ed068b784563a1b5a3422a1'
 
 - name: external-secrets
   type: classic
