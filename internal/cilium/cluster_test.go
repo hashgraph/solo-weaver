@@ -128,6 +128,52 @@ func TestDetectInstallation_APIErrorIsNotAbsence(t *testing.T) {
 	}
 }
 
+func TestDetectInstallation_PositiveEvidenceSurvivesOtherLookupFailures(t *testing.T) {
+	forbidden := func(resource string) error {
+		return kerrors.NewForbidden(schema.GroupResource{Resource: resource}, "", fmt.Errorf("rbac"))
+	}
+	cases := map[string]struct {
+		objs  []runtime.Object
+		fails map[string]error // resource -> error for its get or list
+		want  []string
+	}{
+		"config map found, helm secrets forbidden": {
+			objs:  []runtime.Object{ciliumConfig()},
+			fails: map[string]error{"secrets": forbidden("secrets")},
+			want:  []string{"configmaps/cilium-config"},
+		},
+		"daemonset found, config map forbidden": {
+			objs:  []runtime.Object{agentDaemonSet(image1181, image1181)},
+			fails: map[string]error{"configmaps": forbidden("configmaps")},
+			want:  []string{"daemonsets/cilium"},
+		},
+		"helm release found, every get times out": {
+			objs: []runtime.Object{releaseSecret(1, "deployed", "1.18.1")},
+			fails: map[string]error{
+				"configmaps":  kerrors.NewTimeoutError("deadline exceeded", 1),
+				"daemonsets":  kerrors.NewTimeoutError("deadline exceeded", 1),
+				"deployments": kerrors.NewTimeoutError("deadline exceeded", 1),
+			},
+			want: []string{"helm-release/cilium"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dyn := fakeCluster(tc.objs...)
+			for resource, err := range tc.fails {
+				dyn.PrependReactor("*", resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, err
+				})
+			}
+
+			got, err := DetectInstallation(context.Background(), dyn)
+
+			require.NoError(t, err, "positive evidence must not be lost to another failed lookup")
+			assert.Equal(t, tc.want, got.Resources)
+		})
+	}
+}
+
 func TestInstalledVersion(t *testing.T) {
 	t.Run("agent image and deployed release agree", func(t *testing.T) {
 		dyn := fakeCluster(

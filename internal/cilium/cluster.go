@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/errx"
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,10 +58,12 @@ func (i Installation) Found() bool { return len(i.Resources) > 0 }
 
 // DetectInstallation looks for the resources a Cilium install leaves in
 // kube-system: the cilium-config ConfigMap, the agent DaemonSet, the operator
-// Deployment and the Helm release. It never treats a failed lookup as absence:
-// any error other than NotFound is returned.
+// Deployment and the Helm release. Any one found is enough, even if other
+// lookups fail. With none found, a lookup error other than NotFound is
+// returned rather than read as absence.
 func DetectInstallation(ctx context.Context, dyn dynamic.Interface) (Installation, error) {
 	var found Installation
+	var lookupErr error
 	for _, r := range []struct {
 		gvr  schema.GroupVersionResource
 		name string
@@ -73,19 +76,29 @@ func DetectInstallation(ctx context.Context, dyn dynamic.Interface) (Installatio
 		switch {
 		case err == nil:
 			found.Resources = append(found.Resources, r.gvr.Resource+"/"+r.name)
-		case !kerrors.IsNotFound(err):
-			return Installation{}, apiError(err, "failed to check for %s %s/%s", r.gvr.Resource, Namespace, r.name)
+		case !kerrors.IsNotFound(err) && lookupErr == nil:
+			lookupErr = apiError(err, "failed to check for %s %s/%s", r.gvr.Resource, Namespace, r.name)
 		}
 	}
 
 	releases, err := releaseSecrets(ctx, dyn, "")
-	if err != nil {
-		return Installation{}, err
-	}
-	if len(releases) > 0 {
+	switch {
+	case err == nil && len(releases) > 0:
 		found.Resources = append(found.Resources, "helm-release/"+releaseName)
+	case err != nil && lookupErr == nil:
+		lookupErr = err
 	}
 
+	if found.Found() {
+		if lookupErr != nil {
+			logx.As().Warn().Err(lookupErr).Strs("resources", found.Resources).
+				Msg("Some Cilium resources could not be checked; the ones found are enough to treat Cilium as installed")
+		}
+		return found, nil
+	}
+	if lookupErr != nil {
+		return Installation{}, lookupErr
+	}
 	return found, nil
 }
 

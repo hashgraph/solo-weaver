@@ -203,6 +203,23 @@ func TestInstallCiliumCNI_ExistingCiliumIsLeftAlone(t *testing.T) {
 	}
 }
 
+func TestInstallCiliumCNI_ExistingCiliumWinsOverFailedLookups(t *testing.T) {
+	h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
+	dyn := ciliumCluster(kubeSystemObject("v1", "ConfigMap", "cilium-config", nil))
+	dyn.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, kerrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", fmt.Errorf("rbac"))
+	})
+
+	step, err := installCiliumCNI(newClusterCilium, clientFor(dyn)).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+
+	require.NoError(t, report.Error)
+	assert.Equal(t, automa.StatusSkipped, report.Status)
+	assert.Equal(t, "configmaps/cilium-config", report.Metadata[CiliumResources])
+	assert.Empty(t, h.scripts)
+}
+
 func TestInstallCiliumCNI_DetectionFailureDoesNotInstall(t *testing.T) {
 	cases := map[string]struct {
 		provider func() kube.ClientProvider
