@@ -3,9 +3,9 @@
 // migration_unified_state.go implements the unified state file migration.
 //
 // This migration consolidates multiple legacy state files (*.installed, *.configured)
-// into the new unified State model by writing SoftwareState entries into
-// MachineState.Software via the DefaultStateManager and SetSoftwareState helper.
-// It preserves the legacy files until Rollback is explicitly called.
+// into the unified State model by writing SoftwareState entries into
+// MachineState.Software: into state.yaml when it exists, otherwise into
+// machine.yaml. The marker files are removed once the merge is persisted.
 
 package state
 
@@ -15,9 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
+	"gopkg.in/yaml.v3"
+	htime "helm.sh/helm/v3/pkg/time"
 )
 
 // UnifiedStateMigration consolidates individual legacy state files into the
@@ -52,9 +55,9 @@ func (m *UnifiedStateMigration) Applies(mctx *migration.Context) (bool, error) {
 	return len(files) > 0, nil
 }
 
-// Execute reads all legacy state files and merges them into the unified state via
-// DefaultStateManager.  The legacy files are removed on success.
-func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Context) error {
+// Execute merges every marker file into the persisted state and removes the
+// marker files on success.
+func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context) error {
 	files, err := findLegacyStateFiles(models.Paths().StateDir)
 	if err != nil {
 		return err
@@ -63,50 +66,129 @@ func (m *UnifiedStateMigration) Execute(ctx context.Context, mctx *migration.Con
 		return nil
 	}
 
-	sm, err := NewStateManager()
+	markers, err := readLegacyMarkers(files)
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
+		return err
 	}
 
-	current := sm.State()
+	legacyPath := filepath.Join(models.Paths().StateDir, StateFileName)
+	b, readErr := os.ReadFile(legacyPath)
+	switch {
+	case readErr == nil:
+		// The startup migrations after this one rewrite state.yaml and the
+		// per-component split runs last, so merge into state.yaml itself, and
+		// at the node level: decoding into today's State would silently drop
+		// any older-schema field a later migration still has to convert.
+		out, err := mergeMarkersIntoStateYAML(b, markers)
+		if err != nil {
+			return errorx.IllegalFormat.Wrap(err, "failed to merge marker files into %s", legacyPath)
+		}
+		if err := atomicWriteFile(legacyPath, out); err != nil {
+			return errorx.ExternalError.Wrap(err, "failed to write migrated state file %s", legacyPath)
+		}
 
+	case os.IsNotExist(readErr):
+		// Already split, or old enough to have only marker files: the software
+		// entries belong to machine.yaml, so merge into that alone.
+		sm, err := NewStateManager()
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
+		}
+		if err := sm.Refresh(); err != nil && !errorx.IsOfType(err, NotFoundError) {
+			return errorx.IllegalState.Wrap(err, "failed to read state for unified-state migration")
+		}
+		current := sm.State()
+		for _, mk := range markers {
+			current = SetSoftwareState(current, mk.component, mk.applyTo(GetSoftwareState(current, mk.component)))
+		}
+		if err := sm.Set(current).FlushScoped(ComponentMachine); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
+		}
+
+	default:
+		return errorx.IllegalState.Wrap(readErr, "failed to read existing state file %s", legacyPath)
+	}
+
+	// Remove legacy files now that the state has been persisted.
+	for _, fp := range files {
+		if removeErr := os.Remove(fp); removeErr != nil {
+			logx.As().Warn().Err(removeErr).Str("file", fp).Msg("Failed to remove legacy state file after migration")
+		}
+	}
+
+	return nil
+}
+
+// legacyMarker is one parsed *.installed / *.configured marker file.
+type legacyMarker struct {
+	component string
+	stateType string
+	version   string
+}
+
+func readLegacyMarkers(files []string) ([]legacyMarker, error) {
+	var markers []legacyMarker
 	for _, fp := range files {
 		base := filepath.Base(fp)
 		parts := strings.SplitN(base, ".", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		component, stateType := parts[0], parts[1]
-
-		content, readErr := os.ReadFile(fp)
-		if readErr != nil {
-			return errorx.IllegalState.Wrap(readErr, "failed to read legacy state file %s", base)
+		content, err := os.ReadFile(fp)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to read legacy state file %s", base)
 		}
-		version := parseVersionFromContent(string(content))
+		markers = append(markers, legacyMarker{
+			component: parts[0],
+			stateType: parts[1],
+			version:   parseVersionFromContent(string(content)),
+		})
+	}
+	return markers, nil
+}
 
-		sw := GetSoftwareState(current, component)
-		sw.Version = version
-		switch stateType {
-		case "installed":
-			sw.Installed = true
-		case "configured":
-			sw.Configured = true
+func (mk legacyMarker) applyTo(sw SoftwareState) SoftwareState {
+	sw.Version = mk.version
+	switch mk.stateType {
+	case "installed":
+		sw.Installed = true
+	case "configured":
+		sw.Configured = true
+	}
+	return sw
+}
+
+// mergeMarkersIntoStateYAML records each marker's software entry under
+// state.machineState.software in b, leaving every other node untouched.
+func mergeMarkersIntoStateYAML(b []byte, markers []legacyMarker) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	root := rootMappingNode(&doc)
+	if root == nil {
+		return nil, errorx.IllegalFormat.New("state file has no top-level mapping")
+	}
+	software := ensureMapping(ensureMapping(ensureMapping(root, "state"), "machineState"), "software")
+
+	for _, mk := range markers {
+		sw := SoftwareState{}
+		if existing := mappingValue(software, mk.component); existing != nil {
+			if err := existing.Decode(&sw); err != nil {
+				return nil, err
+			}
 		}
-		current = SetSoftwareState(current, component, sw)
-	}
+		sw = mk.applyTo(sw)
+		sw.Name = mk.component
+		sw.LastSync = htime.Now()
 
-	if err = sm.Set(current).FlushState(); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
-	}
-
-	// Remove legacy files now that the state has been persisted.
-	for _, fp := range files {
-		if removeErr := os.Remove(fp); removeErr != nil && mctx.Logger != nil {
-			mctx.Logger.Warn().Err(removeErr).Str("file", fp).Msg("Failed to remove legacy state file after migration")
+		var n yaml.Node
+		if err := n.Encode(sw); err != nil {
+			return nil, err
 		}
+		setMappingValue(software, mk.component, &n)
 	}
-
-	return nil
+	return yaml.Marshal(&doc)
 }
 
 // Rollback restores the legacy state files from the unified state.

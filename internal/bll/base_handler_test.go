@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -177,7 +179,7 @@ func TestHandleIntent_ReportsTeleportChangeThenPersistsLiveState(t *testing.T) {
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
 	require.Equal(t, []string{
-		`teleport nodeAgent.configured differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport nodeAgent.configured differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
 	require.Equal(t, h.teleport.NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
 
@@ -187,10 +189,14 @@ func TestHandleIntent_ReportsTeleportChangeThenPersistsLiveState(t *testing.T) {
 
 // A handler reports only the components it manages: with Teleport unmanaged, a
 // Teleport change is neither reported nor absorbed — the persisted Teleport
-// section survives the flush for its owning command to report later.
+// file is never touched, so its owning command can still report it later.
 func TestHandleIntent_UnmanagedComponentIsNeitherReportedNorAbsorbed(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, configuredNodeAgent())
+	teleportFile := state.ComponentFilePath(filepath.Dir(stateFile), state.ComponentTeleport)
+	before, err := os.Stat(teleportFile)
+	require.NoError(t, err)
+
 	h := &host{teleport: configuredNodeAgent()}
 	h.teleport.NodeAgent.Configured = false
 
@@ -202,6 +208,10 @@ func TestHandleIntent_UnmanagedComponentIsNeitherReportedNorAbsorbed(t *testing.
 	// The out-of-band Teleport change is not folded into state: the persisted
 	// baseline (Configured: true) is preserved, not the live value (false).
 	require.Equal(t, configuredNodeAgent().NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
+	// Stronger than content equality: the file itself was never rewritten.
+	after, err := os.Stat(teleportFile)
+	require.NoError(t, err)
+	require.Equal(t, before.ModTime(), after.ModTime(), "teleport.yaml must not be opened for writing by a BlockNode-only command")
 }
 
 func TestHandleIntent_WorkflowsOwnChangeIsNotReported(t *testing.T) {
@@ -267,7 +277,7 @@ func TestHandleIntent_ReleaseMissingFromReachableClusterIsReportedAsRemoval(t *t
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
 	require.Equal(t, []string{
-		`teleport clusterAgent.installed differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport clusterAgent.installed differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
 	require.Equal(t, state.TeleportClusterAgentState{}, readState(t, stateFile).TeleportState.ClusterAgent)
 }
@@ -304,6 +314,74 @@ func TestHandleIntent_EarlyFailureLogsTheChangeAndKeepsTheBaseline(t *testing.T)
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 	require.Equal(t, []string{
-		`teleport nodeAgent.configured differs from persisted state: state.yaml has "true", live is "false"`,
+		`teleport nodeAgent.configured differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(report))
+}
+
+// TestHandleIntent_DisjointHandlersDoNotBlockEachOther runs two commands
+// through the real HandleIntent path — not AcquireComponentLocks/FlushScoped
+// called directly — so it actually exercises what lockedComponentIDs locks.
+// A BlockNode-only handler holds its lock for the whole duration of a
+// deliberately slow workflow; a concurrent Teleport-only handler must still
+// complete quickly. Before machine was removed from the locked (as opposed to
+// flushed) set, both commands locked machine too and this test would hang
+// until the slow handler finished.
+func TestHandleIntent_DisjointHandlersDoNotBlockEachOther(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	slow := noopIntent{execute: func() {
+		close(started)
+		<-release
+	}}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, err := handleBlockNodeIntentWith(t, stateFile, &host{}, slow, BlockNode)
+		require.NoError(t, err)
+	}()
+
+	<-started // the slow handler now holds its BlockNode lock
+
+	fastDone := make(chan struct{})
+	go func() {
+		_, err := handleBlockNodeIntentWith(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{}, Teleport)
+		require.NoError(t, err)
+		close(fastDone)
+	}()
+
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("a Teleport-only handler must not block on a concurrent BlockNode-only handler's lock")
+	}
+
+	close(release)
+	wg.Wait()
+}
+
+// TestFlushComponentIDs_DedupesExplicitMachineRegistration covers a handler
+// that lists state.ComponentMachine in Managed explicitly (redundant with the
+// machine component flushComponentIDs always adds) — flushComponentIDs must
+// still return it once, not twice, so FlushScoped doesn't prepare and write
+// machine.yaml twice in the same call.
+func TestFlushComponentIDs_DedupesExplicitMachineRegistration(t *testing.T) {
+	h := BaseHandler[struct{}]{
+		Managed: []Component{{id: state.ComponentMachine}, Teleport},
+	}
+
+	ids := h.flushComponentIDs()
+
+	count := 0
+	for _, id := range ids {
+		if id == state.ComponentMachine {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "expected ComponentMachine exactly once, got %v", ids)
 }
