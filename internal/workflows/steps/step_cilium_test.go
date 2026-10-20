@@ -81,15 +81,16 @@ func clientFor(dyn *dynamicfake.FakeDynamicClient) kube.ClientProvider {
 	return func() (*kube.Client, error) { return &kube.Client{Dyn: dyn}, nil }
 }
 
-const verifiedChartDir = "/opt/solo/weaver/downloads/charts/cilium-1.20.2/cilium"
+const verifiedChartDir = "/tmp/solo-provisioner-cilium-chart-1234/cilium"
 
 // ciliumCNIHarness records every cilium CLI command, binary verification and
 // chart download.
 type ciliumCNIHarness struct {
-	scripts  []string
-	verified *[]string
-	charts   []ciliumRelease
-	chartErr error
+	scripts      []string
+	verified     *[]string
+	charts       []ciliumRelease
+	chartErr     error
+	chartRemoved int
 }
 
 func newCiliumCNIHarness(t *testing.T, verify func(string) error) *ciliumCNIHarness {
@@ -101,12 +102,12 @@ func newCiliumCNIHarness(t *testing.T, verify func(string) error) *ciliumCNIHarn
 		h.scripts = append(h.scripts, strings.Join(scripts, " "))
 		return "", nil
 	}
-	fetchCiliumChart = func(_ context.Context, release ciliumRelease) (string, error) {
+	fetchCiliumChart = func(_ context.Context, release ciliumRelease) (string, func(), error) {
 		h.charts = append(h.charts, release)
 		if h.chartErr != nil {
-			return "", h.chartErr
+			return "", nil, h.chartErr
 		}
-		return verifiedChartDir, nil
+		return verifiedChartDir, func() { h.chartRemoved++ }, nil
 	}
 	t.Cleanup(func() { runCiliumScript, fetchCiliumChart = origRun, origFetch })
 	return h
@@ -127,6 +128,19 @@ func TestInstallCiliumCNI_FreshClusterInstallsPinnedVersion(t *testing.T) {
 	assert.Contains(t, h.scripts[0], `cilium install --wait --version "1.20.2" --chart-directory `+verifiedChartDir+` --values `)
 	installed, _ := step.State().Local().Bool(InstalledByThisStep)
 	assert.True(t, installed)
+	assert.Equal(t, 1, h.chartRemoved, "the unpacked chart is removed once cilium install returns")
+}
+
+func TestInstallCiliumCNI_ChartIsRemovedWhenInstallFails(t *testing.T) {
+	h := newCiliumCNIHarness(t, func(string) error { return nil })
+	runCiliumScript = func([]string, string) (string, error) { return "", assert.AnError }
+
+	step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster())).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+
+	require.ErrorIs(t, report.Error, assert.AnError)
+	assert.Equal(t, 1, h.chartRemoved)
 }
 
 func TestInstallCiliumCNI_UnverifiedChartIsNotInstalled(t *testing.T) {
