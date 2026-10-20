@@ -93,7 +93,9 @@ func TestPullVerifiedCiliumChart_VerifiedChartIsUnpackedInAPrivateDirectory(t *t
 
 	require.NoError(t, err)
 	workDir := filepath.Dir(dir)
-	assert.Equal(t, base, filepath.Dir(workDir))
+	canonicalBase, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalBase, filepath.Dir(workDir))
 	assert.Equal(t, "cilium", filepath.Base(dir))
 	fi, err := os.Stat(workDir)
 	require.NoError(t, err)
@@ -104,6 +106,36 @@ func TestPullVerifiedCiliumChart_VerifiedChartIsUnpackedInAPrivateDirectory(t *t
 
 	cleanup()
 	assert.Empty(t, entries(t, base), "cleanup must remove the work directory")
+}
+
+func TestPullVerifiedCiliumChart_SymlinkedBaseUsesTheCheckedPath(t *testing.T) {
+	release, _ := ciliumChartRepo(t, "1.20.2")
+	top := t.TempDir()
+	real := filepath.Join(top, "real")
+	require.NoError(t, os.Mkdir(real, 0o755))
+	link := filepath.Join(top, "link")
+	require.NoError(t, os.Symlink(real, link))
+	canonicalReal, err := filepath.EvalSymlinks(real)
+	require.NoError(t, err)
+
+	dir, cleanup, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, link)
+
+	require.NoError(t, err)
+	assert.Equal(t, canonicalReal, filepath.Dir(filepath.Dir(dir)), "the chart directory handed to cilium must be under the checked, canonical path")
+	assert.FileExists(t, filepath.Join(dir, "Chart.yaml"))
+	cleanup()
+	assert.Empty(t, entries(t, real))
+}
+
+func TestShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/tmp/solo-provisioner-cilium-chart-1/cilium": `'/tmp/solo-provisioner-cilium-chart-1/cilium'`,
+		"/tmp/a b/cilium":     `'/tmp/a b/cilium'`,
+		"/tmp/$(x)`y`/cilium": "'/tmp/$(x)`y`/cilium'",
+		"/tmp/it's/cilium":    `'/tmp/it'\''s/cilium'`,
+	} {
+		assert.Equal(t, want, shellQuote(in), in)
+	}
 }
 
 func TestPullVerifiedCiliumChart_EachCallUsesAFreshDirectory(t *testing.T) {
@@ -231,6 +263,40 @@ func TestPrivateWorkDir(t *testing.T) {
 		assert.Contains(t, err.Error(), "without the sticky bit")
 		assertReason(t, err, reasons.PreconditionNotMet)
 		assert.Empty(t, entries(t, base), "a rejected work directory is removed")
+	})
+
+	t.Run("symlinked base resolves to the path that is checked", func(t *testing.T) {
+		top := t.TempDir()
+		real := filepath.Join(top, "real")
+		require.NoError(t, os.Mkdir(real, 0o755))
+		link := filepath.Join(top, "link")
+		require.NoError(t, os.Symlink(real, link))
+		canonicalReal, err := filepath.EvalSymlinks(real)
+		require.NoError(t, err)
+
+		dir, err := privateWorkDir(link, "w-")
+
+		require.NoError(t, err)
+		assert.Equal(t, canonicalReal, filepath.Dir(dir), "the returned path must be the canonical one, not the symlink")
+		resolved, err := filepath.EvalSymlinks(dir)
+		require.NoError(t, err)
+		assert.Equal(t, dir, resolved)
+	})
+
+	t.Run("symlinked base pointing at an unsafe directory", func(t *testing.T) {
+		top := t.TempDir()
+		unsafe := filepath.Join(top, "unsafe")
+		require.NoError(t, os.Mkdir(unsafe, 0o755))
+		require.NoError(t, os.Chmod(unsafe, 0o775))
+		link := filepath.Join(top, "link")
+		require.NoError(t, os.Symlink(unsafe, link))
+
+		dir, err := privateWorkDir(link, "w-")
+
+		require.Error(t, err)
+		assert.Empty(t, dir)
+		assertReason(t, err, reasons.PreconditionNotMet)
+		assert.Empty(t, entries(t, unsafe))
 	})
 
 	t.Run("group-writable ancestor", func(t *testing.T) {

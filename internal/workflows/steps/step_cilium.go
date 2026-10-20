@@ -285,7 +285,7 @@ func installCiliumCNI(release ciliumRelease, newClient kube.ClientProvider) *aut
 			// installed is exactly the one verified above.
 			installScript := []string{
 				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --chart-directory %s --values %s/etc/weaver/cilium-config.yaml",
-					models.Paths().SandboxBinDir, version, chartDir, models.Paths().SandboxDir),
+					models.Paths().SandboxBinDir, version, shellQuote(chartDir), models.Paths().SandboxDir),
 			}
 			_, err = runCiliumScript(installScript, "")
 			if err != nil {
@@ -409,23 +409,43 @@ func unpackVerifiedChart(archive string, release ciliumRelease, dest string) (st
 // privateWorkDir creates a 0700 directory under base and checks that no other
 // user can replace it or any directory above it: each must be owned by root or
 // by this process, and writable by group or others only with the sticky bit.
+// It returns the canonical path it checked, with no symlinks, so every later
+// use of the directory names exactly that path.
 func privateWorkDir(base, pattern string) (string, error) {
-	dir, err := os.MkdirTemp(base, pattern)
+	canonicalBase, err := filepath.Abs(base)
+	if err == nil {
+		canonicalBase, err = filepath.EvalSymlinks(canonicalBase)
+	}
 	if err != nil {
-		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to create a work directory under %s", base), base)
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to resolve %s", base), base)
+	}
+
+	dir, err := os.MkdirTemp(canonicalBase, pattern)
+	if err != nil {
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to create a work directory under %s", canonicalBase), canonicalBase)
 	}
 
 	resolved, err := filepath.EvalSymlinks(dir)
-	if err == nil {
-		err = checkNotReplaceable(resolved)
+	switch {
+	case err != nil:
+		err = errorx.ExternalError.Wrap(err, "failed to resolve %s", dir)
+	case resolved != dir:
+		err = errorx.IllegalState.New("%s resolves to %s; the work directory path must not change", dir, resolved)
+	default:
+		err = checkNotReplaceable(dir)
 	}
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return "", errx.Decorate(err, reasons.PreconditionNotMet,
 			"Use a temporary directory only root can modify, for example unset TMPDIR so /tmp is used",
-			fmt.Sprintf("Check the owners and modes of %s and its parents: namei -l %s", base, base))
+			fmt.Sprintf("Check the owners and modes of %s and its parents: namei -l %s", canonicalBase, canonicalBase))
 	}
 	return dir, nil
+}
+
+// shellQuote quotes s as one word for the bash scripts the cilium CLI runs in.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func checkNotReplaceable(dir string) error {
