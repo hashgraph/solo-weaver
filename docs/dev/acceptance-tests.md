@@ -488,7 +488,7 @@ Expected (both F1 and F2):
 
 ## Full VM tests in pull request CI
 
-The VM jobs (integration tests and the four UAT scenarios) no longer run on every push to a pull request. A push runs build and unit tests, plus the **Full VM Tests Gate** job.
+The VM jobs (integration tests and the four UAT scenarios) no longer run on every push to a pull request. A push runs build and unit tests in PR Checks, plus a separate **Full VM Tests Gate** check (`flow-full-vm-gate.yaml`).
 
 The gate passes in one of two ways:
 
@@ -519,11 +519,13 @@ If the full run on the top PR fails:
 
    That runs only `compat`. The inputs are `run-integration`, `run-compat`, `run-lifecycle`, `run-purge-storage` and `run-plugin-preset-upgrade`, all `true` by default. At least one must be selected: with all five switched off, the run fails at once in a `Validate inputs` job instead of ending green having tested nothing.
 
-A run with any job switched off is for diagnosis only. It does not satisfy the gate and does not re-run it. The gate needs one run in which all five jobs passed; results from different runs are not combined. To clear a gate after a failure, use "Re-run failed jobs" on the full run, not a separate partial run.
+A run with any job switched off is for diagnosis only. It does not satisfy the gate and does not re-run it. The gate needs one run in which all five jobs passed; results from different runs are not combined. To clear a gate after a failure, use "Re-run failed jobs" on the full run, not a separate partial run. When all five jobs pass, the workflow re-runs the gate by itself.
 
 Notes:
 
-- The gate is red on a ready PR until the full run has passed. Draft PRs and docs-only changes skip it.
+- The gate is red on a ready PR until the full run has passed. Draft PRs and docs-only changes (only `*.md` files and `docs/`) pass it without a run.
+- Adding or removing the `skip-kvm-runner` label re-checks the gate by itself within seconds, and so does marking a PR ready or converting it to a draft. The gate reads the PR's current labels, draft state and commit from the API, so it never works from stale information. Build and unit tests are not restarted.
+- If the gate result looks out of date, close and reopen the PR or push a commit. Re-running an old gate run is also safe, because it reads the live state.
 - A passing run covers one commit. Any later push needs a new run.
 - For a stack, run it on the top PR and label the PRs below it with `skip-kvm-runner`. Rebase or merge each parent's latest commit into its child and push first, so the top PR contains everything beneath it.
 - A passing top PR does not prove each lower PR on its own. For infrastructure changes, run `Test UAT` or `Test Integration Setup` by hand on the lower PR.

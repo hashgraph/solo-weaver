@@ -53,14 +53,15 @@ concurrency:
 #
 #   gh workflow run flow-test-full.yaml --ref <branch>
 #
-# The "Full VM Tests Gate" job in PR Checks passes once one run of this workflow
-# has succeeded, with all five jobs passing, for the PR's current head commit.
+# The "Full VM Tests Gate" check (flow-full-vm-gate.yaml) passes once one run of
+# this workflow has succeeded, with all five jobs passing, for the PR's current
+# head commit.
 # Switching jobs off (for example to re-test a single failed scenario) is for
 # diagnosis: a run with a job skipped does not satisfy the gate. To retry a
 # failed job of a full run, use "Re-run failed jobs" on that run.
 #
-# The five job names below are matched by prefix in the gate (flow-pull-request-
-# checks.yaml). Keep the two in sync.
+# The five job names below are matched by prefix in the gate
+# (flow-full-vm-gate.yaml). Keep the two in sync.
 jobs:
   # With every job switched off the run would skip everything and still end
   # green, which looks like a pass but tested nothing. Fail it instead.
@@ -143,10 +144,11 @@ jobs:
       vm-os: ${{ inputs.vm-os }}
       vm-cpus: 2
 
-  # The gate in PR Checks ran when the PR was pushed, before this run existed,
-  # so it is red. Once everything here has passed, re-run just that job so it
-  # picks up the result. Best effort: a failure here is only a warning. This
-  # job is skipped, by design, when any job above was switched off.
+  # The gate ran when the PR was pushed, before this run existed, so it is red.
+  # Once everything here has passed, re-run it so it picks up the result. The
+  # gate reads the PR's state live, so a re-run sees the new result. Best effort:
+  # a failure here is only a warning. This job is skipped, by design, when any
+  # job above was switched off.
   recheck-gate:
     name: Re-check PR gate
     needs:
@@ -165,7 +167,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Re-run the Full VM Tests Gate job
+      - name: Re-run the Full VM Tests Gate
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -174,34 +176,26 @@ jobs:
               const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                 owner,
                 repo,
-                workflow_id: 'flow-pull-request-checks.yaml',
+                workflow_id: 'flow-full-vm-gate.yaml',
                 head_sha: context.sha,
                 event: 'pull_request',
                 per_page: 100,
               });
               const latest = runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
               if (!latest) {
-                core.notice('No PR Checks run for this commit, so there is no gate to re-check.');
+                core.notice('No gate run for this commit, so there is nothing to re-check.');
                 return;
               }
               if (latest.status !== 'completed') {
-                core.notice(`PR Checks run ${latest.html_url} is still ${latest.status}. Re-run its "Full VM Tests Gate" job once it finishes.`);
+                core.notice(`The gate run ${latest.html_url} is still ${latest.status}. Re-run it once it finishes.`);
                 return;
               }
-              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                owner,
-                repo,
-                run_id: latest.id,
-                filter: 'latest',
-                per_page: 100,
-              });
-              const gate = jobs.find((j) => j.name === 'Full VM Tests Gate');
-              if (!gate || gate.conclusion !== 'failure') {
-                core.notice('The gate job is not failed (it passed, was skipped, or does not exist), so nothing to re-run.');
+              if (latest.conclusion !== 'failure') {
+                core.notice(`The gate run ended ${latest.conclusion}, so there is nothing to re-run.`);
                 return;
               }
-              await github.rest.actions.reRunJobForWorkflowRun({ owner, repo, job_id: gate.id });
-              core.notice(`Re-ran the gate job: ${latest.html_url}`);
+              await github.rest.actions.reRunWorkflowFailedJobs({ owner, repo, run_id: latest.id });
+              core.notice(`Re-ran the gate: ${latest.html_url}`);
             } catch (error) {
               core.warning(`Could not re-run the gate job automatically: ${error.message}. Re-run it from the PR Checks run.`);
             }

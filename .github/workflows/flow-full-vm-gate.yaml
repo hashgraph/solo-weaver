@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: "Full VM Tests Gate"
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - labeled
+      - unlabeled
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+# This is its own workflow, not a job in PR Checks, so a label change re-checks
+# the gate in seconds without restarting build and unit tests.
+#
+# The job always reports a real result. Draft, docs-only and labeled PRs pass
+# inside the script rather than through a job-level "if": a skipped job counts
+# as passing, and a later skipped run on the same commit could overwrite a red
+# result. For the same reason, an unrelated label also gets a full evaluation.
+concurrency:
+  group: full-vm-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  full-vm-gate:
+    name: Full VM Tests Gate
+    runs-on: solo-linux-medium
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      # The VM jobs (integration and UAT) do not run on every push. Run them on
+      # demand with the "Full VM Tests" workflow, normally on the top PR of a
+      # stack. This job passes once one run of that workflow has passed all five
+      # of its jobs for the PR's current head commit. For a PR below the top of
+      # a stack, add the skip-kvm-runner label instead.
+      - name: Require a passing Full VM Tests run for this commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+
+            // Read the PR's current state from the API. The event payload is
+            // frozen when the event fires, so labels, draft state and the head
+            // commit in it go stale when this run is re-run later.
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            const sha = pr.head.sha;
+            const short = sha.slice(0, 8);
+            const skipLabel = 'skip-kvm-runner';
+
+            if (pr.draft) {
+              core.notice('This PR is a draft, so full VM tests are not required yet.');
+              return;
+            }
+
+            // Same rule as the "Detect Changes" filter in PR Checks: only
+            // markdown files and docs/ do not need the VM tests.
+            const isDoc = (name) => name.endsWith('.md') || name.startsWith('docs/');
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: number,
+              per_page: 100,
+            });
+            if (files.every((file) => isDoc(file.filename) && (!file.previous_filename || isDoc(file.previous_filename)))) {
+              core.notice('Only documentation changed, so full VM tests are not required.');
+              return;
+            }
+
+            if (pr.labels.some((label) => label.name === skipLabel)) {
+              core.notice(`Label '${skipLabel}' is set, so full VM tests are skipped for this PR. They must pass on the top PR of the stack.`);
+              return;
+            }
+
+            let runs;
+            try {
+              runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id: 'flow-test-full.yaml',
+                head_sha: sha,
+                status: 'success',
+                per_page: 100,
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                core.setFailed('The Full VM Tests workflow (flow-test-full.yaml) is not on the default branch yet, so it cannot be run or checked.');
+                return;
+              }
+              throw error;
+            }
+
+            // A run can end "success" with some jobs switched off, so require
+            // every job below to have passed in one run. These are matched by
+            // prefix against the job names in flow-test-full.yaml.
+            const required = [
+              'Integration Tests',
+              'UAT Backward Compatibility',
+              'UAT Core Lifecycle',
+              'UAT Purge Storage',
+              'UAT Plugin Preset Upgrade',
+            ];
+            let closest = null;
+            for (const run of runs) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner,
+                repo,
+                run_id: run.id,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const missing = required.filter(
+                (prefix) => !jobs.some((job) => job.name.startsWith(prefix) && job.conclusion === 'success')
+              );
+              if (missing.length === 0) {
+                core.notice(`Full VM Tests passed for ${short}: ${run.html_url}`);
+                return;
+              }
+              if (closest === null || missing.length < closest.missing.length) {
+                closest = { run, missing };
+              }
+            }
+
+            const partial = closest
+              ? `A successful run exists (${closest.run.html_url}) but these jobs did not pass in it: ${closest.missing.join(', ')}. `
+              : `No successful Full VM Tests run for commit ${short}. `;
+            core.setFailed(
+              partial +
+                `Run all jobs on this branch: gh workflow run flow-test-full.yaml --ref ${pr.head.ref} ` +
+                `(or Actions > Full VM Tests > Run workflow). This check re-runs by itself when the run passes. ` +
+                `For a PR below the top of a stack, add the '${skipLabel}' label instead: the check updates within seconds.`
+            );
