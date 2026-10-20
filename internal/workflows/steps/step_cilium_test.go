@@ -125,7 +125,7 @@ func TestInstallCiliumCNI_FreshClusterInstallsPinnedVersion(t *testing.T) {
 	assert.Equal(t, []string{"cilium"}, *h.verified)
 	assert.Equal(t, []ciliumRelease{newClusterCilium}, h.charts)
 	require.Len(t, h.scripts, 1)
-	assert.Contains(t, h.scripts[0], `cilium install --wait --version "1.20.2" --chart-directory `+verifiedChartDir+` --values `)
+	assert.Contains(t, h.scripts[0], `cilium install --wait --version "1.20.2" --chart-directory '`+verifiedChartDir+`' --values `)
 	installed, _ := step.State().Local().Bool(InstalledByThisStep)
 	assert.True(t, installed)
 	assert.Equal(t, 1, h.chartRemoved, "the unpacked chart is removed once cilium install returns")
