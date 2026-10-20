@@ -64,6 +64,9 @@ jobs:
       github.event.pull_request.draft == false
     name: "${{ inputs.custom-job-label }}"
     runs-on: kvm-runner
+    # Must stay below kvm-vm-up's stale-vm-age-minutes (240): a sibling runner's
+    # sweep treats any VM older than that as left over from a dead job.
+    timeout-minutes: 180
 
     steps:
       - name: Harden Runner

@@ -3,7 +3,7 @@ name: "KVM VM Up"
 description: >
   Boot a throwaway QEMU/KVM VM on a self-hosted runner, wait for SSH, install
   Go + Task and the proxy CA inside it, and sync the checked-out workspace into
-  it. Shared by the UAT and integration test workflows.
+  it. Shared by the UAT and integration test workflows. Call it once per job.
 
 inputs:
   vm-os:
@@ -98,6 +98,13 @@ runs:
         STALE_AGE_MINUTES: ${{ inputs.stale-vm-age-minutes }}
       run: |
         set -euo pipefail
+
+        # Create VM working directory exports KVM_VM_DIR for the rest of the job. If it
+        # is already set, this job booted a VM earlier, and sweeping now would stop it.
+        if [ -n "${KVM_VM_DIR:-}" ]; then
+          echo "::error::kvm-vm-up was already called in this job (KVM_VM_DIR=${KVM_VM_DIR}). Call it once per job: its stale-VM sweep would stop the VM that is already running."
+          exit 1
+        fi
 
         TEMP_ROOT="${RUNNER_TEMP:-}"
         case "${TEMP_ROOT}" in
