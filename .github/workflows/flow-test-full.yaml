@@ -12,6 +12,26 @@ on:
         options:
           - debian
           - ubuntu
+      run-integration:
+        description: "Run Integration Tests"
+        type: boolean
+        default: true
+      run-compat:
+        description: "Run UAT Backward Compatibility"
+        type: boolean
+        default: true
+      run-lifecycle:
+        description: "Run UAT Core Lifecycle"
+        type: boolean
+        default: true
+      run-purge-storage:
+        description: "Run UAT Purge Storage"
+        type: boolean
+        default: true
+      run-plugin-preset-upgrade:
+        description: "Run UAT Plugin Preset Upgrade"
+        type: boolean
+        default: true
 
 defaults:
   run:
@@ -20,10 +40,12 @@ defaults:
 permissions:
   contents: read
 
-# A newer dispatch on the same branch supersedes an older one: the older run
-# is for a commit that is no longer the branch head.
+# A newer dispatch on the same branch supersedes an older one of the same kind:
+# the older run is for a commit that is no longer the branch head. Full and
+# partial runs are separate kinds, so a diagnostic partial run never cancels a
+# full run that is still going.
 concurrency:
-  group: full-vm-tests-${{ github.ref }}
+  group: full-vm-tests-${{ github.ref }}-${{ (inputs.run-integration && inputs.run-compat && inputs.run-lifecycle && inputs.run-purge-storage && inputs.run-plugin-preset-upgrade) && 'full' || 'partial' }}
   cancel-in-progress: true
 
 # Runs the same VM jobs the PR Checks workflow used to run on every push. Run it
@@ -31,11 +53,18 @@ concurrency:
 #
 #   gh workflow run flow-test-full.yaml --ref <branch>
 #
-# The "Full VM Tests Gate" job in PR Checks passes once this workflow has
-# succeeded for the PR's current head commit.
+# The "Full VM Tests Gate" job in PR Checks passes once one run of this workflow
+# has succeeded, with all five jobs passing, for the PR's current head commit.
+# Switching jobs off (for example to re-test a single failed scenario) is for
+# diagnosis: a run with a job skipped does not satisfy the gate. To retry a
+# failed job of a full run, use "Re-run failed jobs" on that run.
+#
+# The five job names below are matched by prefix in the gate (flow-pull-request-
+# checks.yaml). Keep the two in sync.
 jobs:
   integration-tests:
     name: Integration Tests
+    if: inputs.run-integration
     uses: ./.github/workflows/zxc-integration-test.yaml
     secrets: inherit
     with:
@@ -44,6 +73,7 @@ jobs:
 
   uat-compat:
     name: UAT Backward Compatibility
+    if: inputs.run-compat
     uses: ./.github/workflows/zxc-uat-test.yaml
     secrets: inherit
     with:
@@ -54,6 +84,7 @@ jobs:
 
   uat-core:
     name: UAT Core Lifecycle
+    if: inputs.run-lifecycle
     uses: ./.github/workflows/zxc-uat-test.yaml
     secrets: inherit
     with:
@@ -64,6 +95,7 @@ jobs:
 
   uat-purge-storage:
     name: UAT Purge Storage
+    if: inputs.run-purge-storage
     uses: ./.github/workflows/zxc-uat-test.yaml
     secrets: inherit
     with:
@@ -74,6 +106,7 @@ jobs:
 
   uat-plugin-preset-upgrade:
     name: UAT Plugin Preset Upgrade
+    if: inputs.run-plugin-preset-upgrade
     uses: ./.github/workflows/zxc-uat-test.yaml
     secrets: inherit
     with:
@@ -84,7 +117,8 @@ jobs:
 
   # The gate in PR Checks ran when the PR was pushed, before this run existed,
   # so it is red. Once everything here has passed, re-run just that job so it
-  # picks up the result. Best effort: a failure here is only a warning.
+  # picks up the result. Best effort: a failure here is only a warning. This
+  # job is skipped, by design, when any job above was switched off.
   recheck-gate:
     name: Re-check PR gate
     needs:

@@ -492,7 +492,7 @@ The VM jobs (integration tests and the four UAT scenarios) no longer run on ever
 
 The gate passes in one of two ways:
 
-- The **Full VM Tests** workflow has succeeded for the PR's current head commit.
+- One run of the **Full VM Tests** workflow has passed all five jobs for the PR's current head commit.
 - The PR has the `skip-kvm-runner` label.
 
 Run the full set on the branch to validate, normally the top PR of a stack:
@@ -503,13 +503,31 @@ gh workflow run flow-test-full.yaml --ref <branch>
 
 Or use Actions > Full VM Tests > Run workflow and pick the branch. It runs the same five jobs the PR workflow used to run (integration, `compat`, `lifecycle`, `purge-storage`, `plugin-preset-upgrade`). When they all pass, the workflow re-runs the gate job by itself.
 
+### Finding which PR in a stack broke
+
+If the full run on the top PR fails:
+
+1. Use "Re-run failed jobs" on the run. This re-runs only the red jobs on the same commit and rules out a flaky test.
+2. If it still fails, bisect: run the workflow on a PR in the middle of the stack. A pass means the break is above it, a failure means it is at or below it. This takes about log2 of the stack size in runs.
+3. To re-test only what failed, untick the other jobs in the run form (or pass `-f run-compat=false` and so on on the command line):
+
+   ```bash
+   gh workflow run flow-test-full.yaml --ref <branch> \
+     -f run-integration=false -f run-lifecycle=false \
+     -f run-purge-storage=false -f run-plugin-preset-upgrade=false
+   ```
+
+   That runs only `compat`. The inputs are `run-integration`, `run-compat`, `run-lifecycle`, `run-purge-storage` and `run-plugin-preset-upgrade`, all `true` by default.
+
+A run with any job switched off is for diagnosis only. It does not satisfy the gate and does not re-run it. The gate needs one run in which all five jobs passed; results from different runs are not combined. To clear a gate after a failure, use "Re-run failed jobs" on the full run, not a separate partial run.
+
 Notes:
 
 - The gate is red on a ready PR until the full run has passed. Draft PRs and docs-only changes skip it.
 - A passing run covers one commit. Any later push needs a new run.
 - For a stack, run it on the top PR and label the PRs below it with `skip-kvm-runner`. Rebase or merge each parent's latest commit into its child and push first, so the top PR contains everything beneath it.
 - A passing top PR does not prove each lower PR on its own. For infrastructure changes, run `Test UAT` or `Test Integration Setup` by hand on the lower PR.
-- Starting a new run on the same branch cancels an older one still in progress.
+- Starting a new full run on a branch cancels an older full run still in progress. A partial run (any job switched off) never cancels a full run, and the other way round.
 - To run a single UAT scenario or a single test, use the `Test UAT` and `Test Integration Setup` workflows.
 
 ## Quick Reference

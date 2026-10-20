@@ -65,9 +65,9 @@ jobs:
 
   # The VM jobs (integration and UAT) no longer run on every push. Run them
   # on demand with the "Full VM Tests" workflow, normally on the top PR of a
-  # stack. This job passes once that workflow has succeeded for this PR's
-  # current head commit. For a PR below the top of a stack, add the
-  # skip-kvm-runner label instead.
+  # stack. This job passes once one run of that workflow has passed all five
+  # of its jobs for this PR's current head commit. For a PR below the top of a
+  # stack, add the skip-kvm-runner label instead.
   full-vm-gate:
     name: Full VM Tests Gate
     needs: changes
@@ -116,14 +116,43 @@ jobs:
               }
               throw error;
             }
-            if (runs.length > 0) {
-              core.notice(`Full VM Tests passed for ${short}: ${runs[0].html_url}`);
-              return;
+            // A run can end "success" with some jobs switched off, so require
+            // every job below to have passed in one run. These are matched by
+            // prefix against the job names in flow-test-full.yaml.
+            const required = [
+              'Integration Tests',
+              'UAT Backward Compatibility',
+              'UAT Core Lifecycle',
+              'UAT Purge Storage',
+              'UAT Plugin Preset Upgrade',
+            ];
+            let closest = null;
+            for (const run of runs) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const missing = required.filter(
+                (prefix) => !jobs.some((job) => job.name.startsWith(prefix) && job.conclusion === 'success')
+              );
+              if (missing.length === 0) {
+                core.notice(`Full VM Tests passed for ${short}: ${run.html_url}`);
+                return;
+              }
+              if (closest === null || missing.length < closest.missing.length) {
+                closest = { run, missing };
+              }
             }
 
+            const partial = closest
+              ? `A successful run exists (${closest.run.html_url}) but these jobs did not pass in it: ${closest.missing.join(', ')}. `
+              : `No successful Full VM Tests run for commit ${short}. `;
             core.setFailed(
-              `No successful Full VM Tests run for commit ${short}. ` +
-                `Run it on this branch: gh workflow run flow-test-full.yaml --ref ${pr.head.ref} ` +
+              partial +
+                `Run all jobs on this branch: gh workflow run flow-test-full.yaml --ref ${pr.head.ref} ` +
                 `(or Actions > Full VM Tests > Run workflow). This check re-runs by itself when the run passes. ` +
                 `For a PR below the top of a stack, add the '${skipLabel}' label instead.`
             );
