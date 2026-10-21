@@ -26,9 +26,8 @@ type teleportAgent struct {
 var teleportNodeAgent = teleportAgent{
 	installedField: "nodeAgent.installed",
 	installed:      func(t state.TeleportState) bool { return t.NodeAgent.Installed },
-	// nodeAgent.version is not compared: the checker reports the version this
-	// binary would install, not the one on the host, so a provisioner upgrade
-	// alone would change it.
+	// nodeAgent.version is not compared: state files written by earlier
+	// releases hold the catalog default there, not the installed version.
 	fields: []teleportField{
 		{"nodeAgent.configured", func(t state.TeleportState) string { return strconv.FormatBool(t.NodeAgent.Configured) }},
 	},
