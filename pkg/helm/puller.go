@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/action"
@@ -95,7 +96,10 @@ func (h *helmManager) pullAndVerifyClassic(destDir, chartRef, version, expected 
 	pull.Version = version
 	pull.SetRegistryClient(registryClient)
 
-	if _, err := pull.Run(chartRef); err != nil {
+	if err := h.retryTransientFetch(chartRef, version, func() error {
+		_, err := pull.Run(chartRef)
+		return err
+	}); err != nil {
 		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
 	}
 
@@ -122,6 +126,64 @@ func (h *helmManager) pullAndVerifyClassic(destDir, chartRef, version, expected 
 	return tgz, nil
 }
 
+// chartPullSleep is the retry backoff sleep; tests replace it to stay fast.
+var chartPullSleep = time.Sleep
+
+// retryTransientFetch runs fetch, retrying with a small linear backoff while it
+// fails with a transient upstream error (5xx, timeouts). Only the network fetch
+// belongs inside it: checksum and other verification errors embed hex digests
+// that can contain "500"-like substrings and must never be retried.
+func (h *helmManager) retryTransientFetch(chartRef, version string, fetch func() error) error {
+	maxAttempts := h.chartPullAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultChartPullAttempts
+	}
+
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err = fetch(); err == nil || !isTransientChartFetchError(err) || attempt == maxAttempts {
+			return err
+		}
+
+		h.log.Warn().
+			Str("chart", chartRef).
+			Str("version", version).
+			Int("attempt", attempt).
+			Err(err).
+			Msg("Helm chart fetch failed; retrying")
+		// Transient upstream 5xx/timeout errors are usually short-lived; a small
+		// backoff keeps the retry budget bounded without stalling the workflow on a
+		// one-off GitHub or registry blip.
+		chartPullSleep(time.Duration(attempt) * 3 * time.Second)
+	}
+	return err
+}
+
+func isTransientChartFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"500",
+		"502",
+		"503",
+		"504",
+		"timeout",
+		"timed out",
+		"gateway timeout",
+		"bad gateway",
+		"service unavailable",
+		"temporarily unavailable",
+		"connection reset",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
+}
+
 // pullAndVerifyOCI calls the registry client directly so we can read the
 // manifest digest from PullResult.Manifest.Digest (which is reported by
 // `helm pull` as the "Digest: sha256:..." line). The chart layer bytes are
@@ -137,8 +199,12 @@ func (h *helmManager) pullAndVerifyOCI(destDir, chartRef, version, expected stri
 	// `helm pull oci://host/path/chart --version X` translates internally to
 	// `registry.Client.Pull("host/path/chart:X")`. Reproduce that here.
 	ref := fmt.Sprintf("%s:%s", strings.TrimPrefix(chartRef, "oci://"), version)
-	result, err := registryClient.Pull(ref, registry.PullOptWithChart(true))
-	if err != nil {
+	var result *registry.PullResult
+	if err := h.retryTransientFetch(chartRef, version, func() error {
+		var pullErr error
+		result, pullErr = registryClient.Pull(ref, registry.PullOptWithChart(true))
+		return pullErr
+	}); err != nil {
 		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for OCI chart %q version %q", chartRef, version)
 	}
 	if result == nil || result.Manifest == nil || result.Chart == nil {

@@ -26,8 +26,11 @@ import (
 	"helm.sh/helm/v3/pkg/storage/driver"
 )
 
+const defaultChartPullAttempts = 3
+
 type helmManager struct {
-	log zerolog.Logger
+	log               zerolog.Logger
+	chartPullAttempts int
 }
 
 type Option func(*helmManager)
@@ -38,10 +41,19 @@ func WithLogger(log zerolog.Logger) Option {
 	}
 }
 
+func WithChartPullAttempts(attempts int) Option {
+	return func(h *helmManager) {
+		if attempts > 0 {
+			h.chartPullAttempts = attempts
+		}
+	}
+}
+
 // NewManager creates a new Helm manager
 func NewManager(opts ...Option) (Manager, error) {
 	m := &helmManager{
-		log: zerolog.Nop(),
+		log:               zerolog.Nop(),
+		chartPullAttempts: defaultChartPullAttempts,
 	}
 
 	for _, opt := range opts {
