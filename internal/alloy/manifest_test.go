@@ -82,3 +82,45 @@ func TestNodeExporterHelmValues_NamingMatchesReleaseAndAlloySelector(t *testing.
 	assert.Contains(t, cfg, `key      = "app.kubernetes.io/name"`)
 	assert.Contains(t, cfg, `values   = ["`+NodeExporterAppName+`"]`)
 }
+
+// Alloy 1.4.0 releases are reconfigured with these values, so they must stay
+// what earlier releases deployed.
+func TestBaseHelmValues_Unchanged(t *testing.T) {
+	assert.Equal(t, []string{
+		"crds.create=true",
+		"alloy.configMap.create=false",
+		"alloy.configMap.name=grafana-alloy-cm",
+		"alloy.configMap.key=config.alloy",
+		"alloy.clustering.enabled=false",
+		"alloy.enableReporting=false",
+		"alloy.mounts.varlog=false",
+		"controller.type=daemonset",
+		"serviceMonitor.enabled=true",
+		"alloy.mounts.extra[0].name=varlog",
+		"alloy.mounts.extra[0].mountPath=/host/var/log",
+		"alloy.mounts.extra[0].readOnly=true",
+		"controller.volumes.extra[0].name=varlog",
+		"controller.volumes.extra[0].hostPath.path=/var/log",
+	}, BaseHelmValues())
+}
+
+func TestChartJSONValues_Alloy140KeepsChartDefaults(t *testing.T) {
+	vals, err := ChartJSONValues("1.4.0")
+	require.NoError(t, err)
+	assert.Empty(t, vals)
+}
+
+func TestChartJSONValues_UnknownVersionIsRefused(t *testing.T) {
+	for _, v := range []string{"1.5.3", "1.14.0", ""} {
+		_, err := ChartJSONValues(v)
+		assert.Error(t, err, v)
+	}
+}
+
+// Every Alloy version the catalog can deploy needs reviewed values.
+func TestChartJSONValues_CoverEveryCatalogVersion(t *testing.T) {
+	for v := range software.MustGetClusterComponent("alloy").Versions {
+		_, err := ChartJSONValues(string(v))
+		assert.NoError(t, err, "Alloy chart %s has no reviewed Helm values", v)
+	}
+}

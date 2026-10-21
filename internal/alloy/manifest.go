@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"sort"
 
+	"github.com/joomcode/errorx"
+
 	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -81,6 +83,19 @@ func BaseHelmValues() []string {
 		"alloy.mounts.extra[0].readOnly=true",
 		"controller.volumes.extra[0].name=varlog",
 		"controller.volumes.extra[0].hostPath.path=/var/log",
+	}
+}
+
+// ChartJSONValues returns the --set-json values specific to an Alloy chart
+// version. Every catalog version needs an entry reviewed and render-tested for
+// that chart; a version without one is refused rather than given another
+// version's values.
+func ChartJSONValues(chartVersion string) ([]string, error) {
+	switch chartVersion {
+	case "1.4.0":
+		return nil, nil
+	default:
+		return nil, errorx.IllegalArgument.New("no Helm values are defined for Alloy chart %s", chartVersion)
 	}
 }
 
