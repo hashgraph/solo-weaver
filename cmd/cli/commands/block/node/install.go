@@ -8,6 +8,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/provenance"
 	workflowsteps "github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
@@ -130,6 +131,11 @@ var installCmd = &cobra.Command{
 }
 
 func init() {
+	// Block node install does host-level work (firewall, shaping, storage) and
+	// needs the cluster, so it is provisioned-only: the gate must resolve the
+	// target to this host's own cluster. Design section 5.3.
+	common.SetProvenanceNeed(installCmd, provenance.NeedHostAPI)
+
 	installCmd.Flags().StringVar(&flagChartVersion, "chart-version", "", "Helm chart version to use")
 	common.FlagValuesFile().SetVarP(installCmd, &flagValuesFile, false)
 	common.FlagHelmTimeout().SetVarP(installCmd, &flagHelmTimeout, false)

@@ -73,10 +73,27 @@ type Context struct {
 }
 
 // Scope constants for migration registration.
-// Use ScopeStartup for migrations that run at every CLI invocation before any command.
-// Use ScopeBlockNode for migrations that run explicitly during block node upgrade workflows.
+//
+// The startup scope is split by what a migration touches, because the provenance
+// gate runs between the groups (see docs/dev/bring-your-own-cluster.md 5.0, 8.1):
+//   - ScopeStartupFilesystem: reshapes weaver's on-disk state; runs BEFORE the
+//     gate (the gate reads its output). No cluster, no host-system mutation.
+//   - ScopeStartupHost: host-system work (systemd units, sysctl, host files);
+//     runs AFTER the gate on a verified host. Offline-capable (no API).
+//   - ScopeStartupCluster: Kubernetes-API work; runs AFTER the gate on a verified,
+//     reachable cluster. Provisioned-only; skipped for external targets.
+//
+// Use ScopeBlockNode for migrations that run explicitly during block node upgrades.
 const (
-	ScopeStartup   = "startup"
+	// ScopeStartup is deprecated: it was the single pre-split startup scope. It is
+	// retained only so existing tests keep compiling; new registrations use the
+	// three scopes below.
+	ScopeStartup = "startup"
+
+	ScopeStartupFilesystem = "startup-filesystem"
+	ScopeStartupHost       = "startup-host"
+	ScopeStartupCluster    = "startup-cluster"
+
 	ScopeBlockNode = "block-node"
 )
 

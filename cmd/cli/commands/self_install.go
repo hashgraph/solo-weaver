@@ -20,11 +20,15 @@ var selfInstallCmd = &cobra.Command{
 			return err
 		}
 
-		// RunPersistentPreRun (and therefore RunStartupMigrations) is skipped for
-		// the install command, so we invoke it explicitly here. This ensures
-		// startup-scoped migrations such as LegacyBinaryMigration run even when
-		// the user is installing or re-installing.
-		if err := common.RunStartupMigrations(cmd.Context()); err != nil {
+		// RunPersistentPreRun is skipped for the install command, so we invoke the
+		// startup migrations explicitly. Self-install is host-level and has no
+		// cluster, so it runs the filesystem and host migrations (for example
+		// LegacyBinaryMigration) but not the cluster migrations, which the
+		// provenance gate runs later on a verified cluster (design section 8.1).
+		if err := common.RunStartupFilesystemMigrations(cmd.Context()); err != nil {
+			return err
+		}
+		if err := common.RunStartupHostMigrations(cmd.Context()); err != nil {
 			return err
 		}
 
