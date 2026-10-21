@@ -124,3 +124,9 @@ func TestChartJSONValues_CoverEveryCatalogVersion(t *testing.T) {
 		assert.NoError(t, err, "Alloy chart %s has no reviewed Helm values", v)
 	}
 }
+
+func TestBlockNodeServiceMonitorName_MatchesTemplate(t *testing.T) {
+	manifest, err := BlockNodeServiceMonitorManifest("block-node")
+	require.NoError(t, err)
+	assert.Contains(t, manifest, "name: "+BlockNodeServiceMonitorName+"\n")
+}
