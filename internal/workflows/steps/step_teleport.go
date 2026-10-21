@@ -470,12 +470,12 @@ func installTeleportKubeAgent(newManager func() (helm.Manager, error)) automa.Bu
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			rel, err := deployedRelease(hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if rel != nil {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("Teleport agent is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
