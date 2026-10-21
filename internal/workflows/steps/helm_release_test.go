@@ -96,8 +96,9 @@ func TestResolveDeployedChart_Alloy(t *testing.T) {
 		version  string
 		existing bool
 	}{
-		{"absent gets the default", nil, "1.4.0", false},
+		{"absent gets the default", nil, "1.13.1", false},
 		{"deployed 1.4.0 keeps 1.4.0", releaseOf("alloy", "1.4.0", release.StatusDeployed), "1.4.0", true},
+		{"deployed 1.13.1 keeps 1.13.1", releaseOf("alloy", "1.13.1", release.StatusDeployed), "1.13.1", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hm := helm.NewMockManager(gomock.NewController(t))

@@ -86,6 +86,26 @@ func BaseHelmValues() []string {
 	}
 }
 
+// rbacRule is one entry of the Alloy chart's rbac.clusterRules list.
+type rbacRule struct {
+	APIGroups       []string `json:"apiGroups,omitempty"`
+	Resources       []string `json:"resources,omitempty"`
+	NonResourceURLs []string `json:"nonResourceURLs,omitempty"`
+	Verbs           []string `json:"verbs"`
+}
+
+// alloy113ClusterRules is chart 1.13.1's default rbac.clusterRules plus get on
+// nodes/proxy. Chart 1.5.3 dropped nodes/proxy, but kubelet.alloy scrapes the
+// kubelet and cAdvisor through the API server proxy, which needs it. Setting
+// the list replaces the chart default, so it must match the chart it is for.
+var alloy113ClusterRules = []rbacRule{
+	{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "watch"}},
+	{APIGroups: []string{""}, Resources: []string{"nodes/pods"}, Verbs: []string{"get", "list", "watch"}},
+	{APIGroups: []string{""}, Resources: []string{"nodes/metrics"}, Verbs: []string{"get", "list", "watch"}},
+	{APIGroups: []string{""}, Resources: []string{"nodes/proxy"}, Verbs: []string{"get"}},
+	{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}},
+}
+
 // ChartJSONValues returns the --set-json values specific to an Alloy chart
 // version. Every catalog version needs an entry reviewed and render-tested for
 // that chart; a version without one is refused rather than given another
@@ -94,6 +114,12 @@ func ChartJSONValues(chartVersion string) ([]string, error) {
 	switch chartVersion {
 	case "1.4.0":
 		return nil, nil
+	case "1.13.1":
+		rules, err := json.Marshal(alloy113ClusterRules)
+		if err != nil {
+			return nil, errorx.InternalError.Wrap(err, "failed to encode Alloy cluster rules")
+		}
+		return []string{"rbac.clusterRules=" + string(rules)}, nil
 	default:
 		return nil, errorx.IllegalArgument.New("no Helm values are defined for Alloy chart %s", chartVersion)
 	}

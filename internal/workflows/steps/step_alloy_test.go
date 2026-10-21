@@ -108,7 +108,7 @@ func expectAlloyDeploy(t *testing.T, hm *helm.MockManager, version string) {
 func TestInstallAlloy_FreshInstallGetsDefaultAndIsRolledBack(t *testing.T) {
 	hm := helm.NewMockManager(gomock.NewController(t))
 	expectRelease(hm, "alloy", nil, notFound())
-	expectAlloyDeploy(t, hm, "1.4.0")
+	expectAlloyDeploy(t, hm, "1.13.1")
 	spec := chartSpec("alloy")
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
@@ -117,7 +117,7 @@ func TestInstallAlloy_FreshInstallGetsDefaultAndIsRolledBack(t *testing.T) {
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
 	assert.Equal(t, "true", report.Metadata[InstalledByThisStep])
-	assert.Equal(t, "1.4.0", report.Metadata["chartVersion"])
+	assert.Equal(t, "1.13.1", report.Metadata["chartVersion"])
 
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
@@ -127,7 +127,7 @@ func TestInstallAlloy_FreshInstallGetsDefaultAndIsRolledBack(t *testing.T) {
 // An existing release is reconfigured at the chart it runs, with that chart's
 // values, and its rollback never uninstalls it.
 func TestInstallAlloy_ExistingReleaseKeepsItsChart(t *testing.T) {
-	for _, version := range []string{"1.4.0"} {
+	for _, version := range []string{"1.4.0", "1.13.1"} {
 		t.Run(version, func(t *testing.T) {
 			hm := helm.NewMockManager(gomock.NewController(t))
 			expectRelease(hm, "alloy", releaseOf("alloy", version, release.StatusDeployed), nil)
@@ -208,7 +208,7 @@ func TestInstallNodeExporter(t *testing.T) {
 
 func TestInstallPrometheusOperatorCRDs(t *testing.T) {
 	spec := chartSpec("prometheus-operator-crds")
-	require.Equal(t, "24.0.1", spec.Version)
+	require.Equal(t, "32.0.1", spec.Version)
 
 	t.Run("an existing release keeps its CRDs", func(t *testing.T) {
 		hm := helm.NewMockManager(gomock.NewController(t))
@@ -233,7 +233,7 @@ func TestInstallPrometheusOperatorCRDs(t *testing.T) {
 	t.Run("a fresh install gets the default and is rolled back", func(t *testing.T) {
 		hm := helm.NewMockManager(gomock.NewController(t))
 		expectRelease(hm, "prometheus-operator-crds", nil, notFound())
-		hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, "24.0.1", "sha256", spec.Checksum).Return("/tmp/crds.tgz", nil)
+		hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, "32.0.1", "sha256", spec.Checksum).Return("/tmp/crds.tgz", nil)
 		hm.EXPECT().InstallChart(gomock.Any(), spec.Release, "/tmp/crds.tgz", "", spec.Namespace, gomock.Any()).Return(nil, nil)
 		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 		step, err := installPrometheusOperatorCRDs(managerFor(hm)).Build()
