@@ -127,6 +127,35 @@ func TestRefreshLoadsFile(t *testing.T) {
 	}
 }
 
+// TestRefresh_DropsEntriesRemovedFromTheFile verifies that Refresh replaces the
+// in-memory state with the file's content instead of merging it in, so a map
+// entry removed from the file does not survive in memory.
+func TestRefresh_DropsEntriesRemovedFromTheFile(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "state.yaml")
+	writeShaping := func(classes ...string) {
+		t.Helper()
+		onDisk := newTestState(tmp)
+		onDisk.BlockNodeState.Shaping = &ShapingState{ShapeOverrides: map[string]models.ShapeOverride{}}
+		for _, class := range classes {
+			onDisk.BlockNodeState.Shaping.ShapeOverrides[class] = models.ShapeOverride{Rate: "100mbit"}
+		}
+		b, err := yaml.Marshal(onDisk)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(tmp, b, 0o644))
+	}
+
+	m, err := NewStateManager(WithState(newTestState(tmp)), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+
+	writeShaping("publisher", "partner")
+	require.NoError(t, m.Refresh())
+	require.Len(t, m.State().BlockNodeState.Shaping.ShapeOverrides, 2)
+
+	writeShaping("publisher")
+	require.NoError(t, m.Refresh())
+	require.NotContains(t, m.State().BlockNodeState.Shaping.ShapeOverrides, "partner")
+}
+
 // TestNewStateManager_DoesNotAutoRefresh verifies that NewStateManager does NOT
 // automatically load state from disk during construction.
 // Callers are expected to call Refresh() explicitly when they want to load persisted state.

@@ -71,8 +71,7 @@ func TestPersistedSnapshot_IsolatedFromMutationOfTheSource(t *testing.T) {
 	require.Equal(t, "abc", snapshot.ConsensusNodes["node1"].ConfigHashes["app"].Hash)
 }
 
-// A Refresh decodes the file onto a shallow Clone, writing through pointers the
-// previous State() copy still holds. The snapshot must not see that write.
+// A Refresh of a changed file must not reach a snapshot taken before it.
 func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm, err := NewStateManager(WithState(nestedState(stateFile)), WithFileManager(newTestFileManager(t)))
@@ -80,7 +79,6 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 	require.NoError(t, sm.FlushState())
 	require.NoError(t, sm.Refresh())
 
-	plainCopy := sm.State()
 	snapshot, err := sm.State().PersistedSnapshot()
 	require.NoError(t, err)
 
@@ -91,8 +89,6 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(stateFile, b, 0o600))
 	require.NoError(t, sm.Refresh())
 
-	require.Equal(t, "eth9", plainCopy.BlockNodeState.Shaping.EgressInterface,
-		"precondition: a plain copy of State() aliases the refreshed state")
 	require.Equal(t, "eth0", snapshot.BlockNodeState.Shaping.EgressInterface)
 	require.Contains(t, snapshot.BlockNodeState.Shaping.ShapeOverrides, "publisher")
 }

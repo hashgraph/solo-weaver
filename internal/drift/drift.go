@@ -39,7 +39,7 @@ type Producer func(baseline, live state.State) []Change
 
 // DefaultProducers returns the producer of every component wired for detection.
 func DefaultProducers() []Producer {
-	return []Producer{Teleport}
+	return []Producer{Teleport, BlockNode}
 }
 
 // Detect runs every producer against the same baseline and live state, keeping
