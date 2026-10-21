@@ -301,11 +301,7 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 
 			leftovers, err := teleportNodeAgentLeftovers(installer.Version())
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
-					errorx.Decorate(err, "cannot check this host for an existing Teleport node agent"),
-					reasons.PreconditionNotMet,
-					fmt.Sprintf("Check that solo-provisioner runs as root and can read %s, %s and /etc/teleport", models.Paths().SandboxBinDir, models.SystemBinDir))),
-					automa.WithMetadata(meta))
+				return automa.FailureReport(stp, automa.WithError(teleportFilesUnreadable(err)), automa.WithMetadata(meta))
 			}
 			if len(leftovers) > 0 {
 				return automa.FailureReport(stp, automa.WithError(teleportLeftoversRefused(installer.Version(), leftovers)), automa.WithMetadata(meta))
@@ -361,9 +357,12 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 		})
 }
 
-// teleportNodeAgentLeftovers is a package var so tests can describe the host's
-// Teleport files without creating them.
-var teleportNodeAgentLeftovers = software.TeleportNodeAgentLeftovers
+// teleportNodeAgentLeftovers and teleportNodeAgentConfiguration are package vars
+// so tests can describe the host's Teleport files without creating them.
+var (
+	teleportNodeAgentLeftovers     = software.TeleportNodeAgentLeftovers
+	teleportNodeAgentConfiguration = software.TeleportNodeAgentConfiguration
+)
 
 func teleportLeftoversRefused(version string, files []string) error {
 	return errx.Decorate(
@@ -371,7 +370,26 @@ func teleportLeftoversRefused(version string, files []string) error {
 			version, strings.Join(files, ", ")),
 		reasons.PreconditionNotMet,
 		"To keep the existing agent, restore its missing binaries from the Teleport release it runs, then re-run 'solo-provisioner teleport node install'",
-		"To replace it, run 'solo-provisioner teleport node uninstall', delete any of the files above that remain, then re-run 'solo-provisioner teleport node install'")
+		teleportReplaceHint)
+}
+
+func teleportPartlyConfiguredRefused(files []string) error {
+	return errx.Decorate(
+		errorx.IllegalState.New("the Teleport node agent is only partly configured, so it was not configured again; these files were left unchanged: %s",
+			strings.Join(files, ", ")),
+		reasons.PreconditionNotMet,
+		fmt.Sprintf("To keep the existing agent, restore its missing command links in %s (each points to the binary of the same name in %s), then re-run 'solo-provisioner teleport node install'",
+			models.SystemBinDir, models.Paths().SandboxBinDir),
+		teleportReplaceHint)
+}
+
+const teleportReplaceHint = "To replace it, run 'solo-provisioner teleport node uninstall', delete any of the files above that remain, then re-run 'solo-provisioner teleport node install'"
+
+func teleportFilesUnreadable(err error) error {
+	return errx.Decorate(
+		errorx.Decorate(err, "cannot check this host for an existing Teleport node agent"),
+		reasons.PreconditionNotMet,
+		fmt.Sprintf("Check that solo-provisioner runs as root and can read %s, %s and /etc/teleport", models.Paths().SandboxBinDir, models.SystemBinDir))
 }
 
 // configureTeleportNodeAgent configures the Teleport node agent (following kubelet pattern)
@@ -404,6 +422,17 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 			if configured {
 				meta[AlreadyConfigured] = "true"
 				return automa.SkippedReport(stp, automa.WithDetail("teleport is already configured"), automa.WithMetadata(meta))
+			}
+
+			// Configure rewrites the command links before teleport configure can
+			// refuse an existing config file, so a partly configured agent must be
+			// refused here.
+			files, err := teleportNodeAgentConfiguration(installer.Version())
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(teleportFilesUnreadable(err)), automa.WithMetadata(meta))
+			}
+			if len(files) > 0 {
+				return automa.FailureReport(stp, automa.WithError(teleportPartlyConfiguredRefused(files)), automa.WithMetadata(meta))
 			}
 
 			err = installer.Configure()

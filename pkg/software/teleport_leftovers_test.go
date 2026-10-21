@@ -124,3 +124,41 @@ func TestTeleportNodeAgentLeftovers_UnknownVersionIsAnError(t *testing.T) {
 	_, err := TeleportNodeAgentLeftovers("9.9.9")
 	require.Error(t, err)
 }
+
+// A configured agent whose binaries are intact but one command link is gone
+// reports its configuration, so configure is refused rather than run again.
+func TestConfiguredFiles_ConfiguredAgentMissingOneLink(t *testing.T) {
+	h := newTeleportHost(t)
+	for _, name := range teleportBinaryNames {
+		h.writeBinary(t, name, "old")
+	}
+	require.NoError(t, os.WriteFile(h.config, []byte("config"), 0o600))
+	var want []string
+	for _, name := range []string{"tctl", "teleport", "teleport-update"} {
+		link := filepath.Join(h.system, name)
+		require.NoError(t, os.Symlink(filepath.Join(h.sandbox, name), link))
+		want = append(want, link)
+	}
+	want = append(want, h.config)
+
+	got, err := configuredFiles([]string{h.config, h.unit}, h.links())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, want, got)
+}
+
+// Right after a fresh install there are binaries but no configuration yet.
+func TestConfiguredFiles_FreshInstallHasNone(t *testing.T) {
+	h := newTeleportHost(t)
+	for _, name := range teleportBinaryNames {
+		h.writeBinary(t, name, "new")
+	}
+
+	got, err := configuredFiles([]string{h.config, h.unit}, h.links())
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestTeleportNodeAgentConfiguration_UnknownVersionIsAnError(t *testing.T) {
+	_, err := TeleportNodeAgentConfiguration("9.9.9")
+	require.Error(t, err)
+}

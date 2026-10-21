@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,5 +241,63 @@ func TestInstallTeleportNodeAgent_InstalledAgentIsSkipped(t *testing.T) {
 	inst.EXPECT().IsInstalled().Return(true, nil)
 
 	require.NoError(t, runInstallTeleportNodeAgent(t, inst))
+	assert.Equal(t, 0, *calls)
+}
+
+func runConfigureTeleportNodeAgent(t *testing.T, inst software.Software) (*automa.Report, error) {
+	t.Helper()
+	step, err := configureTeleportNodeAgent(func(...software.InstallerOption) (software.Software, error) { return inst, nil }).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	return report, report.Error
+}
+
+func stubTeleportConfiguration(t *testing.T, files []string) *int {
+	t.Helper()
+	calls := 0
+	orig := teleportNodeAgentConfiguration
+	teleportNodeAgentConfiguration = func(version string) ([]string, error) {
+		calls++
+		assert.Equal(t, "18.11.3", version)
+		return files, nil
+	}
+	t.Cleanup(func() { teleportNodeAgentConfiguration = orig })
+	return &calls
+}
+
+// An agent with intact binaries and its config file, but a missing command
+// link, is refused before Configure rewrites any link. gomock fails if
+// Configure is called.
+func TestConfigureTeleportNodeAgent_RefusesAPartlyConfiguredAgent(t *testing.T) {
+	stubTeleportConfiguration(t, []string{"/etc/teleport/teleport.yaml", "/usr/local/bin/tctl"})
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsConfigured().Return(false, nil)
+	inst.EXPECT().Version().Return("18.11.3").AnyTimes()
+
+	_, err := runConfigureTeleportNodeAgent(t, inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only partly configured")
+	assert.Contains(t, err.Error(), "/etc/teleport/teleport.yaml")
+}
+
+func TestConfigureTeleportNodeAgent_FreshInstallIsConfigured(t *testing.T) {
+	stubTeleportConfiguration(t, nil)
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsConfigured().Return(false, nil)
+	inst.EXPECT().Version().Return("18.11.3").AnyTimes()
+	inst.EXPECT().Configure().Return(nil)
+
+	report, err := runConfigureTeleportNodeAgent(t, inst)
+	require.NoError(t, err)
+	assert.Equal(t, "true", report.Metadata[ConfiguredByThisStep])
+}
+
+func TestConfigureTeleportNodeAgent_ConfiguredAgentIsSkipped(t *testing.T) {
+	calls := stubTeleportConfiguration(t, []string{"unused"})
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsConfigured().Return(true, nil)
+
+	_, err := runConfigureTeleportNodeAgent(t, inst)
+	require.NoError(t, err)
 	assert.Equal(t, 0, *calls)
 }
