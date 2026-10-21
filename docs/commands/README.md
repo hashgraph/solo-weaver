@@ -261,16 +261,23 @@ sudo solo-provisioner teleport node uninstall
 ```bash
 sudo solo-provisioner teleport cluster install --values=/path/to/teleport-values.yaml
 
-# Pin the chart version
+# Pin a chart version the infrastructure catalog lists
 sudo solo-provisioner teleport cluster install \
   --values=/path/to/teleport-values.yaml \
-  --version=16.0.0
+  --version=18.6.4
 ```
 
 | Flag | Required | What it does |
 |---|---|---|
 | `--values` | yes | Teleport Helm values file |
-| `--version` | no | Teleport Helm chart version |
+| `--version` | no | Teleport Helm chart version (default: the catalog default) |
+
+How the chart is checked depends on the version:
+
+- **No `--version`, or a version the infrastructure catalog lists:** the chart is checked against its catalog checksum before it is installed. A checksum mismatch or a failed download stops the install.
+- **Any other version:** the chart is installed from the Teleport repository without an integrity check, and a warning is logged. Use this only for a version you have verified yourself.
+
+`teleport.version` in the config file works the same way as `--version`. Pick a version no newer than the Teleport cluster the agent joins. If the agent's Helm release is already deployed, `install` leaves it as it is, whatever chart version it runs.
 
 Remove the Helm release:
 
