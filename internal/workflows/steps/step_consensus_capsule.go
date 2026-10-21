@@ -16,6 +16,7 @@ import (
 	"github.com/automa-saga/version"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -112,6 +113,18 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 }
 
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
+// DesiredOrbitState is the Orbit this install requests: the fields weaver sets
+// from the install inputs, with every other tracked field at its zero value
+// (operator default). EnsureOrbit creates the Orbit from it, requires an existing
+// Orbit to match it, and the install handler records it as the drift baseline.
+func DesiredOrbitState(inputs models.ConsensusNodeInputs) state.ConsensusOrbitState {
+	return state.ConsensusOrbitState{
+		ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
+		LedgerId:                 inputs.LedgerId,
+		ChainId:                  inputs.ChainId,
+	}
+}
+
 func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureOrbitStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -135,6 +148,30 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			}
 
 			if exists {
+				// The Orbit is shared by every node that names it and is never
+				// re-applied here, so a node asking for a different Orbit would
+				// silently run against the wrong network or mode.
+				spec, _, err := kc.GetResourceNestedMap(ctx,
+					kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, "spec")
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read Orbit %s", inputs.OrbitName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
+				}
+				if diffs := DesiredOrbitState(inputs).Diff(state.ConsensusOrbitStateFromSpec(spec)); len(diffs) > 0 {
+					parts := make([]string, 0, len(diffs))
+					for _, d := range diffs {
+						parts = append(parts, fmt.Sprintf("%s: Orbit has %q, install requests %q", d.Field, d.Live, d.Want))
+					}
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("Orbit %q already exists and differs from this install (%s); every node on an Orbit must use the same Orbit settings",
+							inputs.OrbitName, strings.Join(parts, "; ")),
+						reasons.PreconditionNotMet,
+						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
+						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
+						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
+				}
 				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
 					AlreadyInstalled: "true",
