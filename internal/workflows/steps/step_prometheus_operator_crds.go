@@ -24,7 +24,7 @@ const (
 // These CRDs are required for ServiceMonitor and PodMonitor support in Alloy.
 func SetupPrometheusOperatorCRDs() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupPrometheusCRDsStepId).Steps(
-		installPrometheusOperatorCRDs(),
+		installPrometheusOperatorCRDs(newHelmManager),
 		isPrometheusOperatorCRDsReady(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -39,23 +39,24 @@ func SetupPrometheusOperatorCRDs() *automa.WorkflowBuilder {
 		})
 }
 
-func installPrometheusOperatorCRDs() automa.Builder {
+func installPrometheusOperatorCRDs(newManager func() (helm.Manager, error)) automa.Builder {
 	spec := chartSpec("prometheus-operator-crds")
 	return automa.NewStepBuilder().WithId(InstallPrometheusCRDsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			// A deployed release keeps the CRDs it installed, at any version.
+			rel, err := deployedRelease(hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if rel != nil {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("Prometheus Operator CRDs are already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
@@ -92,7 +93,7 @@ func installPrometheusOperatorCRDs() automa.Builder {
 			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
