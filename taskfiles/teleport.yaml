@@ -40,7 +40,7 @@ tasks:
         docker run --hostname "$NODE_IP" --rm \
           --entrypoint=/usr/local/bin/teleport \
           -v teleport_teleport-config:/etc/teleport \
-          public.ecr.aws/gravitational/teleport-distroless:18.6.4 \
+          public.ecr.aws/gravitational/teleport-distroless:18.11.3 \
           configure --roles=proxy,auth --public-addr="$NODE_IP:3080" -o /etc/teleport/teleport.yaml
         
         # Step 5: Restart Docker daemon to ensure iptables chains are clean
