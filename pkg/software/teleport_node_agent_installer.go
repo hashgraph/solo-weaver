@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"sort"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -327,4 +328,67 @@ func (ti *teleportNodeAgentInstaller) verifySandboxConfigs() (models.StringMap, 
 	}
 
 	return meta, nil
+}
+
+// TeleportNodeAgentLeftovers returns the node agent files that make it unsafe to
+// install version on a host where the agent is not fully installed: binaries
+// that are not version's, and the config file, unit file and command links of
+// an agent that was configured. A host with none of them is fresh, or holds an
+// install of version that stopped before configuration, which install can
+// finish. Installing over a configured agent would replace its patched unit
+// file, and teleport configure then refuses the existing config file.
+func TeleportNodeAgentLeftovers(version string) ([]string, error) {
+	catalog, err := LoadInfrastructureCatalog()
+	if err != nil {
+		return nil, NewConfigLoadError(err)
+	}
+	artifact, err := catalog.GetHostArtifact(TeleportBinaryName)
+	if err != nil {
+		return nil, err
+	}
+	binaries, err := platformBinaries(artifact, version, func(binaryName string) string {
+		return installedBinaryPath(artifact.Name, binaryName)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	links := make(map[string]string, len(binaries))
+	for _, b := range binaries {
+		links[path.Join(models.SystemBinDir, path.Base(b.path))] = b.path
+	}
+	deployment := []string{teleportConfigFile, path.Join(models.SystemdUnitFilesDir, teleportServiceFileName)}
+	return teleportLeftovers(binaries, deployment, links)
+}
+
+// teleportLeftovers is the testable core of TeleportNodeAgentLeftovers. links
+// maps each command link to the sandbox binary it points to when weaver made it.
+func teleportLeftovers(binaries []platformBinary, deployment []string, links map[string]string) ([]string, error) {
+	var found []string
+	for _, b := range binaries {
+		digest, err := fileDigest(b.path, b.algorithm)
+		if errorx.IsOfType(err, FileNotFoundError) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if digest != b.checksum {
+			found = append(found, b.path)
+		}
+	}
+	for _, p := range deployment {
+		if _, err := os.Lstat(p); err == nil {
+			found = append(found, p)
+		} else if !os.IsNotExist(err) {
+			return nil, NewFileSystemError(err).WithProperty(filePathProperty, p)
+		}
+	}
+	for link, target := range links {
+		if got, err := os.Readlink(link); err == nil && got == target {
+			found = append(found, link)
+		}
+	}
+	sort.Strings(found)
+	return found, nil
 }
