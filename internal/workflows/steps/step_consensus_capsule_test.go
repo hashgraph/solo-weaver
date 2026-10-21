@@ -289,3 +289,70 @@ func TestSplitConsensusImage(t *testing.T) {
 	assert.Equal(t, "", repo)
 	assert.Equal(t, "consensus-node", name)
 }
+
+func capsuleSecretsFor(t *testing.T, fake *fakeCapsuleClient, in models.ConsensusNodeInputs) (*operatorv1alpha1.ConsensusSecretResources, automa.TypeStatus, error) {
+	t.Helper()
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	if report.Status != automa.StatusSuccess {
+		return nil, report.Status, report.Error
+	}
+	return findCapsule(t, fake.appliedObjs).Spec.Secrets.SecretResources, report.Status, nil
+}
+
+func secretInputs() models.ConsensusNodeInputs {
+	return models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             2,
+		AccountId:          "0.0.5",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		GrpcTlsSecret:      "node2-grpc-tls-keys",
+		SigningSecret:      "node2-gossip-keys",
+	}
+}
+
+// The capsule must reference the neutral, index-free inner keys that
+// `consensus keys import` writes, and the admin public key secret when one was
+// resolved.
+func TestCreateConsensusCapsule_NeutralKeyNamesAndAdminKey(t *testing.T) {
+	in := secretInputs()
+	in.SigningSecret = "node2-gossip-keys-20261101-3fa9c2e1"
+	in.GrpcTlsSecret = "node2-grpc-tls-keys-20261101-b71e04aa"
+	in.AdminKeySecret = "node2-admin-pubkey-9c0d1e2f"
+	fake := &fakeCapsuleClient{existing: map[string]string{in.AdminKeySecret: "x"}}
+	sr, status, err := capsuleSecretsFor(t, fake, in)
+	require.Equal(t, automa.StatusSuccess, status, err)
+
+	assert.Equal(t, in.SigningSecret, sr.SigningPrivateKey.SecretName)
+	assert.Equal(t, "s-private.pem", sr.SigningPrivateKey.KeyName)
+	assert.Equal(t, "s-public.pem", sr.SigningPublicCertificate.KeyName)
+	assert.Equal(t, in.GrpcTlsSecret, sr.GrpcTlsPrivateKey.SecretName)
+	assert.Equal(t, "hedera.key", sr.GrpcTlsPrivateKey.KeyName)
+	assert.Equal(t, "hedera.crt", sr.GrpcTlsPublicCertificate.KeyName)
+	require.NotNil(t, sr.AdminPublicKey)
+	assert.Equal(t, in.AdminKeySecret, sr.AdminPublicKey.SecretName)
+	assert.Equal(t, "admin.pub", sr.AdminPublicKey.KeyName)
+}
+
+func TestCreateConsensusCapsule_NoAdminKeyWhenNoneResolved(t *testing.T) {
+	sr, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{}}, secretInputs())
+	require.Equal(t, automa.StatusSuccess, status, err)
+	assert.Nil(t, sr.AdminPublicKey)
+}
+
+func TestCreateConsensusCapsule_MissingAdminKeySecretFails(t *testing.T) {
+	in := secretInputs()
+	in.AdminKeySecret = "my-admin"
+
+	_, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{}}, in)
+	assert.NotEqual(t, automa.StatusSuccess, status, "a named admin secret that is missing must fail")
+	require.Error(t, err)
+
+	sr, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{"my-admin": "x"}}, in)
+	require.Equal(t, automa.StatusSuccess, status, err)
+	assert.Equal(t, "my-admin", sr.AdminPublicKey.SecretName)
+}
