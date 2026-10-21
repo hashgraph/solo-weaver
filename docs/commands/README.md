@@ -277,7 +277,7 @@ How the chart is checked depends on the version:
 - **No `--version`, or a version the infrastructure catalog lists:** the chart is checked against its catalog checksum before it is installed. A checksum mismatch or a failed download stops the install.
 - **Any other version:** the chart is installed from the Teleport repository without an integrity check, and a warning is logged. Use this only for a version you have verified yourself.
 
-`teleport.version` in the config file works the same way as `--version`. Pick a version no newer than the Teleport cluster the agent joins. If the agent's Helm release is already deployed, `install` leaves it as it is, whatever chart version it runs.
+`teleport.version` in the config file works the same way as `--version`. Pick a version no newer than the Teleport cluster the agent joins. If the agent's Helm release is already deployed, `install` leaves it as it is, whatever chart version it runs. A release in any other state, such as failed or pending, is refused; check it with `helm history teleport-agent -n teleport-agent`.
 
 Remove the Helm release:
 

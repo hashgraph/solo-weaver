@@ -10,6 +10,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -105,7 +106,7 @@ func TestInstallTeleportKubeAgent_PullsAndVerifiesCatalogVersions(t *testing.T) 
 
 			// gomock fails on any call not listed here, including a second pull.
 			hm := helm.NewMockManager(gomock.NewController(t))
-			hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
+			expectRelease(hm, teleportClusterAgent, nil, notFound())
 			hm.EXPECT().AddRepo(spec.RepoAlias, spec.Repo, gomock.Any()).Return(nil, nil)
 			hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, spec.Version, "sha256", spec.Checksum).Return(localChart, nil)
 			hm.EXPECT().InstallChart(gomock.Any(), spec.Release, localChart, "", spec.Namespace, gomock.Any()).Return(nil, nil)
@@ -125,7 +126,7 @@ func TestInstallTeleportKubeAgent_PullFailureStopsTheInstall(t *testing.T) {
 	require.NoError(t, err)
 
 	hm := helm.NewMockManager(gomock.NewController(t))
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
+	expectRelease(hm, teleportClusterAgent, nil, notFound())
 	hm.EXPECT().AddRepo(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, "18.6.4", "sha256", spec.Checksum).
 		Return("", errors.New("checksum mismatch"))
@@ -139,7 +140,7 @@ func TestInstallTeleportKubeAgent_UnlistedVersionInstallsUnverified(t *testing.T
 	spec := chartSpec(teleportClusterAgent)
 
 	hm := helm.NewMockManager(gomock.NewController(t))
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
+	expectRelease(hm, teleportClusterAgent, nil, notFound())
 	hm.EXPECT().AddRepo(spec.RepoAlias, spec.Repo, gomock.Any()).Return(nil, nil)
 	hm.EXPECT().InstallChart(gomock.Any(), spec.Release, spec.Chart, "16.0.0", spec.Namespace, gomock.Any()).Return(nil, nil)
 
@@ -149,16 +150,42 @@ func TestInstallTeleportKubeAgent_UnlistedVersionInstallsUnverified(t *testing.T
 	assert.Equal(t, "false", meta["chartVerified"])
 }
 
-// A deployed release is left alone whatever chart version it runs.
+// A deployed release is left alone whatever chart version it runs, even when
+// --version asks for another one.
 func TestInstallTeleportKubeAgent_DeployedReleaseIsSkipped(t *testing.T) {
+	for _, requested := range []string{"", "18.11.3"} {
+		t.Run("requested "+requested, func(t *testing.T) {
+			withTeleportVersion(t, requested)
+			hm := helm.NewMockManager(gomock.NewController(t))
+			expectRelease(hm, teleportClusterAgent, releaseOf("teleport-kube-agent", "18.6.4", release.StatusDeployed), nil)
+
+			meta, err := runInstallTeleportKubeAgent(t, hm)
+			require.NoError(t, err)
+			assert.Equal(t, "true", meta[AlreadyInstalled])
+			assert.Empty(t, meta[InstalledByThisStep])
+		})
+	}
+}
+
+// A release Helm cannot install over is refused before the chart is fetched.
+func TestInstallTeleportKubeAgent_RefusesAReleaseThatIsNotDeployed(t *testing.T) {
 	withTeleportVersion(t, "")
-	spec := chartSpec(teleportClusterAgent)
+	for _, status := range notDeployedStates {
+		t.Run(string(status), func(t *testing.T) {
+			hm := helm.NewMockManager(gomock.NewController(t))
+			expectRelease(hm, teleportClusterAgent, releaseOf("teleport-kube-agent", "18.6.4", status), nil)
 
-	hm := helm.NewMockManager(gomock.NewController(t))
-	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+			_, err := runInstallTeleportKubeAgent(t, hm)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not deployed")
+		})
+	}
 
-	meta, err := runInstallTeleportKubeAgent(t, hm)
-	require.NoError(t, err)
-	assert.Equal(t, "true", meta[AlreadyInstalled])
-	assert.Empty(t, meta[InstalledByThisStep])
+	t.Run("lookup error", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, teleportClusterAgent, nil, errors.New("connection refused"))
+
+		_, err := runInstallTeleportKubeAgent(t, hm)
+		require.Error(t, err)
+	})
 }
