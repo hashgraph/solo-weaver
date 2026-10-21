@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -22,12 +23,14 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 const (
 	SetupAlloyStepId                = "setup-alloy"
 	PreflightAlloyPhaseId           = "preflight-alloy"
 	PreCheckAlloyStepId             = "precheck-alloy"
+	CheckAlloyReleasesStepId        = "check-alloy-releases"
 	InstallAlloyStepId              = "install-alloy"
 	InstallNodeExporterStepId       = "install-node-exporter"
 	DeployAlloyConfigStepId         = "deploy-alloy-config"
@@ -79,6 +82,7 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 func PreflightAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(PreflightAlloyPhaseId).Steps(
 		preCheckAlloy(),
+		checkAlloyReleases(newHelmManager),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
@@ -230,6 +234,43 @@ func preCheckAlloy() automa.Builder {
 		})
 }
 
+// checkAlloyReleases reads the Alloy release before anything is changed. It must
+// run a chart version this build supports; any other state stops the run here
+// rather than after the ConfigMap is replaced.
+func checkAlloyReleases(newManager func() (helm.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(CheckAlloyReleasesStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			hm, err := newManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			spec, existing, err := resolveDeployedChart(hm, "alloy")
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if _, err := alloy.ChartJSONValues(spec.Version); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.Internal)))
+			}
+
+			meta := map[string]string{"alloyChartVersion": spec.Version}
+			if existing {
+				meta["alloyInstalled"] = "true"
+			}
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking existing Alloy releases")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Existing Alloy releases cannot be changed safely")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Existing Alloy releases checked")
+		})
+}
+
 // SetupAlloy returns a workflow builder that sets up Grafana Alloy for observability.
 func SetupAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupAlloyStepId).Steps(
@@ -237,7 +278,7 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		installNodeExporter(),
 		isNodeExporterPodsReady(),
 		deployAlloyConfig(),
-		installAlloy(),
+		installAlloy(newHelmManager),
 		deployBlockNodeMonitoring(),
 		isAlloyPodsReady(),
 	).
@@ -404,33 +445,35 @@ func createAlloyNamespace() automa.Builder {
 		})
 }
 
-func installAlloy() automa.Builder {
-	spec := chartSpec("alloy")
+func installAlloy(newManager func() (helm.Manager, error)) automa.Builder {
+	defaults := chartSpec("alloy")
 	return automa.NewStepBuilder().WithId(InstallAlloyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
 
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
 
-			// Check if already installed to provide better logging and track for rollback
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			// An existing release is reconfigured at the chart version it runs,
+			// never moved to the catalog default.
+			spec, existing, err := resolveDeployedChart(hm, "alloy")
 			if err != nil {
-				l.Warn().Err(err).Msg("Failed to check if Grafana Alloy is installed, proceeding with install/upgrade")
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			chartValues, err := alloy.ChartJSONValues(spec.Version)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.Internal)))
 			}
 
-			// Track whether this is a fresh install (for rollback purposes)
-			isFreshInstall := !isInstalled
-
-			if isInstalled {
-				l.Info().Msg("Grafana Alloy is already installed, upgrading configuration")
+			if existing {
+				l.Info().Str("chartVersion", spec.Version).Msg("Grafana Alloy is already installed, reconfiguring it at its chart version")
 			} else {
-				l.Info().Msg("Installing Grafana Alloy")
+				l.Info().Str("chartVersion", spec.Version).Msg("Installing Grafana Alloy")
 			}
 
 			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
@@ -463,8 +506,6 @@ func installAlloy() automa.Builder {
 				l.Info().Msg("Enabling hostNetwork for Alloy to access localhost services")
 			}
 
-			// Use DeployChart for idempotent install/upgrade
-			// This will install if not present, or upgrade if already installed
 			_, err = hm.DeployChart(
 				ctx,
 				spec.Release,
@@ -473,7 +514,8 @@ func installAlloy() automa.Builder {
 				spec.Namespace,
 				helm.DeployChartOptions{
 					ValueOpts: &values.Options{
-						Values: helmValues,
+						Values:     helmValues,
+						JSONValues: chartValues,
 					},
 					CreateNamespace: true,
 					Atomic:          true,
@@ -485,13 +527,13 @@ func installAlloy() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Only set InstalledByThisStep if this was a fresh install
-			// This prevents rollback from uninstalling a pre-existing release
-			if isFreshInstall {
+			meta["chartVersion"] = spec.Version
+			// Rollback may only uninstall a release this run created.
+			if existing {
+				meta["upgraded"] = "true"
+			} else {
 				meta[InstalledByThisStep] = "true"
 				stp.State().Local().Set(InstalledByThisStep, true)
-			} else {
-				meta["upgraded"] = "true"
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
@@ -501,12 +543,12 @@ func installAlloy() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(spec.Release, spec.Namespace)
+			err = hm.UninstallChart(defaults.Release, defaults.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
