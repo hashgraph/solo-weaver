@@ -47,17 +47,19 @@ tasks:
       - task: uat:bootstrap
 
   uat:secrets:
-    desc: "Inside VM: create ALL secrets for a consensus deployment in one shot — the private-registry image-pull secret in BOTH the operator namespace (for 'kube operator install') and the consensus namespace (threaded onto the pods), plus the sample consensus-node gossip/gRPC secrets. Same private registry serves both, so one credential covers everything. Select the registry host with REGISTRY= (default ghcr.io), the consensus namespace with NS= (default hiero-network-1), the operator namespace with OPERATOR_NS= (default solo-operator), a single node with NODE=node2, and the pull-secret name with SECRET_NAME= (default private-registry-creds). Run AFTER 'kube cluster install'. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
+    desc: "Inside VM: create ALL secrets for a consensus deployment in one shot — the private-registry image-pull secret in BOTH the operator namespace (for 'kube operator install') and the consensus namespace (threaded onto the pods), plus the sample consensus-node gossip/gRPC secrets. Same private registry serves both, so one credential covers everything. Select the registry host with REGISTRY= (default ghcr.io), the consensus namespace with NS= (default hiero-network-1), the operator namespace with OPERATOR_NS= (default solo-operator), a single node with NODE=node2, skip the sample node secrets with SAMPLE_KEYS=false, and the pull-secret name with SECRET_NAME= (default private-registry-creds). Run AFTER 'kube cluster install'. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
     vars:
       NS: '{{.NS | default "hiero-network-1"}}'
       OPERATOR_NS: '{{.OPERATOR_NS | default "solo-operator"}}'
       NODE: '{{.NODE | default ""}}'
       SECRET_NAME: '{{.SECRET_NAME | default "private-registry-creds"}}'
       REGISTRY: '{{.REGISTRY | default "ghcr.io"}}'
+      SAMPLE_KEYS: '{{.SAMPLE_KEYS | default "true"}}'
     cmds:
       - |
         set -e
         DIR=/mnt/solo-weaver/test/sample-secrets
+        SAMPLE_KEYS='{{.SAMPLE_KEYS}}'
         NS='{{.NS}}'; OPERATOR_NS='{{.OPERATOR_NS}}'; NODE='{{.NODE}}'; SECRET_NAME='{{.SECRET_NAME}}'; REGISTRY='{{.REGISTRY}}'
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (token with read:packages) in a root .env file (see .env.example)}"
@@ -94,8 +96,11 @@ tasks:
         # Sample consensus-node gossip/gRPC secrets (consensus namespace only). The
         # sample manifests carry a fixed namespace; rewrite it to $NS on apply so the
         # same files work for any orbit/namespace.
+        # SAMPLE_KEYS=false skips them (create real keys with `consensus keys init`).
         apply_one() { sed "s/namespace: hiero-network-1/namespace: $NS/" "$1" | kubectl apply -f -; }
-        if [ -n "$NODE" ]; then
+        if [ "$SAMPLE_KEYS" = "false" ]; then
+          echo "▶ Skipping sample gossip/gRPC secrets (SAMPLE_KEYS=false)"
+        elif [ -n "$NODE" ]; then
           echo "▶ Applying sample gossip/gRPC secrets for $NODE in namespace $NS ..."
           apply_one "$DIR/$NODE.yaml"
         else
@@ -107,7 +112,7 @@ tasks:
         echo '✓ Applied:'
         kubectl -n "$OPERATOR_NS" get secret "$SECRET_NAME"
         kubectl -n "$NS" get secret "$SECRET_NAME"
-        kubectl -n "$NS" get secret -l app=consensus-node
+        [ "$SAMPLE_KEYS" = "false" ] || kubectl -n "$NS" get secret -l app=consensus-node
 
   uat:registry:login:ghcr:
     desc: "Inside VM: write ghcr.io credentials into the Helm registry config that 'solo-provisioner ... install' reads, so it can pull the PRIVATE solo-operator OCI chart (oci://ghcr.io/hashgraph/solo-operator/...). Because install runs under sudo (root), the auth is written to BOTH root's and the invoking user's config. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN (root .env; see .env.example). Run once per VM before 'kube cluster install --node-type consensus'."

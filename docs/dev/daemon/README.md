@@ -74,8 +74,11 @@ on daemon self-upgrade, #500). Keep the upgrade package **config-only** for a cl
   task, which sanity-checks the grant with `kubectl auth can-i`.
 - **Per-node secrets.** `consensus node install` needs the gossip signing secret
   (`node<N>-gossip-keys`) and gRPC TLS secret (`node<N>-grpc-tls-keys`) in the orbit
-  namespace, plus a pull secret for private images. The `secrets` task creates these
-  from the sample manifests (reuses `uat:secrets`).
+  namespace, plus a pull secret for private images. The `secrets` task creates the pull
+  secret (reuses `uat:secrets`); the `keys` task generates real keys with
+  `consensus keys init` and creates the dated, labelled node secrets
+  (`node<N>-gossip-keys-<date>-<fp8>`, …), which `consensus node install` finds by label.
+  Use `task -d docs/dev/daemon secrets SAMPLE_KEYS=true` to apply the sample secrets instead.
 - **A solo-operator checkout at v0.7.0+ on the host** (`SOLO_OPERATOR_DIR`, defaults
   to a sibling of solo-weaver) for `beacon` and the deployment zips — the `prep` task
   git-clones it there if it is missing (needs `GITHUB_USER`/`GITHUB_ACCESS_TOKEN` in
@@ -123,11 +126,12 @@ task -d docs/dev/daemon prep            # clone solo-operator (if needed) + buil
 # substrate — the daemon's real install path (single-node k8s)
 task -d docs/dev/daemon rebuild         # build CLI + daemon on the VM + self-install (uat:rebuild)
 task -d docs/dev/daemon cluster         # ghcr login + kube cluster install + orbit ns + hedera user + upgrade dir
-task -d docs/dev/daemon secrets         # gossip/gRPC + pull secrets (uat:secrets)
+task -d docs/dev/daemon secrets         # pull secrets in operator + orbit ns (uat:secrets)
+task -d docs/dev/daemon keys            # consensus keys init + verify --from-cluster (gossip/gRPC/admin secrets)
 task -d docs/dev/daemon operator        # kube operator install (v0.7.0 operator + CRDs)
 
 # a REAL v0.74.0 consensus network, in DAEMON-DELEGATED mode
-task -d docs/dev/daemon consensus # consensus node install --provisioner-daemon + genesis
+task -d docs/dev/daemon consensus       # consensus node install --provisioner-daemon + genesis
 
 # install + run the host daemon (the execute-phase performer)
 task -d docs/dev/daemon daemon:install  # daemon service install (daemon-cn RBAC + scoped kubeconfig)
@@ -164,9 +168,10 @@ Each task wraps a real command; the notable ones:
 | `sync` (host) | runs the root `vm:sync` — rsyncs the weaver checkout (incl. staged zips/package/beacon) into `/mnt/solo-weaver` |
 | `rebuild` | `uat:rebuild` — `task build:cli` (builds daemon too, stamps its digest) + self-install |
 | `cluster` | `uat:registry:login:ghcr` + `kube cluster install --non-interactive` + create orbit ns + `hedera` user/group + upgrade staging dir (owned `hedera:hedera`, mode `0775`, `weaver` in the `hedera` group) |
-| `secrets` | `uat:secrets NS=<orbit> NODE=node<id>` — pull secret in operator + orbit ns, plus `node<id>-gossip-keys` / `node<id>-grpc-tls-keys` |
+| `secrets` | `uat:secrets NS=<orbit> NODE=node<id> SAMPLE_KEYS=false` — pull secret in operator + orbit ns (`SAMPLE_KEYS=true` also applies the sample node secrets) |
+| `keys` | `consensus keys init --experimental --namespace <orbit> --node-id <id> --keys-dir $KEYS_DIR` (default `/tmp/cn-keys/node<id>`), then `keys verify --from-cluster`; creates the labelled `node<id>-gossip-keys-…` / `-grpc-tls-keys-…` / `-admin-pubkey-…` secrets |
 | `operator` | `kube operator install --non-interactive`; checks the `networkupgradeexecutes` CRD is registered |
-| `network` | `consensus node install --experimental --provisioner-daemon --deployment-package-dir <pkg> …` (creates the Orbit in mainnet/daemon-delegated mode), then `consensus network genesis --experimental` |
+| `consensus` | `consensus node install --experimental --provisioner-daemon --deployment-package-dir <pkg> …` (creates the Orbit in mainnet/daemon-delegated mode), then `consensus network genesis --experimental` |
 | `daemon:install` | precondition: the local daemon build exists under `/mnt/solo-weaver/bin`; then `daemon service install --components consensus-node --cn-node-id <id> --cn-orbit <ns> --daemon-bin <built>` (`--cn-namespace` is a hidden alias for `--cn-orbit`) + `kubectl auth can-i` checks |
 | `config` | writes `/tmp/beacon-solo/config.yaml` + the 0.0.2 payer PEM |
 | `upload`/`prepare`/`freeze` | `beacon file upload/info`, `beacon freeze prepare/upgrade` (`{{.BEACON}}` from `/mnt/solo-weaver/bin`) — all pinned to `H` |
