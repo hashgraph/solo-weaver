@@ -5,6 +5,7 @@ package fsx
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -1192,4 +1193,71 @@ func TestUnixManager_RemoveContents_MultipleBatches(t *testing.T) {
 	entries, err = os.ReadDir(testDir)
 	assert.NoError(err)
 	assert.Empty(entries)
+}
+
+// recordDirSyncs replaces the manager's directory sync with one that records each
+// directory it is asked to sync and returns err.
+func recordDirSyncs(manager Manager, err error) *[]string {
+	synced := &[]string{}
+	manager.(*unixManager).syncDir = func(dir string) error {
+		*synced = append(*synced, dir)
+		return err
+	}
+	return synced
+}
+
+func TestUnixManager_AppendToFile_NewFileSyncsDirectory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+
+	assert, manager := setupTest(t, pm)
+	synced := recordDirSyncs(manager, nil)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.yaml")
+
+	assert.NoError(manager.AppendToFile(path, []byte("---\nfirst\n")))
+
+	got, err := os.ReadFile(path)
+	assert.NoError(err)
+	assert.Equal("---\nfirst\n", string(got))
+	assert.Equal([]string{dir}, *synced)
+}
+
+func TestUnixManager_AppendToFile_ExistingFileSyncsDirectory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+
+	assert, manager := setupTest(t, pm)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.yaml")
+	assert.NoError(os.WriteFile(path, []byte("---\nfirst\n"), 0o644))
+	synced := recordDirSyncs(manager, nil)
+
+	assert.NoError(manager.AppendToFile(path, []byte("---\nsecond\n")))
+
+	got, err := os.ReadFile(path)
+	assert.NoError(err)
+	assert.Equal("---\nfirst\n---\nsecond\n", string(got))
+	assert.Equal([]string{dir}, *synced)
+}
+
+func TestUnixManager_AppendToFile_DirectorySyncFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	pm := setupMockPrincipalManager(t, ctrl)
+
+	assert, manager := setupTest(t, pm)
+	syncErr := errors.New("disk gone")
+	recordDirSyncs(manager, syncErr)
+	path := filepath.Join(t.TempDir(), "history.yaml")
+
+	err := manager.AppendToFile(path, []byte("---\nfirst\n"))
+
+	assert.ErrorIs(err, syncErr)
+	// The entry is written; only its durability is in doubt.
+	got, readErr := os.ReadFile(path)
+	assert.NoError(readErr)
+	assert.Equal("---\nfirst\n", string(got))
 }

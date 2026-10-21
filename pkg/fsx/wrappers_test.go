@@ -3,6 +3,7 @@
 package fsx
 
 import (
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"os"
@@ -80,6 +81,23 @@ func TestAtomicWriteFile_OverwritesExistingFile(t *testing.T) {
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, []byte("new"), got)
+}
+
+func TestSyncDir_ExistingDirectory(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, SyncDir(t.TempDir()))
+}
+
+func TestSyncDir_MissingDirectory(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	err := SyncDir(missing)
+
+	require.Error(t, err)
+	require.True(t, errorx.IsOfType(err, FileSyncError), "got %v", err)
+	require.Contains(t, err.Error(), missing)
 }
 
 func TestRemoveAll(t *testing.T) {

@@ -19,6 +19,7 @@ var (
 	PermissionChangeError = ErrorsNamespace.NewType("permission_change_error")
 	FileWriteError        = ErrorsNamespace.NewType("file_write_error")
 	FileReadError         = ErrorsNamespace.NewType("file_read_error")
+	FileSyncError         = FileWriteError.NewSubtype("file_sync_error")
 
 	pathProperty      = errorx.RegisterPrintableProperty("path")
 	userProperty      = errorx.RegisterPrintableProperty("user")

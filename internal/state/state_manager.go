@@ -45,10 +45,13 @@ type Writer interface {
 	// Returns the Writer for chaining.
 	AddActionHistory(entry ActionHistory) Writer
 	// FlushState persists the current state without flushing the action history.
+	// An fsx.FileSyncError means the new state is on disk but not synced; still flush the history after it.
 	FlushState() error
 	// FlushActionHistory persists only the pending action history to disk without flushing the full state.
+	// An fsx.FileSyncError means the entries were appended but not synced.
 	FlushActionHistory() error
 	// FlushAll persists both state and action history
+	// An fsx.FileSyncError means both are on disk, but not all of it is synced.
 	FlushAll() error
 }
 
@@ -258,15 +261,20 @@ func (m *stateManager) FlushAll() error {
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 
-	if err := m.flushState(); err != nil {
-		return err
+	// A FileSyncError leaves the new state on disk, so its history is still appended.
+	stateErr := m.flushState()
+	if stateErr != nil && !errorx.IsOfType(stateErr, fsx.FileSyncError) {
+		return stateErr
 	}
 
 	if err := m.flushActionHistory(); err != nil {
+		if stateErr != nil {
+			logx.As().Warn().Err(stateErr).Msg("Failed to sync the state file")
+		}
 		return err
 	}
 
-	return nil
+	return stateErr
 }
 
 func (m *stateManager) flushState() error {
@@ -343,17 +351,18 @@ func (m *stateManager) flushState() error {
 	}
 
 	// Atomic write: write to temp file in same directory and rename.
-	if err := atomicWriteFile(snapshot.StateFile, b); err != nil {
+	err = atomicWriteFile(snapshot.StateFile, b)
+	if err != nil && !errorx.IsOfType(err, fsx.FileSyncError) {
 		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
 	}
 
-	// Update in-memory state, clear pending actions, and advance the baseline hash.
+	// The new state is on disk, after a FileSyncError too: it becomes the in-memory state and the baseline.
 	m.mu.Lock()
 	m.state = toWrite
-	m.lastStateHash = newHashHex // the new state is now the on-disk baseline
+	m.lastStateHash = newHashHex
 	m.mu.Unlock()
 
-	return nil
+	return err
 }
 
 func (m *stateManager) flushActionHistory() error {
@@ -363,26 +372,35 @@ func (m *stateManager) flushActionHistory() error {
 	copy(pendingActions, m.actions)
 	m.mu.Unlock()
 
+	if len(pendingActions) == 0 {
+		return nil
+	}
+
 	// Append action history entries.
-	// Do this before writing the state file to ensure history is preserved even if the state file flush fails (since pending actions are cleared on successful flush).
 	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
+	// Start on a new line, so an entry a full disk cut short doesn't run into this one.
+	docs := []byte("\n")
 	for _, entry := range pendingActions {
 		entryBytes, marshalErr := yaml.Marshal(entry)
 		if marshalErr != nil {
 			return errorx.InternalError.Wrap(marshalErr, "failed to marshal action history entry to YAML")
 		}
-		doc := append([]byte("---\n"), entryBytes...)
-		if appendErr := m.fm.AppendToFile(actionHistoryFile, doc); appendErr != nil {
-			return errorx.InternalError.Wrap(appendErr, "failed to append action history entry to %s", actionHistoryFile)
-		}
+		docs = append(docs, "---\n"...)
+		docs = append(docs, entryBytes...)
+	}
+	// One append for the batch, so the entries leave pending together.
+	appendErr := m.fm.AppendToFile(actionHistoryFile, docs)
+	if appendErr != nil && !errorx.IsOfType(appendErr, fsx.FileSyncError) {
+		return errorx.InternalError.Wrap(appendErr, "failed to append action history entries to %s", actionHistoryFile)
 	}
 
-	// Update in-memory state
+	// Update in-memory state. A FileSyncError still appended the entries; any added
+	// since the snapshot stay pending.
 	m.mu.Lock()
-	m.actions = []ActionHistory{}
+	m.actions = m.actions[len(pendingActions):]
 	m.mu.Unlock()
 
-	return nil
+	return appendErr
 }
 
 // canonicalJSON returns a deterministic JSON encoding of v where object keys are sorted.
