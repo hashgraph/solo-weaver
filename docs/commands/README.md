@@ -250,6 +250,8 @@ sudo solo-provisioner teleport node install \
 | `--token` | yes | Join token for the agent |
 | `--proxy` | yes | Teleport proxy address as `host:port` |
 
+`install` installs the catalog's Teleport version and skips a host where the agent is already installed, whatever version it runs. If the agent is only partly installed, for example a binary was deleted, `install` stops and lists the files rather than install over it. Restore the missing files, or uninstall the agent and delete the listed files that remain, then install again.
+
 Remove it, stopping the systemd service and cleaning up binaries and config:
 
 ```bash

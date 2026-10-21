@@ -189,3 +189,56 @@ func TestInstallTeleportKubeAgent_RefusesAReleaseThatIsNotDeployed(t *testing.T)
 		require.Error(t, err)
 	})
 }
+
+func runInstallTeleportNodeAgent(t *testing.T, inst software.Software) error {
+	t.Helper()
+	step, err := installTeleportNodeAgent(func(...software.InstallerOption) (software.Software, error) { return inst, nil }).Build()
+	require.NoError(t, err)
+	return step.Execute(context.Background()).Error
+}
+
+func stubTeleportLeftovers(t *testing.T, files []string) *int {
+	t.Helper()
+	calls := 0
+	orig := teleportNodeAgentLeftovers
+	teleportNodeAgentLeftovers = func(version string) ([]string, error) {
+		calls++
+		assert.Equal(t, "18.11.3", version)
+		return files, nil
+	}
+	t.Cleanup(func() { teleportNodeAgentLeftovers = orig })
+	return &calls
+}
+
+// A partial install stops the install before anything is downloaded.
+func TestInstallTeleportNodeAgent_RefusesAPartialInstall(t *testing.T) {
+	stubTeleportLeftovers(t, []string{"/opt/solo/weaver/sandbox/bin/teleport"})
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsInstalled().Return(false, nil)
+	inst.EXPECT().Version().Return("18.11.3").AnyTimes()
+
+	err := runInstallTeleportNodeAgent(t, inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/opt/solo/weaver/sandbox/bin/teleport")
+	assert.Contains(t, err.Error(), "only partly installed")
+}
+
+func TestInstallTeleportNodeAgent_FreshHostIsInstalled(t *testing.T) {
+	stubTeleportLeftovers(t, nil)
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsInstalled().Return(false, nil)
+	inst.EXPECT().Version().Return("18.11.3").AnyTimes()
+	inst.EXPECT().Download().Return(errors.New("stop after the guard"))
+
+	err := runInstallTeleportNodeAgent(t, inst)
+	require.ErrorContains(t, err, "stop after the guard")
+}
+
+func TestInstallTeleportNodeAgent_InstalledAgentIsSkipped(t *testing.T) {
+	calls := stubTeleportLeftovers(t, []string{"unused"})
+	inst := software.NewMockSoftware(gomock.NewController(t))
+	inst.EXPECT().IsInstalled().Return(true, nil)
+
+	require.NoError(t, runInstallTeleportNodeAgent(t, inst))
+	assert.Equal(t, 0, *calls)
+}

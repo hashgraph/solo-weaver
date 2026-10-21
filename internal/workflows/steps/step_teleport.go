@@ -4,12 +4,15 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -17,7 +20,9 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
+	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
 
@@ -294,6 +299,18 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 				return automa.SkippedReport(stp, automa.WithDetail("teleport is already installed"), automa.WithMetadata(meta))
 			}
 
+			leftovers, err := teleportNodeAgentLeftovers(installer.Version())
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.Decorate(err, "cannot check this host for an existing Teleport node agent"),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Check that solo-provisioner runs as root and can read %s, %s and /etc/teleport", models.Paths().SandboxBinDir, models.SystemBinDir))),
+					automa.WithMetadata(meta))
+			}
+			if len(leftovers) > 0 {
+				return automa.FailureReport(stp, automa.WithError(teleportLeftoversRefused(installer.Version(), leftovers)), automa.WithMetadata(meta))
+			}
+
 			err = installer.Download()
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
@@ -342,6 +359,19 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 
 			return automa.SuccessReport(stp)
 		})
+}
+
+// teleportNodeAgentLeftovers is a package var so tests can describe the host's
+// Teleport files without creating them.
+var teleportNodeAgentLeftovers = software.TeleportNodeAgentLeftovers
+
+func teleportLeftoversRefused(version string, files []string) error {
+	return errx.Decorate(
+		errorx.IllegalState.New("the Teleport node agent is only partly installed, so installing Teleport %s over it was refused; these files were left unchanged: %s",
+			version, strings.Join(files, ", ")),
+		reasons.PreconditionNotMet,
+		"To keep the existing agent, restore its missing binaries from the Teleport release it runs, then re-run 'solo-provisioner teleport node install'",
+		"To replace it, run 'solo-provisioner teleport node uninstall', delete any of the files above that remain, then re-run 'solo-provisioner teleport node install'")
 }
 
 // configureTeleportNodeAgent configures the Teleport node agent (following kubelet pattern)
