@@ -15,6 +15,9 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
+// loadCatalog is a package var so tests can make the catalog fail to load.
+var loadCatalog = software.LoadInfrastructureCatalog
+
 // chartDownloadsSubdir is the subdirectory of WeaverPaths.DownloadsDir where
 // PullAndVerify writes verified Helm chart archives. Keeping pulled charts
 // under the shared downloads tree (rather than a temp dir) lets operators
@@ -81,10 +84,25 @@ func resolveCatalogChart(name string) (*helmChartSpec, error) {
 	return resolveCatalogChartVersion(name, "")
 }
 
+// catalogListsChartVersion reports whether the catalog has a checksum for
+// version of the named chart.
+func catalogListsChartVersion(name, version string) (bool, error) {
+	catalog, err := loadCatalog()
+	if err != nil {
+		return false, errorx.IllegalFormat.Wrap(err, "load infrastructure catalog")
+	}
+	meta, err := catalog.GetClusterComponent(name)
+	if err != nil {
+		return false, errorx.IllegalArgument.Wrap(err, "catalog")
+	}
+	_, ok := meta.Versions[software.Version(version)]
+	return ok, nil
+}
+
 // resolveCatalogChartVersion is resolveCatalogChart for a version the catalog
 // lists other than the default. An empty version means the default.
 func resolveCatalogChartVersion(name, version string) (*helmChartSpec, error) {
-	catalog, err := software.LoadInfrastructureCatalog()
+	catalog, err := loadCatalog()
 	if err != nil {
 		return nil, errorx.IllegalFormat.Wrap(err, "load infrastructure catalog")
 	}

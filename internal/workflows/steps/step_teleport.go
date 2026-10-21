@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/automa-saga/automa"
@@ -19,6 +20,9 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
+
+// teleportClusterAgent is the catalog name of the Teleport kube agent chart.
+const teleportClusterAgent = "teleport-cluster-agent"
 
 const (
 	SetupTeleportStepId                = "setup-teleport"
@@ -450,13 +454,17 @@ func CreateTeleportNamespace() automa.Builder {
 }
 
 func InstallTeleportKubeAgent() automa.Builder {
-	spec := chartSpec("teleport-cluster-agent")
+	return installTeleportKubeAgent(newHelmManager)
+}
+
+func installTeleportKubeAgent(newManager func() (helm.Manager, error)) automa.Builder {
+	spec := chartSpec(teleportClusterAgent)
 	return automa.NewStepBuilder().WithId(InstallTeleportStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Teleport
 
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -473,38 +481,33 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
+			chart, verified, err := teleportKubeAgentChart(cfg.Version)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Determine chart version: explicit --version flag overrides the catalog default.
-			// Per-component version overrides remain a legacy carve-out for teleport
-			// (see issue #589 "Out of scope: removing the teleport --version flag").
-			chartVersion := cfg.Version
-			expectedChecksum := spec.Checksum
-			if chartVersion == "" {
-				chartVersion = spec.Version
-			} else if chartVersion != spec.Version {
-				// Operator pinned a non-catalog version; we cannot verify integrity
-				// because the catalog only records checksums for declared versions.
-				expectedChecksum = ""
+			_, err = hm.AddRepo(chart.RepoAlias, chart.Repo, helm.RepoAddOptions{})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			l.Info().Str("path", cfg.ValuesFile).Msg("Using Teleport values file")
 
-			var chartRef string
-			if expectedChecksum != "" {
-				localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, chartVersion, spec.Algorithm, expectedChecksum)
+			chartRef, chartVersion := chart.Chart, chart.Version
+			if verified {
+				localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), chart.Chart, chart.Version, chart.Algorithm, chart.Checksum)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
-				chartRef = localChart
-				chartVersion = ""
+				chartRef, chartVersion = localChart, ""
 			} else {
-				chartRef = spec.Chart
-				l.Warn().Str("version", chartVersion).Msg("Skipping chart integrity verification for operator-pinned Teleport version (not in catalog)")
+				l.Warn().
+					Str("version", chart.Version).
+					Strs("catalogVersions", catalogChartVersions(teleportClusterAgent)).
+					Msg("The requested Teleport chart version is not in the infrastructure catalog, so its integrity is not verified")
 			}
+			meta["chartVersion"] = chart.Version
+			meta["chartVerified"] = strconv.FormatBool(verified)
 
 			_, err = hm.InstallChart(
 				ctx,
@@ -536,7 +539,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -558,6 +561,34 @@ func InstallTeleportKubeAgent() automa.Builder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Teleport agent installed successfully")
 		})
+}
+
+// teleportKubeAgentChart returns the kube agent chart to install for the
+// requested version, and whether it can be checked against a catalog checksum.
+// Only an explicit version the catalog does not list comes back unverified.
+func teleportKubeAgentChart(requested string) (*helmChartSpec, bool, error) {
+	if requested == "" {
+		spec, err := resolveCatalogChart(teleportClusterAgent)
+		return spec, err == nil, err
+	}
+
+	listed, err := catalogListsChartVersion(teleportClusterAgent, requested)
+	if err != nil {
+		return nil, false, err
+	}
+	if listed {
+		spec, err := resolveCatalogChartVersion(teleportClusterAgent, requested)
+		return spec, err == nil, err
+	}
+
+	spec, err := resolveCatalogChart(teleportClusterAgent)
+	if err != nil {
+		return nil, false, err
+	}
+	unverified := *spec
+	unverified.Version = requested
+	unverified.Algorithm, unverified.Checksum = "", ""
+	return &unverified, false, nil
 }
 
 func IsTeleportPodsReady() automa.Builder {
