@@ -148,6 +148,20 @@ func hostEntryLines(info VersionDetails) []string {
 	return lines
 }
 
+func TestCatalog_HostToolDefaults(t *testing.T) {
+	catalog, err := LoadInfrastructureCatalog()
+	require.NoError(t, err)
+
+	for name, want := range map[string]string{"helm": "3.22.1", "k9s": "0.51.0", "teleport": "18.11.3"} {
+		artifact, err := catalog.GetHostArtifact(name)
+		require.NoError(t, err)
+		version, err := artifact.GetDefaultVersion()
+		require.NoError(t, err)
+		assert.Equal(t, want, version, name)
+		assert.Contains(t, pinnedHostEntries[name], version, "%s default must be pinned", name)
+	}
+}
+
 // IsInstalled looks for the default version's binaries. If another version of
 // these artifacts listed a different set, hosts running it would look absent and
 // the install step would replace them with the default.
@@ -211,6 +225,7 @@ func TestCatalog_ClusterChartDefaultsForKubernetes136(t *testing.T) {
 		"metrics-server":           {"3.14.0", "c2ca1185c01e6e7f53dd1b7d131f0c9b3fa50e003ed068b784563a1b5a3422a1"},
 		"alloy":                    {"1.13.1", "6c2b7df23e39438bb11f1e1fcf19eb9eb7c8bfeab7d49b7c975b6212abd0f99a"},
 		"prometheus-operator-crds": {"32.0.1", "6a5f0e0d7e53f0c9336d6ff56fbf4ff506a1a0d8251a26567b11cbbdef2c01b2"},
+		"teleport-cluster-agent":   {"18.11.3", "60e7dd096337c6b817076f2d0a7695e7dc50cd8262306a9dc4537f7449865405"},
 	} {
 		chart, err := catalog.GetClusterComponent(name)
 		require.NoError(t, err)

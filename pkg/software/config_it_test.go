@@ -382,7 +382,7 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		version   string
 	}{
 		"alloy":                    {ChartTypeClassic, "1.13.1"},
-		"teleport-cluster-agent":   {ChartTypeClassic, "18.6.4"},
+		"teleport-cluster-agent":   {ChartTypeClassic, "18.11.3"},
 		"metallb":                  {ChartTypeClassic, "0.16.1"},
 		"metrics-server":           {ChartTypeClassic, "3.14.0"},
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},

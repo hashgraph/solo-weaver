@@ -288,7 +288,7 @@ host:
               checksum: '9dcdd5ef0e38287bdbab49163d746ab6db5917c2baf721165124145637e3c94e4e645de288fe4b29fb564ea2cbf69de780e65d5b42cdaa9692709735c5d86a97' # from https://dl.k8s.io/release/v1.36.5/bin/linux/arm64/kubectl.sha512
 
 - name: helm
-  default: "3.18.6"
+  default: "3.22.1"
   versions:
     3.18.6:
       archives:
@@ -335,7 +335,7 @@ host:
               checksum: '2bd1b649ef89175bc0ae1e0fa7de7e0583a5b0401de9896b644b8acbcae1ba64'
 
 - name: k9s
-  default: "0.50.9"
+  default: "0.51.0"
   versions:
     0.50.9:
       archives:
@@ -428,7 +428,7 @@ host:
               checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
 
 - name: teleport
-  default: "18.6.4"
+  default: "18.11.3"
   versions:
     18.6.4:
       archives:
@@ -578,7 +578,7 @@ cluster:
   chart: 'teleport/teleport-kube-agent'
   namespace: 'teleport-agent'
   release: 'teleport-agent'
-  default: "18.6.4"
+  default: "18.11.3"
   versions:
     18.6.4:
       algorithm: 'sha256'
