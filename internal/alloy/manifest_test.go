@@ -3,6 +3,9 @@
 package alloy
 
 import (
+	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,6 +111,24 @@ func TestChartJSONValues_Alloy140KeepsChartDefaults(t *testing.T) {
 	vals, err := ChartJSONValues("1.4.0")
 	require.NoError(t, err)
 	assert.Empty(t, vals)
+}
+
+func TestChartJSONValues_Alloy1131RestoresNodesProxyGet(t *testing.T) {
+	vals, err := ChartJSONValues("1.13.1")
+	require.NoError(t, err)
+	require.Len(t, vals, 1)
+
+	key, raw, ok := strings.Cut(vals[0], "=")
+	require.True(t, ok)
+	assert.Equal(t, "rbac.clusterRules", key)
+	var rules []rbacRule
+	require.NoError(t, json.Unmarshal([]byte(raw), &rules))
+	assert.Contains(t, rules, rbacRule{APIGroups: []string{""}, Resources: []string{"nodes/proxy"}, Verbs: []string{"get"}})
+	for _, r := range rules {
+		if slices.Contains(r.Resources, "nodes/proxy") {
+			assert.Equal(t, []string{"get"}, r.Verbs, "nodes/proxy must be get-only")
+		}
+	}
 }
 
 func TestChartJSONValues_UnknownVersionIsRefused(t *testing.T) {
