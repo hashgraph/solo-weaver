@@ -43,6 +43,7 @@ func init() {
 	keysCmd.AddCommand(generateCmd)
 	keysCmd.AddCommand(importCmd)
 	keysCmd.AddCommand(exportCmd)
+	keysCmd.AddCommand(verifyCmd)
 }
 
 // GetCmd returns the consensus keys command group.
