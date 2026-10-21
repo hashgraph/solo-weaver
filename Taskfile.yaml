@@ -6,11 +6,11 @@ output: prefixed
 
 # Optional local secrets (not committed; see .env.example). Provides
 # GITHUB_USER / GITHUB_ACCESS_TOKEN to tasks like uat:secrets.
-dotenv: ['.env']
+dotenv: [".env"]
 vars:
-  OS: [ linux ]
-  ARCH: [ amd64, arm64 ]
-  GO_VERSION: 1.26.5
+  OS: [linux]
+  ARCH: [amd64, arm64]
+  GO_VERSION: 1.27.2
   # Build metadata stamped into github.com/automa-saga/version at link time via -X.
   # Override VERSION on the command line or in CI (e.g. `task build:cli VERSION=0.20.0`);
   # COMMIT and DATE are derived automatically.
@@ -27,10 +27,10 @@ vars:
   COMMIT:
     sh: "git -c safe.directory='*' rev-parse HEAD 2>/dev/null || cat .vm-commit 2>/dev/null || echo none"
   DATE:
-    sh: 'date -u +%Y-%m-%dT%H:%M:%SZ'
-  LDFLAGS: '-w -s -X github.com/automa-saga/version.Version={{.VERSION}} -X github.com/automa-saga/version.Commit={{.COMMIT}} -X github.com/automa-saga/version.Date={{.DATE}}'
+    sh: "date -u +%Y-%m-%dT%H:%M:%SZ"
+  LDFLAGS: "-w -s -X github.com/automa-saga/version.Version={{.VERSION}} -X github.com/automa-saga/version.Commit={{.COMMIT}} -X github.com/automa-saga/version.Date={{.DATE}}"
   # VM configuration
-  VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}'  # Options: debian, ubuntu
+  VM_OS_TYPE: '{{.VM_OS_TYPE | default "debian"}}' # Options: debian, ubuntu
   VM_NAME: "solo-weaver-{{.VM_OS_TYPE}}"
   VM_GOLDEN_NAME: "solo-weaver-{{.VM_OS_TYPE}}-golden"
   # Set this to the actual URL or local path of your golden image (e.g., "https://storage.example.com/golden-image.utm" or "/path/to/golden-image.utm")
@@ -46,7 +46,7 @@ vars:
   # ProxyCommand routes through nc with --apple-no-connectx to avoid macOS
   # connectx(2) failures on bridged UTM networks behind captive WiFi or VPNs.
   #SSH_OPTS: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none -o ProxyCommand="nc --apple-no-connectx %h %p"'
-  SSH_OPTS: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none'
+  SSH_OPTS: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentityAgent=none"
   UTM_VMS_DIR: "{{.HOME}}/Library/Containers/com.utmapp.UTM/Data/Documents"
   # Resolve the VM's bridged LAN IP via peers-ip.sh — the single resolver, which
   # picks the guest address on one of the host's own subnets (see its header).
@@ -54,7 +54,6 @@ vars:
     get_vm_ip() {
     bash "{{.ROOT_DIR}}/scripts/network/peers-ip.sh" "{{.VM_NAME}}"
     }
-
 
 includes:
   tests:
@@ -92,7 +91,7 @@ tasks:
       - "rm -f unit-test-report.md"
       - "mkdir -p bin"
       - "go clean -cache -testcache"
-  
+
   vendor:
     desc: "Populate vendor/ from go.mod (skipped when vendor/ is already in sync)"
     # Skip re-vendoring when vendor/ is present AND already records the go.mod
@@ -255,7 +254,7 @@ tasks:
 
   lint:check:
     cmds:
-      - "R=$(go fmt ./...) && if [[ -n \"$R\" ]]; then echo \"The following files require formatting:\"; echo \"$R\"; exit 1; fi"
+      - 'R=$(go fmt ./...) && if [[ -n "$R" ]]; then echo "The following files require formatting:"; echo "$R"; exit 1; fi'
       - task: lint:errorx
 
   lint:errorx:
@@ -276,35 +275,35 @@ tasks:
       - golangci-lint run --config .golangci.yml ./...
 
   setup:golangci-lint:
-    desc: "Install golangci-lint v2.12.2 (used by lint:errorx to enforce errorx)"
+    desc: "Install golangci-lint v2.15.0 (used by lint:errorx to enforce errorx)"
     internal: true
     status:
       # Require the pinned version exactly, so developers running `task lint:errorx`
       # use the same binary version as CI.
-      - 'golangci-lint --version 2>/dev/null | grep -q "version v2.12.2"'
+      - 'golangci-lint --version 2>/dev/null | grep -q "version v2.15.0"'
     cmds:
-      - cmd: echo "Installing golangci-lint v2.12.2..."
+      - cmd: echo "Installing golangci-lint v2.15.0..."
         silent: true
-      - cmd: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - cmd: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
         silent: true
-  
+
   license:check:
     desc: "Check if all source files have SPDX license headers"
     dir: scripts
     cmds:
       - "./license-header.sh check"
-  
+
   license:add:
     desc: "Add SPDX license headers to source files that are missing them"
     dir: scripts
     cmds:
       - "./license-header.sh add"
-  
+
   license:
     desc: "Alias for license:add - Add SPDX license headers to source files"
     cmds:
       - task: license:add
-  
+
   build:
     deps:
       - "vendor"
@@ -346,7 +345,7 @@ tasks:
       # Last word on the release: every CLI about to be published must carry the
       # digest of the daemon published with it, or its auto-download cannot work.
       - task: "verify:cli:all"
-  
+
   generate:
     # Declared `run: once` so multiple callers in the same invocation (e.g.
     # build:cli:all and build:daemon:all from top-level `task build`) share a
@@ -358,11 +357,11 @@ tasks:
   run:
     deps:
       - "run:cli"
-  
+
   install:go:
     deps:
       - "install:go:linux"
-  
+
   install:go:linux:
     internal: true
     status:
@@ -373,18 +372,18 @@ tasks:
       - "linux/arm64"
     cmds:
       - "curl -sSLO https://go.dev/dl/go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz"
-      - "sudo mkdir -p /usr/local/go"
+      - "sudo rm -rf /usr/local/go"
       - "sudo tar -C /usr/local -xzf go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz"
       - "rm -f go{{.GO_VERSION}}.{{OS}}-{{ARCH}}.tar.gz"
-      - "echo 'PATH=\"${PATH}:/usr/local/go/bin:$HOME/go/bin\"' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1"
+      - 'echo ''PATH="${PATH}:/usr/local/go/bin:$HOME/go/bin"'' | sudo tee /etc/profile.d/go.sh >/dev/null 2>&1'
       - "source /etc/profile.d/go.sh"
       - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
       # Set the Go toolchain to auto-upgrade to the latest version due to https://github.com/golang/go/issues/75031
-      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.26.5+auto"
-      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.26.5+auto"
+      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
+      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
     generates:
       - "/usr/local/go/**"
-  
+
   mocks:
     cmds:
       - go install github.com/golang/mock/mockgen@v1.6.0
@@ -394,7 +393,7 @@ tasks:
       - mockgen -source=pkg/software/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/software -package software> pkg/software/mocks_generated.go
       - mockgen -source=pkg/kernel/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/kernel -package kernel > pkg/kernel/mocks_generated.go
       - mockgen -source=pkg/helm/interface.go -self_package github.com/hashgraph/solo-weaver/pkg/helm -package helm > pkg/helm/mocks_generated.go
-  
+
   # Remote debug tasks for Docker container debugging
   debug:container:
     desc: "Setup debug environment and show available debug commands"
@@ -409,13 +408,13 @@ tasks:
         echo "  task debug:container:app -- [args...]    # Debug weaver application"
         echo "  task debug:container:stop                # Stop debug container"
         echo ""
-  
+
   debug:container:setup:
     desc: "Setup Docker container for remote debugging"
     dir: build
     cmds:
       - "./debug-setup.sh"
-  
+
   debug:container:test:
     desc: "Start remote test debug server in Docker container (specify package with -- ./pkg/name)"
     deps:
@@ -423,7 +422,7 @@ tasks:
     dir: build
     cmds:
       - "./debug-run.sh test {{.CLI_ARGS}}"
-  
+
   debug:container:app:
     desc: "Start remote application debug server in Docker container (pass args with -- after command)"
     deps:
@@ -431,10 +430,10 @@ tasks:
     dir: build
     cmds:
       - "./debug-run.sh app {{.CLI_ARGS}}"
-  
+
   debug:container:stop:
     desc: "Stop remote debug container"
     cmds:
       - "docker stop solo-weaver-debug 2>/dev/null || true"
-  
+
   # VM Debugging Tasks
