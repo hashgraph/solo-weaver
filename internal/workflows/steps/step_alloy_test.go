@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 func stepIds(t *testing.T, wb *automa.WorkflowBuilder) []string {
@@ -239,4 +241,83 @@ func TestInstallPrometheusOperatorCRDs(t *testing.T) {
 		require.NoError(t, step.Execute(context.Background()).Error)
 		assert.Equal(t, automa.StatusSuccess, step.Rollback(context.Background()).Status)
 	})
+}
+
+// fakeApplier records manifest calls; exists answers ResourceExists.
+type fakeApplier struct {
+	exists    bool
+	existsErr error
+	applied   []string
+	deleted   []string
+}
+
+func (f *fakeApplier) ResourceExists(context.Context, string, string, string, string) (bool, error) {
+	return f.exists, f.existsErr
+}
+
+func (f *fakeApplier) ApplyManifest(_ context.Context, p string) error {
+	f.applied = append(f.applied, p)
+	return nil
+}
+
+func (f *fakeApplier) DeleteManifest(_ context.Context, p string) error {
+	f.deleted = append(f.deleted, p)
+	return nil
+}
+
+func useTempPaths(t *testing.T) {
+	t.Helper()
+	restore := models.SetPaths(t.TempDir())
+	t.Cleanup(restore)
+	require.NoError(t, os.MkdirAll(models.Paths().TempDir, 0o755))
+}
+
+// A ConfigMap the run created is deleted on rollback; one that already existed
+// is updated in place and never deleted.
+func TestDeployAlloyConfig_RollbackDeletesOnlyWhatItCreated(t *testing.T) {
+	for name, tc := range map[string]struct {
+		exists      bool
+		wantDeleted int
+		wantStatus  automa.TypeStatus
+	}{
+		"created by this run": {exists: false, wantDeleted: 1, wantStatus: automa.StatusSuccess},
+		"already existed":     {exists: true, wantDeleted: 0, wantStatus: automa.StatusSkipped},
+	} {
+		t.Run(name, func(t *testing.T) {
+			useTempPaths(t)
+			k := &fakeApplier{exists: tc.exists}
+			step, err := deployAlloyConfig(func() (manifestApplier, error) { return k, nil }).Build()
+			require.NoError(t, err)
+
+			report := step.Execute(context.Background())
+			require.NoError(t, report.Error)
+			assert.Len(t, k.applied, 1)
+
+			rollback := step.Rollback(context.Background())
+			require.NoError(t, rollback.Error)
+			assert.Equal(t, tc.wantStatus, rollback.Status)
+			assert.Len(t, k.deleted, tc.wantDeleted)
+		})
+	}
+}
+
+func TestDeployAlloyConfig_ExistenceCheckErrorAppliesNothing(t *testing.T) {
+	useTempPaths(t)
+	k := &fakeApplier{existsErr: errors.New("forbidden")}
+	step, err := deployAlloyConfig(func() (manifestApplier, error) { return k, nil }).Build()
+	require.NoError(t, err)
+
+	require.Error(t, step.Execute(context.Background()).Error)
+	assert.Empty(t, k.applied)
+	assert.Equal(t, automa.StatusSkipped, step.Rollback(context.Background()).Status)
+}
+
+func TestApplyManifestOwned(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		k := &fakeApplier{exists: exists}
+		created, err := applyManifestOwned(context.Background(), k, "/tmp/sm.yaml", "monitoring.coreos.com/v1", "ServiceMonitor", "block-node", alloy.BlockNodeServiceMonitorName)
+		require.NoError(t, err)
+		assert.Equal(t, !exists, created)
+		assert.Equal(t, []string{"/tmp/sm.yaml"}, k.applied)
+	}
 }
