@@ -234,9 +234,10 @@ func preCheckAlloy() automa.Builder {
 		})
 }
 
-// checkAlloyReleases reads the Alloy release before anything is changed. It must
-// run a chart version this build supports; any other state stops the run here
-// rather than after the ConfigMap is replaced.
+// checkAlloyReleases reads the Alloy, Prometheus Operator CRD and node-exporter
+// releases before anything is changed. An Alloy release must run a chart
+// version this build supports; the other two must be deployed or absent. Any
+// other state stops the run here rather than after the ConfigMap is replaced.
 func checkAlloyReleases(newManager func() (helm.Manager, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(CheckAlloyReleasesStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -251,6 +252,11 @@ func checkAlloyReleases(newManager func() (helm.Manager, error)) automa.Builder 
 			}
 			if _, err := alloy.ChartJSONValues(spec.Version); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.Internal)))
+			}
+			for _, name := range []string{"prometheus-operator-crds", "node-exporter"} {
+				if _, err := deployedRelease(hm, chartSpec(name)); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
 			}
 
 			meta := map[string]string{"alloyChartVersion": spec.Version}
@@ -275,7 +281,7 @@ func checkAlloyReleases(newManager func() (helm.Manager, error)) automa.Builder 
 func SetupAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupAlloyStepId).Steps(
 		createAlloyNamespace(),
-		installNodeExporter(),
+		installNodeExporter(newHelmManager),
 		isNodeExporterPodsReady(),
 		deployAlloyConfig(),
 		installAlloy(newHelmManager),
@@ -294,23 +300,25 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		})
 }
 
-func installNodeExporter() automa.Builder {
+func installNodeExporter(newManager func() (helm.Manager, error)) automa.Builder {
 	spec := chartSpec("node-exporter")
 	return automa.NewStepBuilder().WithId(InstallNodeExporterStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			// Whatever chart a deployed release runs is left alone: clusters
+			// built by earlier releases still run the Bitnami chart.
+			rel, err := deployedRelease(hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if rel != nil {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("Node Exporter is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
@@ -349,7 +357,7 @@ func installNodeExporter() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

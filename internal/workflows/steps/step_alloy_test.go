@@ -45,10 +45,13 @@ func TestCheckAlloyReleases(t *testing.T) {
 		alloy, crds, nodeExporter *release.Release
 		ok                        bool
 	}{
-		"fresh cluster":              {ok: true},
-		"cluster built by v0.34.0":   {alloy: deployed("alloy", "1.4.0"), crds: deployed("prometheus-operator-crds", "24.0.1"), nodeExporter: deployed("node-exporter", "4.5.19"), ok: true},
-		"alloy chart not in catalog": {alloy: deployed("alloy", "1.9.0")},
-		"alloy upgrade failed":       {alloy: releaseOf("alloy", "1.13.1", release.StatusFailed)},
+		"fresh cluster":                {ok: true},
+		"cluster built by v0.34.0":     {alloy: deployed("alloy", "1.4.0"), crds: deployed("prometheus-operator-crds", "24.0.1"), nodeExporter: deployed("node-exporter", "4.5.19"), ok: true},
+		"alloy chart not in catalog":   {alloy: deployed("alloy", "1.9.0")},
+		"alloy upgrade failed":         {alloy: releaseOf("alloy", "1.13.1", release.StatusFailed)},
+		"crds install pending":         {alloy: deployed("alloy", "1.4.0"), crds: releaseOf("prometheus-operator-crds", "32.0.1", release.StatusPendingInstall)},
+		"node-exporter uninstalled":    {alloy: deployed("alloy", "1.4.0"), crds: deployed("prometheus-operator-crds", "24.0.1"), nodeExporter: releaseOf("node-exporter", "4.5.19", release.StatusUninstalled)},
+		"node-exporter lookup refused": {alloy: deployed("alloy", "1.4.0"), crds: deployed("prometheus-operator-crds", "24.0.1"), nodeExporter: releaseOf("prometheus-node-exporter", "4.59.0", release.StatusPendingUpgrade)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			// Only GetRelease is expected: gomock fails on any change.
@@ -166,4 +169,74 @@ func TestInstallAlloy_UnresolvableReleaseIsNotTouched(t *testing.T) {
 			assert.Equal(t, automa.StatusSkipped, rollback.Status)
 		})
 	}
+}
+
+func TestInstallNodeExporter(t *testing.T) {
+	spec := chartSpec("node-exporter")
+
+	t.Run("an existing Bitnami release is left alone", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, "node-exporter", releaseOf("node-exporter", "4.5.19", release.StatusDeployed), nil)
+		step, err := installNodeExporter(managerFor(hm)).Build()
+		require.NoError(t, err)
+		report := step.Execute(context.Background())
+		require.NoError(t, report.Error)
+		assert.Equal(t, "true", report.Metadata[AlreadyInstalled])
+		assert.Equal(t, automa.StatusSkipped, step.Rollback(context.Background()).Status)
+	})
+	t.Run("a failed release is refused", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, "node-exporter", releaseOf("prometheus-node-exporter", "4.59.0", release.StatusFailed), nil)
+		step, err := installNodeExporter(managerFor(hm)).Build()
+		require.NoError(t, err)
+		require.Error(t, step.Execute(context.Background()).Error)
+	})
+	t.Run("a fresh install is rolled back", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, "node-exporter", nil, notFound())
+		hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum).Return("/tmp/ne.tgz", nil)
+		hm.EXPECT().InstallChart(gomock.Any(), spec.Release, "/tmp/ne.tgz", "", spec.Namespace, gomock.Any()).Return(nil, nil)
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+		step, err := installNodeExporter(managerFor(hm)).Build()
+		require.NoError(t, err)
+		require.NoError(t, step.Execute(context.Background()).Error)
+		assert.Equal(t, automa.StatusSuccess, step.Rollback(context.Background()).Status)
+	})
+}
+
+func TestInstallPrometheusOperatorCRDs(t *testing.T) {
+	spec := chartSpec("prometheus-operator-crds")
+	require.Equal(t, "24.0.1", spec.Version)
+
+	t.Run("an existing release keeps its CRDs", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, "prometheus-operator-crds", releaseOf("prometheus-operator-crds", "24.0.1", release.StatusDeployed), nil)
+		step, err := installPrometheusOperatorCRDs(managerFor(hm)).Build()
+		require.NoError(t, err)
+		report := step.Execute(context.Background())
+		require.NoError(t, report.Error)
+		assert.Equal(t, "true", report.Metadata[AlreadyInstalled])
+		assert.Equal(t, automa.StatusSkipped, step.Rollback(context.Background()).Status)
+	})
+	for _, status := range []release.Status{release.StatusFailed, release.StatusPendingInstall, release.StatusUninstalled} {
+		t.Run(string(status)+" is refused", func(t *testing.T) {
+			hm := helm.NewMockManager(gomock.NewController(t))
+			expectRelease(hm, "prometheus-operator-crds", releaseOf("prometheus-operator-crds", "32.0.1", status), nil)
+			step, err := installPrometheusOperatorCRDs(managerFor(hm)).Build()
+			require.NoError(t, err)
+			require.Error(t, step.Execute(context.Background()).Error)
+			assert.Equal(t, automa.StatusSkipped, step.Rollback(context.Background()).Status)
+		})
+	}
+	t.Run("a fresh install gets the default and is rolled back", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectRelease(hm, "prometheus-operator-crds", nil, notFound())
+		hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, "24.0.1", "sha256", spec.Checksum).Return("/tmp/crds.tgz", nil)
+		hm.EXPECT().InstallChart(gomock.Any(), spec.Release, "/tmp/crds.tgz", "", spec.Namespace, gomock.Any()).Return(nil, nil)
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
+		step, err := installPrometheusOperatorCRDs(managerFor(hm)).Build()
+		require.NoError(t, err)
+		require.NoError(t, step.Execute(context.Background()).Error)
+		assert.Equal(t, automa.StatusSuccess, step.Rollback(context.Background()).Status)
+	})
 }
