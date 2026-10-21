@@ -308,3 +308,56 @@ func TestParseLineLeavesOrdinaryEntriesAlone(t *testing.T) {
 		require.Equal(t, line, e.Raw, line)
 	}
 }
+
+func TestRenderEscapesControlCharacters(t *testing.T) {
+	e := ParseLine("cli", `{"time":"2026-10-17T00:00:01Z","level":"info","caller":"a/b.go:1","message":"clear\u001b[2J\u0007done","title":"\u001b]0;pwned\u0007","n":1}`)
+	require.True(t, e.Valid)
+
+	var out bytes.Buffer
+	Renderer{W: &out, Format: FormatText}.Write(e)
+	require.NotContains(t, out.String(), "\x1b")
+	require.NotContains(t, out.String(), "\x07")
+	require.Contains(t, out.String(), `clear\x1b[2J\x07done`)
+	require.Contains(t, out.String(), `x1b]0;pwned`, "field values are escaped too")
+
+	var colored bytes.Buffer
+	Renderer{W: &colored, Format: FormatText, Color: true}.Write(e)
+	require.NotContains(t, strip(colored.String()), "\x1b")
+
+	var text bytes.Buffer
+	Renderer{W: &text, Format: FormatText}.Write(ParseLine("cli", "raw \x1b[2J line"))
+	require.Equal(t, "raw \\x1b[2J line\n", text.String())
+
+	var js bytes.Buffer
+	Renderer{W: &js, Format: FormatJSON}.Write(e)
+	require.NotContains(t, js.String(), "\x1b", "JSON output keeps the escaped original")
+}
+
+func TestFollowDoesNotReplayWhenLinesLandDuringRead(t *testing.T) {
+	var lines []string
+	for i := 0; i < 200; i++ {
+		lines = append(lines, line("2026-10-17T00:00:01Z", "info", fmt.Sprintf("old-%d", i), ""))
+	}
+	p := writeLog(t, lines...)
+	_, off, err := Tail(p, "cli", Filter{}, 0)
+	require.NoError(t, err)
+
+	got := &syncBuf{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Follow(ctx, p, "cli", off, Filter{}, time.Millisecond, got.add) }()
+
+	const n = 300
+	for i := 0; i < n; i++ {
+		appendTo(t, p, line("2026-10-17T00:00:02Z", "info", fmt.Sprintf("new-%d", i), ""))
+		time.Sleep(200 * time.Microsecond)
+	}
+	require.Eventually(t, func() bool { return len(got.get()) >= n }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+
+	msgs := got.get()
+	require.Len(t, msgs, n)
+	require.Equal(t, "new-0", msgs[0])
+	cancel()
+	require.NoError(t, <-done)
+}

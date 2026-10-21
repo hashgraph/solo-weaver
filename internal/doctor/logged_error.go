@@ -25,11 +25,11 @@ func RenderLoggedError(w io.Writer, e logview.Entry, logfile string, color bool)
 	label := func(code, s string) string { return paint(code, s+":") }
 	str := func(key string) string {
 		v, _ := e.Obj[key].(string)
-		return v
+		return logview.Sanitize(v)
 	}
 
 	reason := str("reason")
-	message := e.Message
+	message := logview.Sanitize(e.Message)
 	if reason != "" {
 		message = stripPrintableProperty(message, "reason", reason)
 	}
@@ -46,7 +46,7 @@ func RenderLoggedError(w io.Writer, e logview.Entry, logfile string, color bool)
 		fmt.Fprintf(w, "\t%s %s\n", label(Gray, "Time"), str("time"))
 	}
 	if e.Caller != "" {
-		fmt.Fprintf(w, "\t%s %s\n", label(Gray, "Caller"), e.Caller)
+		fmt.Fprintf(w, "\t%s %s\n", label(Gray, "Caller"), logview.Sanitize(e.Caller))
 	}
 	if v := str("build_commit"); v != "" {
 		fmt.Fprintf(w, "\t%s %s\n", label(Gray, "Commit"), v)
@@ -55,10 +55,10 @@ func RenderLoggedError(w io.Writer, e logview.Entry, logfile string, color bool)
 		fmt.Fprintf(w, "\t%s %s\n", label(Gray, "Version"), v)
 	}
 	if v, ok := e.Obj["pid"]; ok {
-		fmt.Fprintf(w, "\t%s %v\n", label(Gray, "Pid"), v)
+		fmt.Fprintf(w, "\t%s %v\n", label(Gray, "Pid"), logview.Sanitize(fmt.Sprint(v)))
 	}
 	if logfile != "" {
-		fmt.Fprintf(w, "\t%s %s\n", label(Cyan, "Logfile"), logfile)
+		fmt.Fprintf(w, "\t%s %s\n", label(Cyan, "Logfile"), logview.Sanitize(logfile))
 	}
 
 	hints := loggedHints(e)
@@ -77,7 +77,7 @@ func loggedHints(e logview.Entry) []string {
 	hints := make([]string, 0, len(raw))
 	for _, h := range raw {
 		if s, ok := h.(string); ok && s != "" {
-			hints = append(hints, s)
+			hints = append(hints, logview.Sanitize(s))
 		}
 	}
 	return hints

@@ -159,8 +159,12 @@ func Follow(ctx context.Context, path, source string, offset int64, filter Filte
 				return openError(err, path)
 			}
 			file, info = f, cur
-		case statErr == nil && cur.Size() < pos:
-			pos, partial = 0, nil
+		case file != nil:
+			// Checked after the drain, on the open file: a size taken before it
+			// goes stale when a line lands mid-read and looks like a truncation.
+			if now, err := file.Stat(); err == nil && now.Size() < pos {
+				pos, partial = 0, nil
+			}
 		}
 
 		select {

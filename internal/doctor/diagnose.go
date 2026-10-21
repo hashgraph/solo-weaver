@@ -358,6 +358,28 @@ func Diagnose(ctx context.Context, ex error) *ErrorDiagnosis {
 // error panel is shown and details are written only to the log file.
 var VerboseLevel int
 
+// logSource names the log ("cli" or "daemon") that CheckErr's error line is
+// written to. It stays empty until the file logger is up, so an error raised
+// before that is never claimed to be in the log.
+var logSource string
+
+// SetLogSource records which log file receives errors from now on. Pass "" when
+// file logging is off.
+func SetLogSource(source string) { logSource = source }
+
+// lastErrorCommand returns the command that replays this process's error from
+// the log, or "" when the error was not logged.
+func lastErrorCommand() string {
+	switch logSource {
+	case "":
+		return ""
+	case "cli":
+		return "sudo solo-provisioner diagnose logs --last-error"
+	default:
+		return "sudo solo-provisioner diagnose logs --source " + logSource + " --last-error"
+	}
+}
+
 // CheckErr prints diagnosis and exit with error code 1.
 //
 // Remediation steps come from the error itself — attach them with
@@ -416,7 +438,11 @@ func checkErrCompact(resp *ErrorDiagnosis) {
 		fmt.Fprintf(os.Stderr, "\n  %sSee logs:%s %s\n", Cyan, Reset, logfile)
 	}
 	fmt.Fprintf(os.Stderr, "  %sBuild:%s %s (commit %s)\n", Gray, Reset, resp.Version, version.Info{Commit: resp.Commit}.ShortCommit(12))
-	fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics, or run 'solo-provisioner diagnose logs --last-error' afterwards%s\n", Gray, Reset)
+	if cmd := lastErrorCommand(); cmd != "" {
+		fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics, or run '%s' afterwards%s\n", Gray, cmd, Reset)
+	} else {
+		fmt.Fprintf(os.Stderr, "  %sUse -V for full diagnostics%s\n", Gray, Reset)
+	}
 }
 
 // checkErrVerbose prints the full legacy error output with stacktrace and profiling.

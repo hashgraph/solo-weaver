@@ -322,6 +322,10 @@ func initConfig(ctx context.Context) {
 		ui.SuppressConsoleLogging(logConfig)
 	}
 
+	if logConfig.FileLogging {
+		doctor.SetLogSource("cli")
+	}
+
 	// Stamp the build identity onto every log line (matching the UC / solo-operator)
 	// so operators can tell which provisioner build produced a given log. Image tags
 	// and the version string can be placeholders, so build_commit is the reliable

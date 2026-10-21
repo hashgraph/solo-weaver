@@ -51,3 +51,24 @@ func TestRenderLoggedError_Minimal(t *testing.T) {
 		require.NotContains(t, got, absent, "an absent field must not render an empty line")
 	}
 }
+
+func TestRenderLoggedError_EscapesControlCharacters(t *testing.T) {
+	e := logview.ParseLine("cli", `{"level":"error","message":"boom\u001b[2J","hints":["run \u001b]0;x\u0007"]}`)
+
+	var out bytes.Buffer
+	RenderLoggedError(&out, e, "/x.log", false)
+	require.NotContains(t, out.String(), "\x1b")
+	require.NotContains(t, out.String(), "\x07")
+	require.Contains(t, out.String(), `boom\x1b[2J`)
+}
+
+func TestLastErrorCommand(t *testing.T) {
+	t.Cleanup(func() { SetLogSource("") })
+
+	SetLogSource("")
+	require.Empty(t, lastErrorCommand())
+	SetLogSource("cli")
+	require.Equal(t, "sudo solo-provisioner diagnose logs --last-error", lastErrorCommand())
+	SetLogSource("daemon")
+	require.Equal(t, "sudo solo-provisioner diagnose logs --source daemon --last-error", lastErrorCommand())
+}
