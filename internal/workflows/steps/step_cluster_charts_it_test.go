@@ -6,6 +6,7 @@ package steps
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
+	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 )
 
@@ -28,6 +30,11 @@ import (
 // archive matches its catalog checksum, and renders it client-side with the
 // given values against Kubernetes 1.36.5.
 func renderCatalogChart(t *testing.T, spec *helmChartSpec, vals []string) []unstructured.Unstructured {
+	t.Helper()
+	return renderCatalogChartWith(t, spec, &values.Options{Values: vals})
+}
+
+func renderCatalogChartWith(t *testing.T, spec *helmChartSpec, opts *values.Options) []unstructured.Unstructured {
 	t.Helper()
 	hm := isolatedHelm(t)
 	if spec.Repo != "" {
@@ -39,7 +46,7 @@ func renderCatalogChart(t *testing.T, spec *helmChartSpec, vals []string) []unst
 
 	chrt, err := loader.Load(local)
 	require.NoError(t, err)
-	merged, err := (&values.Options{Values: vals}).MergeValues(getter.All(cli.New()))
+	merged, err := opts.MergeValues(getter.All(cli.New()))
 	require.NoError(t, err)
 
 	install := action.NewInstall(&action.Configuration{})
@@ -61,6 +68,10 @@ func renderCatalogChart(t *testing.T, spec *helmChartSpec, vals []string) []unst
 		}
 	}
 	require.NotEmpty(t, objs)
+	// SplitManifests returns a map, so the order is random.
+	sort.Slice(objs, func(i, j int) bool {
+		return objs[i].GetKind()+"/"+objs[i].GetName() < objs[j].GetKind()+"/"+objs[j].GetName()
+	})
 	return objs
 }
 
@@ -142,6 +153,104 @@ func Test_MetricsServerChart_RendersInsecureKubeletTLS_Integration(t *testing.T)
 			assert.Contains(t, args, "--kubelet-insecure-tls")
 			assert.True(t, skipTLS)
 			assert.True(t, hasObject(objs, "Service", "metrics-server"))
+		})
+	}
+}
+
+func clusterRoleRules(t *testing.T, objs []unstructured.Unstructured) []interface{} {
+	t.Helper()
+	for _, o := range objs {
+		if o.GetKind() == "ClusterRole" {
+			rules, _, err := unstructured.NestedSlice(o.Object, "rules")
+			require.NoError(t, err)
+			return rules
+		}
+	}
+	t.Fatal("no ClusterRole rendered")
+	return nil
+}
+
+func withoutKind(objs []unstructured.Unstructured, kind string) []unstructured.Unstructured {
+	var out []unstructured.Unstructured
+	for _, o := range objs {
+		if o.GetKind() != kind {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// Our per-version values change only the ClusterRole, and only by adding get on
+// nodes/proxy to the chart's own rules. 1.4.0 keeps its chart defaults.
+func Test_AlloyChart_VersionValuesOnlyAddNodesProxyGet_Integration(t *testing.T) {
+	nodesProxyGet := map[string]interface{}{"apiGroups": []interface{}{""}, "resources": []interface{}{"nodes/proxy"}, "verbs": []interface{}{"get"}}
+	for _, version := range []string{"1.4.0", "1.13.1"} {
+		t.Run(version, func(t *testing.T) {
+			spec, err := resolveCatalogChartVersion("alloy", version)
+			require.NoError(t, err)
+			jsonValues, err := alloy.ChartJSONValues(version)
+			require.NoError(t, err)
+
+			chartDefaults := renderCatalogChartWith(t, spec, &values.Options{Values: alloy.BaseHelmValues()})
+			ours := renderCatalogChartWith(t, spec, &values.Options{Values: alloy.BaseHelmValues(), JSONValues: jsonValues})
+
+			assert.Equal(t, withoutKind(chartDefaults, "ClusterRole"), withoutKind(ours, "ClusterRole"))
+			defaultRules, ourRules := clusterRoleRules(t, chartDefaults), clusterRoleRules(t, ours)
+			if version == "1.4.0" {
+				assert.Equal(t, defaultRules, ourRules)
+				return
+			}
+			assert.NotContains(t, defaultRules, nodesProxyGet)
+			var added []interface{}
+			for _, r := range ourRules {
+				if !containsRule(defaultRules, r) {
+					added = append(added, r)
+				}
+			}
+			assert.Equal(t, []interface{}{nodesProxyGet}, added)
+			for _, r := range defaultRules {
+				assert.True(t, containsRule(ourRules, r), "chart rule dropped: %v", r)
+			}
+		})
+	}
+}
+
+func containsRule(rules []interface{}, rule interface{}) bool {
+	for _, r := range rules {
+		if assert.ObjectsAreEqual(r, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// Both CRD chart versions install the same CRDs, with ServiceMonitor and
+// PodMonitor served and stored as v1.
+func Test_PrometheusOperatorCRDsChart_Integration(t *testing.T) {
+	want := []string{
+		"alertmanagerconfigs", "alertmanagers", "podmonitors", "probes", "prometheusagents",
+		"prometheuses", "prometheusrules", "scrapeconfigs", "servicemonitors", "thanosrulers",
+	}
+	for _, version := range []string{"24.0.1", "32.0.1"} {
+		t.Run(version, func(t *testing.T) {
+			spec, err := resolveCatalogChartVersion("prometheus-operator-crds", version)
+			require.NoError(t, err)
+			objs := renderCatalogChart(t, spec, nil)
+
+			var names []string
+			for _, o := range objs {
+				require.Equal(t, "CustomResourceDefinition", o.GetKind())
+				names = append(names, strings.TrimSuffix(o.GetName(), ".monitoring.coreos.com"))
+				if o.GetName() == "servicemonitors.monitoring.coreos.com" || o.GetName() == "podmonitors.monitoring.coreos.com" {
+					versions, _, _ := unstructured.NestedSlice(o.Object, "spec", "versions")
+					require.Len(t, versions, 1)
+					v := versions[0].(map[string]interface{})
+					assert.Equal(t, "v1", v["name"])
+					assert.Equal(t, true, v["served"])
+					assert.Equal(t, true, v["storage"])
+				}
+			}
+			assert.ElementsMatch(t, want, names)
 		})
 	}
 }
