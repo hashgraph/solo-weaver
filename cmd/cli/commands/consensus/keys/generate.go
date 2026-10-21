@@ -151,6 +151,7 @@ func addGrpcFlags(cmd *cobra.Command) func() (corekeys.GrpcOptions, error) {
 // force is set. The bool is false when nothing needs generating.
 func planGeneration(keysDir string, requested cnkeys.Selectors, force bool) (cnkeys.Selectors, bool) {
 	requested = cnkeys.NormalizeSelectors(requested)
+	requested.Admin = false // the admin key is never generated
 	if force {
 		return requested, requested.Any()
 	}
@@ -167,7 +168,7 @@ func warnSkipped(keysDir string, skipped cnkeys.Selectors) {
 	}{{skipped.Gossip, "gossip"}, {skipped.Grpc, "grpc"}} {
 		if k.on {
 			logx.As().Warn().Str("keysDir", keysDir).Str("keyType", k.name).
-				Msg("key material already exists; keeping it (pass --force to regenerate)")
+				Msg("Keeping existing key material (pass --force to regenerate)")
 		}
 	}
 }
