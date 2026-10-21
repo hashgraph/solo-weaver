@@ -203,8 +203,26 @@ runs:
           fi
         fi
 
+        # A VM still running here (not stopped above, or it survived kill -9) would keep
+        # its deleted disk open and the space would not be freed. Leave it for the next sweep.
+        dir_in_use() {
+          local procs
+          procs="$(ps -eo args=)"
+          case "${procs}" in
+            *"file=$1/"*) return 0 ;;
+          esac
+          if command -v fuser >/dev/null 2>&1 && fuser -s "$1/vm-disk.qcow2" 2>/dev/null; then
+            return 0
+          fi
+          return 1
+        }
+
         SWEPT=0
         remove_vm_dir() {
+          if dir_in_use "$1"; then
+            echo "::warning::Skipping $1: a process still uses it. It will be swept once the process exits."
+            return 0
+          fi
           echo "Removing stale VM directory: $1 ($(du -sh "$1" 2>/dev/null | cut -f1))"
           rm -rf -- "$1"
           SWEPT=$((SWEPT + 1))
