@@ -549,7 +549,7 @@ decoy registry at `registries[0]`.
 - solo-operator checkout at `../solo-operator` with a **clean working tree** —
   `task -d docs/dev/daemon prep`'s dirty-tree guard refuses to switch branches
   otherwise. Stash/commit work-in-progress before running the UAT.
-- weaver on a stack that includes operator v0.8.0 (`SOLO_OPERATOR_VERSION = "0.8.0"`
+- weaver on a stack that includes operator v0.10.0 (`SOLO_OPERATOR_VERSION = "0.10.0"`
   in `pkg/deps/deps.go`) and the source-only emission + manifest-strategy
   propagation.
 
@@ -569,7 +569,7 @@ task -d docs/dev/daemon sync
 # Inside the VM (via `task vm:ssh:proxy`):
 task -d docs/dev/daemon cluster       # kube cluster install
 task -d docs/dev/daemon secrets       # creates private-registry-creds in both namespaces
-task -d docs/dev/daemon operator      # kube operator install (v0.8.0 chart)
+task -d docs/dev/daemon operator      # kube operator install (v0.10.0 chart)
 task -d docs/dev/daemon consensus      # consensus node install
 ```
 
