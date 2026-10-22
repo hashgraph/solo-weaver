@@ -54,6 +54,28 @@ func Teleport(baseline, live state.State) []Change {
 		teleportClusterAgent.compare(baseline.TeleportState, live.TeleportState)...)
 }
 
+// OnTeleportNodeAgent reports whether c is a change to the Teleport node agent.
+func OnTeleportNodeAgent(c Change) bool { return teleportNodeAgent.owns(c) }
+
+// OnTeleportClusterAgent reports whether c is a change to the Teleport cluster
+// agent.
+func OnTeleportClusterAgent(c Change) bool { return teleportClusterAgent.owns(c) }
+
+func (a teleportAgent) owns(c Change) bool {
+	if c.Component != teleportComponent {
+		return false
+	}
+	if c.Field == a.installedField {
+		return true
+	}
+	for _, f := range a.fields {
+		if f.name == c.Field {
+			return true
+		}
+	}
+	return false
+}
+
 // compare reports an install or removal as the installed flag alone, since the
 // agent's other fields follow it, and compares those fields only while the
 // agent is installed on both sides.
@@ -65,6 +87,7 @@ func (a teleportAgent) compare(persisted, observed state.TeleportState) []Change
 			Field:     a.installedField,
 			Persisted: strconv.FormatBool(was),
 			Live:      strconv.FormatBool(is),
+			Removed:   was,
 		}}
 	}
 	if !is {
@@ -74,7 +97,12 @@ func (a teleportAgent) compare(persisted, observed state.TeleportState) []Change
 	var changes []Change
 	for _, f := range a.fields {
 		if p, o := f.value(persisted), f.value(observed); p != o {
-			changes = append(changes, Change{Component: teleportComponent, Field: f.name, Persisted: p, Live: o})
+			changes = append(changes, Change{
+				Component: teleportComponent, Field: f.name, Persisted: p, Live: o,
+				// configured only says the agent's /usr/local/bin links point into the
+				// sandbox, so its going false is a removal too.
+				Removed: f.name == "nodeAgent.configured" && p == "true",
+			})
 		}
 	}
 	return changes
