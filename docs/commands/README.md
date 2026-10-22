@@ -10,6 +10,7 @@ Every `solo-provisioner` command, by stack.
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
 | `daemon service` | [below](#daemon-service) | The `solo-provisioner-daemon` systemd service |
+| `consensus node` | [below](#consensus-node) | Install and uninstall a consensus node (experimental) |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
 | `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
 | `version` | [below](#utilities) | Version information |
@@ -97,6 +98,10 @@ sudo solo-provisioner daemon service install --from-config=<path>
 sudo solo-provisioner daemon service uninstall
 sudo solo-provisioner daemon service check          # alias: status
 sudo solo-provisioner daemon service start|stop
+
+# CONSENSUS NODE (experimental: needs --experimental)
+sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>]
+sudo solo-provisioner consensus node uninstall --experimental --namespace=<ns> --node-id=<id> [--force]
 
 # CONSENSUS MIGRATION SOAK
 sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
@@ -347,6 +352,50 @@ sudo solo-provisioner daemon service start
 sudo solo-provisioner daemon service stop
 sudo solo-provisioner daemon service uninstall
 ```
+
+---
+
+## Consensus node
+
+> **Experimental.** The `consensus` group is hidden and runs only with `--experimental` or
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1`. Under `sudo`, use the flag, because `sudo` drops the
+> environment.
+
+`consensus node install` creates the solo-operator CRs of one node: the Orbit, 11 config CRs and the
+ConsensusCapsule. For the full install procedure, see
+[acceptance-tests §F](../dev/acceptance-tests.md#f-consensus-node-deployment).
+
+### Uninstall
+
+`consensus node uninstall` removes one node:
+
+1. It deletes the node's ConsensusCapsule and waits until the capsule is gone.
+2. It deletes the node's 11 config CRs.
+3. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
+4. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.
+
+The command keeps the gossip and gRPC TLS Secrets, the PVCs and the hostPath data. The orbit's `NetworkGenesis` CR and the `genesis-config` ConfigMap also stay after the last
+node is removed.
+When the node is already gone, the command succeeds and changes nothing.
+
+```bash
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0
+
+# Skip the confirmation prompt
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0 --force
+```
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--node-id` | yes | Consensus node ID (0-based). `0` is a valid ID, so the command needs the flag every time. |
+| `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
+| `--force`, `-y` | no | Skip the confirmation prompt. `--non-interactive` also skips it. |
+
+> `uninstall --help` also lists the install flags, because they are defined on `consensus node`.
+> Uninstall does not use them.
+
+> **The node stops.** Deleting the ConsensusCapsule removes the node's pod. To remove the Secrets
+> or the volume data, delete them manually.
 
 ---
 

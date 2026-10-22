@@ -492,6 +492,48 @@ Expected (both F1 and F2):
   kubectl -n "${NS}" get consensuscapsules   # -> N capsules, all Active
   ```
 
+### F3. Uninstall consensus nodes
+
+`consensus node uninstall` removes one node. It keeps the Secrets and the volume data. It deletes
+the Orbit only together with the last node in the namespace. The orbit's `NetworkGenesis` CR and the `genesis-config` ConfigMap also stay after the last
+node is removed.
+
+```bash
+# 7. Uninstall node 0. On a multi-node network (F2), the Orbit stays.
+sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id 0 --force
+
+# 8. Run it again: a no-op success.
+sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id 0 --force
+
+# 9. F2 only: uninstall the other nodes. The last uninstall deletes the Orbit.
+for i in 1 2 3; do
+  sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id "${i}" --force
+done
+```
+
+Expected:
+- After step 7, the capsule and the config CRs of node 0 are gone:
+  ```bash
+  kubectl -n "${NS}" get consensuscapsule "${NS}-consensus-0"   # -> NotFound
+  kubectl -n "${NS}" get log4j2config node0-log4j2              # -> NotFound
+  ```
+- On F2, the Orbit stays until the last node is gone. On F1, step 7 deletes it:
+  ```bash
+  kubectl get orbit "${NS}"   # F2 after step 7 -> found; F1 after step 7, or F2 after step 9 -> NotFound
+  ```
+- The Secrets stay:
+  ```bash
+  kubectl -n "${NS}" get secret node0-gossip-keys node0-grpc-tls-keys   # -> both found
+  ```
+- PVCs stay when the node used PVC volumes (`--default-volume-type pvc`):
+  ```bash
+  kubectl -n "${NS}" get pvc   # -> the PVCs of node 0 are still listed
+  ```
+- `state.yaml` no longer lists the node. The Orbit entry goes only with the last node:
+  ```bash
+  sudo grep -A3 -E 'consensusNodes|consensusOrbits' /opt/solo/weaver/state/state.yaml
+  ```
+
 ### Notes / gotchas
 
 - `--image-pull-secret` is repeatable and host-keyed. A bare `NAME` (default
@@ -605,7 +647,8 @@ task -d docs/dev/daemon prep \
   SOLO_OPERATOR_REF=chore/update-beacon-examples \
   CN_SELECTION_STRATEGY=Random
 task -d docs/dev/daemon sync
-# Reinstall the node (uninstall first, or use a fresh namespace).
+# Reinstall the node. Uninstall it first, or use a fresh namespace:
+#   sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0 --force
 ```
 
 ```bash
