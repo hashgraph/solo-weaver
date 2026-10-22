@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/joomcode/errorx"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -789,5 +790,31 @@ func TestDeleteResource_UnmappedKind(t *testing.T) {
 	}
 	if !errorx.IsOfType(err, errorx.IllegalArgument) {
 		t.Fatalf("expected an IllegalArgument error, got %v", err)
+	}
+	if !IsKindNotServed(err) {
+		t.Fatalf("expected IsKindNotServed to detect the absent CRD, got %v", err)
+	}
+}
+
+func TestIsKindNotServed(t *testing.T) {
+	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "operator.solo.hiero.org", Kind: "Orbit"}}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"bare no-match", noMatch, true},
+		{"errorx-wrapped no-match", errorx.IllegalArgument.Wrap(noMatch, "mapping"), true},
+		{"other error", errorx.ExternalError.New("connection refused"), false},
+		{"not found", kerrors.NewNotFound(schema.GroupResource{Resource: "orbits"}, "x"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsKindNotServed(tt.err); got != tt.want {
+				t.Fatalf("IsKindNotServed(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
