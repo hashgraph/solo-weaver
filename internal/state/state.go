@@ -153,6 +153,22 @@ type ActionHistory struct {
 	// include X answers "what last modified component X" — the role the single
 	// in-state LastAction pointer used to serve before it was dropped (#1242).
 	Components []ComponentID `yaml:"components,omitempty" json:"components,omitempty"`
+	// OwnedDrift lists the out-of-band changes to the action's owned components
+	// that it ran over.
+	OwnedDrift []OwnedDriftRecord `yaml:"ownedDrift,omitempty" json:"ownedDrift,omitempty"`
+}
+
+// OwnedDriftRecord is one owned out-of-band change an action ran over.
+type OwnedDriftRecord struct {
+	Component string `yaml:"component" json:"component"`
+	Field     string `yaml:"field" json:"field"`
+	Persisted string `yaml:"persisted" json:"persisted"`
+	// Live is the out-of-band value the action found.
+	Live string `yaml:"live" json:"live"`
+	// Destroyed is set when the guard let the action destroy the change: the
+	// run went ahead over it. Whether the workflow then succeeded is in the
+	// run's report and log, not here.
+	Destroyed bool `yaml:"destroyed" json:"destroyed"`
 }
 
 type ProvisionerInfo struct {

@@ -454,7 +454,7 @@ func (m *stateManager) flushActionHistory() error {
 
 	// Append action history entries.
 	// Do this before writing the state file to ensure history is preserved even if the state file flush fails (since pending actions are cleared on successful flush).
-	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
+	actionHistoryFile := ActionHistoryFilePath(filepath.Dir(snapshot.StateFile))
 	for _, entry := range pendingActions {
 		entryBytes, marshalErr := yaml.Marshal(entry)
 		if marshalErr != nil {

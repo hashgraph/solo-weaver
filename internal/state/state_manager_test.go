@@ -417,6 +417,36 @@ func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 		"action_history entry must record which components the action wrote")
 }
 
+// An entry records the owned drift its action ran over; an entry with none
+// carries no ownedDrift key.
+func TestActionHistory_EntryRecordsOwnedDrift(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	drifted := []OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.1.0", Live: "18.2.1", Destroyed: true,
+	}}
+
+	m.AddActionHistory(ActionHistory{
+		Intent:     models.Intent{Action: models.ActionUninstall, Target: models.TargetTeleportCluster},
+		OwnedDrift: drifted,
+	})
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetTeleportCluster}})
+	require.NoError(t, m.FlushActionHistory())
+
+	f, err := os.Open(ActionHistoryFilePath(dir))
+	require.NoError(t, err)
+	defer f.Close()
+	dec := yaml.NewDecoder(f)
+	var drifting ActionHistory
+	require.NoError(t, dec.Decode(&drifting))
+	var plain map[string]any
+	require.NoError(t, dec.Decode(&plain))
+
+	require.Equal(t, drifted, drifting.OwnedDrift)
+	require.NotContains(t, plain, "ownedDrift")
+}
+
 // TestFlushState_HandEditWithStaleHashFieldIsDetected verifies the optimistic-
 // concurrency check recomputes the on-disk hash from content rather than
 // trusting the file's own stored hash field. A hand edit naturally leaves
