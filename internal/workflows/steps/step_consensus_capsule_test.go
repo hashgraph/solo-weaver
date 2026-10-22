@@ -19,12 +19,14 @@ import (
 
 // fakeCapsuleClient is an in-memory CapsuleKubeClient for testing the config-CR
 // apply policy without a cluster. `existing` maps CR name -> deployed content;
-// `applied` records the CR names passed to ApplyTyped, in order.
+// `applied` records the CR names passed to ApplyTyped, in order; `deleted`
+// records the CR names DeleteResource removed, in order.
 type fakeCapsuleClient struct {
 	existing    map[string]string
 	nested      map[string]map[string]interface{}
 	applied     []string
 	appliedObjs []runtime.Object
+	deleted     []string
 	listResult  *unstructured.UnstructuredList
 }
 
@@ -54,6 +56,15 @@ func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ strin
 		return f.listResult, nil
 	}
 	return &unstructured.UnstructuredList{}, nil
+}
+
+func (f *fakeCapsuleClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
+	if _, ok := f.existing[name]; !ok {
+		return false, nil
+	}
+	delete(f.existing, name)
+	f.deleted = append(f.deleted, name)
+	return true, nil
 }
 
 func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {
