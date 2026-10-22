@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
@@ -48,4 +49,12 @@ type IntentHandler[I any] interface {
 		intent models.Intent,
 		inputs models.UserInputs[I],
 	) (*automa.Report, error)
+}
+
+// DriftDestroyer is implemented by a per-action handler whose action can
+// destroy owned drift: remove the component the change is on, or its data.
+// DestroysDrift reports whether running the action with inputs destroys c. A
+// handler that doesn't implement it converges, and never stops for drift.
+type DriftDestroyer[I any] interface {
+	DestroysDrift(inputs models.UserInputs[I], c drift.Change) bool
 }
