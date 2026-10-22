@@ -623,7 +623,7 @@ cluster:
   chart: 'external-secrets/external-secrets'
   namespace: 'external-secrets'
   release: 'external-secrets'
-  default: "0.20.2"
+  default: "2.13.0"
   versions:
     0.20.2:
       algorithm: 'sha256'

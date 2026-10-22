@@ -385,7 +385,7 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		"teleport-cluster-agent":   {ChartTypeClassic, "18.11.3"},
 		"metallb":                  {ChartTypeClassic, "0.16.1"},
 		"metrics-server":           {ChartTypeClassic, "3.14.0"},
-		"external-secrets":         {ChartTypeClassic, "0.20.2"},
+		"external-secrets":         {ChartTypeClassic, "2.13.0"},
 		"node-exporter":            {ChartTypeOCI, "4.59.0"},
 		"prometheus-operator-crds": {ChartTypeOCI, "32.0.1"},
 		// solo-operator is intentionally excluded: its version is not pinned in this
