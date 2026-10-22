@@ -45,11 +45,13 @@ type noReleases struct{}
 
 func (noReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
-// noopIntent runs a one-step workflow that calls execute, or fails to build
-// the workflow when buildErr is set.
+// noopIntent is a converging test handler. It runs a one-step workflow that
+// calls execute. With buildErr set, BuildWorkflow fails; with noSteps set, it
+// returns a workflow with no steps, which then fails to build.
 type noopIntent struct {
 	execute  func()
 	buildErr error
+	noSteps  bool
 }
 
 func (n noopIntent) PrepareEffectiveInputs(_ models.Intent, in models.UserInputs[struct{}]) (*models.UserInputs[struct{}], error) {
@@ -59,6 +61,9 @@ func (n noopIntent) PrepareEffectiveInputs(_ models.Intent, in models.UserInputs
 func (n noopIntent) BuildWorkflow(state.State, models.UserInputs[struct{}]) (*automa.WorkflowBuilder, error) {
 	if n.buildErr != nil {
 		return nil, n.buildErr
+	}
+	if n.noSteps {
+		return automa.NewWorkflowBuilder().WithId("test"), nil
 	}
 	step := automa.NewStepBuilder().WithId("noop").
 		WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
@@ -117,6 +122,25 @@ func handleBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopI
 // handleBlockNodeIntentWith is handleBlockNodeIntent with the handler's managed components chosen.
 func handleBlockNodeIntentWith(t *testing.T, stateFile string, h *host, intent noopIntent, managed ...Component) (*automa.Report, error) {
 	t.Helper()
+	return handleIntent(t, stateFile, h, intent, commonInputs(), owns(managed...))
+}
+
+// owns is the handler option that declares the components a test handler manages.
+func owns(managed ...Component) BaseHandlerOption[struct{}] {
+	return WithManagedComponents[struct{}](managed...)
+}
+
+// commonInputs is an interactive run with no override.
+func commonInputs() models.CommonInputs {
+	return models.CommonInputs{
+		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
+	}
+}
+
+// handleIntent is handleBlockNodeIntentWith with the common inputs and the
+// handler's options chosen.
+func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[struct{}], common models.CommonInputs, opts ...BaseHandlerOption[struct{}]) (*automa.Report, error) {
+	t.Helper()
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
@@ -145,12 +169,10 @@ func handleBlockNodeIntentWith(t *testing.T, stateFile string, h *host, intent n
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
-	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, WithManagedComponents[struct{}](managed...))
+	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, opts...)
 	require.NoError(t, err)
 
-	inputs := models.UserInputs[struct{}]{Common: models.CommonInputs{
-		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
-	}}
+	inputs := models.UserInputs[struct{}]{Common: common}
 	return base.HandleIntent(context.Background(),
 		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, inputs, intent, nil)
 }

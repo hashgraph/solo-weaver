@@ -16,9 +16,9 @@ import (
 // live state using producers. With no baseline (no state file yet) there is
 // nothing to compare.
 //
-// Each change is logged here, so it is on record even if the run fails before
-// its report exists. The log is debug only: an Info or Warn line would reach
-// the console as well as the report warning, showing the change twice.
+// Each change is logged here at debug level, so it is on record even if the run
+// fails before its report exists. A run that goes ahead over owned drift also
+// logs each change at warn level, before its workflow (guardOwnedDrift).
 func detectOutOfBandChanges(baseline *state.State, live state.State, producers ...drift.Producer) []drift.Change {
 	if baseline == nil {
 		return nil
