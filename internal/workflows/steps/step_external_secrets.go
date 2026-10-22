@@ -173,6 +173,70 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 	return nil
 }
 
+// esoCRDs are the CRDs every ESO install creates. All are checked, so an
+// install that left only some of them behind is still found.
+var esoCRDs = []string{
+	"externalsecrets.external-secrets.io",
+	"clusterexternalsecrets.external-secrets.io",
+	"secretstores.external-secrets.io",
+	"clustersecretstores.external-secrets.io",
+}
+
+// crdChecker is the part of the kube client checkOrphanedESOCRDs needs.
+type crdChecker interface {
+	CRDExists(ctx context.Context, crdName string) (bool, error)
+}
+
+// checkOrphanedESOCRDs fails when ESO CRDs exist but no Helm release of the ESO
+// chart does. Helm adopts existing resources that carry its ownership labels for
+// the same release name and namespace, so an install over an ESO whose release
+// record was lost would replace its CRDs and workloads with the catalog default.
+func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, crds crdChecker, spec *helmChartSpec) error {
+	releases, err := hm.ListAll()
+	if err != nil {
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to list Helm releases"),
+			reasons.PreconditionNotMet,
+			"Verify the cluster is reachable: kubectl cluster-info",
+		)
+	}
+	for _, rel := range releases {
+		if rel != nil && isESORelease(rel, spec) {
+			return nil
+		}
+	}
+
+	var found []string
+	for _, name := range esoCRDs {
+		exists, err := crds.CRDExists(ctx, name)
+		if err != nil {
+			return errx.Decorate(
+				errorx.ExternalError.Wrap(err, "failed to check for existing External Secrets Operator CRDs"),
+				reasons.K8sAPIFailed,
+				"Verify the cluster is reachable: kubectl cluster-info",
+				"Check the CRD: kubectl get crd "+name,
+			)
+		}
+		if exists {
+			found = append(found, name)
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+
+	return errx.Decorate(
+		errorx.IllegalState.New(
+			"External Secrets Operator CRDs already exist (%s) but no Helm release of the External Secrets Operator does; installing would take over that existing installation, so nothing was changed",
+			strings.Join(found, ", ")),
+		reasons.PreconditionNotMet,
+		"Find what manages them: kubectl get crd "+strings.Join(found, " ")+" -o yaml | grep -E 'managed-by|release-name|release-namespace'",
+		"If another tool (for example Argo CD) manages External Secrets Operator, keep managing it there",
+		"If they are left over from a removed installation, check nothing uses them: kubectl get externalsecrets,secretstores,clustersecretstores,clusterexternalsecrets -A",
+		"Then delete them, which deletes every resource of those kinds and the Secrets they own: kubectl delete crd "+strings.Join(found, " "),
+	)
+}
+
 // chartName reports rel's chart name, or "unknown" when its metadata is missing.
 func chartName(rel *release.Release) string {
 	if rel.Chart == nil || rel.Chart.Metadata == nil {
@@ -209,6 +273,17 @@ func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Bu
 					)))
 				}
 				if err := checkESOSingleton(hm, spec); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+				k, err := kube.NewClient()
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.ExternalError.Wrap(err, "failed to initialise Kubernetes client"),
+						reasons.K8sAPIFailed,
+						"Verify the cluster is reachable: kubectl cluster-info",
+					)))
+				}
+				if err := checkOrphanedESOCRDs(ctx, hm, k, spec); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 			}

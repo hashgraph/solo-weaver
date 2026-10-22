@@ -241,6 +241,7 @@ is skipped with a clear message.
 > * ESO already exists elsewhere in the cluster, in another namespace or under another release name;
 > * the release in the target namespace is left in a failed, pending or uninstalled state;
 > * the `external-secrets` release name in the target namespace belongs to a different chart.
+> * ESO CRDs already exist but no ESO Helm release does — ESO managed by another tool, or one whose release record was lost. Installing would take that ESO over, so the install stops and names the CRDs.
 >
 > Each message names the release and namespace that are in the way, and the command to clear it. For the
 > first two cases that is `sudo solo-provisioner eso operator uninstall --namespace <namespace>`,
@@ -279,9 +280,24 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 | `--continue-on-error` | Keep going past failures | — |
 
 > **This deletes secrets across the whole cluster.** Uninstalling ESO removes its
-> cluster-scoped CRDs, which deletes every `ExternalSecret` and `SecretStore` in the cluster —
-> and the Kubernetes Secrets they sync. Do not run it while anything still depends on a synced
-> secret.
+> cluster-scoped CRDs. When that completes, every `ExternalSecret` and `SecretStore` in the
+> cluster is deleted, and with them the Kubernetes Secrets they own. Do not run it while anything
+> still depends on a synced secret.
+
+> **Remove ExternalSecrets first, while ESO is healthy.** ESO puts a cleanup finalizer on each
+> `ExternalSecret`, and only the ESO controller removes it. The uninstall deletes the controller
+> and the CRDs together, so with ExternalSecrets still present it can time out after 5 minutes.
+> The Helm release record is gone by then, but the `ExternalSecret` CRD stays `Terminating` and
+> the synced Secrets remain; `eso operator install` refuses to run until that CRD is gone.
+>
+> 1. List the ExternalSecrets and find the workloads that use their Secrets:
+>    `kubectl get externalsecrets -A`
+> 2. Delete the ones you no longer need with `eso secret delete`, and wait until
+>    `kubectl get externalsecrets -A` lists none.
+> 3. Then run `eso operator uninstall`.
+>
+> Do not remove finalizers or delete the CRDs by hand to get past a stuck uninstall on a
+> production cluster. That skips ESO's cleanup and deletes every resource of those kinds.
 
 The target is the ESO release **in `--namespace`**, found by chart name — so this clears an ESO
 installed under a different release name (a hand-run `helm install my-eso`, or a controller such
