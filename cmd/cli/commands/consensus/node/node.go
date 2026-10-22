@@ -109,6 +109,7 @@ func init() {
 	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
 	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)
 	nodeCmd.AddCommand(installCmd)
+	nodeCmd.AddCommand(uninstallCmd)
 }
 
 // GetCmd returns the consensus node command group.
