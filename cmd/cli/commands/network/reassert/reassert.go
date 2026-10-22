@@ -13,6 +13,7 @@ package reassert
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"text/tabwriter"
 
 	"github.com/automa-saga/logx"
@@ -38,8 +39,15 @@ var (
 			"keeps serving traffic, just unfiltered and unshaped.\n\n" +
 			"Each plane is checked only where it is provisioned, decided from its own persisted " +
 			"artifact, and repair means restarting the systemd unit that replays that artifact — " +
-			"nothing is re-rendered. An artifact whose presence cannot be determined is reported and " +
+			"nothing is re-rendered (the older-format reload below is the one exception). An artifact whose presence cannot be determined is reported and " +
 			"left alone rather than rebuilt on a guess.\n\n" +
+			"It also checks that the live state is right, not just present: that the live " +
+			"`inet weaver-workload-policy` rules match the policy registry, that no tc filter sits on " +
+			"a lane tree, and it reads the rule and lane counters the daemon compares minute to " +
+			"minute. These checks only report, with one exception: without --check, rules an older " +
+			"version wrote are reloaded in the current format when they otherwise match the registry.\n\n" +
+			"Both apply locks are taken without waiting, also under --check; if an operator apply " +
+			"holds one, that plane is reported as skipped — run it again.\n\n" +
 			"This normally runs unattended: the solo-provisioner-daemon execs it via sudo once a " +
 			"minute. Run it by hand to inspect state (--check), or to recover a node that has no " +
 			"daemon.",
@@ -71,12 +79,38 @@ func emitReassertReport(cmd *cobra.Command, report ra.Report, checkOnly bool) er
 	return nil
 }
 
-// writeReassertTable prints one row per artifact.
+// writeReassertTable prints one row per artifact, then one per check.
 func writeReassertTable(cmd *cobra.Command, report ra.Report) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ARTIFACT\tSTATE\tDETAIL")
 	for _, a := range report.Artifacts {
 		fmt.Fprintf(w, "%s\t%s\t%s\n", a.Artifact, reassertState(a), a.Detail)
+	}
+	_ = w.Flush()
+
+	c := report.Checks
+	if c == nil {
+		return
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	w = tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "CHECK\tSTATE\tDETAIL")
+	fmt.Fprintf(w, "rules\t%s\t%s\n", c.Rules.Status, c.Rules.Detail)
+	for _, l := range c.Rules.Missing {
+		fmt.Fprintf(w, "\t\t- %s\n", l)
+	}
+	for _, l := range c.Rules.Unexpected {
+		fmt.Fprintf(w, "\t\t+ %s\n", l)
+	}
+	fmt.Fprintf(w, "filters\t%s\t%s\n", c.Filters.Status, c.Filters.Detail)
+	for _, d := range c.Filters.Devices {
+		lines := d.Filters
+		if d.Error != "" {
+			lines = append(slices.Clone(lines), d.Error)
+		}
+		for _, l := range lines {
+			fmt.Fprintf(w, "\t\t%s (%s): %s\n", d.Dev, d.Role, l)
+		}
 	}
 	_ = w.Flush()
 }
@@ -115,6 +149,23 @@ func logReassertOutcome(report ra.Report, checkOnly bool) {
 	// Only non-empty under --check; a normal run repairs what it finds absent.
 	missing := artifactNames(report.Missing())
 	skipped := artifactNames(report.Skipped())
+
+	if c := report.Checks; c != nil {
+		// The status detail is gone a minute later; this line is the lasting record.
+		if c.Rules.ReloadedFrom != 0 {
+			logx.As().Info().
+				Str("reason", "NetworkRulesReloaded").
+				Int("from_format", c.Rules.ReloadedFrom).
+				Int("to_format", c.Rules.LiveFormat).
+				Msg("reloaded the workload-policy rules an older version wrote; peer lists were kept")
+		}
+		if c.Rules.Status == ra.CheckFailed || c.Filters.Status == ra.CheckFailed {
+			logx.As().Warn().
+				Str("rules", c.Rules.Status).
+				Str("filters", c.Filters.Status).
+				Msg("weaver network state is present but not right; see the CHECK rows")
+		}
+	}
 
 	switch {
 	case len(unhealthy) > 0:
@@ -157,7 +208,7 @@ func init() {
 	common.SkipGlobalChecks(reassertCmd)
 
 	reassertCmd.Flags().BoolVar(&flagReassertCheck, "check", false,
-		"Report what is missing without restoring anything")
+		"Report what is missing or wrong without restoring anything")
 }
 
 // GetCmd returns the `network reassert` command.

@@ -109,7 +109,7 @@ func TestRender_PortScopedDenyPrecedesClassification(t *testing.T) {
 
 	body := chainBody(t, doc, chainV4)
 	dropIdx := strings.Index(body, "@bn-health_ports ct direction original drop")
-	stampIdx := strings.Index(body, "tcp dport @bn-subscriber-in_ports meta priority")
+	stampIdx := strings.Index(body, "tcp dport @bn-subscriber-in_ports counter meta priority")
 	// Guard both lookups: a missing substring indexes to -1, which would satisfy
 	// the ordering assertion below and let the test pass with no drop at all.
 	require.Positive(t, dropIdx, "the health drop is missing from the chain")

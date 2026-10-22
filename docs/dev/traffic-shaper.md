@@ -85,7 +85,12 @@ is `1:40`, and so on (major `1` in the high 16 bits, the mark as the minor in th
 low 16). Those minors are exactly the HTB leaf classes the shaper installs.
 
 The policy plane stamps that priority with an nft rule ending in
-`meta priority set <hexPriority> accept` (`internal/network/policy/render.go`).
+`counter meta priority set <hexPriority> accept comment "weaver:class=<class>"`
+(`internal/network/policy/render.go`). The counter and label exist so `network reassert` can
+add up stamped bytes per class; the `forward` rule's own counter and its
+`weaver:format=<N>` comment count total traffic and tag the render format (`FormatVersion`).
+Bump `FormatVersion` whenever a render change alters live rules, or upgraded hosts report
+their old table as drift instead of `older-format`.
 Asymmetric flows are handled with conntrack: the forward rule writes
 `ct mark set <mark>` plus the forward priority, and a reply-restore rule
 (`ct direction reply ct mark <mark> meta priority set <replyPriority>`) re-stamps
@@ -173,6 +178,42 @@ it checks that the two nft tables and the `$EGRESS` root qdisc are still live an
 owning unit for any definite absence (see `docs/commands/network/reassert.md`). It depends on
 one invariant here: restarting the shared nft loader for one table replays the other, so
 `persistMembership` must keep writing the artifact under the same lock as every kernel write.
+
+The same worker run also checks that the live state is **right** (#766). It only reports, except
+for an older render format (see **Upgrade path** below):
+
+- **Rules vs registry.** `policy.Manager.ExpectedDocument` renders the table from the registry
+  and the live sets; `policy.ListInScratchNetns` loads it into a throwaway network namespace
+  and lists it with `nft -j`; `policy.Compare` diffs that against the live `nft -j` listing,
+  ignoring handles and counter values. nft prints both sides, so its reformatting
+  (`0x10010` → `1:10`) never reads as drift.
+- **Stray tc filters.** `shape.LaneTrees` finds every device with weaver's `root 1: htb` in one
+  `tc -j qdisc show`; `shape.TreeFilters` reads `parent 1:` and `1:1` on each. HTB consults
+  filters only for packets without a valid `skb->priority`, so a stray filter can only move or
+  drop *unstamped* traffic.
+- **Counters.** The worker reports raw rule and lane byte counters plus reset IDs (the table
+  handle, each device's ifindex). The daemon's `judge` (`internal/daemon/network/verify.go`)
+  keeps the previous sample, applies the "two minutes in a row" rule, and decides what to log.
+
+The worker keeps no history and holds both locks throughout, so the checks never read an
+apply half done.
+
+**Upgrade path.** Adding counters changed the rule text, and `ApplySets` only rewrites set
+elements, so an upgraded host starts with its old table. When the formats differ, check 1
+compares both sides again without counters and `weaver:` comments
+(`policy.CompareIgnoringFormat`), so a hand edit still reads as drift. When that comparison is
+clean and the live format is **older**, a full `network reassert` run (not `--check`) reloads
+the table it just compared (`policy.Manager.ReloadTable`: one atomic `nft -f` carrying the live
+set elements, then the `.nft` artifact), reads it back, and reports `ok` only if it now matches.
+The daemon runs one a minute (the first two minutes after it starts), so the old table is gone
+within about three minutes of an upgrade; the reload resets the counters, so lanes are judged
+from the minute after that. The CLI logs each reload at INFO with reason `NetworkRulesReloaded`.
+
+This lives in the reassert worker, not in a startup migration: the daemon's execs skip the
+global pre-run hook where migrations run (`common.RunPersistentPreRun`), and nothing on disk
+tells an old live table apart, because `persistMembership` rewrites the `.nft` file in the new
+format on the next membership write. A newer live format (a downgrade) and any drift are never
+reloaded.
 
 **statusz** is the block node's own health API — `statusz/inbound` and
 `statusz/outbound` JSON endpoints served on the pod's health port (default
@@ -999,7 +1040,7 @@ sudo nft list table inet weaver-workload-policy
 tc -s class show dev "$EGRESS_NIC"
 tc -s class show dev "$POD_VETH"
 
-# what is live, and what re-assert would restore
+# what is live, what re-assert would restore, and whether the rules and lanes are right
 sudo solo-provisioner network reassert --check
 
 # systemd: the loaders and the daemon
