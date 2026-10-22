@@ -227,6 +227,7 @@ func TestCatalog_ClusterChartDefaultsForKubernetes136(t *testing.T) {
 		"alloy":                    {"1.13.1", "6c2b7df23e39438bb11f1e1fcf19eb9eb7c8bfeab7d49b7c975b6212abd0f99a"},
 		"prometheus-operator-crds": {"32.0.1", "6a5f0e0d7e53f0c9336d6ff56fbf4ff506a1a0d8251a26567b11cbbdef2c01b2"},
 		"teleport-cluster-agent":   {"18.11.3", "60e7dd096337c6b817076f2d0a7695e7dc50cd8262306a9dc4537f7449865405"},
+		"external-secrets":         {"2.13.0", "f693a96f0d929a07e000dd39e68b92a1a1343c5bc440ebab091b03da30bcac3a"},
 	} {
 		chart, err := catalog.GetClusterComponent(name)
 		require.NoError(t, err)

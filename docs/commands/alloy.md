@@ -231,7 +231,8 @@ declare an `ExternalSecret` per secret you need — including `grafana-alloy-sec
 ## `eso operator install`
 
 Installs the `external-secrets/external-secrets` Helm chart. The chart version is pinned by
-the infrastructure catalog. Idempotent: if ESO is already in the target namespace, the install
+the infrastructure catalog. Chart 2.13.0 runs the image `ghcr.io/external-secrets/external-secrets:v2.13.0`
+for the controller, webhook and cert controller; mirror it there for hosts without access to ghcr.io. Idempotent: if ESO is already in the target namespace, the install
 is skipped with a clear message.
 
 > **ESO is one per cluster.** Its CRDs are cluster-scoped, so a second instance cannot coexist
