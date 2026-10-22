@@ -198,6 +198,7 @@ var chartVersionsOnExistingClusters = map[string]map[string]string{
 	"alloy":                    {"1.4.0": "b1adbb6344301b8353c9d5d39bb5de196e3735441ca1742913d60922a96bffcb"},
 	"prometheus-operator-crds": {"24.0.1": "e940c5ce899ec16aa6d868ecf49e2c21193728bef3a0a453b29e05e2d1601288"},
 	"teleport-cluster-agent":   {"18.6.4": "f657f1f216ebfe6bd074d5c3509b6617205ae956d3e73b895e20d71b26002201"},
+	"external-secrets":         {"0.20.2": "f8e0b2f4f22fab223f79567df4786ae1873d5f45b993c9f94419650462d937be"},
 }
 
 func TestCatalog_KeepsChartVersionsDeployedByEarlierReleases(t *testing.T) {
