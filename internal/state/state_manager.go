@@ -478,7 +478,7 @@ func (m *stateManager) flushActionHistory() error {
 	}
 
 	// Append action history entries.
-	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
+	actionHistoryFile := ActionHistoryFilePath(filepath.Dir(snapshot.StateFile))
 	// Start on a new line, so an entry a full disk cut short doesn't run into this one.
 	docs := []byte("\n")
 	for _, entry := range pendingActions {
