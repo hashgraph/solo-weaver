@@ -47,6 +47,7 @@ type CapsuleKubeClient interface {
 	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
+	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 }
 
 // CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,
