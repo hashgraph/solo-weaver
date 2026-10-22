@@ -42,18 +42,19 @@ func TestTeleport_ReportsEachChangedFieldSeparately(t *testing.T) {
 	got := Teleport(withTeleport(teleportInstalled()), withTeleport(live))
 
 	require.Equal(t, []Change{
-		{Component: "teleport", Field: "nodeAgent.configured", Persisted: "true", Live: "false"},
+		{Component: "teleport", Field: "nodeAgent.configured", Persisted: "true", Live: "false", Removed: true},
 		{Component: "teleport", Field: "clusterAgent.namespace", Persisted: "teleport-agent", Live: "teleport"},
 		{Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.1.0", Live: "18.2.0"},
 	}, got)
 }
 
+// A removal is the installed flag alone, marked as a removal.
 func TestTeleport_RemovalIsReportedAsTheInstalledFlagOnly(t *testing.T) {
 	got := Teleport(withTeleport(teleportInstalled()), withTeleport(state.TeleportState{}))
 
 	require.Equal(t, []Change{
-		{Component: "teleport", Field: "nodeAgent.installed", Persisted: "true", Live: "false"},
-		{Component: "teleport", Field: "clusterAgent.installed", Persisted: "true", Live: "false"},
+		{Component: "teleport", Field: "nodeAgent.installed", Persisted: "true", Live: "false", Removed: true},
+		{Component: "teleport", Field: "clusterAgent.installed", Persisted: "true", Live: "false", Removed: true},
 	}, got)
 }
 
@@ -135,4 +136,18 @@ func yamlKeys(t reflect.Type, prefix string) []string {
 		keys = append(keys, name)
 	}
 	return keys
+}
+
+// The configured flag going false means the agent's service unit was removed:
+// a removal too. Configuring by hand is not.
+func TestTeleport_UnconfiguringIsMarkedAsARemoval(t *testing.T) {
+	configured := state.TeleportState{NodeAgent: state.TeleportNodeAgentState{Installed: true, Configured: true}}
+	unconfigured := state.TeleportState{NodeAgent: state.TeleportNodeAgentState{Installed: true}}
+
+	require.Equal(t, []Change{
+		{Component: "teleport", Field: "nodeAgent.configured", Persisted: "true", Live: "false", Removed: true},
+	}, Teleport(withTeleport(configured), withTeleport(unconfigured)))
+	require.Equal(t, []Change{
+		{Component: "teleport", Field: "nodeAgent.configured", Persisted: "false", Live: "true"},
+	}, Teleport(withTeleport(unconfigured), withTeleport(configured)))
 }
