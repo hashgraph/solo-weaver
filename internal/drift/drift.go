@@ -22,6 +22,9 @@ type Change struct {
 	Field     string
 	Persisted string
 	Live      string
+	// Removed is set when the change is the removal of what Field belongs to,
+	// such as a Teleport agent uninstalled out of band.
+	Removed bool
 }
 
 // String renders the change as one operator-facing warning line.
@@ -34,7 +37,9 @@ func (c Change) String() string {
 //
 // It must return only differences an operator should act on. A field the live
 // system cannot report, or could not report on this run, is left out rather
-// than reported as changed.
+// than reported as changed. A change that reports something gone from the live
+// system must set Removed: no action can destroy a removal, so the drift guard
+// never stops a run for one.
 type Producer func(baseline, live state.State) []Change
 
 // Detect runs every producer against the same baseline and live state, keeping
