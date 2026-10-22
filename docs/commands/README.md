@@ -256,6 +256,22 @@ Remove it, stopping the systemd service and cleaning up binaries and config:
 sudo solo-provisioner teleport node uninstall
 ```
 
+If the node agent's binaries were installed, or its `/usr/local/bin` links created, since
+solo-provisioner last recorded it (by hand, or by an earlier run that stopped before
+recording), `uninstall` stops before removing it, lists each changed field and exits
+non-zero. Re-run it with `--override-drift` to remove it anyway. The overwritten values are
+recorded in `/opt/solo/weaver/state/action_history.yaml`. `--force`, `--non-interactive`
+and `--output=json` also go ahead, and are recorded the same way. An agent whose binaries
+or links were already removed never stops it. Neither does a change to the cluster agent,
+which `teleport node` commands leave on record for `teleport cluster` ones. A hand edit of
+`/etc/teleport/teleport.yaml` or of the service unit is not detected, and `uninstall` removes
+it. `teleport node install` records the agent as it finds it, so after it `uninstall` no
+longer stops for that change.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
+
 ### Cluster agent (kubectl)
 
 ```bash
@@ -277,6 +293,21 @@ Remove the Helm release:
 ```bash
 sudo solo-provisioner teleport cluster uninstall
 ```
+
+If the cluster agent changed since solo-provisioner last recorded it (its chart version
+pinned with a hand-run `helm upgrade`, say, or an earlier run that stopped before
+recording), `uninstall` stops before removing it,
+lists each changed field and exits non-zero. Re-run it with `--override-drift` to remove it
+anyway. The overwritten values are recorded in `/opt/solo/weaver/state/action_history.yaml`.
+`--force`, `--non-interactive` and `--output=json` also go ahead, and are recorded the same
+way. An agent already removed by hand never stops it. Neither does a change to the node
+agent, which `teleport cluster` commands leave on record for `teleport node` ones.
+`teleport cluster install` keeps an existing release and records it as it finds it, so after
+it `uninstall` no longer stops for that change.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
 
 ---
 

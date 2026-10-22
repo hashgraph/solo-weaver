@@ -14,6 +14,7 @@ func init() {
 	common.FlagStopOnError().SetVar(uninstallCmd, &flagStopOnError, false)
 	common.FlagContinueOnError().SetVar(uninstallCmd, &flagContinueOnError, false)
 	common.FlagRollbackOnError().SetVar(uninstallCmd, &flagRollbackOnError, false)
+	common.FlagOverrideDrift().SetVar(uninstallCmd, &flagOverrideDrift, false)
 	uninstallCmd.MarkFlagsMutuallyExclusive(
 		common.FlagStopOnError().Name,
 		common.FlagContinueOnError().Name,
@@ -50,20 +51,14 @@ var uninstallCmd = &cobra.Command{
 			return err
 		}
 
-		executionOptions, err := getUninstallExecutionOptions()
-		if err != nil {
-			return err
-		}
-
 		intent := models.Intent{
 			Action: models.ActionUninstall,
 			Target: models.TargetTeleportNode,
 		}
 
-		inputs := &models.UserInputs[models.TeleportNodeInputs]{
-			Common: models.CommonInputs{
-				ExecutionOptions: executionOptions,
-			},
+		inputs, err := uninstallInputs(cmd, args)
+		if err != nil {
+			return err
 		}
 
 		handler, err := teleportHandler.ForNodeAction(intent.Action)
@@ -82,4 +77,23 @@ var uninstallCmd = &cobra.Command{
 		logx.As().Info().Msg("Successfully uninstalled Teleport node agent")
 		return nil
 	},
+}
+
+// uninstallInputs builds the uninstall's inputs: the execution options, and
+// the flags the drift guard reads.
+func uninstallInputs(cmd *cobra.Command, args []string) (*models.UserInputs[models.TeleportNodeInputs], error) {
+	executionOptions, err := getUninstallExecutionOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	inputs := &models.UserInputs[models.TeleportNodeInputs]{
+		Common: models.CommonInputs{
+			ExecutionOptions: executionOptions,
+		},
+	}
+	if err := common.ExtractDriftGuardFlags(cmd, args, &inputs.Common); err != nil {
+		return nil, err
+	}
+	return inputs, nil
 }
