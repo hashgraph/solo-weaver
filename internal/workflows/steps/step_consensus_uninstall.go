@@ -15,6 +15,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -64,8 +65,9 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			kind := string(kube.KindConsensusCapsule)
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
+			// An absent CRD means its CRs are gone too, so treat it as already deleted.
 			deleted, err := kc.DeleteResource(ctx, apiVersion, kind, inputs.Namespace, capsuleName)
-			if err != nil {
+			if err != nil && !kube.IsKindNotServed(err) {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to delete ConsensusCapsule %s", capsuleName),
 					reasons.PreconditionNotMet,
@@ -108,7 +110,7 @@ func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, 
 
 	for {
 		exists, err := kc.ResourceExists(ctx, apiVersion, kind, namespace, name)
-		if err != nil {
+		if err != nil && !kube.IsKindNotServed(err) {
 			return errorx.ExternalError.Wrap(err, "failed to check %s %s", kind, name)
 		}
 		if !exists {
@@ -144,7 +146,7 @@ func DeleteConsensusConfigCRs(inputs models.ConsensusNodeInputs, provider Capsul
 			for _, c := range consensusConfigCRKinds {
 				name := models.ConsensusConfigCRName(scope, c.key)
 				deleted, err := kc.DeleteResource(ctx, apiVersion, c.kind, inputs.Namespace, name)
-				if err != nil {
+				if err != nil && !kube.IsKindNotServed(err) {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.ExternalError.Wrap(err, "failed to delete %s %s", c.kind, name),
 						reasons.PreconditionNotMet,
@@ -186,8 +188,9 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
+			// Without the CRD the list path is NotFound and no capsule can exist.
 			list, err := kc.List(ctx, kube.KindConsensusCapsule, inputs.Namespace, kube.WaitOptions{})
-			if err != nil {
+			if err != nil && !kerrors.IsNotFound(err) {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to list ConsensusCapsules in namespace %s", inputs.Namespace),
 					reasons.PreconditionNotMet,
@@ -212,7 +215,7 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 			}
 
 			deleted, err := kc.DeleteResource(ctx, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName)
-			if err != nil {
+			if err != nil && !kube.IsKindNotServed(err) {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to delete Orbit %s", inputs.OrbitName),
 					reasons.PreconditionNotMet,

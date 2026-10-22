@@ -8,9 +8,15 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // stuckDeleteClient accepts a delete but never removes the resource, like a capsule held by a finalizer.
@@ -21,6 +27,46 @@ type stuckDeleteClient struct {
 func (s *stuckDeleteClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
 	_, ok := s.existing[name]
 	return ok, nil
+}
+
+// noCRDClient fails like the real client when the operator CRDs are absent.
+type noCRDClient struct {
+	*fakeCapsuleClient
+}
+
+func noKindMatch(kind string) error {
+	return errorx.IllegalArgument.Wrap(&meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: kube.SoloOperatorGroup, Kind: kind}}, "failed to get REST mapping")
+}
+
+func (n *noCRDClient) DeleteResource(_ context.Context, _, kind, _, _ string) (bool, error) {
+	return false, noKindMatch(kind)
+}
+
+func (n *noCRDClient) ResourceExists(_ context.Context, _, kind, _, _ string) (bool, error) {
+	return false, noKindMatch(kind)
+}
+
+func (n *noCRDClient) List(_ context.Context, kind kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	return nil, kerrors.NewNotFound(schema.GroupResource{Group: kube.SoloOperatorGroup, Resource: string(kind)}, "")
+}
+
+func noCRDProvider() CapsuleKubeProvider {
+	c := &noCRDClient{&fakeCapsuleClient{}}
+	return func(context.Context) (CapsuleKubeClient, error) { return c, nil }
+}
+
+// Deleting a CRD deletes its CRs, so every uninstall step must succeed without the CRDs.
+func TestConsensusUninstallSteps_SucceedWithoutOperatorCRDs(t *testing.T) {
+	for name, b := range map[string]automa.Builder{
+		"capsule":    DeleteConsensusCapsule(uninstallInputs(), noCRDProvider()),
+		"config CRs": DeleteConsensusConfigCRs(uninstallInputs(), noCRDProvider()),
+		"orbit":      DeleteOrbitIfLast(uninstallInputs(), noCRDProvider()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rpt := runUninstallStep(t, b)
+			require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+		})
+	}
 }
 
 func uninstallInputs() models.ConsensusNodeInputs {

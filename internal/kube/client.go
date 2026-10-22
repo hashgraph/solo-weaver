@@ -537,6 +537,22 @@ func (c *Client) DeleteResource(ctx context.Context, apiVersion, kind, namespace
 	return true, nil
 }
 
+// IsKindNotServed reports whether err comes from a REST mapping of a kind the cluster does not
+// serve (its CRD is absent). It walks errorx causes, which errors.Is cannot see through.
+func IsKindNotServed(err error) bool {
+	for e := err; e != nil; {
+		if meta.IsNoMatchError(e) {
+			return true
+		}
+		if ex := errorx.Cast(e); ex != nil {
+			e = ex.Cause()
+			continue
+		}
+		e = errors.Unwrap(e)
+	}
+	return false
+}
+
 // GetResourceNestedString retrieves a nested string value from a Kubernetes resource.
 // For cluster-scoped resources, pass empty string for namespace.
 // The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").
