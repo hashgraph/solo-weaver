@@ -11,6 +11,7 @@ Every `solo-provisioner` command, by stack.
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
 | `daemon service` | [below](#daemon-service) | The `solo-provisioner-daemon` systemd service |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
+| `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
 | `version` | [below](#utilities) | Version information |
 
 Also useful:
@@ -101,6 +102,13 @@ sudo solo-provisioner daemon service start|stop
 sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
 sudo solo-provisioner consensus migration soak stop   [--keep-state]
 sudo solo-provisioner consensus migration soak status
+
+# DIAGNOSE
+solo-provisioner diagnose logs [-n <count> | --head <count>] [-f] [--source=cli|daemon|all]
+                               [--level=<level>] [--since=<dur|time>] [--grep=<regex>]
+                               [--message=<regex>] [--field=key=value ...] [--output=text|json]
+solo-provisioner diagnose logs --last-error [--source=cli|daemon|all] [--since=<dur|time>]
+                               [--grep=<regex>] [--message=<regex>] [--field=key=value ...]
 
 # UTILITIES
 solo-provisioner version [--output=text|json]
@@ -374,6 +382,67 @@ sudo solo-provisioner consensus migration soak status
 | `start` | `--cutover-ts` | yes | Cutover timestamp, RFC-3339 (`2025-09-01T00:00:00Z`) |
 | `start` | `--migration-plan` | yes | Path to the migration plan file on the host |
 | `stop` | `--keep-state` | no | Preserve `cutover-state.jsonl` so the daemon resumes on restart. Default `false` |
+
+---
+
+## Diagnose logs
+
+The CLI and the daemon write their logs as JSON, one object per line. `diagnose logs` reads those files and shows them as readable console lines, so you do not need `tail` or `jq`. It needs no cluster and works on a host that is only partly installed.
+
+| Log | File |
+|---|---|
+| `cli` | `/opt/solo/weaver/logs/solo-provisioner.log` |
+| `daemon` | `/opt/solo/weaver/logs/solo-provisioner-daemon.log` |
+
+```bash
+# The last 50 entries of the CLI log
+sudo solo-provisioner diagnose logs
+
+# Follow the daemon log, warnings and above
+sudo solo-provisioner diagnose logs --source daemon -f --level warn
+
+# Both logs, merged by time, for one field value in the last hour
+sudo solo-provisioner diagnose logs --source all --since 1h --field reason=UpgradeMonitorWatchClosed
+
+# The first 20 entries that mention cilium, as JSON
+sudo solo-provisioner diagnose logs --head 20 --grep cilium --output json
+
+# The most recent error, in full, after a command has already failed
+sudo solo-provisioner diagnose logs --last-error
+```
+
+| Flag | What it does |
+|---|---|
+| `--source` | Log to read: `cli` (default), `daemon`, or `all`. `all` merges both by timestamp. |
+| `-n`, `--tail` | Show the last N entries that match. Default `50`. `0` shows none, which is useful with `--follow`. |
+| `--head` | Show the first N entries that match instead of the last. Cannot be combined with `--tail` or `--follow`. |
+| `-f`, `--follow` | Keep streaming new entries, and keep following across log rotation. |
+| `--level` | Show entries at this level and above: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `panic`. |
+| `--since` | Show entries newer than a duration (`10m`, `2h`) or an RFC3339 time. |
+| `--grep` | Show entries whose caller, message or `key=value` fields match a regular expression. |
+| `--message` | Show entries whose message matches a regular expression. Fields are not searched. |
+| `--field` | Show entries where a field equals a value, as `key=value`. Repeat the flag to require several. A dotted key such as `step.name` reaches a nested field. |
+| `--last-error` | Show the most recent error in full (stack trace, reason, hints), as `-V` would have. Combine with `--source`, `--since`, `--grep`, `--message` or `--field`. Cannot be combined with `--tail`, `--head`, `--follow` or `--level`. |
+
+How it behaves:
+
+- Every filter must match.
+- When any filter is set, lines that are not JSON are left out.
+- With `--output json` the matching entries are printed unchanged, one JSON object per line, so you can pipe them to `jq`.
+- Colors are used only when the output is a terminal. Set `NO_COLOR` to turn them off.
+- A log file that does not exist yet is treated as empty. With `--follow` the command waits for it to appear.
+
+### Replaying the last error
+
+When a command fails, the short error panel suggests re-running with `-V`. Re-running a long or one-shot command is often not possible. The failure is already in the log, with its full stack trace, reason code and hints, so `--last-error` shows it again in the same layout `-V` uses:
+
+```bash
+sudo solo-provisioner diagnose logs --last-error
+```
+
+- It picks the newest entry at `error` level or above. The filters you pass decide which errors count, so `--source all --field reason=FileMissing` shows the latest `FileMissing` error from either log.
+- Only what the log recorded is shown. The error type and code are not in the log, so they are left out.
+- If no error matches, it prints `No error entries found.` and exits 0. With `--output json` it prints nothing in that case, and otherwise prints the raw log entry.
 
 ---
 

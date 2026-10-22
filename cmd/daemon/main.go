@@ -222,6 +222,8 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
+	doctor.SetLogSource("daemon")
+
 	installLogContext()
 
 	// Workflow reports take their times from automa's clock; keep them in the
