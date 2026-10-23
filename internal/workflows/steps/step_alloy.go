@@ -280,20 +280,6 @@ func installNodeExporter() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			helmValues := []string{
-				"resourceType=daemonset",
-				"resourcesPreset=small",
-				"rbac.pspEnabled=false",
-				"serviceMonitor.enabled=true",
-				"serviceMonitor.interval=15s",
-				"serviceMonitor.scrapeTimeout=5s",
-				"serviceMonitor.jobLabel=node",
-				"serviceMonitor.attachMetadata.node=true",
-				"extraArgs.collector\\.systemd=",
-				"extraArgs.collector\\.processes=",
-				"image.repository=bitnamilegacy/node-exporter",
-			}
-
 			_, err = hm.InstallChart(
 				ctx,
 				spec.Release,
@@ -301,9 +287,7 @@ func installNodeExporter() automa.Builder {
 				"",
 				spec.Namespace,
 				helm.InstallChartOptions{
-					ValueOpts: &values.Options{
-						Values: helmValues,
-					},
+					ValueOpts:       alloy.NodeExporterHelmValues(),
 					CreateNamespace: true,
 					Atomic:          true,
 					Wait:            true,
@@ -359,7 +343,7 @@ func isNodeExporterPodsReady() automa.Builder {
 
 			meta := map[string]string{}
 			// wait for node-exporter pods to be ready
-			err = k.WaitForResources(ctx, kube.KindPod, spec.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: "node-exporter"})
+			err = k.WaitForResources(ctx, kube.KindPod, spec.Namespace, kube.IsPodReady, 5*time.Minute, kube.WaitOptions{NamePrefix: alloy.NodeExporterAppName})
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
