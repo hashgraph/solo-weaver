@@ -23,7 +23,7 @@ import (
 // over-match but never miss a call.
 var writerCalls = []string{
 	"Commit", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
-	"RecordStartupPass", "AcquireComponentLocks", "AcquireProvisionerLock",
+	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock",
 }
 
 // fileCalls write, remove or move a file. They count only in the files that
@@ -111,7 +111,7 @@ var stateWriters = map[string]writerRow{
 	},
 	"internal/state/startup_pass.go:appendEntry": {
 		lock: "appends to action_history.yaml only, which no lock guards (one append per batch); RecordStartupPass's caller " +
-			"holds .startup-migrations.lock when migrations are pending",
+			"holds .startup-migrations.lock when migrations are pending, and RecordAround's holds every state lock",
 		history: "TestRecordStartupPass_RecordsOnePassEntry",
 	},
 	"internal/state/migration_per_component_state.go:Execute":                            {lock: exemptStartupMigration, history: inStartupPass},
@@ -129,10 +129,20 @@ var stateWriters = map[string]writerRow{
 	"internal/state/provisioner.go:writeProvisionerRecord": {lock: "helper", history: "helper"},
 	"internal/state/state_manager.go:commitComponentFlush": {lock: "inside Commit and writeUnrecorded", history: "inside Commit and writeUnrecorded"},
 
-	// kube cluster uninstall.
-	"internal/workflows/steps/step_cluster_uninstall.go:CleanupWeaverFiles": {
+	// kube cluster uninstall: it holds every state lock, and records one entry
+	// around its workflow, which empties the state dir but keeps the history.
+	"cmd/cli/commands/kube/cluster/uninstall.go:uninstallCmd": {
+		lock: "lockAllState: TestLockAllState_FailsFastOnEveryStateLock",
+		history: "no unit test runs uninstallCmd: it records one uninstall/cluster entry around its workflow " +
+			"(TestRecordAround_RecordsWhatTheActionRemoved); shown by the manual UAT's kube cluster uninstall step",
+	},
+	"internal/workflows/steps/step_cluster_uninstall.go:cleanupWeaverHome": {
 		lock:    "kube cluster uninstall holds every state lock: TestLockAllState_FailsFastOnEveryStateLock",
-		history: "none yet: it deletes action_history.yaml with the rest of the state dir",
+		history: "inside kube cluster uninstall's RecordAround; keeps action_history.yaml: TestCleanupWeaverHome_KeepsTheActionHistory",
+	},
+	"internal/workflows/steps/step_cluster_uninstall.go:removeAllExcept": {
+		lock:    "helper of cleanupWeaverHome",
+		history: "helper of cleanupWeaverHome",
 	},
 	"internal/workflows/steps/step_cluster_uninstall.go:RemoveSystemdServiceFiles": {lock: "not state: systemd unit files", history: "not state"},
 	"internal/workflows/steps/step_cluster_uninstall.go:RemoveConfigDirectories":   {lock: "not state: configuration directories", history: "not state"},
