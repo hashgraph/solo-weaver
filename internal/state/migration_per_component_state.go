@@ -2,8 +2,9 @@
 
 // migration_per_component_state.go splits the single state.yaml into the
 // per-component files internal/bll.BaseHandler.FlushScoped writes —
-// machine.yaml, cluster.yaml, blocknode.yaml, consensus.yaml, teleport.yaml —
-// plus provisioner.yaml, each in the same state directory. It must run after every other
+// profile.yaml, firewall.yaml, system.yaml, cluster.yaml, blocknode.yaml,
+// consensus.yaml, teleport.yaml — plus provisioner.yaml, each in the same
+// state directory. It must run after every other
 // ScopeStartup migration in this package (migration_unified_state.go,
 // migration_helm_release_schema_v2.go, migration_mgmt_ports_v1.go), which
 // still assume and rewrite the single-file legacy shape — see
@@ -48,7 +49,7 @@ func NewPerComponentStateMigration() *PerComponentStateMigration {
 
 func (m *PerComponentStateMigration) ID() string { return "per-component-state" }
 func (m *PerComponentStateMigration) Description() string {
-	return "Split the single state.yaml into one file per component (machine, cluster, blocknode, consensus, teleport)"
+	return "Split the single state.yaml into one file per component (profile, firewall, system, cluster, blocknode, consensus, teleport) plus provisioner.yaml"
 }
 
 func (m *PerComponentStateMigration) legacyStateFilePath() string {

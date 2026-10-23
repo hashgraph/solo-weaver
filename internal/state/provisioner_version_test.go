@@ -162,13 +162,13 @@ func TestFlushingHostStateDoesNotRecordTheVersion(t *testing.T) {
 	sm, err := NewStateManager(WithState(newTestState(filepath.Join(dir, StateFileName))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
-	require.NoError(t, sm.FlushScoped(ComponentMachine))
+	require.NoError(t, sm.FlushScoped(ComponentProfile, ComponentFirewall, ComponentSystem))
 
 	_, ok, err := readProvisionerRecord(dir)
 	require.NoError(t, err)
 	assert.False(t, ok, "a component flush must not create provisioner.yaml")
 
-	for _, id := range []ComponentID{ComponentMachine} {
+	for _, id := range []ComponentID{ComponentProfile, ComponentFirewall, ComponentSystem} {
 		b, err := os.ReadFile(componentFilePath(dir, id))
 		require.NoError(t, err)
 		var doc ProvisionerVersionDoc

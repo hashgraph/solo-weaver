@@ -13,18 +13,22 @@ package blocknode
 import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
 // Handlers is the private struct that holds all per-action handlers for block-node intents.
 type Handlers struct {
-	install     *InstallHandler
-	upgrade     *UpgradeHandler
-	reconfigure *ReconfigureHandler
-	reset       *ResetHandler
-	uninstall   *UninstallHandler
-	runtime     *rsl.BlockNodeRuntimeResolver
+	install *InstallHandler
+	// installWithCluster also stands up Kubernetes, so it owns the system
+	// record as well — see ForAction.
+	installWithCluster *InstallHandler
+	upgrade            *UpgradeHandler
+	reconfigure        *ReconfigureHandler
+	reset              *ResetHandler
+	uninstall          *UninstallHandler
+	runtime            *rsl.BlockNodeRuntimeResolver
 }
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
@@ -32,10 +36,29 @@ type Handlers struct {
 func NewHandlerFactory(
 	runtime *rsl.RuntimeResolver,
 ) (*Handlers, error) {
-	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime, models.TargetBlockNode,
-		bll.WithProfileExtractor(func(i models.BlockNodeInputs) string { return i.Profile }),
-		bll.WithManagedComponents[models.BlockNodeInputs](bll.BlockNode),
-	)
+	// Each intent owns only the files it writes: install records the profile
+	// and the host-firewall decision (and the system record too when it also
+	// stands up Kubernetes), reconfigure re-asserts the firewall, and upgrade,
+	// reset and uninstall touch the block node alone.
+	profile := bll.WithProfileExtractor(func(i models.BlockNodeInputs) string { return i.Profile })
+	managed := bll.WithManagedComponents[models.BlockNodeInputs]
+
+	installBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, profile,
+		managed(bll.BlockNode, bll.Profile, bll.Firewall))
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create install BaseHandler: %v", err)
+	}
+	clusterInstallBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, profile,
+		managed(bll.BlockNode, bll.Profile, bll.Firewall, bll.System))
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create cluster install BaseHandler: %v", err)
+	}
+	reconfigureBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode,
+		managed(bll.BlockNode, bll.Firewall))
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create reconfigure BaseHandler: %v", err)
+	}
+	base, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, managed(bll.BlockNode))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
 	}
@@ -58,7 +81,12 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", runtime.MachineRuntime)
 	}
 
-	installHandler, err := NewInstallHandler(base, bnr, mr)
+	installHandler, err := NewInstallHandler(installBase, bnr, mr)
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
+	}
+
+	installWithClusterHandler, err := NewInstallHandler(clusterInstallBase, bnr, mr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
 	}
@@ -68,7 +96,7 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("failed to create UpgradeHandler: %v", err)
 	}
 
-	reconfigureHandler, err := NewReconfigureHandler(base, bnr)
+	reconfigureHandler, err := NewReconfigureHandler(reconfigureBase, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create ReconfigureHandler: %v", err)
 	}
@@ -84,12 +112,13 @@ func NewHandlerFactory(
 	}
 
 	h := &Handlers{
-		install:     installHandler,
-		upgrade:     upgradeHandler,
-		reconfigure: reconfigureHandler,
-		reset:       resetHandler,
-		uninstall:   uninstallHandler,
-		runtime:     bnr,
+		install:            installHandler,
+		installWithCluster: installWithClusterHandler,
+		upgrade:            upgradeHandler,
+		reconfigure:        reconfigureHandler,
+		reset:              resetHandler,
+		uninstall:          uninstallHandler,
+		runtime:            bnr,
 	}
 
 	return h, nil
@@ -108,7 +137,12 @@ func (h *Handlers) ForAction(
 ) (bll.IntentHandler[models.BlockNodeInputs], error) {
 	switch action {
 	case models.ActionInstall:
-		return h.install, nil
+		// With no Kubernetes yet, install stands it up, which writes the
+		// system record, so it needs the handler that owns it.
+		if workflows.KubernetesInstalled() {
+			return h.install, nil
+		}
+		return h.installWithCluster, nil
 	case models.ActionUpgrade:
 		return h.upgrade, nil
 	case models.ActionReconfigure:

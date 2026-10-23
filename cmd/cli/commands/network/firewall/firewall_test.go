@@ -563,6 +563,7 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 	// so create must source the default from NewTable(), gated on Changed().
 	// This executes the real command so the shared-var registration is exercised.
 	resetFlagState(t)
+	stubStateManager(t) // create records its decision; keep it off the host's real state
 
 	r := &captureRunner{}
 	dir := t.TempDir()
