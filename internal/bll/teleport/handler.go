@@ -4,7 +4,7 @@
 //
 // The HandlerRegistry receives a models.Intent, delegates workflow construction
 // to the appropriate per-action handler, executes the workflow, and flushes
-// state to disk via BaseHandler.FlushState.
+// state to disk via BaseHandler.HandleIntent.
 package teleport
 
 import (

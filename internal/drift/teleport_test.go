@@ -120,12 +120,17 @@ func TestTeleport_EveryStateFieldIsComparedOrExplicitlyExcluded(t *testing.T) {
 	}
 }
 
-// yamlKeys returns the dotted yaml key of every leaf field of a struct type.
+// yamlKeys returns the dotted yaml key of every leaf field of a struct type. A
+// field that is never written has no persisted value to compare, so it is left
+// out.
 func yamlKeys(t reflect.Type, prefix string) []string {
 	var keys []string
 	for i := range t.NumField() {
 		f := t.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if name == "-" {
+			continue
+		}
 		if prefix != "" {
 			name = prefix + "." + name
 		}
@@ -150,4 +155,19 @@ func TestTeleport_UnconfiguringIsMarkedAsARemoval(t *testing.T) {
 	require.Equal(t, []Change{
 		{Component: "teleport", Field: "nodeAgent.configured", Persisted: "false", Live: "true"},
 	}, Teleport(withTeleport(unconfigured), withTeleport(configured)))
+}
+
+// An agent the checker could not read is reported once, on its installed flag,
+// with no live value. That holds for an agent recorded as not installed too:
+// one may have been installed by hand since.
+func TestTeleport_UnobservedAgentIsReportedOnceOnItsInstalledFlag(t *testing.T) {
+	var baseline, live state.State
+	baseline.TeleportState.ClusterAgent = state.TeleportClusterAgentState{Installed: true, ChartVersion: "18.6.4"}
+	live.TeleportState.ClusterAgent = state.TeleportClusterAgentState{Installed: true, ChartVersion: "18.6.4", Unobserved: true}
+	live.TeleportState.NodeAgent.Unobserved = true
+
+	require.Equal(t, []Change{
+		{Component: "teleport", Field: "nodeAgent.installed", Persisted: "false", Unobserved: true},
+		{Component: "teleport", Field: "clusterAgent.installed", Persisted: "true", Unobserved: true},
+	}, Teleport(baseline, live))
 }

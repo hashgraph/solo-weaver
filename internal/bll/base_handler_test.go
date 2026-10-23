@@ -47,11 +47,13 @@ func (noReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
 // noopIntent is a converging test handler. It runs a one-step workflow that
 // calls execute. With buildErr set, BuildWorkflow fails; with noSteps set, it
-// returns a workflow with no steps, which then fails to build.
+// returns a workflow with no steps, which then fails to build; with stepErr
+// set, the step fails.
 type noopIntent struct {
 	execute  func()
 	buildErr error
 	noSteps  bool
+	stepErr  error
 }
 
 func (n noopIntent) PrepareEffectiveInputs(_ models.Intent, in models.UserInputs[struct{}]) (*models.UserInputs[struct{}], error) {
@@ -69,6 +71,9 @@ func (n noopIntent) BuildWorkflow(state.State, models.UserInputs[struct{}]) (*au
 		WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
 			if n.execute != nil {
 				n.execute()
+			}
+			if n.stepErr != nil {
+				return automa.FailureReport(stp, automa.WithError(n.stepErr))
 			}
 			return automa.SuccessReport(stp)
 		})
@@ -265,8 +270,8 @@ func installedClusterAgent() state.TeleportState {
 }
 
 // The cluster runtime reaches the cluster, then the Teleport checker's own probe
-// finds the API server silent. The persisted cluster agent stands and nothing is
-// reported.
+// finds the API server silent. The persisted cluster agent stands, and the run
+// reports that it could not read the agent, not a removal.
 func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
@@ -274,7 +279,9 @@ func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
-	require.Empty(t, ui.CollectWarnings(report))
+	require.Equal(t, []string{
+		`teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
+	}, ui.CollectWarnings(report))
 	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
 }
 
