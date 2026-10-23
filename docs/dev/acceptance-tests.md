@@ -525,9 +525,12 @@ Expected:
   ```bash
   kubectl -n "${NS}" get secret node0-gossip-keys node0-grpc-tls-keys   # -> both found
   ```
-- PVCs stay when the node used PVC volumes (`--default-volume-type pvc`):
+- PVCs stay when the node used PVC volumes (`--default-volume-type pvc`). They have no owner, so a
+  later delete of an Orbit or a capsule does not remove them:
   ```bash
   kubectl -n "${NS}" get pvc   # -> the PVCs of node 0 are still listed
+  kubectl -n "${NS}" get pvc -o custom-columns=NAME:.metadata.name,OWNERS:.metadata.ownerReferences
+  # -> OWNERS is <none> for each PVC of node 0
   ```
 - `state.yaml` no longer lists the node. The Orbit entry goes only with the last node:
   ```bash

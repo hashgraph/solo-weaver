@@ -16,9 +16,11 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
+	ReleaseConsensusPVCsStepId     = "release-consensus-pvcs"
 	DeleteConsensusCapsuleStepId   = "delete-consensus-capsule"
 	DeleteConsensusConfigCRsStepId = "delete-consensus-config-crs"
 	DeleteOrbitIfLastStepId        = "delete-orbit-if-last"
@@ -46,6 +48,75 @@ var consensusConfigCRKinds = []struct{ key, kind string }{
 	{models.ConfigKeySimpleFeesSchedules, "SimpleFeesSchedules"},
 	{models.ConfigKeyThrottles, "ThrottlesConfig"},
 	{models.ConfigKeyBlockNodes, "BlockNodesConfig"},
+}
+
+// ReleaseConsensusPVCs removes the ConsensusCapsule ownerReference from the node's PVCs. The operator
+// makes the capsule their controller, so the capsule delete would otherwise garbage-collect the node's data.
+func ReleaseConsensusPVCs(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(ReleaseConsensusPVCsStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+			}
+
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+			capsuleKind := string(kube.KindConsensusCapsule)
+
+			list, err := kc.List(ctx, kube.KindPVC, inputs.Namespace, kube.WaitOptions{})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to list PVCs in namespace %s", inputs.Namespace),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and RBAC for listing PersistentVolumeClaims",
+					"Re-run uninstall; the capsule is not deleted until its PVCs are released")))
+			}
+
+			var released []string
+			for i := range list.Items {
+				name := list.Items[i].GetName()
+				if !ownedBy(list.Items[i].GetOwnerReferences(), capsuleKind, capsuleName) {
+					continue
+				}
+				if _, err := kc.RemoveOwnerReference(ctx, kube.KindPVC, inputs.Namespace, name, capsuleKind, capsuleName); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.ExternalError.Wrap(err, "failed to release PVC %s from ConsensusCapsule %s", name, capsuleName),
+						reasons.PreconditionNotMet,
+						"Verify RBAC for updating PersistentVolumeClaims",
+						fmt.Sprintf("Inspect the owners: kubectl -n %s get pvc %s -o jsonpath='{.metadata.ownerReferences}'", inputs.Namespace, name),
+						"Re-run uninstall; the capsule is not deleted until its PVCs are released")))
+				}
+				released = append(released, name)
+			}
+
+			logx.As().Info().Str("capsule", capsuleName).Strs("pvcs", released).Msg("PVCs released from ConsensusCapsule")
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
+				"releasedCount": fmt.Sprintf("%d", len(released)),
+			}))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, fmt.Sprintf("Keeping consensus node %d PVCs", inputs.NodeId))
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to release PVCs")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "PVCs released")
+		})
+}
+
+// ownedBy reports whether refs name the given owner.
+func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
+	for _, r := range refs {
+		if r.Kind == kind && r.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // DeleteConsensusCapsule deletes the node's ConsensusCapsule and waits until it is gone,
@@ -221,6 +292,17 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 					reasons.PreconditionNotMet,
 					"Verify cluster connectivity and RBAC for deleting the cluster-scoped solo-operator Orbit CR",
 					"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml")))
+			}
+
+			// The delete is asynchronous; the state prune after the workflow needs the Orbit gone.
+			if deleted {
+				if err := waitForResourceGone(ctx, kc, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
+						reasons.PreconditionNotMet,
+						"Check what blocks the delete: kubectl get orbit "+inputs.OrbitName+" -o jsonpath='{.metadata.finalizers}'",
+						"Check the solo-operator is running and inspect its logs",
+						"Re-run uninstall once the Orbit is gone")))
+				}
 			}
 
 			logx.As().Info().Str("orbit", inputs.OrbitName).Bool("deleted", deleted).Msg("No consensus nodes left on Orbit")

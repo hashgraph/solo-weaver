@@ -56,6 +56,7 @@ func TestUninstall_PrepareEffectiveInputs_OrbitIsNamespace(t *testing.T) {
 	assert.Equal(t, int64(2), eff.Custom.NodeId)
 }
 
+// The PVCs must be released before the capsule delete, or garbage collection deletes them.
 // The capsule must go before the config CRs it references, and before the Orbit check.
 func TestUninstall_BuildWorkflow_StepOrder(t *testing.T) {
 	h := newMinimalUninstallHandler()
@@ -69,6 +70,7 @@ func TestUninstall_BuildWorkflow_StepOrder(t *testing.T) {
 	wf, err := wb.Build()
 	require.NoError(t, err)
 	assert.Equal(t, []string{
+		steps.ReleaseConsensusPVCsStepId,
 		steps.DeleteConsensusCapsuleStepId,
 		steps.DeleteConsensusConfigCRsStepId,
 		steps.DeleteOrbitIfLastStepId,

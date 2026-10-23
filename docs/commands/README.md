@@ -369,10 +369,12 @@ ConsensusCapsule. For the full install procedure, see
 
 `consensus node uninstall` removes one node:
 
-1. It deletes the node's ConsensusCapsule and waits until the capsule is gone.
-2. It deletes the node's 11 config CRs.
-3. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
-4. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.
+1. It removes the ConsensusCapsule ownerReference from the node's PVCs. The solo-operator makes the
+   capsule the owner of the PVCs, so without this step Kubernetes deletes the PVCs with the capsule.
+2. It deletes the node's ConsensusCapsule and waits until the capsule is gone.
+3. It deletes the node's 11 config CRs.
+4. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
+5. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.
 
 The command keeps the gossip and gRPC TLS Secrets, the PVCs and the hostPath data. The orbit's `NetworkGenesis` CR and the `genesis-config` ConfigMap also stay after the last
 node is removed.
