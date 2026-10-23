@@ -40,6 +40,11 @@ state:
       crio:
         name: cri-o
         version: "1.30.0"
+        installed: true
+      teleport:
+        name: teleport
+        version: "18.6.4"
+        installed: false
 `)
 	var doc SoftwareVersionsDoc
 	if err := unmarshalStateDoc(data, &doc); err != nil {
@@ -57,8 +62,13 @@ state:
 	if got := softwareVersionFromDoc(doc, "crio"); got != "1.30.0" {
 		t.Fatalf("expected cri-o version '1.30.0' via map key, got %q", got)
 	}
-	// Unrecorded component resolves to the empty string.
+	// A not-installed entry carries the default of whichever provisioner wrote
+	// it, not the version of anything on disk, so it is not a recorded version.
 	if got := softwareVersionFromDoc(doc, "teleport"); got != "" {
+		t.Fatalf("expected empty version for a not-installed component, got %q", got)
+	}
+	// Unrecorded component resolves to the empty string.
+	if got := softwareVersionFromDoc(doc, "k9s"); got != "" {
 		t.Fatalf("expected empty version for unrecorded component, got %q", got)
 	}
 }

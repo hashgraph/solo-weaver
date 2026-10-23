@@ -22,27 +22,55 @@ func IsSupportedAlgorithm(algorithm string) bool {
 	}
 }
 
-// VerifyChecksum dynamically verifies the checksum of a file using the specified algorithm
-func VerifyChecksum(filePath string, expectedValue string, algorithm string) error {
+func newHasher(algorithm string) (hash.Hash, bool) {
 	switch algorithm {
 	case "md5":
-		return checksum(filePath, expectedValue, algorithm, md5.New())
+		return md5.New(), true
 	case "sha256":
-		return checksum(filePath, expectedValue, algorithm, sha256.New())
+		return sha256.New(), true
 	case "sha512":
-		return checksum(filePath, expectedValue, algorithm, sha512.New())
+		return sha512.New(), true
 	default:
+		return nil, false
+	}
+}
+
+// VerifyChecksum dynamically verifies the checksum of a file using the specified algorithm
+func VerifyChecksum(filePath string, expectedValue string, algorithm string) error {
+	hashFunction, ok := newHasher(algorithm)
+	if !ok {
 		return NewChecksumError(filePath, algorithm, expectedValue, "")
 	}
+	return checksum(filePath, expectedValue, algorithm, hashFunction)
+}
+
+// fileDigest returns the lowercase hex digest of the file at filePath.
+func fileDigest(filePath string, algorithm string) (string, error) {
+	hashFunction, ok := newHasher(algorithm)
+	if !ok {
+		return "", NewChecksumError(filePath, algorithm, "", "")
+	}
+
+	file, err := openForHashing(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(hashFunction, file); err != nil {
+		return "", NewChecksumError(filePath, algorithm, "", "")
+	}
+
+	return fmt.Sprintf("%x", hashFunction.Sum(nil)), nil
 }
 
 // checksum verifies the hash of a file.
 // algorithm is the name of the hash function (e.g. "sha256"), used only for error
 // reporting; hashFunction is the matching hash implementation (md5.New(), etc.).
 func checksum(filePath string, expectedHash string, algorithm string, hashFunction hash.Hash) error {
-	file, err := os.Open(filePath)
+	file, err := openForHashing(filePath)
 	if err != nil {
-		return NewFileNotFoundError(filePath)
+		return err
 	}
 	defer file.Close()
 
@@ -56,4 +84,19 @@ func checksum(filePath string, expectedHash string, algorithm string, hashFuncti
 	}
 
 	return nil
+}
+
+// openForHashing opens filePath, reporting FileNotFoundError only when the file
+// does not exist. Callers treat that type as "absent" (e.g. kube cluster
+// uninstall skips the reset), so an existing file that cannot be opened must
+// surface as a different error.
+func openForHashing(filePath string) (*os.File, error) {
+	file, err := os.Open(filePath)
+	if err == nil {
+		return file, nil
+	}
+	if os.IsNotExist(err) {
+		return nil, NewFileNotFoundError(filePath)
+	}
+	return nil, NewFileSystemError(err).WithProperty(filePathProperty, filePath)
 }
