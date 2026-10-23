@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // migration_per_component_state.go splits the single state.yaml into the
-// per-component files internal/bll.BaseHandler.FlushScoped writes —
+// per-component files internal/bll.BaseHandler commits —
 // profile.yaml, firewall.yaml, system.yaml, cluster.yaml, blocknode.yaml,
 // consensus.yaml, teleport.yaml — plus provisioner.yaml, each in the same
 // state directory. It must run after every other
@@ -141,11 +141,11 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Con
 		}
 	}
 
-	sm, err := NewStateManager(WithState(legacy))
+	sm, err := newStateManager(WithState(legacy))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager for per-component migration")
 	}
-	if err := sm.FlushState(); err != nil {
+	if err := sm.writeUnrecorded(AllComponentIDs...); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write per-component state files")
 	}
 

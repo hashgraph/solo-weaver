@@ -5,9 +5,11 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/automa-saga/logx"
 	"github.com/automa-saga/version"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
@@ -27,22 +29,39 @@ func provisionerFilePath(dir string) string {
 	return filepath.Join(dir, ProvisionerFileName)
 }
 
+// provisionerStampLockWait is how long a stamp waits for another writer of
+// provisioner.yaml. A stamp holds the lock only around one write, so a
+// concurrent one is waited out and its version found current; kube cluster
+// uninstall holds it for its whole run, and a stamp then fails.
+const provisionerStampLockWait = 3 * time.Second
+
 // PersistProvisionerVersion records the running CLI in provisioner.yaml so
 // version-boundary startup migrations are not re-evaluated — and
 // non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
 // invocation. Call only after a successful startup-migration pass and only on
 // a provisioned host, so a genuinely fresh machine keeps having no state file.
-func PersistProvisionerVersion() error {
+// changed is false when provisioner.yaml already describes the running binary,
+// which is then left as it is. An fsx.FileSyncError means the new record is on
+// disk but not synced, so changed is true.
+func PersistProvisionerVersion() (changed bool, err error) {
 	return persistProvisionerVersionIn(models.Paths().StateDir)
 }
 
-func persistProvisionerVersionIn(dir string) error {
-	release, err := AcquireProvisionerLock(dir, 0)
+func persistProvisionerVersionIn(dir string) (changed bool, err error) {
+	release, err := AcquireProvisionerLock(dir, provisionerStampLockWait)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer release()
-	return writeProvisionerRecord(dir, ProvisionerRecord{CLI: currentProvisionerInfo()})
+	rec := ProvisionerRecord{CLI: currentProvisionerInfo()}
+	if prev, ok, readErr := readProvisionerRecord(dir); readErr == nil && ok && prev == rec {
+		return false, nil
+	}
+	if err := writeProvisionerRecord(dir, rec); err != nil {
+		// A FileSyncError leaves the new record on disk, so the file changed.
+		return errorx.IsOfType(err, fsx.FileSyncError), err
+	}
+	return true, nil
 }
 
 // currentProvisionerInfo describes the running binary.
@@ -63,7 +82,8 @@ func currentProvisionerInfo() ProvisionerInfo {
 }
 
 // writeProvisionerRecord replaces provisioner.yaml with rec. The caller holds
-// the provisioner lock, or is a startup migration.
+// the provisioner lock, or is a startup migration. An fsx.FileSyncError means
+// the new record is on disk but not synced.
 func writeProvisionerRecord(dir string, rec ProvisionerRecord) error {
 	b, err := yaml.Marshal(rec)
 	if err != nil {
@@ -71,6 +91,9 @@ func writeProvisionerRecord(dir string, rec ProvisionerRecord) error {
 	}
 	path := provisionerFilePath(dir)
 	if err := atomicWriteFile(path, b); err != nil {
+		if errorx.IsOfType(err, fsx.FileSyncError) {
+			return err
+		}
 		return errorx.ExternalError.Wrap(err, "failed to write %s", path)
 	}
 	return nil

@@ -65,7 +65,9 @@ func newRegistryReading(t *testing.T, persisted state.TeleportState, live func()
 	recorded.TeleportState = persisted
 	writer, err := state.NewStateManager(state.WithState(recorded), state.WithFileManager(fm))
 	require.NoError(t, err)
-	require.NoError(t, writer.FlushState())
+	require.NoError(t, writer.Commit(state.ActionHistory{}, state.AllComponentIDs...))
+	// The seed is not an action under test: drop its entry.
+	require.NoError(t, os.Remove(state.ActionHistoryFilePath(filepath.Dir(stateFile))))
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())

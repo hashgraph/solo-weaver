@@ -13,6 +13,7 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,9 +56,9 @@ func TestRecordProvisionerVersion_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func() error {
+	persistProvisionerVersion = func() (bool, error) {
 		persistCalled++
-		return errors.New("simulated persist failure")
+		return false, errors.New("simulated persist failure")
 	}
 
 	step, err := RecordProvisionerVersion().Build()
@@ -88,8 +89,8 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 
 	// Failure path: the completion message must signal the miss.
-	persistProvisionerVersion = func() error {
-		return errors.New("simulated persist failure")
+	persistProvisionerVersion = func() (bool, error) {
+		return false, errors.New("simulated persist failure")
 	}
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
@@ -100,14 +101,44 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	assert.Contains(t, gotMsg, "not recorded",
 		"the completion message must not claim the version was recorded")
 
-	// Success path: the completion message reports the version recorded.
-	gotMsg = ""
-	persistProvisionerVersion = func() error { return nil }
-	step, err = RecordProvisionerVersion().Build()
+	// Success path: the completion message reports the version recorded, and
+	// the report says it changed the file only when it did.
+	for _, changed := range []bool{true, false} {
+		gotMsg = ""
+		persistProvisionerVersion = func() (bool, error) { return changed, nil }
+		step, err = RecordProvisionerVersion().Build()
+		require.NoError(t, err)
+		report = step.Execute(context.Background())
+		require.NoError(t, report.Error)
+		assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
+			"a successful persist must not flag a miss")
+		assert.Equal(t, changed, ProvisionerVersionPersisted(report),
+			"version_persisted is true only when the file changed")
+		assert.Equal(t, "Provisioner version recorded", gotMsg)
+	}
+}
+
+// TestRecordProvisionerVersion_UnsyncedVersionIsRecorded: a version written but
+// not synced counts as recorded, and the completion line says it is not synced,
+// since in TUI mode the step's log line reaches only the log file.
+func TestRecordProvisionerVersion_UnsyncedVersionIsRecorded(t *testing.T) {
+	origHandler := notify.As().StepCompletion
+	t.Cleanup(func() { notify.SetDefault(&notify.Handler{StepCompletion: origHandler}) })
+	var gotMsg string
+	notify.SetDefault(&notify.Handler{
+		StepCompletion: func(_ context.Context, _ automa.Step, _ *automa.Report, msg string, _ ...interface{}) {
+			gotMsg = msg
+		},
+	})
+	origPersist := persistProvisionerVersion
+	t.Cleanup(func() { persistProvisionerVersion = origPersist })
+	persistProvisionerVersion = func() (bool, error) { return true, fsx.FileSyncError.New("disk gone") }
+
+	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
-	report = step.Execute(context.Background())
+	report := step.Execute(context.Background())
+
 	require.NoError(t, report.Error)
-	assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
-		"a successful persist must not flag a miss")
-	assert.Equal(t, "Provisioner version recorded", gotMsg)
+	assert.True(t, ProvisionerVersionPersisted(report), "the version is on disk")
+	assert.Equal(t, "Provisioner version recorded, but not synced to disk", gotMsg)
 }

@@ -12,7 +12,9 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
@@ -33,29 +35,31 @@ type Reader interface {
 // Consumers that record side-effects (e.g. the BLL after a workflow run) should
 // depend on this narrow interface so that their dependencies are explicit.
 //
-// Set and AddActionHistory return Writer (not DefaultStateManager) so that
+// Set returns Writer (not DefaultStateManager) so that
 // callers depending only on Writer can chain calls without importing the full
 // DefaultStateManager type.
 type Writer interface {
 	// Set replaces the entire in-memory state and returns the Writer for chaining.
 	Set(s State) Writer
-	// AddActionHistory appends an entry to the pending action log. Entries are
-	// flushed to the append-only action_history.yaml on the next flush.
-	// Returns the Writer for chaining.
-	AddActionHistory(entry ActionHistory) Writer
-	// FlushState persists every component's state without flushing the action history.
-	// An fsx.FileSyncError means the new state is on disk but not synced; still flush the history after it.
-	FlushState() error
-	// FlushScoped persists only the listed components' state, leaving every
-	// other component's file untouched — not read, not rewritten, not reverted.
-	// A component with no prior baseline (first write) is written outright.
-	FlushScoped(ids ...ComponentID) error
-	// FlushActionHistory persists only the pending action history to disk without flushing the full state.
-	// An fsx.FileSyncError means the entries were appended but not synced.
-	FlushActionHistory() error
-	// FlushAll persists both state and action history
-	// An fsx.FileSyncError means both are on disk, but not all of it is synced.
-	FlushAll() error
+	// Commit persists only the listed components' state, leaving every other
+	// component's file untouched — not read, not rewritten, not reverted — then
+	// appends entry to action_history.yaml. A component with no prior baseline
+	// (first write) is written outright. entry.Components gains the listed
+	// files whose content changed. entry is appended even when a file did not
+	// land, marked NotPersisted with the error. An fsx.FileSyncError means the
+	// files landed and the entry was appended, but not all of it is synced.
+	// When a file did not land, or entry.Outcome is failed, the command reports
+	// the action's own failure: Commit returns the write error (nil for a
+	// failed action whose state landed), and a lost entry or an unsynced write
+	// is a state warning, as with Record's cause.
+	Commit(entry ActionHistory, ids ...ComponentID) error
+	// Record appends entry to action_history.yaml for an action that changed
+	// the host but writes no state through Commit. cause, when not nil, is the
+	// action's failure: it is recorded as the entry's error, and an append that
+	// fails is a state warning rather than an error, so the action's own error
+	// stays the one the command returns. Without a cause, an fsx.FileSyncError
+	// means the entry was appended but not synced.
+	Record(entry ActionHistory, cause error) error
 }
 
 // Persister groups lifecycle operations (load + save) that are needed at the
@@ -127,6 +131,10 @@ func WithStateFile(path string) ManagerOption {
 // NewStateManager creates a Manager with the provided options.
 // Caller must call Refresh() to load the persisted state from disk before accessing the state.
 func NewStateManager(opts ...ManagerOption) (Manager, error) {
+	return newStateManager(opts...)
+}
+
+func newStateManager(opts ...ManagerOption) (*stateManager, error) {
 	m := &stateManager{
 		actions: []ActionHistory{},
 	}
@@ -225,59 +233,121 @@ func (m *stateManager) Refresh() error {
 	return nil
 }
 
-// FlushState persists every component's state to disk with canonical hashing
-// and atomic writes, one file per component.
-func (m *stateManager) FlushState() error {
+func (m *stateManager) Commit(entry ActionHistory, ids ...ComponentID) error {
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 
-	return m.flushComponents(AllComponentIDs)
-}
-
-// FlushScoped persists only the listed components, leaving every other
-// component's file untouched.
-func (m *stateManager) FlushScoped(ids ...ComponentID) error {
-	m.flushMu.Lock()
-	defer m.flushMu.Unlock()
-
-	return m.flushComponents(ids)
-}
-
-func (m *stateManager) FlushActionHistory() error {
-	m.flushMu.Lock()
-	defer m.flushMu.Unlock()
-	return m.flushActionHistory()
-}
-
-func (m *stateManager) FlushAll() error {
-	m.flushMu.Lock()
-	defer m.flushMu.Unlock()
-
-	// A FileSyncError leaves the new state on disk, so its history is still appended.
-	stateErr := m.flushComponents(AllComponentIDs)
-	if stateErr != nil && !errorx.IsOfType(stateErr, fsx.FileSyncError) {
-		return stateErr
+	changed, writeErr := m.flushComponents(ids)
+	files := make([]ChangedFile, 0, len(changed)+len(entry.Components))
+	for _, id := range changed {
+		files = append(files, id.File())
+	}
+	entry.Components = append(files, entry.Components...)
+	// A FileSyncError leaves the new state on disk, so the files landed.
+	landed := writeErr == nil || errorx.IsOfType(writeErr, fsx.FileSyncError)
+	if !landed {
+		entry.NotPersisted = true
+		entry = withError(entry, writeErr)
 	}
 
-	if err := m.flushActionHistory(); err != nil {
-		if stateErr != nil {
-			logx.As().Warn().Err(stateErr).Msg("Failed to sync the state file")
+	m.addActionHistory(entry)
+	appendErr := m.flushActionHistory()
+	switch {
+	case !landed:
+		if appendErr != nil {
+			warnRecordFailure(m.dir(), appendErr)
 		}
-		return err
+		return writeErr
+	case entry.Outcome == OutcomeFailed:
+		// The action's own failure is what the command reports; trouble
+		// recording it is a warning.
+		if writeErr != nil {
+			warnUnsynced(m.dir(), writeErr)
+		}
+		if appendErr != nil {
+			warnRecordFailure(m.dir(), appendErr)
+		}
+		return nil
+	case appendErr != nil:
+		if writeErr != nil {
+			warnUnsynced(m.dir(), writeErr)
+		}
+		if errorx.IsOfType(appendErr, fsx.FileSyncError) {
+			return appendErr
+		}
+		return EntryNotAppendedError.Wrap(appendErr, "the state was written but its action history entry was not appended")
 	}
+	return writeErr
+}
 
-	return stateErr
+func (m *stateManager) Record(entry ActionHistory, cause error) error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	if cause != nil {
+		entry = withError(entry, cause)
+	}
+	m.addActionHistory(entry)
+	err := m.flushActionHistory()
+	if err != nil && cause != nil {
+		warnRecordFailure(m.dir(), err)
+		return nil
+	}
+	return err
+}
+
+// writeUnrecorded persists ids' state like Commit but appends no entry: only
+// for a startup migration, whose pass records one entry for all its writes.
+func (m *stateManager) writeUnrecorded(ids ...ComponentID) error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	_, err := m.flushComponents(ids)
+	return err
+}
+
+// warnUnsynced tells the operator that state was written but its sync to disk
+// failed, when the command reports something else.
+func warnUnsynced(dir string, err error) {
+	logx.As().Warn().Err(err).Msg("Failed to sync the state file")
+	addWarning("The state was written but not synced to disk: " + doctor.OperatorMessage(err) +
+		". Check the disk holding " + dir + ".")
+}
+
+// warnRecordFailure tells the operator that an entry could not be appended
+// after its action had already failed, without replacing the action's own
+// error. An fsx.FileSyncError means the entry was appended but not synced.
+func warnRecordFailure(dir string, err error) {
+	logx.As().Warn().Err(err).Msg("Failed to append the action history entry of a failed action")
+	if errorx.IsOfType(err, fsx.FileSyncError) {
+		addWarning("The command's action history entry was appended but not synced to disk: " +
+			doctor.OperatorMessage(err) + ".")
+		return
+	}
+	addWarning("The command's action history entry was not appended: " + doctor.OperatorMessage(err) +
+		". Check that " + ActionHistoryFilePath(dir) + " is writable.")
+}
+
+// withError records err on entry the way an operator reads it: the message
+// without its printable reason, which goes in Reason instead.
+func withError(entry ActionHistory, err error) ActionHistory {
+	entry.Error = doctor.OperatorMessage(err)
+	if reason, ok := errx.ReasonOf(err); ok {
+		entry.Reason = reason
+	}
+	return entry
 }
 
 // preparedComponentFlush is one component's validated, ready-to-write output:
 // everything flushComponents needs to know the write is safe to make, computed
 // without touching disk.
 type preparedComponentFlush struct {
-	id      ComponentID
-	path    string
-	bytes   []byte
-	toWrite State
-	newHash string
+	id       ComponentID
+	path     string
+	bytes    []byte
+	toWrite  State
+	newHash  string
+	baseline string // "" when the component had no baseline
 }
 
 // flushComponents writes every listed component's file. It validates every
@@ -290,12 +360,16 @@ type preparedComponentFlush struct {
 // failure fail cleanly with nothing written, which is the realistic failure
 // mode this protects against; it does not make the set of writes atomic
 // against a crash between two of the writes below.
-func (m *stateManager) flushComponents(ids []ComponentID) error {
+//
+// changed lists the components written whose content moved from their
+// baseline, including first writes; on an error it holds those written before
+// it.
+func (m *stateManager) flushComponents(ids []ComponentID) (changed []ComponentID, err error) {
 	prepared := make([]preparedComponentFlush, 0, len(ids))
 	for _, id := range ids {
 		p, err := m.prepareComponentFlush(id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		prepared = append(prepared, p)
 	}
@@ -305,17 +379,20 @@ func (m *stateManager) flushComponents(ids []ComponentID) error {
 	var syncErr error
 	for _, p := range prepared {
 		err := m.commitComponentFlush(p)
+		if err != nil && !errorx.IsOfType(err, fsx.FileSyncError) {
+			return changed, err
+		}
+		if p.newHash != p.baseline {
+			changed = append(changed, p.id)
+		}
 		if err == nil {
 			continue
-		}
-		if !errorx.IsOfType(err, fsx.FileSyncError) {
-			return err
 		}
 		if syncErr == nil {
 			syncErr = err
 		}
 	}
-	return syncErr
+	return changed, syncErr
 }
 
 // prepareComponentFlush computes id's canonical hash and marshaled bytes and
@@ -405,7 +482,7 @@ func (m *stateManager) prepareComponentFlush(id ComponentID) (preparedComponentF
 		}
 	}
 
-	return preparedComponentFlush{id: id, path: path, bytes: b, toWrite: toWrite, newHash: newHashHex}, nil
+	return preparedComponentFlush{id: id, path: path, bytes: b, toWrite: toWrite, newHash: newHashHex, baseline: baseline}, nil
 }
 
 // commitComponentFlush writes a prepared component's file and advances its
@@ -433,10 +510,12 @@ func (m *stateManager) commitComponentFlush(p preparedComponentFlush) error {
 }
 
 func (m *stateManager) flushActionHistory() error {
+	// An append takes the queued entries, and a failed one loses them, which
+	// its caller reports. Entries queued meanwhile wait for the next append.
 	m.mu.Lock()
 	snapshot := m.state
-	pendingActions := make([]ActionHistory, len(m.actions))
-	copy(pendingActions, m.actions)
+	pendingActions := m.actions
+	m.actions = nil
 	m.mu.Unlock()
 
 	if len(pendingActions) == 0 {
@@ -460,12 +539,6 @@ func (m *stateManager) flushActionHistory() error {
 	if appendErr != nil && !errorx.IsOfType(appendErr, fsx.FileSyncError) {
 		return errorx.InternalError.Wrap(appendErr, "failed to append action history entries to %s", actionHistoryFile)
 	}
-
-	// Update in-memory state. A FileSyncError still appended the entries; any added
-	// since the snapshot stay pending.
-	m.mu.Lock()
-	m.actions = m.actions[len(pendingActions):]
-	m.mu.Unlock()
 
 	return appendErr
 }
@@ -611,15 +684,13 @@ func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	return nil, false, nil
 }
 
-// AddActionHistory adds an entry to the in-memory pending action history.
-// The action history is flushed to disk as part of the Flush() operation, and is stored in a separate history file to
-// avoid unbounded growth of the main state file.
-// The timestamp of the entry is set to the current time when adding to history to ensure consistency.
-func (m *stateManager) AddActionHistory(entry ActionHistory) Writer {
-	entry.Timestamp = htime.Now() // force the timestamp to be set to the current time when adding to history to ensure consistency
+// addActionHistory queues entry for the next append to action_history.yaml,
+// which is kept apart from the state files so they don't grow without bound.
+// The timestamp is set here, so every entry carries the time it was recorded.
+func (m *stateManager) addActionHistory(entry ActionHistory) {
+	entry.Timestamp = htime.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.actions = append(m.actions, entry)
 	logx.As().Debug().Any("entry", entry).Msg("Added action history entry")
-	return m
 }

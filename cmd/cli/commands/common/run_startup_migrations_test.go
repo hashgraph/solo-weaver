@@ -152,9 +152,9 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func() error {
+	persistProvisionerVersion = func() (bool, error) {
 		persistCalled++
-		return errors.New("simulated persist failure")
+		return false, errors.New("simulated persist failure")
 	}
 
 	// The migration applies (baseline crosses the boundary) and the persist fails —

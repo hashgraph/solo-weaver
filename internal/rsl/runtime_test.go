@@ -6,15 +6,20 @@ package rsl
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
@@ -49,7 +54,7 @@ func writePersistedState(t *testing.T, stateFile string) state.Manager {
 	s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth0"}
 	writer, err := state.NewStateManager(state.WithState(s), state.WithFileManager(fm))
 	require.NoError(t, err)
-	require.NoError(t, writer.FlushState())
+	require.NoError(t, writer.Commit(state.ActionHistory{}, state.AllComponentIDs...))
 
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
 	require.NoError(t, err)
@@ -129,7 +134,7 @@ func TestRefreshWithBaseline_BaselineSurvivesARefreshDuringTheRuntimeRefresh(t *
 		s := sm.State()
 		s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth9"}
 		s.TeleportState = state.TeleportState{}
-		require.NoError(t, sm.Set(s).FlushScoped(state.ComponentBlockNode, state.ComponentTeleport))
+		require.NoError(t, sm.Set(s).Commit(state.ActionHistory{}, state.ComponentBlockNode, state.ComponentTeleport))
 	}
 	r := newResolver(t, sm, liveTeleport(), rewrite)
 
@@ -155,11 +160,11 @@ func TestRefreshWithBaseline_NoStateFileHasNoBaseline(t *testing.T) {
 	require.Equal(t, liveTeleport().NodeAgent, current.TeleportState.NodeAgent)
 }
 
-// TestFlushScoped_PreservesUnderlyingErrorCause verifies FlushScoped wraps
+// TestCommit_PreservesUnderlyingErrorCause verifies Commit wraps
 // (rather than stringifies via %v) the state manager's error, so the
 // underlying errorx cause — here, the per-file hash-conflict error — survives
 // in the error chain for diagnostics instead of being flattened to text.
-func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
+func TestCommit_PreservesUnderlyingErrorCause(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm := writePersistedState(t, stateFile)
 	r := newResolver(t, sm, liveTeleport(), nil)
@@ -172,11 +177,11 @@ func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
 	require.NoError(t, other.Refresh())
 	otherState := other.State()
 	otherState.TeleportState.NodeAgent.Configured = false // flips from persistedTeleport()'s true
-	require.NoError(t, other.Set(otherState).FlushScoped(state.ComponentTeleport))
+	require.NoError(t, other.Set(otherState).Commit(state.ActionHistory{}, state.ComponentTeleport))
 
 	staleState := sm.State()
 	staleState.TeleportState.NodeAgent.Configured = false
-	err = r.FlushScoped(staleState, state.ComponentTeleport)
+	err = r.Commit(staleState, state.ActionHistory{}, state.ComponentTeleport)
 	require.Error(t, err)
 
 	// errorx.Wrap is opaque to errors.Is/As/Unwrap by design (see the errorx
@@ -187,4 +192,67 @@ func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
 	cause := errorx.Cast(err).Cause()
 	require.NotNil(t, cause, "the underlying errorx cause must still be reachable via .Cause(), not flattened to text by %%v")
 	require.Contains(t, cause.Error(), "changed externally on disk")
+}
+
+// unsyncedAppender is an fsx.Manager whose appends land but report a failed sync.
+type unsyncedAppender struct{ fsx.Manager }
+
+func (a unsyncedAppender) AppendToFile(path string, payload []byte) error {
+	if err := a.Manager.AppendToFile(path, payload); err != nil {
+		return err
+	}
+	return fsx.FileSyncError.New("disk gone")
+}
+
+// requireStateOperationFailed checks err's reason and that one of its hints
+// contains hint.
+func requireStateOperationFailed(t *testing.T, err error, hint string) {
+	t.Helper()
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason on %v", err)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, strings.Join(hints, "\n"), hint)
+}
+
+// TestCommit_LandedStateWithALostEntrySaysSo: state that landed with its entry
+// lost keeps EntryNotAppendedError, says so once, and tells the operator what
+// to check, rather than "failed to persist state".
+func TestCommit_LandedStateWithALostEntrySaysSo(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, sm, liveTeleport(), nil)
+	history := state.ActionHistoryFilePath(filepath.Dir(stateFile))
+	require.NoError(t, os.RemoveAll(history))
+	require.NoError(t, os.Mkdir(history, 0o755)) // appending to a directory fails
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	err := r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+
+	require.True(t, errorx.IsOfType(err, state.EntryNotAppendedError), "got %v", err)
+	msg := doctor.OperatorMessage(err)
+	require.Equal(t, 1, strings.Count(msg, "the state was written but its action history entry was not appended"), msg)
+	require.NotContains(t, msg, "failed to persist state")
+	requireStateOperationFailed(t, err, history+" is writable")
+}
+
+// TestCommit_UnsyncedStateSaysSo: state whose entry was appended but not synced
+// keeps FileSyncError and says it was saved but not synced.
+func TestCommit_UnsyncedStateSaysSo(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writePersistedState(t, stateFile)
+	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(unsyncedAppender{newFileManager(t)}))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+	r := newResolver(t, sm, liveTeleport(), nil)
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	err = r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	require.Contains(t, doctor.OperatorMessage(err), "the state was saved and its action history entry appended, but not synced to disk")
+	requireStateOperationFailed(t, err, "Check the disk holding "+filepath.Dir(stateFile))
 }

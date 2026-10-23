@@ -20,6 +20,8 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
@@ -252,9 +254,25 @@ func (h *BaseHandler[T]) HandleIntent(
 	)
 }
 
+// unconfirmed returns the records as they stand when the run's read after the
+// workflow failed: a change the run was allowed to destroy is marked
+// Unconfirmed, since no read says whether it is gone.
+func (r ownedDriftRun) unconfirmed() []state.OwnedDriftRecord {
+	if len(r.records) == 0 {
+		return r.records
+	}
+	records := slices.Clone(r.records)
+	for i := range records {
+		records[i].Unconfirmed = records[i].DestroyAllowed
+	}
+	return records
+}
+
 // flushState is the generic flush after a run's workflow. owned is the owned
 // drift the run went ahead over: the flush's refresh confirms which records
-// were destroyed, for the action history entry.
+// were destroyed, for the action history entry. The workflow has run, so the
+// entry is appended however the flush ends, marked NotPersisted when the state
+// did not land.
 func (h *BaseHandler[T]) flushState(
 	ctx context.Context,
 	report *automa.Report,
@@ -267,19 +285,31 @@ func (h *BaseHandler[T]) flushState(
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
-	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
+	entry := state.ActionHistory{
+		Intent:  intent,
+		Inputs:  effectiveInputs,
+		Outcome: steps.OutcomeOf(report),
+	}
+	if steps.ProvisionerVersionPersisted(report) {
+		entry.Components = []state.ChangedFile{state.ChangedProvisioner}
+	}
+	if steps.ProvisionerVersionFailed(report) {
+		entry.NotPersisted = true
+		entry.Error = "the provisioner version was not recorded; startup migrations may run again on the next invocation"
+	}
+	notPersisted := func(err error) error {
+		entry.NotPersisted = true
+		_ = h.Runtime.Record(entry, err) // with a cause, a lost entry is a state warning
+		return err
 	}
 
-	h.Runtime.AddActionHistory(state.ActionHistory{
-		Intent: intent,
-		Inputs: effectiveInputs,
-		// Provenance: the component files this flush writes, so action_history.yaml
-		// records what on disk each action changed (see state.ActionHistory.Components).
-		Components: h.ownedComponentIDs(),
-		OwnedDrift: owned.confirm(fullState, producersOf(h.Managed)...),
-	})
+	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
+	if err != nil {
+		entry.OwnedDrift = owned.unconfirmed()
+		return nil, notPersisted(errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err))
+	}
+
+	entry.OwnedDrift = owned.confirm(fullState, producersOf(h.Managed)...)
 	if h.KeptAtBaseline != nil && baseline != nil {
 		h.KeptAtBaseline(&fullState, *baseline)
 	}
@@ -297,13 +327,16 @@ func (h *BaseHandler[T]) flushState(
 	if callback != nil {
 		logx.As().Debug().Msg("Applying callback mutations to full state before flush")
 		if err := callback(&fullState, *effectiveInputs); err != nil {
-			return nil, errorx.IllegalState.New("failed to patch state after workflow execution: %v", err)
+			return nil, notPersisted(errorx.IllegalState.New("failed to patch state after workflow execution: %v", err))
 		}
 		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")
 	}
 
-	// Flush only the files this handler owns, plus the action history.
-	if err := h.Runtime.FlushScoped(fullState, h.ownedComponentIDs()...); err != nil {
+	// Write only the files this handler owns, then the entry.
+	if err := h.Runtime.Commit(fullState, entry, h.ownedComponentIDs()...); err != nil {
+		if errorx.IsOfType(err, state.EntryNotAppendedError) || errorx.IsOfType(err, fsx.FileSyncError) {
+			return nil, err // the state landed; rsl says what to check
+		}
 		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")
 	}
 

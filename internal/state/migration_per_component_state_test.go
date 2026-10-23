@@ -391,7 +391,7 @@ func TestPerComponentStateMigration_RollbackRestoresTheExactBackup(t *testing.T)
 	require.NoError(t, sm.Refresh())
 	changed := sm.State()
 	changed.BlockNodeState.ReleaseInfo.Name = "changed-after-migration"
-	require.NoError(t, sm.Set(changed).FlushScoped(ComponentBlockNode))
+	require.NoError(t, sm.Set(changed).Commit(ActionHistory{}, ComponentBlockNode))
 
 	require.NoError(t, m.Rollback(context.Background(), nil))
 

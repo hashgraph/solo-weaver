@@ -40,14 +40,14 @@
 ### 1.2 State File Persistence & Integrity
 
 - [ ] **TC-STA-001** — `NewStateManager()` creates a manager with default state (`ModelVersion = "v1"`, provisioner info populated).
-- [ ] **TC-STA-002** — `FlushState()` writes the state file atomically (temp file + rename).
-- [ ] **TC-STA-003** — `FlushState()` computes a SHA-256 hash and stores it in `state.Hash` / `state.HashAlgo`.
-- [ ] **TC-STA-004** — `FlushState()` detects external concurrent modifications and refuses to overwrite (optimistic concurrency via hash comparison).
-- [ ] **TC-STA-005** — `FlushState()` is a no-op (no disk write) if the state content has not changed (hash comparison against baseline).
+- [ ] **TC-STA-002** — `Commit()` writes each listed component file atomically (temp file + rename).
+- [ ] **TC-STA-003** — `Commit()` computes a SHA-256 hash and stores it in `state.Hash` / `state.HashAlgo`.
+- [ ] **TC-STA-004** — `Commit()` detects external concurrent modifications and refuses to overwrite (optimistic concurrency via hash comparison).
+- [ ] **TC-STA-005** — `Commit()` names a component file in the entry's `components` only if its content changed (hash comparison against baseline).
 - [ ] **TC-STA-006** — `Refresh()` reloads state from disk and replaces the in-memory state correctly.
 - [ ] **TC-STA-007** — `Refresh()` returns `NotFoundError` when the state file does not exist (first-run scenario).
-- [ ] **TC-STA-008** — `Set()` + `FlushAll()` persists both state and action history.
-- [ ] **TC-STA-009** — `AddActionHistory()` appends entries and updates `State.LastAction`; entries are written to `action_history.yaml` on `FlushActionHistory()`.
+- [ ] **TC-STA-008** — `Set()` + `Commit()` writes the listed components' files, then appends the action history entry naming the files whose content changed.
+- [ ] **TC-STA-009** — `Commit()` appends its entry even when a file did not land, marked `notPersisted` with the error; `Record()` appends an entry for an action whose state never reached `Commit()`.
 - [ ] **TC-STA-010** — `HasPersistedState()` reports correctly whether the state file exists on disk.
 
 ---
@@ -62,7 +62,7 @@
 - [ ] **TC-BN-INS-004** — `--force` flag bypasses the "already installed" guard and re-runs the install workflow.
 - [ ] **TC-BN-INS-005** — After a successful install, the state is flushed to disk with `BlockNodeState.ReleaseInfo.Status = deployed`.
 - [ ] **TC-BN-INS-006** — After a successful install, `ActionHistory` is persisted with `intent.action = install`, `intent.target = blocknode`.
-- [ ] **TC-BN-INS-007** — The `patchBlockNodeChartRef()` callback correctly writes `ChartRef` into `BlockNodeState.ReleaseInfo.ChartRef` after workflow execution. Profile is persisted by `BaseHandler.FlushState` via `ProfileExtractor`.
+- [ ] **TC-BN-INS-007** — The `patchBlockNodeChartRef()` callback correctly writes `ChartRef` into `BlockNodeState.ReleaseInfo.ChartRef` after workflow execution. Profile is persisted by `BaseHandler.flushState` via `ProfileExtractor`.
 - [ ] **TC-BN-INS-008** — Storage `basePath` is resolved from config when not provided by the user.
 
 ### 2.2 Block Node Upgrade
@@ -166,7 +166,7 @@
 
 - [ ] **TC-RSL-RT-001** — `Refresh()` calls `RefreshState()` on all three runtimes (cluster, block node, machine).
 - [ ] **TC-RSL-RT-002** — `CurrentState()` composes a single `state.State` from all three runtime states.
-- [ ] **TC-RSL-RT-003** — `FlushAll()` persists the composed state to disk.
+- [ ] **TC-RSL-RT-003** — `Commit()` persists the listed components of the composed state to disk, then appends the action history entry.
 
 ---
 
@@ -176,15 +176,15 @@
 
 - [ ] **TC-RC-CL-001** — `RefreshState()` returns an empty `ClusterState` when the cluster does not exist.
 - [ ] **TC-RC-CL-002** — `RefreshState()` populates `ClusterInfo` and sets `Created = true` when the cluster is reachable.
-- [ ] **TC-RC-CL-003** — `FlushState()` skips writes when the state is unchanged (comparator-based).
-- [ ] **TC-RC-CL-004** — `FlushState()` refreshes from disk before writing to avoid overwriting concurrent updates.
+- [ ] **TC-RC-CL-003** — A `Commit()` that leaves the cluster state unchanged doesn't name `cluster` in the entry's `components`.
+- [ ] **TC-RC-CL-004** — `Commit()` checks each file on disk against its baseline before writing, so a concurrent update is not overwritten.
 - [ ] **TC-RC-CL-005** — State persisted to disk matches the in-memory value (nil vs empty map handling for `Clusters`/`Contexts`).
 
 ### 6.2 MachineChecker
 
 - [ ] **TC-RC-MC-001** — `RefreshState()` returns populated `SoftwareState` entries for all registered software installers.
 - [ ] **TC-RC-MC-002** — `RefreshState()` returns populated `HardwareState` entries (OS, CPU, memory, storage).
-- [ ] **TC-RC-MC-003** — `FlushState()` skips writes when the machine state is unchanged.
+- [ ] **TC-RC-MC-003** — A `Commit()` that leaves the machine state unchanged doesn't name `profile`, `firewall` or `system` in the entry's `components`.
 - [ ] **TC-RC-MC-004** — State persisted to disk matches the in-memory value after refresh.
 - [ ] **TC-RC-MC-005** — Software installers that fail verification log errors but do not prevent other software from being checked.
 
@@ -196,7 +196,7 @@
 - [ ] **TC-RC-BN-004** — `RefreshState()` populates storage paths/sizes from PersistentVolumes (live, archive, log, verification).
 - [ ] **TC-RC-BN-005** — `ChartRef` is intentionally left empty in `RefreshState()` (not stored in Helm; injected by caller).
 - [ ] **TC-RC-BN-006** — When a previously deployed release is now missing, state resets to `NewBlockNodeState()`.
-- [ ] **TC-RC-BN-007** — `FlushState()` skips writes when `BlockNodeState` is unchanged.
+- [ ] **TC-RC-BN-007** — A `Commit()` that leaves `BlockNodeState` unchanged doesn't name `blocknode` in the entry's `components`.
 
 ---
 
@@ -257,8 +257,8 @@
 - [ ] **TC-BLL-BH-002** — `ValidateIntent()` rejects invalid intents (empty action, wrong target).
 - [ ] **TC-BLL-BH-003** — `ValidateIntent()` rejects invalid user inputs (bad profile, bad namespace, etc.).
 - [ ] **TC-BLL-BH-004** — `HandleIntent()` orchestrates: validate → refresh → prepare effective inputs → build workflow → execute → flush.
-- [ ] **TC-BLL-BH-005** — `FlushState()` calls `Refresh(ctx, true)` to get latest state, applies callback, and flushes.
-- [ ] **TC-BLL-BH-006** — `FlushState()` writes action history entry before flushing.
+- [ ] **TC-BLL-BH-005** — `flushState()` calls `RefreshWithBaseline(ctx, true)` to get the latest state, applies the callback, and commits the owned components with the entry.
+- [ ] **TC-BLL-BH-006** — `flushState()` records the action history entry on every exit after the workflow: `succeeded` or `failed` when its state landed, `notPersisted` when it did not.
 
 ### 8.2 Block Node HandlerRegistry
 
@@ -283,11 +283,11 @@
 - [ ] **TC-BLL-CR-002** — `patchBlockNodeChartRef()` is a no-op for `ChartRef` when the release is not deployed.
 - [ ] **TC-BLL-CR-003** — `patchBlockNodeChartRef()` is a no-op for `ChartRef` when the user did not provide a chart reference.
 
-### 8.5 Profile Persistence (BaseHandler.FlushState)
+### 8.5 Profile Persistence (BaseHandler.flushState)
 
-- [ ] **TC-BLL-PF-001** — `BaseHandler.FlushState` persists the profile into `MachineState.Profile` when `ProfileExtractor` returns a non-empty string.
-- [ ] **TC-BLL-PF-002** — `BaseHandler.FlushState` does not overwrite `MachineState.Profile` when `ProfileExtractor` returns an empty string.
-- [ ] **TC-BLL-PF-003** — `BaseHandler.FlushState` does not write a profile when `ProfileExtractor` is nil (e.g. teleport handlers).
+- [ ] **TC-BLL-PF-001** — `BaseHandler.flushState` persists the profile into `MachineState.Profile` when `ProfileExtractor` returns a non-empty string.
+- [ ] **TC-BLL-PF-002** — `BaseHandler.flushState` does not overwrite `MachineState.Profile` when `ProfileExtractor` returns an empty string.
+- [ ] **TC-BLL-PF-003** — `BaseHandler.flushState` does not write a profile when `ProfileExtractor` is nil (e.g. teleport handlers).
 
 ---
 
@@ -429,7 +429,7 @@
 - [ ] **TC-ERR-001** — All commands return clear error messages with resolution hints (via `ErrPropertyResolution`).
 - [ ] **TC-ERR-002** — `--force` flag overrides all precondition guards (install when deployed, upgrade when not deployed, etc.).
 - [ ] **TC-ERR-003** — YAML marshal/unmarshal of `StringMap` (replacing `automa.StateBag`) works correctly for state persistence.
-- [ ] **TC-ERR-004** — Concurrent state modifications by different checkers are handled via refresh-before-write pattern in `FlushState()`.
+- [ ] **TC-ERR-004** — Concurrent state modifications by different checkers are handled via the refresh-before-write pattern in `flushState()` and `Commit()`'s per-file hash check.
 - [ ] **TC-ERR-005** — `BlockNodeStorage.Validate()` correctly enforces "either basePath or all of archivePath, livePath, logPath, verificationPath".
 - [ ] **TC-ERR-006** — Helm template rendering errors (e.g. missing `loadBalancer.enabled`) produce clear diagnostic messages.
 

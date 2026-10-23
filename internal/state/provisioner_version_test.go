@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/automa-saga/version"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -42,7 +44,9 @@ func writeLegacyStateWithVersion(t *testing.T, dir, cliVersion string) {
 func TestPersistProvisionerVersion_RecordsTheRunningCLI(t *testing.T) {
 	dir := t.TempDir()
 
-	require.NoError(t, persistProvisionerVersionIn(dir))
+	changed, err := persistProvisionerVersionIn(dir)
+	require.NoError(t, err)
+	require.True(t, changed)
 
 	rec := readProvisionerRecordFrom(t, dir)
 	assert.Equal(t, version.Get().Version, rec.CLI.Version)
@@ -55,7 +59,8 @@ func TestPersistProvisionerVersion_RecordsTheRunningCLI(t *testing.T) {
 func TestPersistProvisionerVersion_OnlyWritesProvisionerFile(t *testing.T) {
 	dir := t.TempDir()
 
-	require.NoError(t, persistProvisionerVersionIn(dir))
+	_, err := persistProvisionerVersionIn(dir)
+	require.NoError(t, err)
 
 	for _, id := range AllComponentIDs {
 		_, err := os.Stat(componentFilePath(dir, id))
@@ -64,26 +69,30 @@ func TestPersistProvisionerVersion_OnlyWritesProvisionerFile(t *testing.T) {
 }
 
 // TestPersistProvisionerVersion_Idempotent: repeated calls succeed and keep the
-// same record.
+// same record; only the first changes the file, the rest leave it as it is.
 func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 
 	for i := range 3 {
-		require.NoErrorf(t, persistProvisionerVersionIn(dir), "call %d should succeed", i)
+		changed, err := persistProvisionerVersionIn(dir)
+		require.NoErrorf(t, err, "call %d should succeed", i)
+		require.Equalf(t, i == 0, changed, "call %d changed the file", i)
 	}
 	assert.Equal(t, version.Get().Version, readProvisionerRecordFrom(t, dir).CLI.Version)
 }
 
-// TestPersistProvisionerVersion_FailsFastWhenLocked: a writer holding the
-// provisioner lock makes the write fail at once, leaving the file untouched.
-func TestPersistProvisionerVersion_FailsFastWhenLocked(t *testing.T) {
+// TestPersistProvisionerVersion_FailsWhenLockedPastTheWait: a writer holding the
+// provisioner lock for longer than the stamp waits, as kube cluster uninstall
+// does, makes the write fail, leaving the file untouched.
+func TestPersistProvisionerVersion_FailsWhenLockedPastTheWait(t *testing.T) {
 	dir := t.TempDir()
 	release, err := AcquireProvisionerLock(dir, 0)
 	require.NoError(t, err)
 	defer release()
 
-	err = persistProvisionerVersionIn(dir)
+	changed, err := persistProvisionerVersionIn(dir)
 	require.Error(t, err)
+	require.False(t, changed)
 	require.Contains(t, err.Error(), "provisioner.yaml is being modified")
 
 	_, ok, err := readProvisionerRecord(dir)
@@ -101,7 +110,8 @@ func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, absent, "no recorded version must read back as an empty version")
 
-	require.NoError(t, PersistProvisionerVersion())
+	_, err = PersistProvisionerVersion()
+	require.NoError(t, err)
 
 	readBack, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
@@ -162,7 +172,7 @@ func TestFlushingHostStateDoesNotRecordTheVersion(t *testing.T) {
 	sm, err := NewStateManager(WithState(newTestState(filepath.Join(dir, StateFileName))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
-	require.NoError(t, sm.FlushScoped(ComponentProfile, ComponentFirewall, ComponentSystem))
+	require.NoError(t, sm.Commit(ActionHistory{}, ComponentProfile, ComponentFirewall, ComponentSystem))
 
 	_, ok, err := readProvisionerRecord(dir)
 	require.NoError(t, err)
@@ -176,4 +186,19 @@ func TestFlushingHostStateDoesNotRecordTheVersion(t *testing.T) {
 		assert.Emptyf(t, doc.State.Provisioner.Version, "%s.yaml must not carry the provisioner version", id)
 		assert.Emptyf(t, doc.State.Version, "%s.yaml must not carry the state model version", id)
 	}
+}
+
+// TestPersistProvisionerVersion_SyncFailureStillChangesTheFile: a record whose
+// directory sync fails is on disk, so the call reports the file changed, with
+// the FileSyncError.
+func TestPersistProvisionerVersion_SyncFailureStillChangesTheFile(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+
+	changed, err := persistProvisionerVersionIn(dir)
+
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	require.True(t, changed)
+	assert.Equal(t, version.Get().Version, readProvisionerRecordFrom(t, dir).CLI.Version)
 }

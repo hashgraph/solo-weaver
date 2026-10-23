@@ -90,7 +90,7 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 	case os.IsNotExist(readErr):
 		// Already split, or old enough to have only marker files: the software
 		// entries belong to system.yaml, so merge into that alone.
-		sm, err := NewStateManager()
+		sm, err := newStateManager()
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
 		}
@@ -101,7 +101,8 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 		for _, mk := range markers {
 			current = SetSoftwareState(current, mk.component, mk.applyTo(GetSoftwareState(current, mk.component)))
 		}
-		if err := sm.Set(current).FlushScoped(ComponentSystem); err != nil {
+		sm.Set(current)
+		if err := sm.writeUnrecorded(ComponentSystem); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
 		}
 

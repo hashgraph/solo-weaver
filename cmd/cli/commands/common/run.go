@@ -402,7 +402,7 @@ func RunStartupMigrations(ctx context.Context) error {
 	// crosses the baseline. Gate on a version change and a provisioned host so a
 	// fresh machine keeps no state file. Best-effort.
 	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
-		if err := persistProvisionerVersion(); err != nil {
+		if _, err := persistProvisionerVersion(); err != nil {
 			logx.As().Warn().Err(err).
 				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
 		}
