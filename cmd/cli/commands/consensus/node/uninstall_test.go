@@ -66,3 +66,15 @@ func TestUninstallCmd_IsRegistered(t *testing.T) {
 	}
 	assert.True(t, found, "consensus node must have an uninstall subcommand")
 }
+
+// Install-only flags must not show in uninstall --help.
+func TestNodeFlags_InstallOnlyFlagsScopedToInstall(t *testing.T) {
+	for _, name := range []string{"namespace", "orbit", "node-id"} {
+		assert.NotNil(t, nodeCmd.PersistentFlags().Lookup(name), "--%s must stay on consensus node", name)
+	}
+	for _, name := range []string{"profile", "account-id", "weight", "image-tag", "cpu-limit", "default-volume-type", "hostpath-uid"} {
+		assert.Nil(t, nodeCmd.PersistentFlags().Lookup(name), "--%s must not be on consensus node", name)
+		assert.NotNil(t, installCmd.Flag(name), "--%s must be on install", name)
+		assert.Nil(t, uninstallCmd.Flag(name), "--%s must not be on uninstall", name)
+	}
+}

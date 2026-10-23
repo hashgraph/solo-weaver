@@ -119,8 +119,8 @@ func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
 	return false
 }
 
-// DeleteConsensusCapsule deletes the node's ConsensusCapsule and waits until it is gone,
-// so the later steps never race the operator's teardown. An absent capsule is a success.
+// DeleteConsensusCapsule deletes the node's ConsensusCapsule and waits until the capsule object is gone.
+// The wait does not cover the capsule's pods, which can still be stopping. An absent capsule is a success.
 func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(DeleteConsensusCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {

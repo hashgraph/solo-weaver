@@ -393,9 +393,6 @@ sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-
 | `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
 | `--force`, `-y` | no | Skip the confirmation prompt. `--non-interactive` also skips it. |
 
-> `uninstall --help` also lists the install flags, because they are defined on `consensus node`.
-> Uninstall does not use them.
-
 > **The node stops.** Deleting the ConsensusCapsule removes the node's pod. To remove the Secrets
 > or the volume data, delete them manually.
 
