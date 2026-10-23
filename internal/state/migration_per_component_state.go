@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // migration_per_component_state.go splits the single state.yaml into the
-// per-component files internal/bll.BaseHandler.FlushScoped writes:
-// machine.yaml, cluster.yaml, blocknode.yaml, consensus.yaml, teleport.yaml,
-// each in the same state directory. It must run after every other
+// per-component files internal/bll.BaseHandler.FlushScoped writes —
+// machine.yaml, cluster.yaml, blocknode.yaml, consensus.yaml, teleport.yaml —
+// plus provisioner.yaml, each in the same state directory. It must run after every other
 // ScopeStartup migration in this package (migration_unified_state.go,
 // migration_helm_release_schema_v2.go, migration_mgmt_ports_v1.go), which
 // still assume and rewrite the single-file legacy shape — see
@@ -85,7 +85,8 @@ func (m *PerComponentStateMigration) Applies(_ *migration.Context) (bool, error)
 
 // Execute reads the legacy state.yaml, writes every component's section to
 // its own file (establishing a fresh per-file hash baseline for each, since
-// none existed before), and only then renames the legacy file out of the way.
+// none existed before) and its provisioner fields to provisioner.yaml, and
+// only then renames the legacy file out of the way.
 // If writing the component files fails partway through, state.yaml is left
 // untouched, so a re-run is idempotent: Applies() is still true and Execute
 // starts over from the unmodified legacy content.
@@ -147,6 +148,19 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Con
 		return errorx.IllegalState.Wrap(err, "failed to write per-component state files")
 	}
 
+	// The recorded version that startup migrations gate on moves to
+	// provisioner.yaml. Write it before the rename: once state.yaml is gone,
+	// nothing else holds it, and the next run would see no version at all.
+	var prov ProvisionerVersionDoc
+	if err := yaml.Unmarshal(b, &prov); err != nil {
+		return errorx.IllegalFormat.Wrap(err, "legacy state file %s is not parseable YAML", legacyPath)
+	}
+	rec := ProvisionerRecord{CLI: prov.State.Provisioner}
+	rec.CLI.StateVersion = prov.State.Version
+	if err := writeProvisionerRecord(dir, rec); err != nil {
+		return err
+	}
+
 	backupPath := legacyPath + legacyStateBackupSuffix
 	if err := os.Rename(legacyPath, backupPath); err != nil {
 		// The split already succeeded and legacyPath is what Applies() checks
@@ -169,15 +183,14 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Con
 	return nil
 }
 
-// Rollback restores a single state.yaml and removes the per-component files,
-// undoing Execute. When Execute's backup survived (the normal case), this
-// restores that exact pre-migration snapshot verbatim — not a recomposition
-// of the current component files, which would stamp the running binary's
-// version into provisioner.version rather than whatever version was actually
-// recorded before the split. If the backup is missing (Execute's rename
-// failed and it fell back to removing the legacy file, or there was never a
-// legacy file to begin with), this falls back to a best-effort recomposition
-// from the current component files, which may not fully restore — the same
+// Rollback restores a single state.yaml and removes the per-component files
+// and provisioner.yaml, undoing Execute. When Execute's backup survived (the
+// normal case), this restores that exact pre-migration snapshot verbatim. With
+// no backup and state.yaml still present, Execute never got as far as the
+// rename, so there is nothing to undo. Otherwise (Execute's rename failed and
+// it fell back to removing the legacy file, or there was never a legacy file to
+// begin with) this falls back to a best-effort recomposition from the current
+// component files and provisioner.yaml, which may not fully restore — the same
 // contract every Migration.Rollback has.
 func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Context) error {
 	legacyPath := m.legacyStateFilePath()
@@ -189,6 +202,14 @@ func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Co
 			return errorx.ExternalError.Wrap(err, "failed to restore legacy state file from backup %s", backupPath)
 		}
 	} else if os.IsNotExist(err) {
+		// No backup but state.yaml is still there: Execute failed before its
+		// rename (or while moving a diverged state.yaml aside), so state.yaml
+		// is untouched and still holds the recorded version, which the
+		// component files do not. Leave everything as it is; the next run's
+		// Execute clears any partial files and splits again.
+		if _, statErr := os.Stat(legacyPath); statErr == nil {
+			return nil
+		}
 		if err := recomposeLegacyStateFromComponents(legacyPath); err != nil {
 			return err
 		}
@@ -200,6 +221,9 @@ func (m *PerComponentStateMigration) Rollback(_ context.Context, _ *migration.Co
 		if err := os.Remove(componentFilePath(dir, id)); err != nil && !os.IsNotExist(err) {
 			return errorx.ExternalError.Wrap(err, "failed to remove %s state file during rollback", id)
 		}
+	}
+	if err := os.Remove(provisionerFilePath(dir)); err != nil && !os.IsNotExist(err) {
+		return errorx.ExternalError.Wrap(err, "failed to remove %s during rollback", ProvisionerFileName)
 	}
 	// Best-effort: the backup has now been restored (or recomposed in its
 	// absence), so it no longer serves a purpose.
@@ -283,8 +307,40 @@ func recomposeLegacyStateFromComponents(legacyPath string) error {
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to marshal recomposed state.yaml for rollback")
 	}
+	rec, ok, err := readProvisionerRecord(filepath.Dir(legacyPath))
+	if err != nil {
+		return err
+	}
+	if ok {
+		if b, err = withLegacyProvisionerFields(b, rec); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to add the provisioner fields to the recomposed state.yaml")
+		}
+	}
 	if err := atomicWriteFile(legacyPath, b); err != nil {
 		return errorx.ExternalError.Wrap(err, "failed to write recomposed state.yaml for rollback")
 	}
 	return nil
+}
+
+// withLegacyProvisionerFields puts rec back where a single state.yaml kept it:
+// the model version and the CLI's provisioner info inside the state record.
+func withLegacyProvisionerFields(stateYAML []byte, rec ProvisionerRecord) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(stateYAML, &doc); err != nil {
+		return nil, err
+	}
+	record := ensureMapping(rootMappingNode(&doc), "state")
+	if record == nil {
+		return nil, errorx.IllegalFormat.New("recomposed state.yaml has no top-level mapping")
+	}
+
+	info := rec.CLI
+	info.StateVersion = ""
+	var provisioner yaml.Node
+	if err := provisioner.Encode(info); err != nil {
+		return nil, err
+	}
+	setMappingValue(record, "version", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: rec.CLI.StateVersion})
+	setMappingValue(record, "provisioner", &provisioner)
+	return yaml.Marshal(&doc)
 }

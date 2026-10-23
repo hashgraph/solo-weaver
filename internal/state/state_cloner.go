@@ -152,11 +152,9 @@ func (s *State) Clone() (*State, error) {
 		LastSync:  s.LastSync,
 		// Domain content
 		StateRecord: StateRecord{
-			Version:          s.Version,
-			ProvisionerState: s.ProvisionerState,
-			MachineState:     *ms,
-			ClusterState:     *cs,
-			BlockNodeState:   *bs,
+			MachineState:   *ms,
+			ClusterState:   *cs,
+			BlockNodeState: *bs,
 		},
 	}, nil
 }
