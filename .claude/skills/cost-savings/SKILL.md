@@ -1,6 +1,6 @@
 ---
 name: cost-savings
-description: Use this skill to keep Claude Code token cost down in this repo. Load it when running UAT or VM tests (`task vm:*`, `task test:*`), reading test or CI logs, printing large files or reports, or when the developer starts work on another PR in a session that already delivered one ("start #NNNN", "next issue", "let's begin the next PR"). Covers running UAT in a subagent, writing self-checking UAT scripts, suggesting a fresh session between PRs, and keeping command output small.
+description: Use this skill to keep Claude Code token cost down in this repo. Load it when running UAT or VM tests (`task vm:*`, `task test:*`), reading test or CI logs, printing large files or reports, or when the developer starts work on another PR in a session that already delivered one ("start #NNNN", "next issue", "let's begin the next PR"), or raises a PR with `gh pr create`. Covers running UAT in a subagent, writing self-checking UAT scripts, suggesting a fresh session between PRs, and keeping command output small.
 ---
 
 # Cost savings
@@ -42,6 +42,8 @@ Make the suggestion once. Do not block the request.
 - Summarise CI job logs in a subagent. Do not download them into the main context.
 - Use the Read tool with `offset` and `limit` for large files.
 
-## CI instead of local UAT
+## 5. Save KVM runner capacity when raising PRs
 
-On the top PR of a stack, run the VM integration and UAT jobs in CI (no `skip-kvm-runner` label). This replaces some local UAT runs.
+- Add the `skip-kvm-runner` label to every new PR by default: `gh pr create --label skip-kvm-runner ...`. It skips the KVM-runner jobs (UAT, integration).
+- Leave the label off the top PR of a stack, and off any PR whose only UAT is the CI run. Those PRs need the KVM jobs. They also replace some local UAT runs.
+- When a PR becomes the top of its stack, or is ready to merge, remove the label: `gh pr edit <num> --remove-label skip-kvm-runner`.
