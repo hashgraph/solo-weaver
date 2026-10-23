@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,7 +55,7 @@ func TestConsensusUninstallInputs_NoProfileAndValid(t *testing.T) {
 	assert.Equal(t, "hiero-network-1", inputs.Custom.Namespace)
 	assert.Equal(t, int64(3), inputs.Custom.NodeId)
 	assert.True(t, inputs.Common.Force)
-	require.NoError(t, inputs.Validate(), "the base handler validates these inputs")
+	require.NoError(t, inputs.ValidateFor(models.ActionUninstall), "the base handler validates these inputs")
 }
 
 func TestUninstallCmd_IsRegistered(t *testing.T) {

@@ -124,9 +124,6 @@ func consensusUninstallInputs(force bool) models.UserInputs[models.ConsensusNode
 		Custom: models.ConsensusNodeInputs{
 			Namespace: flagNamespace,
 			NodeId:    flagNodeId,
-			// Unused by uninstall, but ConsensusNodeInputs.Validate requires them.
-			AccountId: models.ConsensusDefaultAccountId,
-			Weight:    models.ConsensusDefaultWeight,
 		},
 	}
 }
