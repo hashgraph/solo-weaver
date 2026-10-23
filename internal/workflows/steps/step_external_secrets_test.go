@@ -703,3 +703,105 @@ func Test_isESORelease_FallsBackToReleaseName(t *testing.T) {
 		"a release with no chart metadata is matched by name")
 	assert.False(t, isESORelease(&release.Release{Name: "something-else"}, spec))
 }
+
+// fakeCRDs answers CRDExists from a fixed set and counts lookups.
+type fakeCRDs struct {
+	existing map[string]bool
+	err      error
+	lookups  []string
+}
+
+func (f *fakeCRDs) CRDExists(_ context.Context, name string) (bool, error) {
+	f.lookups = append(f.lookups, name)
+	return f.existing[name], f.err
+}
+
+// The preflight runs before the install step, so a refusal there means Helm
+// installs nothing.
+func Test_SetupExternalSecrets_ChecksBeforeInstalling(t *testing.T) {
+	assert.Equal(t,
+		[]string{PreCheckExternalSecretsStepId, InstallExternalSecretsStepId, IsExternalSecretsReadyStepId},
+		stepIds(t, SetupExternalSecrets("")))
+}
+
+func Test_checkOrphanedESOCRDs(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		releases    []*release.Release
+		crds        *fakeCRDs
+		wantLookups int
+		wantErr     bool
+		wantReason  errx.Reason
+		wantFound   []string
+	}{
+		{
+			name:        "fresh cluster",
+			crds:        &fakeCRDs{},
+			wantLookups: 4,
+		},
+		{
+			name:     "deployed ESO release owns the CRDs",
+			releases: []*release.Release{esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed)},
+			crds:     &fakeCRDs{existing: map[string]bool{"externalsecrets.external-secrets.io": true}},
+		},
+		{
+			name:        "all CRDs without a release",
+			releases:    []*release.Release{esoRelease("other", "other", "some-chart", release.StatusDeployed)},
+			crds:        &fakeCRDs{existing: map[string]bool{"externalsecrets.external-secrets.io": true, "clusterexternalsecrets.external-secrets.io": true, "secretstores.external-secrets.io": true, "clustersecretstores.external-secrets.io": true}},
+			wantLookups: 4,
+			wantErr:     true,
+			wantReason:  reasons.PreconditionNotMet,
+			wantFound:   esoCRDs,
+		},
+		{
+			name:        "one CRD left without a release",
+			crds:        &fakeCRDs{existing: map[string]bool{"clustersecretstores.external-secrets.io": true}},
+			wantLookups: 4,
+			wantErr:     true,
+			wantReason:  reasons.PreconditionNotMet,
+			wantFound:   []string{"clustersecretstores.external-secrets.io"},
+		},
+		{
+			name:        "CRD lookup fails",
+			crds:        &fakeCRDs{err: errors.New("connection refused")},
+			wantLookups: 1,
+			wantErr:     true,
+			wantReason:  reasons.K8sAPIFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Only ListAll is expected: gomock fails on any install call.
+			hm := helm.NewMockManager(gomock.NewController(t))
+			hm.EXPECT().ListAll().Return(tt.releases, nil)
+
+			err := checkOrphanedESOCRDs(context.Background(), hm, tt.crds, spec)
+			assert.Len(t, tt.crds.lookups, tt.wantLookups)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			reason, ok := errx.ReasonOf(err)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantReason, reason)
+			for _, name := range tt.wantFound {
+				assert.Contains(t, err.Error(), name)
+			}
+		})
+	}
+}
+
+func Test_checkOrphanedESOCRDs_ListErrorFailsClosed(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	hm := helm.NewMockManager(gomock.NewController(t))
+	hm.EXPECT().ListAll().Return(nil, errors.New("boom"))
+	crds := &fakeCRDs{}
+
+	require.Error(t, checkOrphanedESOCRDs(context.Background(), hm, crds, spec))
+	assert.Empty(t, crds.lookups)
+}

@@ -306,3 +306,77 @@ func Test_TeleportKubeAgentChart_ChecksumMismatchIsRefused_Integration(t *testin
 	_, err = hm.PullAndVerify(context.Background(), t.TempDir(), spec.Chart, "18.6.4", spec.Algorithm, other.Checksum)
 	require.True(t, errorx.IsOfType(err, helm.ErrChecksumMismatch), "got %v", err)
 }
+
+// Both External Secrets chart versions render with the values installESOChart
+// passes: 2.13.0 on new clusters, 0.20.2 on clusters built by earlier releases.
+// Each must create the three ESO workloads and the core CRDs, served and stored
+// as v1 with no conversion, so the v1 manifests work against either.
+func Test_ExternalSecretsChart_Integration(t *testing.T) {
+	images := map[string]string{
+		"0.20.2": "oci.external-secrets.io/external-secrets/external-secrets:v0.20.2",
+		"2.13.0": "ghcr.io/external-secrets/external-secrets:v2.13.0",
+	}
+	for version, image := range images {
+		t.Run(version, func(t *testing.T) {
+			spec, err := resolveCatalogChartVersion("external-secrets", version)
+			require.NoError(t, err)
+			objs := renderCatalogChart(t, spec, []string{"installCRDs=true", "webhook.port=9443"})
+
+			for _, name := range []string{"external-secrets", "external-secrets-webhook", "external-secrets-cert-controller"} {
+				var dep *unstructured.Unstructured
+				for i := range objs {
+					if objs[i].GetKind() == "Deployment" && objs[i].GetName() == name {
+						dep = &objs[i]
+					}
+				}
+				require.NotNil(t, dep, "Deployment %s", name)
+				containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+				require.Len(t, containers, 1, name)
+				c := containers[0].(map[string]interface{})
+				assert.Equal(t, image, c["image"], name)
+				if name == "external-secrets-webhook" {
+					assert.Contains(t, c["args"], "--port=9443")
+				}
+			}
+
+			for _, crd := range esoCRDs {
+				var obj *unstructured.Unstructured
+				for i := range objs {
+					if objs[i].GetKind() == "CustomResourceDefinition" && objs[i].GetName() == crd {
+						obj = &objs[i]
+					}
+				}
+				require.NotNil(t, obj, "CRD %s", crd)
+				_, hasConversion, _ := unstructured.NestedMap(obj.Object, "spec", "conversion")
+				assert.False(t, hasConversion, "%s conversion", crd)
+
+				versions, _, _ := unstructured.NestedSlice(obj.Object, "spec", "versions")
+				var served, stored []string
+				for _, v := range versions {
+					m := v.(map[string]interface{})
+					if m["served"] == true {
+						served = append(served, m["name"].(string))
+					}
+					if m["storage"] == true {
+						stored = append(stored, m["name"].(string))
+					}
+				}
+				assert.Equal(t, []string{"v1"}, served, "%s served", crd)
+				assert.Equal(t, []string{"v1"}, stored, "%s storage", crd)
+			}
+		})
+	}
+}
+
+func Test_ExternalSecretsChart_ChecksumMismatchIsRefused_Integration(t *testing.T) {
+	spec, err := resolveCatalogChartVersion("external-secrets", "0.20.2")
+	require.NoError(t, err)
+	other, err := resolveCatalogChartVersion("external-secrets", "2.13.0")
+	require.NoError(t, err)
+
+	hm := isolatedHelm(t)
+	_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
+	require.NoError(t, err)
+	_, err = hm.PullAndVerify(context.Background(), t.TempDir(), spec.Chart, "0.20.2", spec.Algorithm, other.Checksum)
+	require.True(t, errorx.IsOfType(err, helm.ErrChecksumMismatch), "got %v", err)
+}
