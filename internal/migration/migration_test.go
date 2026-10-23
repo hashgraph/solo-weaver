@@ -301,3 +301,33 @@ func TestClearRegistry(t *testing.T) {
 	applicable, _ = GetApplicableMigrations("test", mctx)
 	assert.Len(t, applicable, 0)
 }
+
+// TestRanIDs_ReadsBackTheIDsMigrationsToWorkflowBuilt: the step id each
+// migration runs under parses back to that migration's id, the start step is
+// not a migration, and a failure names the migration that failed, while the
+// ones before it count as applied even though they were rolled back. (A
+// migration whose id is "start" cannot collide with the start step: automa
+// refuses the duplicate step id when the workflow is built.)
+func TestRanIDs_ReadsBackTheIDsMigrationsToWorkflowBuilt(t *testing.T) {
+	mctx := &Context{Component: "test", Logger: testLogger()}
+	run := func(migrations ...Migration) *automa.Report {
+		t.Helper()
+		wf, err := MigrationsToWorkflow(migrations, mctx).Build()
+		require.NoError(t, err)
+		return wf.Execute(context.Background())
+	}
+
+	applied, failed := RanIDs(run(NewMockMigration("unified-state", "1.0.0"), NewMockMigration("helm-release-schema-v2", "1.0.0")))
+	assert.Equal(t, []string{"unified-state", "helm-release-schema-v2"}, applied, "the start step is not a migration")
+	assert.Empty(t, failed)
+
+	broken := NewMockMigration("per-component-state", "2.0.0")
+	broken.executeFunc = func(context.Context, *Context) error { return errors.New("split failed") }
+	applied, failed = RanIDs(run(NewMockMigration("mgmt-ports-v1", "1.0.0"), broken, NewMockMigration("never-runs", "3.0.0")))
+	assert.Equal(t, []string{"mgmt-ports-v1"}, applied)
+	assert.Equal(t, "per-component-state", failed)
+
+	applied, failed = RanIDs(nil)
+	assert.Empty(t, applied)
+	assert.Empty(t, failed)
+}

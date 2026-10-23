@@ -219,6 +219,10 @@ No `InitMigrations()` to update. The migration runs automatically on the next CL
 
 After a successful pass on a host with Kubernetes installed, `state.PersistProvisionerVersion()` records the running version in `provisioner.yaml`. Kubernetes setup records it too, when a command creates the cluster. Subsequent invocations of the same binary version then see no applicable CLI-version-gated migrations.
 
+The pass, the version stamp included, runs inside `state.RecordStartupPass`, which records it as one `migrate` / `system` entry in the action history: what ran, how it ended, and the state files it changed. See [Action history](action-history.md#startup-migration-passes).
+
+**A startup migration that writes state belongs in `internal/state`** and declares every state file its `Execute` or `Rollback` can write, through an unexported `stateFiles(dir)` method. The pass compares only declared files (and the legacy ones), and credits `provisioner.yaml` to the version stamp only when the stamp changed it, so a running command's write is credited to the pass only during the one-time `per-component-state` split, which declares every component file. `TestStateMigrations_TouchOnlyTheirDeclaredFiles` runs each one and fails on an undeclared write, and `TestStartupMigrationsOutsideStateWriteNoState` fails if a host migration in `internal/workflows` writes state.
+
 ## Block-Node Upgrade Workflow
 
 `blocknode.BuildMigrationWorkflow()` uses a special two-phase structure because Kubernetes forbids in-place `volumeClaimTemplates` updates:

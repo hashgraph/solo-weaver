@@ -66,6 +66,12 @@ func NewTrafficShapingEnabledV1Migration() *TrafficShapingEnabledV1Migration {
 }
 
 func (m *TrafficShapingEnabledV1Migration) ID() string { return "traffic-shaping-enabled-v1" }
+
+// stateFiles is every state file Execute or Rollback can write in dir.
+func (m *TrafficShapingEnabledV1Migration) stateFiles(dir string) []string {
+	return []string{filepath.Join(dir, StateFileName)}
+}
+
 func (m *TrafficShapingEnabledV1Migration) Description() string {
 	return "Replace blockNodeState.trafficShapingDisabled with an explicit trafficShapingEnabled"
 }
