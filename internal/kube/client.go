@@ -553,6 +553,23 @@ func IsKindNotServed(err error) bool {
 	return false
 }
 
+// ResourceChecker is the part of *Client that ResourceAbsent needs, so callers can pass a narrow fake.
+type ResourceChecker interface {
+	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+}
+
+// ResourceAbsent reports whether a resource is absent. A kind the cluster does not serve counts as absent.
+func ResourceAbsent(ctx context.Context, rc ResourceChecker, apiVersion, kind, namespace, name string) (bool, error) {
+	exists, err := rc.ResourceExists(ctx, apiVersion, kind, namespace, name)
+	if err != nil {
+		if IsKindNotServed(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return !exists, nil
+}
+
 // RemoveOwnerReference drops every ownerReference to ownerKind/ownerName from a namespaced
 // resource, so deleting that owner does not garbage-collect it. It reports whether it changed anything.
 func (c *Client) RemoveOwnerReference(ctx context.Context, kind ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error) {
