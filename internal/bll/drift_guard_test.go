@@ -17,6 +17,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/drift"
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -116,14 +117,16 @@ func readActionHistory(t *testing.T, dir string) []state.ActionHistory {
 }
 
 // The override lets a destructive action run over the drift it destroys, and
-// its history entry records each field; its inputs record the override.
+// its history entry records each field; its inputs record the override. The
+// workflow removes the agent, and the flush's refresh confirms it.
 func TestHandleIntent_OverrideRunsAndRecordsDestroyedDrift(t *testing.T) {
 	stateFile, h := configuredByHandHost(t)
 	common := commonInputs()
 	common.OverrideDrift = true
 	ran := false
+	remove := func() { ran = true; h.teleport = state.TeleportState{} }
 
-	report, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: func() { ran = true }}, destroysAll}, common, owns(Teleport))
+	report, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: remove}, destroysAll}, common, owns(Teleport))
 
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
@@ -131,7 +134,8 @@ func TestHandleIntent_OverrideRunsAndRecordsDestroyedDrift(t *testing.T) {
 	entries := readActionHistory(t, filepath.Dir(stateFile))
 	require.Len(t, entries, 1)
 	require.Equal(t, []state.OwnedDriftRecord{{
-		Component: "teleport", Field: "nodeAgent.configured", Persisted: "false", Live: "true", Destroyed: true,
+		Component: "teleport", Field: "nodeAgent.configured", Persisted: "false", Live: "true",
+		DestroyAllowed: true, Destroyed: true,
 	}}, entries[0].OwnedDrift)
 	require.Equal(t, true, recordedCommon(t, entries[0])["overridedrift"])
 }
@@ -147,7 +151,7 @@ func TestHandleIntent_ForceRunsOverDestroyedDrift(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
 	entry := readActionHistory(t, filepath.Dir(stateFile))[0]
-	require.True(t, entry.OwnedDrift[0].Destroyed)
+	require.True(t, entry.OwnedDrift[0].DestroyAllowed)
 	require.Equal(t, true, recordedCommon(t, entry)["force"])
 }
 
@@ -163,7 +167,7 @@ func TestHandleIntent_NonInteractiveRunsOverDestroyedDrift(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
 	entry := readActionHistory(t, filepath.Dir(stateFile))[0]
-	require.True(t, entry.OwnedDrift[0].Destroyed)
+	require.True(t, entry.OwnedDrift[0].DestroyAllowed)
 	require.Equal(t, true, recordedCommon(t, entry)["noninteractive"])
 }
 
@@ -181,7 +185,7 @@ func TestHandleIntent_GoingAheadOverOwnedDriftWarnsBeforeTheWorkflow(t *testing.
 	}, common, owns(Teleport))
 
 	require.NoError(t, err)
-	warn := `{"level":"warn","component":"teleport","field":"nodeAgent.configured","persisted":"false","live":"true","destroyed":true,"message":"Going ahead over an out-of-band change"}`
+	warn := `{"level":"warn","component":"teleport","field":"nodeAgent.configured","persisted":"false","live":"true","destroyAllowed":true,"message":"Going ahead over an out-of-band change"}`
 	require.Contains(t, logs.String(), warn)
 	require.Less(t, strings.Index(logs.String(), warn), strings.Index(logs.String(), "workflow ran"))
 }
@@ -296,4 +300,188 @@ func TestHandleIntent_KeptAtBaselineLeavesTheOtherAgentsDriftOnRecord(t *testing
 
 	_, err = handleIntent(t, stateFile, h, destroyingIntent{destroys: destroysAll}, commonInputs(), owns(Teleport))
 	require.Error(t, err)
+}
+
+// unobservedClusterAgentHost is a host whose cluster agent, recorded as
+// installed, could not be read on this run.
+func unobservedClusterAgentHost(t *testing.T) (string, *host) {
+	t.Helper()
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, installedClusterAgent())
+	live := installedClusterAgent()
+	live.ClusterAgent.Unobserved = true
+	return stateFile, &host{teleport: live}
+}
+
+// A destructive action stops before its workflow when it would remove a part
+// this run could not read: "not read" is never taken for "unchanged". The error
+// says it cannot verify, and the hint says to re-run once it can be read.
+func TestHandleIntent_UnobservedPartStopsADestructiveAction(t *testing.T) {
+	stateFile, h := unobservedClusterAgentHost(t)
+	dir := filepath.Dir(stateFile)
+	ran := false
+
+	_, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: func() { ran = true }}, destroysAll}, commonInputs(), owns(Teleport))
+
+	require.Error(t, err)
+	require.False(t, ran, "the workflow must not run")
+	require.NoFileExists(t, state.ActionHistoryFilePath(dir))
+	require.Equal(t, "blocknode install cannot verify teleport:\n"+
+		`  teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
+		errorx.Cast(err).Message())
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	require.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Equal(t, []string{"Re-run once the live system can be read"}, hints)
+}
+
+// Through the real Teleport checker: an API server that does not answer stops
+// a destructive action instead of letting it through as unchanged.
+func TestHandleIntent_SilentAPIServerStopsADestructiveAction(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, installedClusterAgent())
+	h := &host{teleportProbe: func() reality.ClusterReachability { return reality.Unobservable }}
+
+	_, err := handleIntent(t, stateFile, h, destroyingIntent{destroys: destroysAll}, commonInputs(), owns(Teleport))
+
+	require.ErrorContains(t, err, `teleport clusterAgent.installed could not be read from the live system: recorded "true"`)
+}
+
+// No flag gets past a part the run could not read: --override-drift, --force
+// and a non-interactive run all stop with "cannot verify", before the workflow,
+// and nothing is written.
+func TestHandleIntent_NoFlagGetsPastAnUnobservedPart(t *testing.T) {
+	for name, set := range map[string]func(*models.CommonInputs){
+		"override":        func(c *models.CommonInputs) { c.OverrideDrift = true },
+		"force":           func(c *models.CommonInputs) { c.Force = true },
+		"non-interactive": func(c *models.CommonInputs) { c.NonInteractive = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			stateFile, h := unobservedClusterAgentHost(t)
+			common := commonInputs()
+			set(&common)
+			ran := false
+
+			_, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: func() { ran = true }}, destroysAll}, common, owns(Teleport))
+
+			require.ErrorContains(t, err, "blocknode install cannot verify teleport:")
+			require.False(t, ran, "the workflow must not run")
+			require.NoFileExists(t, state.ActionHistoryFilePath(filepath.Dir(stateFile)))
+			require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
+		})
+	}
+}
+
+// A converging action never stops for a part it could not read; its entry
+// records the part as unobserved and not destroyed.
+func TestHandleIntent_ConvergingActionRecordsAnUnobservedPart(t *testing.T) {
+	stateFile, h := unobservedClusterAgentHost(t)
+
+	report, err := handleIntent(t, stateFile, h, noopIntent{}, commonInputs(), owns(Teleport))
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.installed", Persisted: "true", Unobserved: true,
+	}}, readActionHistory(t, filepath.Dir(stateFile))[0].OwnedDrift)
+}
+
+// pinnedClusterAgentHost is a host whose cluster agent's chart was pinned by
+// hand since solo-provisioner recorded it.
+func pinnedClusterAgentHost(t *testing.T) (string, *host) {
+	t.Helper()
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, installedClusterAgent())
+	live := installedClusterAgent()
+	live.ClusterAgent.ChartVersion = "18.7.1-hotfix"
+	return stateFile, &host{teleport: live}
+}
+
+// overrideInputs is an interactive run with --override-drift.
+func overrideInputs() models.CommonInputs {
+	common := commonInputs()
+	common.OverrideDrift = true
+	return common
+}
+
+// An uninstall that fails leaves the agent where it was: the entry says the run
+// was allowed to destroy the change, and that it did not.
+func TestHandleIntent_FailedActionIsAllowedButNotConfirmedDestroyed(t *testing.T) {
+	stateFile, h := pinnedClusterAgentHost(t)
+	failed := noopIntent{stepErr: errors.New("helm uninstall failed")}
+
+	report, err := handleIntent(t, stateFile, h, destroyingIntent{failed, destroysAll}, overrideInputs(), owns(Teleport))
+
+	require.NoError(t, err)
+	require.Error(t, report.Error)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.6.4", Live: "18.7.1-hotfix",
+		DestroyAllowed: true,
+	}}, readActionHistory(t, filepath.Dir(stateFile))[0].OwnedDrift)
+}
+
+// A refresh after the workflow that cannot read the agent confirms nothing,
+// even if the agent is gone.
+func TestHandleIntent_UnreadableAfterTheWorkflowConfirmsNothing(t *testing.T) {
+	stateFile, h := pinnedClusterAgentHost(t)
+	unreadable := func() {
+		h.teleport = installedClusterAgent()
+		h.teleport.ClusterAgent.Unobserved = true
+	}
+
+	report, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: unreadable}, destroysAll}, overrideInputs(), owns(Teleport))
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	record := readActionHistory(t, filepath.Dir(stateFile))[0].OwnedDrift[0]
+	require.True(t, record.DestroyAllowed)
+	require.False(t, record.Destroyed)
+}
+
+// An uninstall that removes the agent is confirmed by the flush's refresh.
+func TestHandleIntent_RemovalIsConfirmedDestroyed(t *testing.T) {
+	stateFile, h := pinnedClusterAgentHost(t)
+	remove := func() { h.teleport = state.TeleportState{} }
+
+	report, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: remove}, destroysAll}, overrideInputs(), owns(Teleport))
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.6.4", Live: "18.7.1-hotfix",
+		DestroyAllowed: true, Destroyed: true,
+	}}, readActionHistory(t, filepath.Dir(stateFile))[0].OwnedDrift)
+}
+
+// A node teardown that unconfigures the agent, then fails to remove its
+// binaries, leaves the agent installed: the record on nodeAgent.installed is
+// not destroyed.
+func TestHandleIntent_PartialTeardownIsNotConfirmedDestroyed(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, state.TeleportState{})
+	h := &host{teleport: configuredNodeAgent()}
+	partial := noopIntent{
+		execute: func() { h.teleport.NodeAgent.Configured = false },
+		stepErr: errors.New("failed to uninstall teleport binaries"),
+	}
+
+	report, err := handleIntent(t, stateFile, h, destroyingIntent{partial, drift.OnTeleportNodeAgent}, overrideInputs(), owns(Teleport))
+
+	require.NoError(t, err)
+	require.Error(t, report.Error)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "nodeAgent.installed", Persisted: "false", Live: "true", DestroyAllowed: true,
+	}}, readActionHistory(t, filepath.Dir(stateFile))[0].OwnedDrift)
+}
+
+// With no baseline there is nothing to confirm against: the records stand.
+func TestOwnedDriftRun_ConfirmWithoutABaselineKeepsTheRecords(t *testing.T) {
+	records := []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.6.4", Live: "18.7.1-hotfix", DestroyAllowed: true,
+	}}
+	run := ownedDriftRun{records: records, destroys: destroysAll}
+
+	require.Equal(t, records, run.confirm(state.State{}, drift.Teleport))
 }

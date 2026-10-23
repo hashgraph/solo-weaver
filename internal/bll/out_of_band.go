@@ -26,12 +26,15 @@ func detectOutOfBandChanges(baseline *state.State, live state.State, producers .
 
 	changes := drift.Detect(*baseline, live, producers...)
 	for _, c := range changes {
-		logx.As().Debug().
+		l := logx.As().Debug().
 			Str("component", c.Component).
 			Str("field", c.Field).
-			Str("persisted", c.Persisted).
-			Str("live", c.Live).
-			Msg("Live value differs from persisted state")
+			Str("persisted", c.Persisted)
+		if c.Unobserved {
+			l.Msg("Live value could not be read")
+			continue
+		}
+		l.Str("live", c.Live).Msg("Live value differs from persisted state")
 	}
 	return changes
 }

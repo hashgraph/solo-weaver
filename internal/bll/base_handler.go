@@ -31,8 +31,8 @@ import (
 // needs: a StateManager for reading and writing state, the rsl Runtime, and
 // the reality Checker for live machine-state queries.
 //
-// Embed this struct in any concrete handler to inherit RefreshRuntimeState and
-// FlushState without re-implementing them.
+// Embed this struct in any concrete handler to inherit HandleIntent, with its
+// refresh and flush, without re-implementing them.
 //
 //	type BlockNodeHandler struct {
 //	    BaseHandler
@@ -61,7 +61,7 @@ type BaseHandler[T any] struct {
 type BaseHandlerOption[T any] func(*BaseHandler[T])
 
 // WithProfileExtractor returns a BaseHandlerOption that sets the profile extractor function.
-// The extractor is called during FlushState to persist the deployment profile into
+// The extractor is called during flushState to persist the deployment profile into
 // MachineState.Profile.  Handlers whose input types carry no profile (e.g. teleport)
 // should omit this option — the extractor defaults to nil, and no profile is written.
 func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
@@ -232,9 +232,9 @@ func (h *BaseHandler[T]) HandleIntent(
 	if h.KeptChange != nil {
 		owned = slices.DeleteFunc(slices.Clone(outOfBand), h.KeptChange)
 	}
-	driftRecords, err := guardOwnedDrift(intent, effectiveInputs.Common, destroys, owned)
+	driftRecords, unverified, err := guardOwnedDrift(intent, effectiveInputs.Common, destroys, owned)
 	if err != nil {
-		return nil, errx.Decorate(err, reasons.PreconditionNotMet, driftGuardHint(h.Runtime.StateDir()))
+		return nil, errx.Decorate(err, reasons.PreconditionNotMet, driftGuardHint(h.Runtime.StateDir(), unverified))
 	}
 
 	logx.As().Info().
@@ -247,29 +247,34 @@ func (h *BaseHandler[T]) HandleIntent(
 	addOutOfBandWarnings(report, outOfBand)
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
-	return h.FlushState(
+	return h.flushState(
 		ctx,
 		report,
 		intent,
 		effectiveInputs,
-		driftRecords,
+		ownedDriftRun{records: driftRecords, baseline: baseline, destroys: destroys},
 		callback,
 	)
 }
 
-// FlushState is the exported generic flush used by all node handlers.
-// driftRecords are the owned drift the run went ahead over, for its action
-// history entry.
-func (h *BaseHandler[T]) FlushState(
+// flushState is the generic flush after a run's workflow. owned is the owned
+// drift the run went ahead over: the flush's refresh confirms which records
+// were destroyed, for the action history entry.
+func (h *BaseHandler[T]) flushState(
 	ctx context.Context,
 	report *automa.Report,
 	intent models.Intent,
 	effectiveInputs *models.UserInputs[T],
-	driftRecords []state.OwnedDriftRecord,
+	owned ownedDriftRun,
 	callback func(full *state.State, effInputs models.UserInputs[T]) error,
 ) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
+	}
+
+	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
+	if err != nil {
+		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
 	}
 
 	h.Runtime.AddActionHistory(state.ActionHistory{
@@ -278,13 +283,8 @@ func (h *BaseHandler[T]) FlushState(
 		// Provenance: the component files this flush writes, so action_history.yaml
 		// records what on disk each action changed (see state.ActionHistory.Components).
 		Components: h.flushComponentIDs(),
-		OwnedDrift: driftRecords,
+		OwnedDrift: owned.confirm(fullState, producersOf(h.Managed)...),
 	})
-
-	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
-	if err != nil {
-		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
-	}
 	if h.KeptAtBaseline != nil && baseline != nil {
 		h.KeptAtBaseline(&fullState, *baseline)
 	}

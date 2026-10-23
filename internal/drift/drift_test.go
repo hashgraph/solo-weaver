@@ -51,3 +51,11 @@ func TestChange_StringNamesComponentFieldAndBothValues(t *testing.T) {
 		`teleport clusterAgent.chartVersion differs from persisted state: recorded "18.1.0", live ""`,
 		c.String())
 }
+
+func TestChange_StringSaysAnUnobservedValueCouldNotBeRead(t *testing.T) {
+	c := Change{Component: "teleport", Field: "clusterAgent.installed", Persisted: "true", Unobserved: true}
+
+	require.Equal(t,
+		`teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
+		c.String())
+}
