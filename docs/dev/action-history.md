@@ -32,8 +32,7 @@ and a warning says what went wrong recording it. Every other way a run can end i
 State files and history appends are synced to disk. Each append starts on a new line, so an
 entry a full disk cut short doesn't run into the next one. A file or entry that landed but could
 not be synced counts as written: its entry is not marked `notPersisted` and still names the file.
-The `network firewall` verbs, the handler commands, `kube cluster install`, the
-provisioner-version step and the startup pass say it was not synced to disk.
+Every command says it was not synced to disk, rather than that it was not recorded.
 
 ## Entry format
 
@@ -92,6 +91,7 @@ Each record names the component and field, its persisted and live values, and:
 | `network firewall create` | `install` / `firewall`. |
 | `network firewall delete` (with or without `--all`) | `uninstall` / `firewall`. `delete --name` edits only the firewall's own config and records nothing. |
 | `kube cluster install` | `install` / `cluster`. A failed install leaves the `system` record as it was and records `failed`. |
+| `kube cluster uninstall` | `uninstall` / `cluster`, naming every state file it removed. The uninstall empties the state directory but keeps `action_history.yaml`, so the history outlives the cluster. |
 
 When a command's workflow records the provisioner version (cluster creation inside
 `kube cluster install` or `block node install`), that command's entry lists `provisioner`; a
@@ -103,8 +103,6 @@ warning, once. A command whose workflow ran lists it in that workflow's run summ
 summary table, the saved report and, under `--output=json`, the JSON summary's `warnings`. A
 command that stopped before a workflow ran prints it when the command ends, on stderr, as one
 NDJSON `warn` record per warning under `--output=json`.
-
-`kube cluster uninstall` is not recorded yet.
 
 ## Startup migration passes
 
@@ -161,6 +159,10 @@ components: [profile, firewall, system, cluster, blocknode, consensus, teleport,
   `Commit`, such as a refresh that failed after the workflow. With a cause (the action failed),
   an entry that can't be appended is a warning and `Record` returns nil, so the command fails
   with the action's own error, reason and hints intact.
+- Use `state.RecordAround` for an action that changes state files without `Commit`, such as
+  `kube cluster uninstall`. It compares every state file before and after, so the caller must
+  hold every lock for them; if the files can't be read, the entry names none and the operator
+  is warned.
 - The startup pass runs through `state.RecordStartupPass`. A startup migration that writes state
   lives in `internal/state` and declares its files with `stateFiles(dir)`; see
   [Migration Framework](migration-framework.md#startup-migration-runner).

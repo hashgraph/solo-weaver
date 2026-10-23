@@ -101,8 +101,9 @@ func Test_ClusterTeardown(t *testing.T) {
 		testutil.AssertBashCommand(t, "[ -d /opt/solo/weaver/bin ] && echo 'preserved' || echo 'missing'", "preserved\n")
 		testutil.AssertBashCommand(t, "[ -d /opt/solo/weaver/logs ] && echo 'preserved' || echo 'missing'", "preserved\n")
 
-		// Verify that only the downloads, bin, and logs folders exist under /opt/solo/weaver
-		testutil.AssertBashCommand(t, "ls -1 /opt/solo/weaver | wc -l | tr -d ' '", "3\n")
-		testutil.AssertBashCommand(t, "ls -1 /opt/solo/weaver | sort", "bin\ndownloads\nlogs\n")
+		// Verify that only the downloads, bin, and logs folders exist under /opt/solo/weaver,
+		// besides the state folder, which is emptied but keeps the action history
+		testutil.AssertBashCommand(t, "ls -1 /opt/solo/weaver | grep -vx state | sort", "bin\ndownloads\nlogs\n")
+		testutil.AssertBashCommand(t, "ls -A /opt/solo/weaver/state 2>/dev/null | grep -vx action_history.yaml | wc -l | tr -d ' '", "0\n")
 	})
 }
