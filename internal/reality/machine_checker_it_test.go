@@ -24,7 +24,7 @@ func newTestStateManager(t *testing.T) state.Manager {
 	require.NoError(t, err)
 	err = sm.Refresh()
 	require.NoError(t, err)
-	err = sm.FlushAll()
+	err = sm.Commit(state.ActionHistory{}, state.AllComponentIDs...)
 	require.NoError(t, err)
 	return sm
 }

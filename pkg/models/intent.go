@@ -87,14 +87,17 @@ const (
 	// TargetConsensusNetwork represents orbit/network-level operations over a
 	// consensus network (e.g. genesis), as distinct from a single consensus node.
 	TargetConsensusNetwork TargetType = "consensus-network"
+
+	// TargetFirewall represents the host firewall managed by `network firewall`
+	TargetFirewall TargetType = "firewall"
 )
 
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:       {TargetMachine, TargetSystem, TargetCluster},
 	ActionReset:       {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
-	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster},
+	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall},
+	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall},
 	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionReconfigure: {TargetBlockNode},

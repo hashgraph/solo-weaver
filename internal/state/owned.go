@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
@@ -16,8 +17,9 @@ import (
 // files. One set drives the lock, the read and the flush, so the command cannot
 // write a file it has not locked, and a broken file it does not own cannot stop
 // it. A lock already held, or an owned file that cannot be read, fails before
-// run starts.
-func RunOwning(sm Manager, ids []ComponentID, run func() error, patch func(*State) error) error {
+// run starts and records nothing; once run has started, entry is appended to
+// the action history however the command ends.
+func RunOwning(sm Manager, entry ActionHistory, ids []ComponentID, run func() error, patch func(*State) error) error {
 	release, err := AcquireComponentLocks(filepath.Dir(sm.State().StateFile), ids, 0)
 	if err != nil {
 		return err
@@ -31,14 +33,22 @@ func RunOwning(sm Manager, ids []ComponentID, run func() error, patch func(*Stat
 	}
 
 	if err := run(); err != nil {
+		entry.Outcome = OutcomeFailed
+		_ = sm.Record(entry, err) // with a cause, a lost entry is a state warning
 		return err
 	}
 
+	entry.Outcome = OutcomeSucceeded
 	st := sm.State()
 	if err := patch(&st); err != nil {
+		entry.NotPersisted = true
+		_ = sm.Record(entry, err) // with a cause, a lost entry is a state warning
 		return err
 	}
-	if err := sm.Set(st).FlushScoped(ids...); err != nil {
+	if err := sm.Set(st).Commit(entry, ids...); err != nil {
+		if errorx.IsOfType(err, EntryNotAppendedError) || errorx.IsOfType(err, fsx.FileSyncError) {
+			return err // the state did land; the caller says so
+		}
 		return errorx.IllegalState.Wrap(err, "failed to persist state")
 	}
 	return nil

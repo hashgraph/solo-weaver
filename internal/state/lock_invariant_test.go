@@ -22,39 +22,81 @@ import (
 // one. A method of any type with one of these names counts, so the scan can
 // over-match but never miss a call.
 var writerCalls = []string{
-	"FlushScoped", "FlushState", "FlushAll", "RunOwning", "writeProvisionerRecord",
+	"Commit", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
 	"AcquireComponentLocks", "AcquireProvisionerLock",
 }
 
 const exemptStartupMigration = "exempt: a startup migration writes under .startup-migrations.lock, " +
 	"which its invocation takes before any command locks a component"
 
+// writerRow says how one writer site holds the lock for what it writes, and
+// how what it writes reaches the action history. Each names the test that
+// shows it, or says why there is none.
+type writerRow struct{ lock, history string }
+
 // stateWriters accounts for every non-test call of writerCalls, keyed by
 // "<path>:<enclosing declaration>". It is a checklist, not a proof: the test
 // fails when a call that writes state, or takes a state lock, appears or moves
-// without a row saying how that site holds its lock. A row names the test that
-// shows it, or says why there is none.
+// without a row saying how that site holds its lock and records its entry.
 //
 // Known gap: the daemon runs as the weaver user and cannot open the root-only
 // 0600 lock files (lock.go), so it must not write state until that is settled.
-var stateWriters = map[string]string{
+var stateWriters = map[string]writerRow{
 	// HandleIntent locks the owned set for the whole command; flushState writes it.
-	"internal/bll/base_handler.go:HandleIntent": "TestHandleIntent_FailsFastOnEachOwnedLock",
-	"internal/bll/base_handler.go:flushState":   "TestHandleIntent_FailsFastOnEachOwnedLock",
-	"internal/rsl/runtime.go:FlushScoped":       "wrapper: its callers are BaseHandler.flushState and kube cluster install",
-	"internal/rsl/runtime.go:FlushAll":          "wrapper with no caller",
+	"internal/bll/base_handler.go:HandleIntent": {
+		lock:    "TestHandleIntent_FailsFastOnEachOwnedLock",
+		history: "takes no history call: flushState records the entry",
+	},
+	"internal/bll/base_handler.go:flushState": {
+		lock:    "TestHandleIntent_FailsFastOnEachOwnedLock",
+		history: "TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow",
+	},
+	"internal/rsl/runtime.go:Commit": {
+		lock:    "wrapper: its callers are BaseHandler.flushState and kube cluster install",
+		history: "wrapper over state.Writer.Commit: TestCommit_RecordsTheFilesItChanged",
+	},
+	"internal/rsl/runtime.go:Record": {
+		lock:    "wrapper: writes no state file",
+		history: "wrapper over state.Writer.Record: TestRecord_RendersTheCauseForTheOperator",
+	},
 
 	// RunOwning locks exactly the ids it flushes.
-	"internal/state/owned.go:RunOwning":                                  "TestRunOwning_FailsFastWhenLocked",
-	"cmd/cli/commands/network/firewall/state.go:applyHostFirewallChange": "TestFirewallVerbs_FailFastBeforeApplyingWhenTheFirewallIsLocked",
-	"cmd/cli/commands/kube/cluster/install.go:installCmd": "no unit test runs installCmd: it locks ComponentSystem for the " +
-		"whole command, then flushes only that; shown by the manual UAT's kube cluster install step",
+	"internal/state/owned.go:RunOwning": {
+		lock:    "TestRunOwning_FailsFastWhenLocked",
+		history: "TestRunOwning_RecordsEntryOnEveryExit",
+	},
+	"cmd/cli/commands/network/firewall/state.go:applyHostFirewallChange": {
+		lock:    "TestFirewallVerbs_FailFastBeforeApplyingWhenTheFirewallIsLocked",
+		history: "TestFirewallVerbs_RecordAnEntry",
+	},
+	"cmd/cli/commands/kube/cluster/install.go:installCmd": {
+		lock: "no unit test runs installCmd: it locks ComponentSystem for the " +
+			"whole command, then flushes only that; shown by the manual UAT's kube cluster install step",
+		history: "takes no history call: recordClusterInstall records the entry once the workflow started",
+	},
+	"cmd/cli/commands/kube/cluster/install.go:recordClusterInstall": {
+		lock: "its caller, installCmd, holds ComponentSystem's lock for the whole command",
+		history: "TestRecordClusterInstall_SuccessRecordsOneEntry, TestRecordClusterInstall_FailedInstallRecordsAFailedEntry, " +
+			"TestRecordClusterInstall_FailedRefreshIsNotPersisted",
+	},
 
-	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState":   "TestLockAllState_FailsFastOnEveryStateLock",
-	"internal/state/provisioner.go:persistProvisionerVersionIn": "TestPersistProvisionerVersion_FailsFastWhenLocked",
+	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
+		lock:    "TestLockAllState_FailsFastOnEveryStateLock",
+		history: "takes locks only",
+	},
+	"internal/state/provisioner.go:persistProvisionerVersionIn": {
+		lock:    "TestPersistProvisionerVersion_FailsWhenLockedPastTheWait",
+		history: "the entry of the command whose workflow ran the version step names provisioner: TestProvisionerVersionPersisted_ReadsTheStepsMetadata",
+	},
 
-	"internal/state/migration_per_component_state.go:Execute": exemptStartupMigration,
-	"internal/state/migration_unified_state.go:Execute":       exemptStartupMigration,
+	"internal/state/migration_per_component_state.go:Execute": {
+		lock:    exemptStartupMigration,
+		history: "none yet: the startup pass is not recorded",
+	},
+	"internal/state/migration_unified_state.go:Execute": {
+		lock:    exemptStartupMigration,
+		history: "none yet: the startup pass is not recorded",
+	},
 }
 
 // Fails when code that writes state, or takes a state lock, is added or moved
@@ -92,13 +134,16 @@ func TestEveryStateWriterIsAccountedFor(t *testing.T) {
 	}
 	sort.Strings(unknown)
 	sort.Strings(stale)
-	require.Empty(t, unknown, "new state writers: add each to stateWriters with the test proving it holds its lock")
+	require.Empty(t, unknown, "new state writers: add each to stateWriters with the tests proving it holds its lock and records its entry")
 	require.Empty(t, stale, "stateWriters rows with no matching call left: remove them")
 
 	tests := testFuncNames(t, root)
-	for site, how := range stateWriters {
-		if strings.HasPrefix(how, "Test") {
-			require.Truef(t, tests[how], "%s names %s, which does not exist", site, how)
+	for site, row := range stateWriters {
+		for _, how := range []string{row.lock, row.history} {
+			require.NotEmptyf(t, how, "%s must say how it holds its lock and records its entry", site)
+			for _, name := range regexp.MustCompile(`\bTest\w+`).FindAllString(how, -1) {
+				require.Truef(t, tests[name], "%s names %s, which does not exist", site, name)
+			}
 		}
 	}
 }

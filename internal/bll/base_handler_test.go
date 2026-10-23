@@ -15,15 +15,20 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
+	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
@@ -57,6 +62,8 @@ type noopIntent struct {
 	buildErr error
 	noSteps  bool
 	stepErr  error
+	// recordVersion adds the real RecordProvisionerVersion step after the noop.
+	recordVersion bool
 }
 
 func (n noopIntent) PrepareEffectiveInputs(_ models.Intent, in models.UserInputs[struct{}]) (*models.UserInputs[struct{}], error) {
@@ -80,11 +87,28 @@ func (n noopIntent) BuildWorkflow(state.State, models.UserInputs[struct{}]) (*au
 			}
 			return automa.SuccessReport(stp)
 		})
+	if n.recordVersion {
+		return automa.NewWorkflowBuilder().WithId("test").Steps(step, steps.RecordProvisionerVersion()), nil
+	}
 	return automa.NewWorkflowBuilder().WithId("test").Steps(step), nil
 }
 
 func (n noopIntent) HandleIntent(context.Context, models.Intent, models.UserInputs[struct{}]) (*automa.Report, error) {
 	return nil, nil
+}
+
+// handlerFileManager wraps the file manager handleIntent gives the command's
+// state manager, so a test can make its appends fail.
+var handlerFileManager = func(fm fsx.Manager) fsx.Manager { return fm }
+
+// unsyncedAppender is an fsx.Manager whose appends land but report a failed sync.
+type unsyncedAppender struct{ fsx.Manager }
+
+func (a unsyncedAppender) AppendToFile(path string, payload []byte) error {
+	if err := a.Manager.AppendToFile(path, payload); err != nil {
+		return err
+	}
+	return fsx.FileSyncError.New("disk gone")
 }
 
 func newFileManager(t *testing.T) fsx.Manager {
@@ -100,7 +124,9 @@ func writeState(t *testing.T, stateFile string, teleport state.TeleportState) {
 	s.TeleportState = teleport
 	sm, err := state.NewStateManager(state.WithState(s), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushState())
+	require.NoError(t, sm.Commit(state.ActionHistory{}, state.AllComponentIDs...))
+	// The seed is not an action under test: drop its entry.
+	require.NoError(t, os.Remove(state.ActionHistoryFilePath(filepath.Dir(stateFile))))
 }
 
 func readState(t *testing.T, stateFile string) state.State {
@@ -149,7 +175,7 @@ func commonInputs() models.CommonInputs {
 // handler's options chosen.
 func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[struct{}], common models.CommonInputs, opts ...BaseHandlerOption[struct{}]) (*automa.Report, error) {
 	t.Helper()
-	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(newFileManager(t)))
+	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(handlerFileManager(newFileManager(t))))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
 
@@ -554,4 +580,198 @@ func TestHandleIntent_DisjointHandlersNeverContend(t *testing.T) {
 	final := readState(t, stateFile)
 	require.Equal(t, configuredNodeAgent().NodeAgent, final.TeleportState.NodeAgent)
 	require.True(t, final.MachineState.Software["teleport"].Installed, "B's system record must have landed")
+}
+
+// TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow: once the workflow has
+// run, the action is recorded however the flush ends: as succeeded or failed
+// when its state landed, and marked NotPersisted when the refresh before the
+// flush failed, so no state file was written.
+func TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	dir := filepath.Dir(stateFile)
+	writeState(t, stateFile, configuredNodeAgent())
+	h := &host{teleport: configuredNodeAgent()}
+
+	runBlockNodeIntent(t, stateFile, h, noopIntent{})
+
+	report, err := handleBlockNodeIntent(t, stateFile, h, noopIntent{stepErr: errors.New("step failed")})
+	require.NoError(t, err, "a failed workflow is reported, and its state is still flushed")
+	require.Error(t, report.Error)
+
+	// The workflow breaks a state file, so the refresh before the flush fails.
+	breakState := func() {
+		require.NoError(t, os.WriteFile(state.ComponentFilePath(dir, state.ComponentTeleport), []byte("state: [broken"), 0o644))
+	}
+	_, err = handleBlockNodeIntent(t, stateFile, h, noopIntent{execute: breakState})
+	require.ErrorContains(t, err, "failed to refresh runtime state before flush")
+
+	entries := readActionHistory(t, dir)
+	require.Len(t, entries, 3)
+	require.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	require.False(t, entries[0].NotPersisted)
+	require.Equal(t, state.OutcomeFailed, entries[1].Outcome)
+	require.False(t, entries[1].NotPersisted, "a failed workflow's state still landed")
+	require.Equal(t, state.OutcomeSucceeded, entries[2].Outcome)
+	require.True(t, entries[2].NotPersisted)
+	require.Contains(t, entries[2].Error, "failed to refresh runtime state before flush")
+	require.Empty(t, entries[2].Components)
+}
+
+// TestFlushState_LandedStateWithALostEntrySaysSo: when the state lands but its
+// entry can't be appended, the command says exactly that, with the reason and
+// a hint, rather than "failed to persist state".
+func TestFlushState_LandedStateWithALostEntrySaysSo(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	dir := filepath.Dir(stateFile)
+	writeState(t, stateFile, configuredNodeAgent())
+	breakHistory := func() {
+		require.NoError(t, os.Mkdir(state.ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
+	}
+
+	_, err := handleBlockNodeIntent(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{execute: breakHistory})
+
+	require.True(t, errorx.IsOfType(err, state.EntryNotAppendedError), "got %v", err)
+	msg := doctor.OperatorMessage(err)
+	require.Contains(t, msg, "the state was written but its action history entry was not appended")
+	require.NotContains(t, msg, "failed to persist state")
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, hints, "Check that "+state.ActionHistoryFilePath(dir)+" is writable.")
+}
+
+// TestFlushState_FailedWorkflowKeepsItsFailureWhenRecordingHasTrouble: a
+// failed workflow whose state landed returns its report, with the step's own
+// failure, and no error, whether its entry was lost or appended but not
+// synced; the trouble recording it is a warning.
+func TestFlushState_FailedWorkflowKeepsItsFailureWhenRecordingHasTrouble(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fm      func(fsx.Manager) fsx.Manager
+		history func(dir string)
+		warning string
+	}{
+		"entry lost": {
+			history: func(dir string) {
+				require.NoError(t, os.Mkdir(state.ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
+			},
+			warning: "action history entry was not appended",
+		},
+		"entry not synced": {
+			fm:      func(fm fsx.Manager) fsx.Manager { return unsyncedAppender{fm} },
+			warning: "action history entry was appended but not synced to disk",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state.TakeWarnings()
+			t.Cleanup(func() { state.TakeWarnings() })
+			stateFile := filepath.Join(t.TempDir(), "state.yaml")
+			dir := filepath.Dir(stateFile)
+			writeState(t, stateFile, configuredNodeAgent())
+			if tc.fm != nil {
+				t.Cleanup(func() { handlerFileManager = func(fm fsx.Manager) fsx.Manager { return fm } })
+				handlerFileManager = tc.fm
+			}
+			execute := func() {}
+			if tc.history != nil {
+				execute = func() { tc.history(dir) }
+			}
+
+			report, err := handleBlockNodeIntent(t, stateFile, &host{teleport: configuredNodeAgent()},
+				noopIntent{execute: execute, stepErr: errors.New("kubeadm init failed")})
+
+			require.NoError(t, err)
+			require.NotNil(t, report)
+			require.Error(t, report.Error)
+			require.Len(t, report.StepReports, 1)
+			require.ErrorContains(t, report.StepReports[0].Error, "kubeadm init failed", "the step's own failure reaches the summary")
+			warnings := state.TakeWarnings()
+			require.Len(t, warnings, 1)
+			require.Contains(t, warnings[0], tc.warning)
+		})
+	}
+}
+
+// TestFlushState_FailedVersionStampIsNotPersisted: a workflow whose version
+// stamp could not write provisioner.yaml records its entry NotPersisted, saying
+// the version was not recorded.
+func TestFlushState_FailedVersionStampIsNotPersisted(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	versionDir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+	release, err := state.AcquireProvisionerLock(versionDir, 0)
+	require.NoError(t, err)
+	defer release()
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	_, err = handleBlockNodeIntent(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{recordVersion: true})
+
+	require.NoError(t, err)
+	entries := readActionHistory(t, filepath.Dir(stateFile))
+	require.Len(t, entries, 1)
+	require.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	require.True(t, entries[0].NotPersisted)
+	require.Equal(t, "the provisioner version was not recorded; startup migrations may run again on the next invocation", entries[0].Error)
+}
+
+// TestFlushState_FailedCallbackIsRecordedAsNotPersisted: a callback that fails
+// after the workflow leaves its state unwritten, so the entry is appended
+// marked NotPersisted, with the callback's error.
+func TestFlushState_FailedCallbackIsRecordedAsNotPersisted(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	_, err := handleBlockNodeIntentWithCallback(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{},
+		func(*state.State, models.UserInputs[struct{}]) error { return errors.New("cannot patch") })
+
+	require.ErrorContains(t, err, "cannot patch")
+	entries := readActionHistory(t, filepath.Dir(stateFile))
+	require.Len(t, entries, 1)
+	require.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	require.True(t, entries[0].NotPersisted)
+	require.Contains(t, entries[0].Error, "cannot patch")
+	require.Empty(t, entries[0].Components)
+}
+
+// TestFlushState_LostEntryOfAFailedFlushIsAWarning: when the refresh after the
+// workflow fails and the entry can't be appended either, the command returns
+// the flush's own error, and the lost entry is a state warning.
+func TestFlushState_LostEntryOfAFailedFlushIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	dir := filepath.Dir(stateFile)
+	writeState(t, stateFile, configuredNodeAgent())
+	breakStateAndHistory := func() {
+		require.NoError(t, os.WriteFile(state.ComponentFilePath(dir, state.ComponentTeleport), []byte("state: [broken"), 0o644))
+		require.NoError(t, os.Mkdir(state.ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
+	}
+
+	_, err := handleBlockNodeIntent(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{execute: breakStateAndHistory})
+
+	require.ErrorContains(t, err, "failed to refresh runtime state before flush")
+	require.NotContains(t, err.Error(), "action history")
+	require.NotContains(t, doctor.OperatorMessage(err), "{reason:")
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was not appended")
+}
+
+// A change the run was allowed to destroy is marked unconfirmed when the read
+// after the workflow failed; the other records stand as found.
+func TestOwnedDriftRun_UnconfirmedMarksOnlyAllowedDestroys(t *testing.T) {
+	run := ownedDriftRun{records: []state.OwnedDriftRecord{
+		{Component: "teleport", Field: "nodeAgent.configured", DestroyAllowed: true},
+		{Component: "teleport", Field: "clusterAgent.chartVersion"},
+	}}
+
+	got := run.unconfirmed()
+
+	require.True(t, got[0].Unconfirmed)
+	require.False(t, got[0].Destroyed)
+	require.False(t, got[1].Unconfirmed)
+	require.False(t, run.records[0].Unconfirmed, "the run's own records are not changed")
+	require.Empty(t, ownedDriftRun{}.unconfirmed())
 }

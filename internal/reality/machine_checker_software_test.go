@@ -235,7 +235,7 @@ func TestRefreshSoftware_RepeatedFlushesKeepInstalledVersions(t *testing.T) {
 	}
 	writer, err := state.NewStateManager(state.WithState(seed), state.WithFileManager(fm))
 	require.NoError(t, err)
-	require.NoError(t, writer.FlushAll())
+	require.NoError(t, writer.Commit(state.ActionHistory{}, state.AllComponentIDs...))
 
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestRefreshSoftware_RepeatedFlushesKeepInstalledVersions(t *testing.T) {
 		require.NoError(t, err)
 		s := sm.State()
 		s.MachineState = ms
-		require.NoError(t, sm.Set(s).FlushAll())
+		require.NoError(t, sm.Set(s).Commit(state.ActionHistory{}, state.AllComponentIDs...))
 	}
 
 	reader, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))

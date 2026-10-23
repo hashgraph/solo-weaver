@@ -180,6 +180,11 @@ It holds the `system` record for its whole run. While another command holds it (
 cluster itself), it fails at once with `system is being modified (held by pid N)` and
 changes nothing. Re-run it once that command finishes.
 
+Each run whose workflow started adds one `install` / `cluster` entry to
+`/opt/solo/weaver/state/action_history.yaml`, even when it fails. A failed install leaves
+`system.yaml` as it was, and its entry records `outcome: failed`. See
+[Action history](../dev/action-history.md).
+
 ### Two things it deliberately does not do
 
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the

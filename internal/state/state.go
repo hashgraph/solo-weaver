@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -143,17 +144,32 @@ type ActionHistory struct {
 	Intent    models.Intent `yaml:"intent" json:"intent"` // e.g. "weaver block node init"
 	Inputs    any           `yaml:"inputs" json:"inputs"` // inputs used for this intent; any marshallable value is accepted (e.g. models.UserInputs[T])
 	Timestamp htime.Time    `yaml:"timestamp" json:"timestamp"`
-	// Components names the per-component files this action wrote (e.g. machine,
-	// blocknode). Provenance for the multi-file layout: with state split across
-	// files, the intent alone no longer says what on disk changed. Reading
-	// action_history.yaml back and taking the latest entry whose Components
-	// include X answers "what last modified component X" — the role the single
-	// in-state LastAction pointer used to serve before it was dropped (#1242).
-	Components []ComponentID `yaml:"components,omitempty" json:"components,omitempty"`
+	// Outcome is what the action did. Entries written before it existed have none.
+	Outcome Outcome `yaml:"outcome" json:"outcome"`
+	// NotPersisted is set only when a state file the action meant to write did
+	// not land, so persisted state does not reflect what the action did.
+	NotPersisted bool `yaml:"notPersisted,omitempty" json:"notPersisted,omitempty"`
+	// Error is why the action failed or its state did not land, as the operator
+	// sees it; Reason is the reason code attached to that error.
+	Error  string      `yaml:"error,omitempty" json:"error,omitempty"`
+	Reason errx.Reason `yaml:"reason,omitempty" json:"reason,omitempty"`
+	// Components names the state files whose content this action changed,
+	// created or removed. The latest entry naming X is the action that last
+	// changed X. Entries written before the machine component was split name
+	// machine.
+	Components []ChangedFile `yaml:"components,omitempty" json:"components,omitempty"`
 	// OwnedDrift lists the out-of-band changes to the action's owned components
 	// that it ran over.
 	OwnedDrift []OwnedDriftRecord `yaml:"ownedDrift,omitempty" json:"ownedDrift,omitempty"`
 }
+
+// Outcome is what an action did.
+type Outcome string
+
+const (
+	OutcomeSucceeded Outcome = "succeeded"
+	OutcomeFailed    Outcome = "failed"
+)
 
 // OwnedDriftRecord is one owned out-of-band change an action ran over.
 type OwnedDriftRecord struct {
@@ -171,6 +187,9 @@ type OwnedDriftRecord struct {
 	// value, so a second hand change to that field during the run would also
 	// read as destroyed.
 	Destroyed bool `yaml:"destroyed" json:"destroyed"`
+	// Unconfirmed is set when the run was allowed to destroy the change but
+	// could not read the part afterwards, so Destroyed is unknown.
+	Unconfirmed bool `yaml:"unconfirmed,omitempty" json:"unconfirmed,omitempty"`
 	// Unobserved is set when the run could not read the live value, so Live is
 	// empty. No destructive run goes ahead over such a change.
 	Unobserved bool `yaml:"unobserved,omitempty" json:"unobserved,omitempty"`
