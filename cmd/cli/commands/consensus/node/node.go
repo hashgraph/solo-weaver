@@ -3,10 +3,7 @@
 package node
 
 import (
-	"strconv"
-
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 )
@@ -57,57 +54,13 @@ var (
 )
 
 func init() {
+	// Only flags that every subcommand uses live here; install-only flags are on installCmd.
 	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "namespace", models.ConsensusDefaultNamespace, "Kubernetes namespace (also used as the Orbit CR name). Deploy multiple networks in one cluster by using a distinct namespace per orbit (hiero-network-1, hiero-network-2, ...) (alias: --orbit)")
 	// --orbit is a hidden alias for --namespace (the namespace IS the Orbit name),
 	// bound to the same variable so either spelling works; keep the default identical.
 	nodeCmd.PersistentFlags().StringVar(&flagNamespace, "orbit", models.ConsensusDefaultNamespace, "Alias for --namespace (the Orbit CR name)")
 	_ = nodeCmd.PersistentFlags().MarkHidden("orbit")
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
-	nodeCmd.PersistentFlags().StringVar(&flagAccountId, "account-id", "0.0.3", "Node account ID (e.g. 0.0.3)")
-	nodeCmd.PersistentFlags().IntVar(&flagWeight, "weight", 500, "Consensus weight for this node")
-	nodeCmd.PersistentFlags().StringVar(&flagLedgerId, "ledger-id", "", "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev) — extracted from deployment package if not set")
-	nodeCmd.PersistentFlags().StringVar(&flagChainId, "chain-id", "", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev) — extracted from deployment package if not set")
-	nodeCmd.PersistentFlags().StringVar(&flagImageRepo, "image-repo", "", "Consensus node container image repository — extracted from deployment package if not set")
-	nodeCmd.PersistentFlags().StringVar(&flagImageTag, "image-tag", "", "Consensus node container image tag — extracted from deployment package if not set")
-	nodeCmd.PersistentFlags().StringVar(&flagUCImageRepo, "uc-image-repo", models.ConsensusDefaultUCImageRepo, "UC (Update Coordinator) sidecar image repository (the operator's own image; no operator default)")
-	nodeCmd.PersistentFlags().StringVar(&flagUCImageTag, "uc-image-tag", models.ConsensusDefaultUCImageTag, "UC sidecar image tag (tracks the solo-operator version)")
-	nodeCmd.PersistentFlags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
-	nodeCmd.PersistentFlags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera-node<N>.key, hedera-node<N>.crt)")
-	nodeCmd.PersistentFlags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: private.pem, public.pem)")
-	nodeCmd.PersistentFlags().StringArrayVar(&flagImagePullSecret, "image-pull-secret", []string{models.ConsensusDefaultImagePullSecret}, "Map a docker-registry Secret to a registry for pulling private consensus/UC images. Repeatable. Bare NAME applies to all registries (default private-registry-creds); keyed HOST=NAME overrides one registry host (e.g. ghcr.io=ghcr-creds). Empty (\"\") disables (public images). Registries come from the deployment manifest; each Secret must already exist in the namespace")
-	nodeCmd.PersistentFlags().StringVar(&flagRegistryStrategy, "registry-selection-strategy", "", "Order the operator probes candidate registries for a multi-registry image: Random or Sequential. Empty uses the weaver default (Sequential — manifest primary first, deterministic failover). Pass Random to spread probe traffic. Applies only when the manifest yields multiple registries")
-
-	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
-	// the explicit Java heap is required or the node stalls on startup.
-	nodeCmd.PersistentFlags().StringVar(&flagContainerName, "container-name", models.ConsensusDefaultContainerName, "Consensus-node container name")
-	nodeCmd.PersistentFlags().StringVar(&flagJavaHeapMin, "java-heap-min", models.ConsensusDefaultJavaHeapMin, "JVM minimum heap (-Xms) for the consensus node")
-	nodeCmd.PersistentFlags().StringVar(&flagJavaHeapMax, "java-heap-max", models.ConsensusDefaultJavaHeapMax, "JVM maximum heap (-Xmx) for the consensus node")
-	nodeCmd.PersistentFlags().StringVar(&flagJavaOpts, "java-opts", models.ConsensusDefaultJavaOpts, "Additional JVM options for the consensus node")
-	nodeCmd.PersistentFlags().StringVar(&flagCPULimit, "cpu-limit", models.ConsensusDefaultCPULimit, "Consensus-node CPU limit (Kubernetes quantity, e.g. 2)")
-	nodeCmd.PersistentFlags().StringVar(&flagCPURequest, "cpu-request", models.ConsensusDefaultCPURequest, "Consensus-node CPU request (e.g. 250m)")
-	nodeCmd.PersistentFlags().StringVar(&flagMemoryLimit, "memory-limit", models.ConsensusDefaultMemoryLimit, "Consensus-node memory limit (e.g. 5Gi)")
-	nodeCmd.PersistentFlags().StringVar(&flagMemoryRequest, "memory-request", models.ConsensusDefaultMemoryRequest, "Consensus-node memory request (e.g. 1Gi)")
-	nodeCmd.PersistentFlags().BoolVar(&flagProvisionerDaemon, "provisioner-daemon", false, "Deploy the Orbit in mainnet mode: the UC sidecar defers the execute phase to a host-level solo-provisioner-daemon (Orbit.spec.consensus.provisionerDaemonEnabled). Default false = cluster-only (the in-pod UC runs execute)")
-
-	// Volume backing. Each data volume (upgrade/logs/stats/saved/state/blocks/records/
-	// events) can be emptyDir, hostPath, or a PVC. --default-* set fallbacks; --volume
-	// overrides one volume; --volumes-file supplies the same as YAML (flags win).
-	nodeCmd.PersistentFlags().StringVar(&flagDefaultVolumeType, "default-volume-type", "", "Default backing for all data volumes: emptydir|hostpath|pvc (empty = emptydir)")
-	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCSize, "default-pvc-size", "", "Default PVC size for pvc-backed volumes when size= is omitted (empty = per-volume default)")
-	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCStorageClass, "default-pvc-storage-class", "", "Default StorageClass for pvc-backed volumes (empty = cluster default)")
-	nodeCmd.PersistentFlags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
-	nodeCmd.PersistentFlags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
-	nodeCmd.PersistentFlags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
-	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
-	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
-	// value is the trusted "2000" constant, so the error can't fire).
-	hederaUID, _ := strconv.Atoi(config.HederaUserId())
-	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
-	nodeCmd.PersistentFlags().IntVar(&flagHostPathUID, "hostpath-uid", hederaUID, "Owner UID for hostPath volume dirs (the hedera user the pod runs as)")
-	nodeCmd.PersistentFlags().IntVar(&flagHostPathGID, "hostpath-gid", hederaGID, "Owner GID for hostPath volume dirs (the hedera group the pod runs as)")
-
-	// flagProfile is a binding target for Cobra; the install command reads the value via FlagProfile().Value()
-	common.FlagProfile().SetVarP(nodeCmd, &flagProfile, false)
 	nodeCmd.AddCommand(installCmd)
 	nodeCmd.AddCommand(uninstallCmd)
 }

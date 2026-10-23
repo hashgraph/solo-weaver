@@ -26,6 +26,10 @@ const (
 	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
 	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
 
+	// Default node identity for --account-id and --weight.
+	ConsensusDefaultAccountId = "0.0.3"
+	ConsensusDefaultWeight    = 500
+
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
 	ConsensusDefaultJavaHeapMax   = "2g"
