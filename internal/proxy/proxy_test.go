@@ -4,8 +4,10 @@ package proxy
 
 import (
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
@@ -76,4 +78,20 @@ func TestActivate_EmptyURL(t *testing.T) {
 	assert.Equal(t, "", os.Getenv("HTTP_PROXY"))
 	assert.Equal(t, "", os.Getenv("HTTPS_PROXY"))
 	assert.True(t, config.IsProxyEnabled())
+}
+
+// CRI-O enforces unambiguous short image names, so the proxy's registries.conf
+// must list a single unqualified search registry or short names fail to pull.
+func TestRegistriesConf_OneUnqualifiedSearchRegistry(t *testing.T) {
+	content, err := templates.Render("files/crio/registries.conf", struct{ ContainerRegistryProxy string }{"localhost:5050"})
+	require.NoError(t, err)
+
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "unqualified-search-registries") {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	assert.Equal(t, []string{`unqualified-search-registries = ["docker.io"]`}, lines)
+	assert.Contains(t, content, `location = "localhost:5050"`)
 }
