@@ -163,6 +163,15 @@ sudo solo-provisioner kube cluster install --rollback-on-error
 | `--rollback-on-error` | Undo completed steps if a later one fails |
 | `--continue-on-error` | Keep going past failures |
 
+### State it records
+
+Cluster install installs host binaries, so it records what the host now has in
+`/opt/solo/weaver/state/system.yaml`, and the running CLI's version in `provisioner.yaml`.
+It holds the `system` record for its whole run. While another command holds it (a
+`teleport node install` or `uninstall`, or a `block node install` that is setting up the
+cluster itself), it fails at once with `system is being modified (held by pid N)` and
+changes nothing. Re-run it once that command finishes.
+
 ### Two things it deliberately does not do
 
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
@@ -217,6 +226,11 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 ```
 
 > **Every running workload stops.** This includes the block node.
+
+It also deletes everything under `/opt/solo/weaver/state/`, so it takes every state lock
+first. While any other solo-provisioner command holds one, it fails at once with
+`<record> is being modified (held by pid N)`, before tearing anything down. Re-run it once
+that command finishes.
 
 ---
 

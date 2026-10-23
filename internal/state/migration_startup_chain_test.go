@@ -59,11 +59,12 @@ func TestStartupStateMigrations_ChainKeepsEveryMigrationsChanges(t *testing.T) {
 		return s
 	}
 
-	machine := readComponent(ComponentMachine)
-	require.True(t, machine.MachineState.Software["crio"].Installed, "the marker file's software entry must survive the split")
-	require.NotNil(t, machine.MachineState.Firewall)
-	require.Equal(t, []int{2222}, machine.MachineState.Firewall.MgmtPorts, "the sshPort→mgmtPorts rewrite must survive the split")
-	require.Equal(t, "mainnet", machine.MachineState.Profile)
+	require.True(t, readComponent(ComponentSystem).MachineState.Software["crio"].Installed,
+		"the marker file's software entry must survive the split")
+	firewall := readComponent(ComponentFirewall).MachineState.Firewall
+	require.NotNil(t, firewall)
+	require.Equal(t, []int{2222}, firewall.MgmtPorts, "the sshPort→mgmtPorts rewrite must survive the split")
+	require.Equal(t, "mainnet", readComponent(ComponentProfile).MachineState.Profile)
 	require.Equal(t, "block-node", readComponent(ComponentBlockNode).BlockNodeState.ReleaseInfo.Name)
 
 	_, err := os.Stat(filepath.Join(dir, StateFileName))

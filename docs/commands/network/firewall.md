@@ -388,10 +388,16 @@ sudo solo-provisioner network firewall set --name mgmt --cidrs "" --force
 ### `create` and `delete --all` record a decision
 
 Both write the enable decision into the host's runtime state
-(`machineState.firewall.disabled`), so `block node reconfigure` agrees with what you did here:
+(`firewall.disabled` in `/opt/solo/weaver/state/firewall.yaml`), so `block node reconfigure`
+agrees with what you did here:
 
 - A firewall you created by hand survives a later reconfigure instead of being torn down.
 - One you deleted here is not re-created by it.
+- While another command holds the firewall record (a `block node install` or `reconfigure`), both
+  fail at once with `firewall is being modified (held by pid N)` and change nothing. Re-run once
+  that command finishes.
+- If the decision cannot be written after the ruleset was applied, the command fails with
+  `StateOperationFailed`. Re-running it is safe and records the decision.
 - A **live table always wins** over the recorded decision, so removing an active host firewall
   through `block node reconfigure` needs an explicit `--firewall-enabled=false`.
 - The membership verbs (`add`, `remove`, `set`) record no decision. `reconfigure` reads their

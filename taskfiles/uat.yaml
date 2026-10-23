@@ -612,7 +612,7 @@ tasks:
 
 
         echo -e '\n▶ Step 10: Verify state file after upgrade'
-        for f in provisioner.yaml machine.yaml blocknode.yaml; do
+        for f in provisioner.yaml profile.yaml firewall.yaml system.yaml blocknode.yaml; do
           [ -f "/opt/solo/weaver/state/$f" ] || { echo "FAIL: $f missing after upgrade"; exit 1; }
         done
         [ ! -f /opt/solo/weaver/state/state.yaml ] || { echo "FAIL: state.yaml still present after upgrade (split migration did not run)"; exit 1; }

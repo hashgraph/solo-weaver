@@ -205,7 +205,7 @@ func (m *stateManager) Refresh() error {
 
 		var fileState State
 		if err := yaml.Unmarshal(b, &fileState); err != nil {
-			return errorx.InternalError.Wrap(err, "failed to unmarshal %s state from YAML", id)
+			return errorx.InternalError.Wrap(err, "failed to parse the %s state file %s", id, componentFilePath(dir, id))
 		}
 		applyComponentSection(composed, id, fileState)
 

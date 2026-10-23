@@ -202,9 +202,9 @@ constant.
 | `IntegrityCheckFailed` | A checksum, signature or tamper check failed on a downloaded or installed artifact — do **not** retry; report it | reserved — `pkg/software`, `pkg/helm` |
 | `PreflightFailed` | A hardware/OS validation floor was not met (memory, storage, OS version) | reserved — `internal/workflows` preflight, `pkg/hardware` |
 | `ResourceNotReady` | A Kubernetes resource did not converge in time (pod/CRD/PVC); the API call itself succeeded | reserved — `internal/kube`, `internal/blocknode`, workflow steps |
-| `StateOperationFailed` | Reading, writing, refreshing or migrating the application state file failed | reserved — `internal/state`, `internal/rsl`, `internal/bll` |
+| `StateOperationFailed` | Reading, writing, refreshing or migrating the application state file failed | **declared** — `cmd/cli/commands/network/firewall`, `internal/state` (state that cannot be read before a change); reserved for `internal/rsl`, `internal/bll` |
 | `ConfigInvalid` | A configuration **file's contents** are malformed or incomplete (`config.yaml`, `daemon.yaml`) — not a flag value | reserved — `pkg/config`, `cmd/daemon` |
-| `PreconditionNotMet` | The system is in the wrong state for this command (already installed, service already running, resource still referenced); change the state or use a different verb | **declared** — `internal/workflows`, `internal/state` (a state lock held by another command); reserved for `internal/bll`, daemon/service steps |
+| `PreconditionNotMet` | The system is in the wrong state for this command (already installed, service already running, resource still referenced); change the state or use a different verb | **declared** — `internal/workflows`, `internal/state` (a state lock held by another command), `internal/bll/blocknode` (install that finds no cluster); reserved for the rest of `internal/bll`, daemon/service steps |
 
 Two mapping calls settled during the #933 audit, recorded so they stay uniform:
 a requested version/platform absent from the embedded catalog is

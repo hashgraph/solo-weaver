@@ -21,7 +21,6 @@ const StateFileName = "state.yaml"
 //
 //	hash: "e3b0c4..."
 //	hashAlgo: sha256
-//	stateFile: /opt/solo/weaver/state/state.yaml
 //	lastSync: "2026-03-17T..."
 //	state:
 //	  machineState:
@@ -37,7 +36,7 @@ type State struct {
 	// Envelope — excluded from hash; never add domain data here
 	Hash      string     `yaml:"hash,omitempty"     json:"hash,omitempty"`     // digest of StateRecord
 	HashAlgo  string     `yaml:"hashAlgo,omitempty" json:"hashAlgo,omitempty"` // algorithm used for Hash (e.g. "sha256")
-	StateFile string     `yaml:"stateFile"          json:"stateFile"`          // path to the state file on disk
+	StateFile string     `yaml:"-"                  json:"-"`                  // path to the state file on disk; never persisted
 	LastSync  htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was flushed to disk
 
 	// Domain content — serialised as a nested "state" object for readability.

@@ -10,10 +10,14 @@ import "path/filepath"
 type ComponentID string
 
 const (
-	// ComponentMachine holds MachineState — the fields with no single owning
-	// handler. It is written by every handler alongside whatever it manages
-	// (see internal/bll.WithManagedComponents).
-	ComponentMachine ComponentID = "machine"
+	// ComponentProfile is the host's deployment profile, set by the installs.
+	ComponentProfile ComponentID = "profile"
+	// ComponentFirewall is the host's last host-firewall decision. It is
+	// host-scoped, so it survives a block-node uninstall.
+	ComponentFirewall ComponentID = "firewall"
+	// ComponentSystem is what the host has installed (Software) and runs on
+	// (Hardware), written by the commands that install host binaries.
+	ComponentSystem  ComponentID = "system"
 	ComponentCluster ComponentID = "cluster"
 	// ComponentBlockNode is the block node's persisted state.
 	ComponentBlockNode ComponentID = "blocknode"
@@ -26,7 +30,9 @@ const (
 // reads each of these independently; a missing file leaves that component at
 // its zero value, the same as a missing state.yaml did before the split.
 var AllComponentIDs = []ComponentID{
-	ComponentMachine,
+	ComponentProfile,
+	ComponentFirewall,
+	ComponentSystem,
 	ComponentCluster,
 	ComponentBlockNode,
 	ComponentConsensus,
@@ -58,8 +64,14 @@ func componentFilePath(dir string, id ComponentID) string {
 // writing to its own file.
 func applyComponentSection(dst *State, id ComponentID, src State) {
 	switch id {
-	case ComponentMachine:
-		dst.MachineState = src.MachineState
+	case ComponentProfile:
+		dst.MachineState.Profile = src.MachineState.Profile
+	case ComponentFirewall:
+		dst.MachineState.Firewall = src.MachineState.Firewall
+	case ComponentSystem:
+		dst.MachineState.Software = src.MachineState.Software
+		dst.MachineState.Hardware = src.MachineState.Hardware
+		dst.MachineState.LastSync = src.MachineState.LastSync
 	case ComponentCluster:
 		dst.ClusterState = src.ClusterState
 	case ComponentBlockNode:
@@ -82,15 +94,14 @@ func projectComponentSection(full State, id ComponentID) State {
 
 // DedupeComponentIDs returns ids with duplicates removed, preserving the
 // first occurrence's order. Exported so callers outside this package (e.g.
-// internal/bll.BaseHandler, which unions a handler's managed components with
-// the machine component) can share one definition of "duplicate" instead of
-// each writing their own — AcquireComponentLocks needs this because a caller
-// that accidentally lists the same component twice would otherwise try to
-// flock it twice in the same call (two separate open file descriptions on
-// the same file conflict with each other even within one process, so the
-// second attempt would see its own first lock as already held and fail or
-// hang on itself); FlushScoped needs it because flushComponents has no
-// dedup of its own and would otherwise prepare and write the same file twice.
+// internal/bll.BaseHandler, whose managed components may repeat) can share
+// one definition of "duplicate" instead of each writing their own.
+// AcquireComponentLocks needs this because a caller that lists the same
+// component twice would otherwise flock it twice in the same call (two open
+// file descriptions on the same file conflict even within one process, so
+// the second attempt would see its own first lock as held and fail or hang
+// on itself); FlushScoped needs it because flushComponents has no dedup of
+// its own and would otherwise prepare and write the same file twice.
 func DedupeComponentIDs(ids []ComponentID) []ComponentID {
 	seen := make(map[ComponentID]struct{}, len(ids))
 	deduped := make([]ComponentID, 0, len(ids))

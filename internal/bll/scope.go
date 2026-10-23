@@ -38,6 +38,12 @@ var (
 	// wire one in later. The flush scope applies now regardless.
 	ConsensusNode = Component{id: state.ComponentConsensus}
 	Teleport      = Component{id: state.ComponentTeleport, producer: drift.Teleport}
+	// Profile, Firewall and System are the host components: the deployment
+	// profile, the host-firewall decision, and the host's installed software
+	// and hardware. None has a drift producer yet.
+	Profile  = Component{id: state.ComponentProfile}
+	Firewall = Component{id: state.ComponentFirewall}
+	System   = Component{id: state.ComponentSystem}
 )
 
 // producersOf returns the drift producers of the managed components that have one.

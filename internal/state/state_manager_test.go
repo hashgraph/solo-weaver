@@ -62,7 +62,7 @@ func newTestFileManager(t *testing.T) fsx.Manager {
 
 // TestFlushWritesFile checks that FlushState writes each component's YAML
 // representation to its own file, keyed by the profile (which lives in the
-// machine component's file).
+// profile component's file).
 func TestFlushWritesFile(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "state.yaml")
@@ -82,9 +82,9 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("FlushState returned error: %v", err)
 	}
 
-	data, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	data, err := os.ReadFile(componentFilePath(dir, ComponentProfile))
 	if err != nil {
-		t.Fatalf("failed to read persisted machine state file: %v", err)
+		t.Fatalf("failed to read persisted profile state file: %v", err)
 	}
 
 	var loaded State
@@ -173,7 +173,7 @@ func TestHasPersistedState(t *testing.T) {
 	tmp := filepath.Join(dir, "state.yaml")
 
 	// write a component file directly
-	if err := os.WriteFile(componentFilePath(dir, ComponentMachine), []byte("dummy"), 0o644); err != nil {
+	if err := os.WriteFile(componentFilePath(dir, ComponentProfile), []byte("dummy"), 0o644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 	m.AddActionHistory(ActionHistory{
 		Intent:     models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs:     map[string]any{"key": "value"},
-		Components: []ComponentID{ComponentMachine, ComponentBlockNode},
+		Components: []ComponentID{ComponentProfile, ComponentBlockNode},
 	})
 	if err := m.FlushActionHistory(); err != nil {
 		t.Fatalf("FlushActionHistory: %v", err)
@@ -414,7 +414,7 @@ func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 	if entry.Timestamp.IsZero() {
 		t.Error("Timestamp is zero after AddActionHistory")
 	}
-	require.Equal(t, []ComponentID{ComponentMachine, ComponentBlockNode}, entry.Components,
+	require.Equal(t, []ComponentID{ComponentProfile, ComponentBlockNode}, entry.Components,
 		"action_history entry must record which components the action wrote")
 }
 
@@ -469,12 +469,12 @@ func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
 
 	// Simulate a hand edit: change the content but leave the stored hash field
 	// exactly as it was written.
-	machineFile := componentFilePath(dir, ComponentMachine)
-	raw, err := os.ReadFile(machineFile)
+	profileFile := componentFilePath(dir, ComponentProfile)
+	raw, err := os.ReadFile(profileFile)
 	require.NoError(t, err)
 	edited := bytes.Replace(raw, []byte("profile: before"), []byte("profile: hand-edited"), 1)
 	require.NotEqual(t, string(raw), string(edited), "precondition: the replacement must have matched something")
-	require.NoError(t, os.WriteFile(machineFile, edited, 0o644))
+	require.NoError(t, os.WriteFile(profileFile, edited, 0o644))
 
 	changed := m.State()
 	changed.MachineState.Profile = "after"

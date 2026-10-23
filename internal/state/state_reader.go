@@ -173,11 +173,11 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 }
 
 // ReadSoftwareVersionFromDisk reads a single host component's recorded version
-// (by catalog artifact name) from the on-disk machine state file without
+// (by catalog artifact name) from the on-disk system state file without
 // loading the full state. Returns an empty string when that file or the
 // component is absent.
 func ReadSoftwareVersionFromDisk(name string) (string, error) {
-	data, err := readComponentOrLegacyBytes(ComponentMachine)
+	data, err := readComponentOrLegacyBytes(ComponentSystem)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -242,40 +242,38 @@ type PromptDefaults struct {
 }
 
 // ReadPromptDefaultsFromDisk extracts all prompt-relevant fields with one
-// read + YAML parse per component file (machine for Profile/Firewall, block
-// node for the rest). Each file is decoded into its own PromptDefaultsDoc —
-// not a shared one — because every component file is a marshaled State, so
-// blockNodeData's non-owned machineState section is present too (just zero-
-// valued, since MachineState has no omitempty tag). Decoding both files into
-// one doc would let the second unmarshal silently overwrite the Profile/
-// Firewall the first one just loaded. A component whose file does not exist
-// leaves its doc at its zero value, so this returns a zero-value struct only
-// when neither file exists.
+// read + YAML parse per component file (profile, firewall, and block node for
+// the rest). Each file is decoded into its own PromptDefaultsDoc — not a
+// shared one — because every component file is a marshaled State, so each
+// file's non-owned sections are present too, just zero-valued. Decoding the
+// files into one doc would let a later unmarshal silently overwrite what an
+// earlier one loaded. A component whose file does not exist leaves its doc at
+// its zero value, so this returns a zero-value struct only when none of the
+// files exists.
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
-	var machineDoc, blockNodeDoc PromptDefaultsDoc
+	var profileDoc, firewallDoc, blockNodeDoc PromptDefaultsDoc
 
-	machineData, err := readComponentOrLegacyBytes(ComponentMachine)
-	if err != nil {
-		return PromptDefaults{}, err
-	}
-	if machineData != nil {
-		if err := unmarshalStateDoc(machineData, &machineDoc); err != nil {
+	for _, f := range []struct {
+		id  ComponentID
+		doc *PromptDefaultsDoc
+	}{
+		{ComponentProfile, &profileDoc},
+		{ComponentFirewall, &firewallDoc},
+		{ComponentBlockNode, &blockNodeDoc},
+	} {
+		data, err := readComponentOrLegacyBytes(f.id)
+		if err != nil {
 			return PromptDefaults{}, err
 		}
-	}
-
-	blockNodeData, err := readComponentOrLegacyBytes(ComponentBlockNode)
-	if err != nil {
-		return PromptDefaults{}, err
-	}
-	if blockNodeData != nil {
-		if err := unmarshalStateDoc(blockNodeData, &blockNodeDoc); err != nil {
-			return PromptDefaults{}, err
+		if data != nil {
+			if err := unmarshalStateDoc(data, f.doc); err != nil {
+				return PromptDefaults{}, err
+			}
 		}
 	}
 
 	var firewall *models.HostConfig
-	if fw := machineDoc.State.MachineState.Firewall; fw != nil {
+	if fw := firewallDoc.State.MachineState.Firewall; fw != nil {
 		firewall = &models.HostConfig{
 			Disabled:        fw.Disabled,
 			ManagementCIDRs: fw.ManagementCIDRs,
@@ -293,7 +291,7 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		linkRate = bn.Shaping.LinkRate
 	}
 	return PromptDefaults{
-		Profile:  machineDoc.State.MachineState.Profile,
+		Profile:  profileDoc.State.MachineState.Profile,
 		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
 			ReleaseName:            bn.Name,

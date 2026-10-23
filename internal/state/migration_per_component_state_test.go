@@ -281,9 +281,9 @@ func TestPerComponentStateMigration_SplitsAReleasedStateFile(t *testing.T) {
 		require.NoError(t, yaml.Unmarshal(b, &s))
 		return s
 	}
-	require.Equal(t, "local", read(ComponentMachine).MachineState.Profile)
-	require.True(t, read(ComponentMachine).MachineState.Firewall.Disabled)
-	require.True(t, read(ComponentMachine).MachineState.Software["crio"].Installed)
+	require.Equal(t, "local", read(ComponentProfile).MachineState.Profile)
+	require.True(t, read(ComponentFirewall).MachineState.Firewall.Disabled)
+	require.True(t, read(ComponentSystem).MachineState.Software["crio"].Installed)
 	blockNode := read(ComponentBlockNode).BlockNodeState
 	require.Equal(t, "block-node", blockNode.ReleaseInfo.Name)
 	require.True(t, blockNode.TrafficShapingDisabled)
