@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/release"
@@ -103,6 +105,18 @@ func (h *InstallHandler) BuildWorkflow(
 		stepList = append(stepList, daemonConfigStep...)
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(stepList...)
 	} else {
+		// Standing up Kubernetes writes the system record. ForAction picked
+		// the owned set from /etc/kubernetes/admin.conf before the locks were
+		// taken; this branch follows the refreshed ClusterState.Created. When
+		// they disagree, the install is refused, never guessed.
+		if !h.Owns(bll.System) {
+			return nil, errx.Decorate(
+				errorx.IllegalState.New(
+					"found no running Kubernetes cluster, although Kubernetes was installed when this command started"),
+				reasons.PreconditionNotMet,
+				"Check the control plane: sudo systemctl status kubelet, then kubectl get nodes.",
+				"Re-run this command; if Kubernetes was removed, it will set the cluster up.")
+		}
 		stepList := []automa.Builder{
 			// Same backwards-compat guard as above: ensure weaver:2500 exists
 			// before the preflight check validates it. Older binaries did not

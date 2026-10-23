@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,6 +22,7 @@ import (
 type fakeStateManager struct {
 	current  state.State
 	flushed  *state.State
+	scoped   [][]state.ComponentID // the ids of every FlushScoped call
 	refresh  error
 	flushErr error
 }
@@ -40,17 +43,21 @@ func (f *fakeStateManager) FlushState() error {
 	f.flushed = &snapshot
 	return nil
 }
-func (f *fakeStateManager) FlushScoped(...state.ComponentID) error { return f.FlushState() }
-func (f *fakeStateManager) FlushActionHistory() error              { return nil }
-func (f *fakeStateManager) FlushAll() error                        { return f.FlushState() }
-func (f *fakeStateManager) Refresh() error                         { return f.refresh }
-func (f *fakeStateManager) FileManager() fsx.Manager               { return nil }
+func (f *fakeStateManager) FlushScoped(ids ...state.ComponentID) error {
+	f.scoped = append(f.scoped, ids)
+	return f.FlushState()
+}
+func (f *fakeStateManager) FlushActionHistory() error { return nil }
+func (f *fakeStateManager) FlushAll() error           { return f.FlushState() }
+func (f *fakeStateManager) Refresh() error            { return f.refresh }
+func (f *fakeStateManager) FileManager() fsx.Manager  { return nil }
 
 // stubStateManager points the package's state seam at an in-memory manager and
-// returns it, so a test can assert on what a verb flushed.
+// returns it, so a test can assert on what a verb flushed. Its state directory,
+// where the verbs take the firewall lock, is a temp dir.
 func stubStateManager(t *testing.T) *fakeStateManager {
 	t.Helper()
-	fake := &fakeStateManager{}
+	fake := &fakeStateManager{current: state.State{StateFile: filepath.Join(t.TempDir(), state.StateFileName)}}
 
 	orig := stateManager
 	stateManager = func() (state.Manager, error) { return fake, nil }
@@ -161,15 +168,91 @@ allow:
 	require.Nil(t, fake.flushed, "deleting one allow rule is not a decision to disable the firewall")
 }
 
-// TestCreateCmd_SucceedsWhenStateWriteFails is the "bookkeeping must never fail
-// an applied ruleset" guarantee: the nft table is already live by the time the
-// decision is recorded, so a state-write failure is a warning, not an error.
-func TestCreateCmd_SucceedsWhenStateWriteFails(t *testing.T) {
-	stubManager(t)
+// TestCreateCmd_FailsBeforeApplyingWhenStateIsUnavailable: with no state to
+// record the decision in, create stops before it touches the kernel.
+func TestCreateCmd_FailsBeforeApplyingWhenStateIsUnavailable(t *testing.T) {
+	nftPath, _ := stubManager(t)
 
 	orig := stateManager
 	stateManager = func() (state.Manager, error) { return nil, errors.New("no state manager") }
 	t.Cleanup(func() { stateManager = orig })
 
+	require.Error(t, run(t, "create", "--mgmt-cidrs", "192.168.50.0/24"))
+	require.NoFileExists(t, nftPath, "no ruleset may be applied when the decision cannot be recorded")
+}
+
+// TestFirewallVerbs_FailFastBeforeApplyingWhenTheFirewallIsLocked: another
+// command holding the firewall lock makes create and delete fail at once,
+// before they change the kernel or the recorded decision.
+func TestFirewallVerbs_FailFastBeforeApplyingWhenTheFirewallIsLocked(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	fake := stubStateManager(t)
+	stateDir := filepath.Dir(fake.current.StateFile)
+
+	hold := func() func() {
+		release, err := state.AcquireComponentLocks(stateDir, []state.ComponentID{state.ComponentFirewall}, 0)
+		require.NoError(t, err)
+		return release
+	}
+
+	release := hold()
+	err := run(t, "create", "--mgmt-cidrs", "192.168.50.0/24")
+	release()
+	require.ErrorContains(t, err, "firewall is being modified")
+	require.NoFileExists(t, nftPath, "create must not apply the ruleset while the firewall is locked")
+	require.Nil(t, fake.flushed, "create must not record a decision while the firewall is locked")
+
 	require.NoError(t, run(t, "create", "--mgmt-cidrs", "192.168.50.0/24"))
+	fake.flushed = nil
+
+	release = hold()
+	err = run(t, "delete", "--all")
+	release()
+	require.ErrorContains(t, err, "firewall is being modified")
+	require.FileExists(t, nftPath, "delete must not remove the ruleset while the firewall is locked")
+	require.Nil(t, fake.flushed, "delete must not record a decision while the firewall is locked")
+}
+
+// TestFirewallVerbs_WriteOnlyTheFirewallFile: recording the decision touches
+// the firewall component alone, never the other component files.
+func TestFirewallVerbs_WriteOnlyTheFirewallFile(t *testing.T) {
+	stubManager(t)
+	fake := stubStateManager(t)
+
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "192.168.50.0/24"))
+	require.NoError(t, run(t, "delete", "--all"))
+
+	require.Len(t, fake.scoped, 2)
+	for _, ids := range fake.scoped {
+		require.Equal(t, []state.ComponentID{state.ComponentFirewall}, ids)
+	}
+}
+
+// TestCreateCmd_FailsWhenTheDecisionCannotBeRecorded: once the ruleset is
+// applied, a failed record is an error the operator sees, with the way to
+// recover, never only a log line. A dropped decision is what makes the next
+// reconfigure undo this command.
+func TestCreateCmd_FailsWhenTheDecisionCannotBeRecorded(t *testing.T) {
+	nftPath, _ := stubManager(t)
+	fake := stubStateManager(t)
+	fake.flushErr = errors.New("disk full")
+
+	err := run(t, "create", "--mgmt-cidrs", "192.168.50.0/24")
+	require.Error(t, err)
+	require.FileExists(t, nftPath, "the ruleset was applied before the record failed")
+
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason attached")
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok, "no hints attached")
+	require.Len(t, hints, 1)
+	require.Contains(t, hints[0], "Re-run the same command")
+
+	// Doing what the hint says records the decision.
+	fake.flushErr = nil
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "192.168.50.0/24"))
+	fw := flushedFirewall(t, fake)
+	require.NotNil(t, fw)
+	require.False(t, fw.Disabled, "the re-run must record the enable decision")
 }

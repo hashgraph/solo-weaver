@@ -62,8 +62,9 @@ type BaseHandlerOption[T any] func(*BaseHandler[T])
 
 // WithProfileExtractor returns a BaseHandlerOption that sets the profile extractor function.
 // The extractor is called during flushState to persist the deployment profile into
-// MachineState.Profile.  Handlers whose input types carry no profile (e.g. teleport)
-// should omit this option — the extractor defaults to nil, and no profile is written.
+// MachineState.Profile, so the handler must also manage Profile.  Handlers whose input
+// types carry no profile (e.g. teleport) should omit this option — the extractor
+// defaults to nil, and no profile is written.
 func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
 	return func(h *BaseHandler[T]) {
 		h.ProfileExtractor = fn
@@ -71,11 +72,10 @@ func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
 }
 
 // WithManagedComponents returns a BaseHandlerOption that declares the components a
-// handler owns. The declaration scopes both drift detection (only managed components'
-// producers run) and the state flush (only managed components' files are written).
-// Handlers that omit it manage nothing: they report no drift and write no
-// component file of their own (machine.yaml is still flushed regardless — see
-// HandleIntent).
+// handler owns. The one declaration scopes drift detection (only managed components'
+// producers run), the locks HandleIntent holds for the whole command, and the state
+// flush (only managed components' files are written). Handlers that omit it manage
+// nothing: they report no drift, lock nothing and write no component file.
 func WithManagedComponents[T any](components ...Component) BaseHandlerOption[T] {
 	return func(h *BaseHandler[T]) {
 		h.Managed = components
@@ -107,27 +107,15 @@ func WithLockWait[T any](wait time.Duration) BaseHandlerOption[T] {
 	}
 }
 
-// flushComponentIDs returns the internal/state.ComponentID set this handler
-// flushes: every managed component, plus machine. MachineState
-// (Profile/Firewall) has no single owning handler, so every handler flushes
-// it alongside whatever it manages — that part of the design is unchanged
-// from before per-component locking existed, and stays unscoped/unlocked on
-// purpose (a known, separately-tracked gap, not something this lock covers).
-func (h *BaseHandler[T]) flushComponentIDs() []state.ComponentID {
-	return state.DedupeComponentIDs(append([]state.ComponentID{state.ComponentMachine}, componentIDsOf(h.Managed)...))
+// ownedComponentIDs returns the internal/state.ComponentID of every managed
+// component: the files this handler locks for the whole command, then writes.
+func (h *BaseHandler[T]) ownedComponentIDs() []state.ComponentID {
+	return state.DedupeComponentIDs(componentIDsOf(h.Managed))
 }
 
-// lockedComponentIDs returns the internal/state.ComponentID set this handler
-// locks for the duration of the command: only the components it actually
-// manages. machine is deliberately excluded — it has no single owner, so
-// locking it here would serialize every command in the system against every
-// other one (a block node install and a teleport install would contend on
-// nothing but machine), which defeats the entire point of per-component
-// locking. The per-file hash check in flushComponent is what still protects
-// machine.yaml's content; see the comment on AcquireComponentLocks for why
-// both mechanisms exist.
-func (h *BaseHandler[T]) lockedComponentIDs() []state.ComponentID {
-	return componentIDsOf(h.Managed)
+// Owns reports whether c is one of the handler's managed components.
+func (h *BaseHandler[T]) Owns(c Component) bool {
+	return slices.Contains(componentIDsOf(h.Managed), c.id)
 }
 
 // NewBaseHandler validates the required dependencies and returns a
@@ -139,6 +127,13 @@ func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType, o
 	h := BaseHandler[T]{Runtime: reg, Target: target}
 	for _, opt := range opts {
 		opt(&h)
+	}
+	// The extractor writes MachineState.Profile, which only reaches disk when
+	// the handler flushes the profile file.
+	if h.ProfileExtractor != nil && !h.Owns(Profile) {
+		return BaseHandler[T]{}, errx.WithReason(
+			errorx.AssertionFailed.New("a handler with a profile extractor must manage the profile component"),
+			reasons.Internal)
 	}
 	return h, nil
 }
@@ -188,7 +183,7 @@ func (h *BaseHandler[T]) HandleIntent(
 
 	// Lock every managed component for the whole command, not just the flush
 	// — see internal/state.AcquireComponentLocks.
-	release, err := state.AcquireComponentLocks(h.Runtime.StateDir(), h.lockedComponentIDs(), h.LockWait)
+	release, err := state.AcquireComponentLocks(h.Runtime.StateDir(), h.ownedComponentIDs(), h.LockWait)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +277,7 @@ func (h *BaseHandler[T]) flushState(
 		Inputs: effectiveInputs,
 		// Provenance: the component files this flush writes, so action_history.yaml
 		// records what on disk each action changed (see state.ActionHistory.Components).
-		Components: h.flushComponentIDs(),
+		Components: h.ownedComponentIDs(),
 		OwnedDrift: owned.confirm(fullState, producersOf(h.Managed)...),
 	})
 	if h.KeptAtBaseline != nil && baseline != nil {
@@ -307,9 +302,8 @@ func (h *BaseHandler[T]) flushState(
 		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")
 	}
 
-	// Flush only the files this handler owns (machine + h.Managed) plus the
-	// action history — see flushComponentIDs.
-	if err := h.Runtime.FlushScoped(fullState, h.flushComponentIDs()...); err != nil {
+	// Flush only the files this handler owns, plus the action history.
+	if err := h.Runtime.FlushScoped(fullState, h.ownedComponentIDs()...); err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")
 	}
 

@@ -326,7 +326,7 @@ sudo solo-provisioner block node install -p local \
 ```bash
 solo-provisioner version                # Shows released version
 kubectl get pods -n block-node          # Running
-cat /opt/solo/weaver/state/state.yaml   # State file exists with current schema
+sudo cat /opt/solo/weaver/state/state.yaml   # A released CLI up to v0.34.0 keeps one state file
 ```
 
 ```bash
@@ -349,7 +349,8 @@ sudo solo-provisioner block node upgrade -p local \
 **Verify:**
 ```bash
 kubectl get pods -n block-node          # Running with updated version
-cat /opt/solo/weaver/state/state.yaml   # State file version matches current schema
+sudo cat /opt/solo/weaver/state/provisioner.yaml   # cli.version is the new CLI; cli.stateVersion the current schema
+sudo ls /opt/solo/weaver/state/        # One file per component; state.yaml is now state.yaml.legacy
 # Check logs for migration messages:
 grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 ```

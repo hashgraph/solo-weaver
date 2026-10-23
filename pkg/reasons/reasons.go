@@ -26,4 +26,8 @@ const (
 	// PreconditionNotMet - the system is in the wrong state for this command; change the
 	// state or use a different verb.
 	PreconditionNotMet errx.Reason = "PreconditionNotMet"
+
+	// StateOperationFailed - reading, writing, refreshing or migrating the application
+	// state failed.
+	StateOperationFailed errx.Reason = "StateOperationFailed"
 )

@@ -192,7 +192,7 @@ constant.
 | `InvalidArgument` | A flag value, flag combination or positional argument was rejected | **declared** — `pkg/sanity` |
 | `FileMissing` | A required file, directory, binary or unit file does not exist and will not be created | **declared** — `pkg/sanity` |
 | `Internal` | An invariant breach or bug in solo-weaver, not an operator error | **declared** — `pkg/sanity` |
-| `PermissionDenied` | Superuser privilege required, or file/resource ownership or access denied | **declared** — `pkg/sanity` |
+| `PermissionDenied` | Superuser privilege required, or file/resource ownership or access denied | **declared** — `pkg/sanity`, `internal/state` (a state lock file it cannot open) |
 | `NotInstalled` | A component is absent; the operator must run its install command first | **declared** — `internal/workflows`; reserved for `internal/bll` handlers, `internal/network` ("run `… create` first") |
 | `Unreachable` | An endpoint did not respond: K8s API server, daemon socket, block-node health | reserved — `internal/kube`, daemon steps, `internal/blocknode` |
 | `K8sAPIFailed` | A Kubernetes API operation failed (ConfigMaps, ServiceAccounts, …) | reserved — `internal/kube`, cluster steps |
@@ -202,9 +202,9 @@ constant.
 | `IntegrityCheckFailed` | A checksum, signature or tamper check failed on a downloaded or installed artifact — do **not** retry; report it | reserved — `pkg/software`, `pkg/helm` |
 | `PreflightFailed` | A hardware/OS validation floor was not met (memory, storage, OS version) | reserved — `internal/workflows` preflight, `pkg/hardware` |
 | `ResourceNotReady` | A Kubernetes resource did not converge in time (pod/CRD/PVC); the API call itself succeeded | reserved — `internal/kube`, `internal/blocknode`, workflow steps |
-| `StateOperationFailed` | Reading, writing, refreshing or migrating the application state file failed | reserved — `internal/state`, `internal/rsl`, `internal/bll` |
+| `StateOperationFailed` | Reading, writing, refreshing or migrating the application state file failed | **declared** — `cmd/cli/commands/network/firewall`, `internal/state` (state that cannot be read before a change); reserved for `internal/rsl`, `internal/bll` |
 | `ConfigInvalid` | A configuration **file's contents** are malformed or incomplete (`config.yaml`, `daemon.yaml`) — not a flag value | reserved — `pkg/config`, `cmd/daemon` |
-| `PreconditionNotMet` | The system is in the wrong state for this command (already installed, service already running, resource still referenced); change the state or use a different verb | **declared** — `internal/workflows`; reserved for `internal/bll`, daemon/service steps |
+| `PreconditionNotMet` | The system is in the wrong state for this command (already installed, service already running, resource still referenced); change the state or use a different verb | **declared** — `internal/workflows`, `internal/state` (a state lock held by another command), `internal/bll/blocknode` (install that finds no cluster); reserved for the rest of `internal/bll`, daemon/service steps |
 
 Two mapping calls settled during the #933 audit, recorded so they stay uniform:
 a requested version/platform absent from the embedded catalog is

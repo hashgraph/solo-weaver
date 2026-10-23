@@ -5,8 +5,10 @@ package cluster
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +51,17 @@ var uninstallCmd = &cobra.Command{
 			Any("opts", opts).
 			Msg("Uninstalling Kubernetes Cluster")
 
+		// The teardown deletes every state file (CleanupWeaverFiles), so it
+		// holds every state lock while it runs. Cleanup deletes the .lock files
+		// too, while they are held: a command that starts after that step gets
+		// fresh locks while the teardown finishes. That is safe because nothing
+		// writes state after cleanup.
+		release, err := lockAllState(models.Paths().StateDir)
+		if err != nil {
+			return err
+		}
+		defer release()
+
 		wb := workflows.WithWorkflowExecutionMode(workflows.UninstallClusterWorkflow(), opts)
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
@@ -57,6 +70,32 @@ var uninstallCmd = &cobra.Command{
 		logx.As().Info().Msg("Successfully uninstalled Kubernetes Cluster")
 		return nil
 	},
+}
+
+// lockAllState takes, failing fast, every lock that guards a state file: each
+// component's, provisioner.yaml's, and the startup migrations'. The returned
+// release unwinds them all.
+func lockAllState(dir string) (release func(), err error) {
+	releaseComponents, err := state.AcquireComponentLocks(dir, state.AllComponentIDs, 0)
+	if err != nil {
+		return nil, err
+	}
+	releaseProvisioner, err := state.AcquireProvisionerLock(dir, 0)
+	if err != nil {
+		releaseComponents()
+		return nil, err
+	}
+	releaseMigrations, err := state.AcquireStartupMigrationsLock(dir, 0)
+	if err != nil {
+		releaseProvisioner()
+		releaseComponents()
+		return nil, err
+	}
+	return func() {
+		releaseMigrations()
+		releaseProvisioner()
+		releaseComponents()
+	}, nil
 }
 
 func init() {

@@ -46,8 +46,6 @@ func InstallClusterWorkflow(skipHardwareChecks bool, mr software.MachineRuntime,
 		Steps(
 			preflight,
 			KubernetesSetupWorkflow(mr),
-			// Record the CLI version so a fresh cluster has a machine.yaml; without it the next invocation synthesises the 0.0.0 baseline and re-runs historical startup migrations.
-			steps.RecordProvisionerVersion(),
 		)
 }
 
@@ -108,6 +106,11 @@ func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder
 
 		// init cluster
 		steps.InitializeCluster(),
+		// Record the CLI version as soon as a cluster exists, whichever command
+		// created it, so a later step's failure cannot leave it unrecorded:
+		// without it the next invocation synthesises the 0.0.0 baseline and
+		// re-runs historical startup migrations on this cluster.
+		steps.RecordProvisionerVersion(),
 
 		steps.SetupCilium(mr),
 		steps.StartCilium(),
