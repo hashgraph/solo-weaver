@@ -818,3 +818,80 @@ func TestIsKindNotServed(t *testing.T) {
 		})
 	}
 }
+
+func newOwnedPVC(namespace, name string, owners ...string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion("v1")
+	u.SetKind("PersistentVolumeClaim")
+	u.SetNamespace(namespace)
+	u.SetName(name)
+	var refs []metav1.OwnerReference
+	for _, o := range owners {
+		refs = append(refs, metav1.OwnerReference{APIVersion: SoloOperatorGroup + "/" + SoloOperatorVersion, Kind: "ConsensusCapsule", Name: o})
+	}
+	u.SetOwnerReferences(refs)
+	return u
+}
+
+func pvcOwners(t *testing.T, c *Client, namespace, name string) []metav1.OwnerReference {
+	t.Helper()
+	gvr, _ := ToGroupVersionResource(KindPVC)
+	obj, err := c.Dyn.Resource(gvr).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get PVC %s/%s: %v", namespace, name, err)
+	}
+	return obj.GetOwnerReferences()
+}
+
+func TestRemoveOwnerReference_KeepsOtherOwners(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-0", "other"))
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if err != nil {
+		t.Fatalf("RemoveOwnerReference returned an error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected changed=true")
+	}
+	owners := pvcOwners(t, c, "ns", "data")
+	if len(owners) != 1 || owners[0].Name != "other" {
+		t.Fatalf("expected only the other owner to stay, got %v", owners)
+	}
+}
+
+func TestRemoveOwnerReference_NoMatchingOwnerIsNoOp(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-1"))
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if err != nil {
+		t.Fatalf("RemoveOwnerReference returned an error: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected changed=false when the owner is not referenced")
+	}
+	if owners := pvcOwners(t, c, "ns", "data"); len(owners) != 1 {
+		t.Fatalf("expected the PVC to keep its owner, got %v", owners)
+	}
+}
+
+func TestRemoveOwnerReference_MissingResourceIsNotAnError(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources())
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "missing", "ConsensusCapsule", "capsule-0")
+	if err != nil || changed {
+		t.Fatalf("expected (false, nil) for a missing PVC, got (%v, %v)", changed, err)
+	}
+}
+
+func TestRemoveOwnerReference_UpdateFailureIsExternalError(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-0"))
+	dyn := c.Dyn.(*dynamicfake.FakeDynamicClient)
+	dyn.PrependReactor("update", "persistentvolumeclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, kerrors.NewForbidden(schema.GroupResource{Resource: "persistentvolumeclaims"}, "data", errors.New("rbac"))
+	})
+
+	_, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if !errorx.IsOfType(err, errorx.ExternalError) {
+		t.Fatalf("expected an ExternalError, got %v", err)
+	}
+}

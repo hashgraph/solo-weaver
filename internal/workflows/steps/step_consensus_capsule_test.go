@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -20,7 +21,8 @@ import (
 // fakeCapsuleClient is an in-memory CapsuleKubeClient for testing the config-CR
 // apply policy without a cluster. `existing` maps CR name -> deployed content;
 // `applied` records the CR names passed to ApplyTyped, in order; `deleted`
-// records the CR names DeleteResource removed, in order.
+// records the CR names DeleteResource removed, in order. `pvcs` answers a PVC
+// List; `released` records the PVCs RemoveOwnerReference changed.
 type fakeCapsuleClient struct {
 	existing    map[string]string
 	nested      map[string]map[string]interface{}
@@ -28,6 +30,8 @@ type fakeCapsuleClient struct {
 	appliedObjs []runtime.Object
 	deleted     []string
 	listResult  *unstructured.UnstructuredList
+	pvcs        []unstructured.Unstructured
+	released    []string
 }
 
 func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name string) (bool, error) {
@@ -51,7 +55,10 @@ func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) er
 	return nil
 }
 
-func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+func (f *fakeCapsuleClient) List(_ context.Context, kind kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	if kind == kube.KindPVC {
+		return &unstructured.UnstructuredList{Items: f.pvcs}, nil
+	}
 	if f.listResult != nil {
 		return f.listResult, nil
 	}
@@ -65,6 +72,24 @@ func (f *fakeCapsuleClient) DeleteResource(_ context.Context, _, _, _, name stri
 	delete(f.existing, name)
 	f.deleted = append(f.deleted, name)
 	return true, nil
+}
+
+func (f *fakeCapsuleClient) RemoveOwnerReference(_ context.Context, _ kube.ResourceKind, _, name, ownerKind, ownerName string) (bool, error) {
+	for i := range f.pvcs {
+		if f.pvcs[i].GetName() != name {
+			continue
+		}
+		var kept []metav1.OwnerReference
+		for _, r := range f.pvcs[i].GetOwnerReferences() {
+			if r.Kind != ownerKind || r.Name != ownerName {
+				kept = append(kept, r)
+			}
+		}
+		f.pvcs[i].SetOwnerReferences(kept)
+		f.released = append(f.released, name)
+		return true, nil
+	}
+	return false, nil
 }
 
 func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {

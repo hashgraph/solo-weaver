@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -46,7 +47,10 @@ func (n *noCRDClient) ResourceExists(_ context.Context, _, kind, _, _ string) (b
 	return false, noKindMatch(kind)
 }
 
-func (n *noCRDClient) List(_ context.Context, kind kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+func (n *noCRDClient) List(ctx context.Context, kind kube.ResourceKind, ns string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	if kind == kube.KindPVC {
+		return n.fakeCapsuleClient.List(ctx, kind, ns, opts) // a core kind, served without the operator CRDs
+	}
 	return nil, kerrors.NewNotFound(schema.GroupResource{Group: kube.SoloOperatorGroup, Resource: string(kind)}, "")
 }
 
@@ -58,6 +62,7 @@ func noCRDProvider() CapsuleKubeProvider {
 // Deleting a CRD deletes its CRs, so every uninstall step must succeed without the CRDs.
 func TestConsensusUninstallSteps_SucceedWithoutOperatorCRDs(t *testing.T) {
 	for name, b := range map[string]automa.Builder{
+		"pvcs":       ReleaseConsensusPVCs(uninstallInputs(), noCRDProvider()),
 		"capsule":    DeleteConsensusCapsule(uninstallInputs(), noCRDProvider()),
 		"config CRs": DeleteConsensusConfigCRs(uninstallInputs(), noCRDProvider()),
 		"orbit":      DeleteOrbitIfLast(uninstallInputs(), noCRDProvider()),
@@ -78,6 +83,85 @@ func runUninstallStep(t *testing.T, b automa.Builder) *automa.Report {
 	step, err := b.Build()
 	require.NoError(t, err)
 	return step.Execute(context.Background())
+}
+
+// --- ReleaseConsensusPVCs ---
+
+// pvcOwnedBy builds a PVC whose owners are the named ConsensusCapsules.
+func pvcOwnedBy(name string, capsules ...string) unstructured.Unstructured {
+	u := unstructured.Unstructured{}
+	u.SetName(name)
+	var refs []metav1.OwnerReference
+	for _, c := range capsules {
+		refs = append(refs, metav1.OwnerReference{
+			APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+			Kind:       string(kube.KindConsensusCapsule),
+			Name:       c,
+		})
+	}
+	u.SetOwnerReferences(refs)
+	return u
+}
+
+// The capsule delete garbage-collects every PVC it still owns, so this node's PVCs must be released first.
+func TestReleaseConsensusPVCs_ReleasesOnlyThisNodesPVCs(t *testing.T) {
+	capsule0 := models.ConsensusCapsuleName("orbit", 0)
+	capsule1 := models.ConsensusCapsuleName("orbit", 1)
+	fake := &fakeCapsuleClient{pvcs: []unstructured.Unstructured{
+		pvcOwnedBy(capsule0+"-saved", capsule0),
+		pvcOwnedBy("shared", capsule0, "other-owner"),
+		pvcOwnedBy(capsule1+"-saved", capsule1),
+		pvcOwnedBy("unowned"),
+	}}
+
+	rpt := runUninstallStep(t, ReleaseConsensusPVCs(uninstallInputs(), fake.provider()))
+
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.Equal(t, []string{capsule0 + "-saved", "shared"}, fake.released)
+	assert.Equal(t, "2", rpt.Metadata["releasedCount"])
+	assert.Empty(t, fake.pvcs[0].GetOwnerReferences())
+	require.Len(t, fake.pvcs[1].GetOwnerReferences(), 1, "owners other than the capsule must stay")
+	assert.Equal(t, "other-owner", fake.pvcs[1].GetOwnerReferences()[0].Name)
+	assert.Len(t, fake.pvcs[2].GetOwnerReferences(), 1, "another node's PVC must stay owned by its capsule")
+}
+
+// emptyDir and hostPath nodes have no PVCs.
+func TestReleaseConsensusPVCs_NoPVCs(t *testing.T) {
+	fake := &fakeCapsuleClient{}
+
+	rpt := runUninstallStep(t, ReleaseConsensusPVCs(uninstallInputs(), fake.provider()))
+
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.Equal(t, "0", rpt.Metadata["releasedCount"])
+}
+
+// releaseErrorClient fails every RemoveOwnerReference, like an RBAC denial on PVC update.
+type releaseErrorClient struct {
+	*fakeCapsuleClient
+}
+
+func (r *releaseErrorClient) RemoveOwnerReference(_ context.Context, _ kube.ResourceKind, _, name, _, _ string) (bool, error) {
+	return false, errorx.ExternalError.New("forbidden: cannot update pvc %s", name)
+}
+
+// A failed release must stop the workflow before the capsule delete, so it fails the step.
+func TestReleaseConsensusPVCs_ReleaseErrorFails(t *testing.T) {
+	capsule0 := models.ConsensusCapsuleName("orbit", 0)
+	kc := &releaseErrorClient{&fakeCapsuleClient{pvcs: []unstructured.Unstructured{pvcOwnedBy(capsule0+"-saved", capsule0)}}}
+
+	rpt := runUninstallStep(t, ReleaseConsensusPVCs(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to release PVC")
+}
+
+func TestReleaseConsensusPVCs_ListErrorFails(t *testing.T) {
+	kc := &listErrorClient{&fakeCapsuleClient{}}
+
+	rpt := runUninstallStep(t, ReleaseConsensusPVCs(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to list PVCs")
 }
 
 // --- DeleteConsensusCapsule ---
@@ -211,6 +295,20 @@ func TestDeleteOrbitIfLast_DeletesWhenOnlyThisNodeListed(t *testing.T) {
 	assert.Equal(t, "true", rpt.Metadata[OrbitDeletedByThisStep])
 }
 
+func TestDeleteOrbitIfLast_TimesOutWhenOrbitStays(t *testing.T) {
+	origInterval, origTimeout := capsuleDeletePollInterval, capsuleDeleteTimeout
+	capsuleDeletePollInterval, capsuleDeleteTimeout = 5*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { capsuleDeletePollInterval, capsuleDeleteTimeout = origInterval, origTimeout })
+
+	stuck := &stuckDeleteClient{&fakeCapsuleClient{existing: map[string]string{"orbit": "deployed"}}}
+	provider := func(context.Context) (CapsuleKubeClient, error) { return stuck, nil }
+
+	rpt := runUninstallStep(t, DeleteOrbitIfLast(uninstallInputs(), provider))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "still exists")
+}
+
 func TestDeleteOrbitIfLast_OrbitAlreadyAbsent(t *testing.T) {
 	fake := &fakeCapsuleClient{existing: map[string]string{}}
 
@@ -218,4 +316,64 @@ func TestDeleteOrbitIfLast_OrbitAlreadyAbsent(t *testing.T) {
 
 	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
 	assert.Equal(t, "false", rpt.Metadata[OrbitDeletedByThisStep])
+}
+
+// listErrorClient fails every List, like an API outage during the Orbit check.
+type listErrorClient struct {
+	*fakeCapsuleClient
+}
+
+func (l *listErrorClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	return nil, errorx.ExternalError.New("connection reset")
+}
+
+// deleteErrorClient fails every DeleteResource with a non-NotFound error, like an RBAC denial.
+type deleteErrorClient struct {
+	*fakeCapsuleClient
+}
+
+func (d *deleteErrorClient) DeleteResource(_ context.Context, _, kind, _, _ string) (bool, error) {
+	return false, errorx.ExternalError.New("forbidden: cannot delete %s", kind)
+}
+
+// A failed list must not be read as "no nodes left"; the shared Orbit must stay.
+func TestDeleteOrbitIfLast_ListErrorKeepsOrbit(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{"orbit": "deployed"}}
+	kc := &listErrorClient{fake}
+
+	rpt := runUninstallStep(t, DeleteOrbitIfLast(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to list ConsensusCapsules")
+	assert.Empty(t, fake.deleted, "the Orbit must not be deleted when the list fails")
+	assert.Contains(t, fake.existing, "orbit")
+}
+
+func TestDeleteOrbitIfLast_DeleteErrorFails(t *testing.T) {
+	kc := &deleteErrorClient{&fakeCapsuleClient{existing: map[string]string{"orbit": "deployed"}}}
+
+	rpt := runUninstallStep(t, DeleteOrbitIfLast(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to delete Orbit")
+}
+
+func TestDeleteConsensusCapsule_DeleteErrorFailsWithoutWaiting(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	kc := &deleteErrorClient{&fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}}
+
+	rpt := runUninstallStep(t, DeleteConsensusCapsule(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to delete ConsensusCapsule")
+	assert.NotContains(t, rpt.Error.Error(), "still exists", "a delete error must not be reported as a wait timeout")
+}
+
+func TestDeleteConsensusConfigCRs_DeleteErrorFails(t *testing.T) {
+	kc := &deleteErrorClient{&fakeCapsuleClient{existing: allConfigCRNames(0)}}
+
+	rpt := runUninstallStep(t, DeleteConsensusConfigCRs(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to delete")
 }

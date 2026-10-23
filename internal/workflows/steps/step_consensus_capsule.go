@@ -48,6 +48,7 @@ type CapsuleKubeClient interface {
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+	RemoveOwnerReference(ctx context.Context, kind kube.ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error)
 }
 
 // CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,

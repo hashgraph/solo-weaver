@@ -40,8 +40,10 @@ func (h *UninstallHandler) BuildWorkflow(
 ) (*automa.WorkflowBuilder, error) {
 	ins := inputs.Custom
 
-	// Capsule first: it references the config CRs, and the Orbit check needs it gone.
+	// PVCs are released before the capsule goes, or garbage collection deletes them.
+	// Capsule next: it references the config CRs, and the Orbit check needs it gone.
 	remove := phaseWorkflow("consensus-node-removal", "Consensus Node Removal",
+		steps.ReleaseConsensusPVCs(ins, h.provider),
 		steps.DeleteConsensusCapsule(ins, h.provider),
 		steps.DeleteConsensusConfigCRs(ins, h.provider),
 		steps.DeleteOrbitIfLast(ins, h.provider),
