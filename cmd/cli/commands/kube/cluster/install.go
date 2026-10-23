@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -86,9 +87,27 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
 		}
 
+		// Setting up Kubernetes installs host binaries, so this command owns the
+		// system record: it holds that lock for the whole run, then records what
+		// the host now has. Only the system file is written, so flushing the
+		// whole live state records just its Software and Hardware.
+		owned := []state.ComponentID{state.ComponentSystem}
+		release, err := state.AcquireComponentLocks(sr.Runtime.StateDir(), owned, 0)
+		if err != nil {
+			return err
+		}
+		defer release()
+
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
+		}
+		live, err := sr.Runtime.Refresh(cmd.Context(), true)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install")
+		}
+		if err := sr.Runtime.FlushScoped(live, owned...); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to persist the system record")
 		}
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")

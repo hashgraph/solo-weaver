@@ -155,11 +155,11 @@ func TestUnifiedStateMigration_Execute_PreservesExistingStateFile(t *testing.T) 
 	assert.True(t, cilium.Installed)
 }
 
-// TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly covers
+// TestUnifiedStateMigration_Execute_AlreadySplitHostWritesSystemOnly covers
 // marker files on a host with no state.yaml: the software entries are merged
-// into machine.yaml, no state.yaml is created, and other component files are
+// into system.yaml, no state.yaml is created, and other component files are
 // left as they were.
-func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly(t *testing.T) {
+func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesSystemOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
 	dir := models.Paths().StateDir
@@ -167,12 +167,17 @@ func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly(t *test
 
 	existing := NewState(filepath.Join(dir, StateFileName))
 	existing.MachineState.Profile = "mainnet"
+	existing.MachineState.Software["crio"] = SoftwareState{Name: "cri-o", Version: "1.30.0", Installed: true}
 	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
 	sm, err := NewStateManager(WithState(existing))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushScoped(ComponentMachine, ComponentBlockNode))
-	blockNodeBefore, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
-	require.NoError(t, err)
+	require.NoError(t, sm.FlushScoped(ComponentProfile, ComponentSystem, ComponentBlockNode))
+	untouched := map[ComponentID][]byte{}
+	for _, id := range []ComponentID{ComponentProfile, ComponentBlockNode} {
+		b, err := os.ReadFile(componentFilePath(dir, id))
+		require.NoError(t, err)
+		untouched[id] = b
+	}
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cilium.installed"), []byte("installed at version 1.16.0\n"), 0o644))
 
@@ -181,16 +186,18 @@ func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly(t *test
 	_, err = os.Stat(filepath.Join(dir, StateFileName))
 	require.True(t, os.IsNotExist(err), "no state.yaml must be created on an already-split host")
 
-	b, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	b, err := os.ReadFile(componentFilePath(dir, ComponentSystem))
 	require.NoError(t, err)
-	var machine State
-	require.NoError(t, yaml.Unmarshal(b, &machine))
-	assert.True(t, GetSoftwareState(machine, "cilium").Installed)
-	assert.Equal(t, "mainnet", machine.MachineState.Profile, "existing machine data must survive the merge")
+	var system State
+	require.NoError(t, yaml.Unmarshal(b, &system))
+	assert.True(t, GetSoftwareState(system, "cilium").Installed)
+	assert.True(t, GetSoftwareState(system, "crio").Installed, "existing system data must survive the merge")
 
-	blockNodeAfter, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
-	require.NoError(t, err)
-	assert.Equal(t, string(blockNodeBefore), string(blockNodeAfter), "blocknode.yaml must not be rewritten")
+	for id, before := range untouched {
+		after, err := os.ReadFile(componentFilePath(dir, id))
+		require.NoError(t, err)
+		assert.Equalf(t, string(before), string(after), "%s.yaml must not be rewritten", id)
+	}
 
 	_, err = os.Stat(filepath.Join(dir, "cilium.installed"))
 	assert.True(t, os.IsNotExist(err), "the marker file is removed once merged")

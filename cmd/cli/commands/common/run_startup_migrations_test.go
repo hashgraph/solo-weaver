@@ -223,6 +223,6 @@ func TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce(t *testing.T) 
 		require.NoError(t, yaml.Unmarshal(b, &s))
 		return s
 	}
-	assert.Equal(t, "mainnet", read(state.ComponentMachine).MachineState.Profile)
+	assert.Equal(t, "mainnet", read(state.ComponentProfile).MachineState.Profile)
 	assert.Equal(t, "block-node", read(state.ComponentBlockNode).BlockNodeState.ReleaseInfo.Name)
 }

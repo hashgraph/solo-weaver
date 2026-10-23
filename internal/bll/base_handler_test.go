@@ -36,9 +36,12 @@ func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 // host stands in for the live system: the checkers read teleport from it, and
 // the workflow can change it as a real install would. A non-nil teleportProbe
 // swaps in the real Teleport checker with that cluster probe and no Helm releases.
+// A non-nil software replaces the recorded host binaries, as the machine
+// checker's probe would after an install.
 type host struct {
 	teleport      state.TeleportState
 	teleportProbe reality.ClusterProbe
+	software      map[string]state.SoftwareState
 }
 
 type noReleases struct{}
@@ -155,7 +158,11 @@ func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[
 			return state.ClusterState{Created: true}, nil
 		}),
 		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
-			return sm.State().MachineState, nil
+			ms := sm.State().MachineState
+			if h.software != nil {
+				ms.Software = h.software
+			}
+			return ms, nil
 		}),
 		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
 			return sm.State().BlockNodeState, nil
@@ -352,9 +359,7 @@ func TestHandleIntent_EarlyFailureLogsTheChangeAndKeepsTheBaseline(t *testing.T)
 // called directly — so it actually exercises what lockedComponentIDs locks.
 // A BlockNode-only handler holds its lock for the whole duration of a
 // deliberately slow workflow; a concurrent Teleport-only handler must still
-// complete quickly. Before machine was removed from the locked (as opposed to
-// flushed) set, both commands locked machine too and this test would hang
-// until the slow handler finished.
+// complete quickly, because neither owns a file the other writes.
 func TestHandleIntent_DisjointHandlersDoNotBlockEachOther(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, configuredNodeAgent())
@@ -394,23 +399,159 @@ func TestHandleIntent_DisjointHandlersDoNotBlockEachOther(t *testing.T) {
 	wg.Wait()
 }
 
-// TestFlushComponentIDs_DedupesExplicitMachineRegistration covers a handler
-// that lists state.ComponentMachine in Managed explicitly (redundant with the
-// machine component flushComponentIDs always adds) — flushComponentIDs must
-// still return it once, not twice, so FlushScoped doesn't prepare and write
-// machine.yaml twice in the same call.
-func TestFlushComponentIDs_DedupesExplicitMachineRegistration(t *testing.T) {
-	h := BaseHandler[struct{}]{
-		Managed: []Component{{id: state.ComponentMachine}, Teleport},
+// TestOwnedComponentIDs_AreTheManagedComponentsOnce: the one declared set is
+// what a handler locks and flushes, with a repeated component listed once, so
+// AcquireComponentLocks never flocks the same file twice.
+func TestOwnedComponentIDs_AreTheManagedComponentsOnce(t *testing.T) {
+	h := BaseHandler[struct{}]{Managed: []Component{Teleport, System, Teleport}}
+
+	require.Equal(t, []state.ComponentID{state.ComponentTeleport, state.ComponentSystem}, h.ownedComponentIDs())
+	require.True(t, h.Owns(System))
+	require.False(t, h.Owns(Profile))
+}
+
+// TestNewBaseHandler_ProfileExtractorRequiresTheProfileComponent: the extractor
+// writes MachineState.Profile, which reaches disk only through the profile
+// file, so a handler that would extract a profile it never flushes is refused.
+func TestNewBaseHandler_ProfileExtractorRequiresTheProfileComponent(t *testing.T) {
+	extract := WithProfileExtractor(func(struct{}) string { return "mainnet" })
+
+	_, err := NewBaseHandler[struct{}](&rsl.RuntimeResolver{}, models.TargetBlockNode, extract, owns(BlockNode))
+	require.Error(t, err)
+
+	_, err = NewBaseHandler[struct{}](&rsl.RuntimeResolver{}, models.TargetBlockNode, extract, owns(BlockNode, Profile))
+	require.NoError(t, err)
+}
+
+// TestHandleIntent_FailsFastOnEachOwnedLock: every component a handler owns is
+// locked before the workflow runs, so another command holding any one of them
+// stops this one at once, with nothing run and nothing written.
+func TestHandleIntent_FailsFastOnEachOwnedLock(t *testing.T) {
+	managed := []Component{BlockNode, Profile, Firewall, System}
+	for _, c := range managed {
+		t.Run(string(c.id), func(t *testing.T) {
+			stateFile := filepath.Join(t.TempDir(), "state.yaml")
+			writeState(t, stateFile, configuredNodeAgent())
+			before := readState(t, stateFile)
+
+			release, err := state.AcquireComponentLocks(filepath.Dir(stateFile), []state.ComponentID{c.id}, 0)
+			require.NoError(t, err)
+			defer release()
+
+			ran := false
+			_, err = handleBlockNodeIntentWith(t, stateFile, &host{}, noopIntent{execute: func() { ran = true }}, managed...)
+			require.ErrorContains(t, err, string(c.id)+" is being modified")
+			require.False(t, ran, "the workflow must not run while an owned component is locked")
+			require.Equal(t, before.StateRecord, readState(t, stateFile).StateRecord, "nothing may be written")
+		})
+	}
+}
+
+// handleBlockNodeIntentWithCallback is handleBlockNodeIntentWith plus a flush
+// callback. HandleIntent invokes the callback AFTER its pre-flush
+// Runtime.Refresh (which captures this handler's hash baselines) and BEFORE
+// FlushScoped writes its files — the exact seam where a second process could
+// slip a write in underneath this one.
+func handleBlockNodeIntentWithCallback(
+	t *testing.T,
+	stateFile string,
+	h *host,
+	intent noopIntent,
+	callback func(full *state.State, effInputs models.UserInputs[struct{}]) error,
+	managed ...Component,
+) (*automa.Report, error) {
+	t.Helper()
+	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(newFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+
+	checkers := reality.Checkers{
+		Cluster: funcChecker[state.ClusterState](func() (state.ClusterState, error) {
+			return state.ClusterState{Created: true}, nil
+		}),
+		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
+			return sm.State().MachineState, nil
+		}),
+		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
+			return sm.State().BlockNodeState, nil
+		}),
+		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
+			return map[string]state.ConsensusNodeState{}, nil
+		}),
+		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) {
+			return h.teleport, nil
+		}),
+	}
+	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
+	require.NoError(t, err)
+	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, WithManagedComponents[struct{}](managed...))
+	require.NoError(t, err)
+
+	inputs := models.UserInputs[struct{}]{Common: models.CommonInputs{
+		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
+	}}
+	return base.HandleIntent(context.Background(),
+		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, inputs, intent, callback)
+}
+
+// TestHandleIntent_DisjointHandlersNeverContend: two commands that
+// manage disjoint components never contend on a shared file. This used to fail
+// (#1242): every command flushed the shared, unlocked machine.yaml, so a
+// teleport command writing it inside a block node command's flush window made
+// the block node command abort after its workflow had run. With machine.yaml
+// split by owner (#1245), the teleport node command writes teleport.yaml and
+// system.yaml, neither of which the block node command locks or writes.
+//
+// Handler A (BlockNode-only) blocks in its flush callback — AFTER
+// HandleIntent's pre-flush Refresh captured A's baselines, BEFORE A's
+// FlushScoped. While A is parked there, handler B (Teleport and System, like
+// `teleport node install`) runs to completion. Two separate state managers
+// (one per handler) model two separate processes with independent baselines.
+func TestHandleIntent_DisjointHandlersNeverContend(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	aRefreshed := make(chan struct{}) // A has captured its baselines
+	bDone := make(chan struct{})      // B has finished writing its files
+
+	var aErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, aErr = handleBlockNodeIntentWithCallback(t, stateFile, &host{}, noopIntent{},
+			func(_ *state.State, _ models.UserInputs[struct{}]) error {
+				close(aRefreshed)
+				<-bDone
+				return nil
+			},
+			BlockNode)
+	}()
+
+	// Wait until A is parked between its pre-flush Refresh and its flush.
+	select {
+	case <-aRefreshed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler A never reached its flush callback")
 	}
 
-	ids := h.flushComponentIDs()
+	// B, a teleport node command, installs the teleport binary and writes its
+	// files, so the system record really changes under A.
+	installedTeleport := map[string]state.SoftwareState{"teleport": {Name: "teleport", Installed: true}}
+	_, bErr := handleBlockNodeIntentWith(t, stateFile,
+		&host{teleport: configuredNodeAgent(), software: installedTeleport}, noopIntent{}, Teleport, System)
+	require.NoError(t, bErr, "B (teleport node) should complete independently")
 
-	count := 0
-	for _, id := range ids {
-		if id == state.ComponentMachine {
-			count++
-		}
-	}
-	require.Equal(t, 1, count, "expected ComponentMachine exactly once, got %v", ids)
+	close(bDone) // release A to flush
+	wg.Wait()
+
+	// A BlockNode-only command must not fail because a teleport node command
+	// wrote its own files.
+	require.NoError(t, aErr,
+		"A (blocknode-only) must not fail just because B (teleport node) wrote teleport.yaml and system.yaml")
+
+	// Confirm both components' own files reflect their writes.
+	final := readState(t, stateFile)
+	require.Equal(t, configuredNodeAgent().NodeAgent, final.TeleportState.NodeAgent)
+	require.True(t, final.MachineState.Software["teleport"].Installed, "B's system record must have landed")
 }
