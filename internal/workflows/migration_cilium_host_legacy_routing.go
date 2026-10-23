@@ -21,7 +21,6 @@ package workflows
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/automa-saga/logx"
@@ -70,7 +69,7 @@ func NewCiliumHostLegacyRoutingMigration() *CiliumHostLegacyRoutingMigration {
 }
 
 // Execute re-renders cilium-config.yaml from the updated template and applies it
-// with `cilium upgrade --values <config> --wait`.
+// with `cilium upgrade --version <deployed> --values <config> --wait`.
 //
 // It is idempotent: it no-ops when the cluster is unreachable, when Cilium is not
 // yet installed, or when enable-host-legacy-routing is already "true". It fails
@@ -110,6 +109,11 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 		return nil
 	}
 
+	version, err := prepareCiliumUpgrade(ctx)
+	if err != nil {
+		return err
+	}
+
 	configPath, err := reconfigureCiliumConfig()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to re-render cilium-config.yaml")
@@ -117,20 +121,12 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 
 	logx.As().Info().
 		Str("config", configPath).
+		Str("ciliumVersion", version).
 		Str("from", hlr).
 		Str("to", "true").
 		Msg("Applying cilium-config (enable-host-legacy-routing=true) to existing cluster via 'cilium upgrade'")
 
-	// Verify the cilium binary before executing it.
-	if err := verifyCiliumExecutable(); err != nil {
-		return err
-	}
-
-	upgrade := []string{
-		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --values %s --wait",
-			models.Paths().SandboxBinDir, configPath),
-	}
-	if _, err := runShell(upgrade, ""); err != nil {
+	if _, err := runShell(ciliumUpgradeCommand(version, configPath), ""); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to run 'cilium upgrade' to apply host-legacy-routing")
 	}
 

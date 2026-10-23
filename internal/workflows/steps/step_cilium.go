@@ -3,9 +3,15 @@
 package steps
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
@@ -13,9 +19,15 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 
+	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/internal/cilium"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 func SetupCilium(mr software.MachineRuntime) *automa.WorkflowBuilder {
@@ -176,9 +188,30 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 		})
 }
 
+// ciliumRelease is a Cilium release, the Helm repository serving its chart, and
+// the sha256 of that chart archive.
+type ciliumRelease struct {
+	Version     string
+	ChartRepo   string
+	ChartSHA256 string
+}
+
+// newClusterCilium is the Cilium release a new cluster gets. Clusters that
+// already run Cilium keep their release: installCiliumCNI leaves them alone.
+var newClusterCilium = ciliumRelease{
+	Version:     "1.20.2",
+	ChartRepo:   "https://helm.cilium.io",
+	ChartSHA256: "b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e",
+}
+
+const (
+	ciliumChartRepoAlias = "cilium"
+	ciliumChartRef       = ciliumChartRepoAlias + "/cilium"
+)
+
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		installCiliumCNI("1.18.1"), // we cannot write in pure Go because we need to run cilium binary
+		installCiliumCNI(newClusterCilium, kube.NewClient),
 		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -193,41 +226,68 @@ func StartCilium() *automa.WorkflowBuilder {
 		})
 }
 
+// installCiliumCNI installs Cilium only on a cluster with no trace of it. Any
+// existing Cilium resource, healthy or not, means an install already happened,
+// and installing again could overwrite or duplicate it. A failed lookup is
+// never read as "absent".
+//
 // TODO to be replaced with helm invocation
-func installCiliumCNI(version string) *automa.StepBuilder {
+func installCiliumCNI(release ciliumRelease, newClient kube.ClientProvider) *automa.StepBuilder {
+	version := release.Version
+
 	return automa.NewStepBuilder().WithId("install-cilium-cni").
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, "installing Cilium CNI...")
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			meta := map[string]string{}
+
+			// Decide from the Kubernetes API before touching the cilium binary, so
+			// an existing cluster is left alone even if the CLI is missing or bad.
+			kc, err := newClient()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.Decorate(err, "cannot reach the Kubernetes API to check for an existing Cilium, so 'cilium install' was not run"),
+					reasons.K8sAPIFailed,
+					"Check that the admin kubeconfig exists and the API server is up: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))
+			}
+
+			existing, err := cilium.DetectInstallation(ctx, kc.Dyn)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(
+					errorx.Decorate(err, "cannot tell whether Cilium is already installed, so 'cilium install' was not run")))
+			}
+			if existing.Found() {
+				meta[AlreadyInstalled] = "true"
+				meta[CiliumResources] = strings.Join(existing.Resources, ",")
+				logx.As().Info().Str("step_id", stp.Id()).Strs("resources", existing.Resources).
+					Msg("Cilium is already installed; leaving it unchanged")
+				return automa.SkippedReport(stp,
+					automa.WithDetail(fmt.Sprintf("Cilium is already installed (found %s); leaving it unchanged", strings.Join(existing.Resources, ", "))),
+					automa.WithMetadata(meta))
+			}
+
 			logx.As().Info().Str("step_id", stp.Id()).Str("software", "cilium-cni").Str("version", version).Msgf("cilium-cni version: %s", version)
 
 			// Verify the cilium binary before executing it.
 			if err := verifyExecutables("cilium"); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
 
-			// Prepare metadata for reporting
-			meta := map[string]string{}
-
-			// Check if Cilium CNI is already installed/running using cilium status
-			statusCheck := []string{
-				fmt.Sprintf("%s/cilium status", models.Paths().SandboxBinDir),
+			chartDir, removeChart, err := fetchCiliumChart(ctx, release)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
-			output, err := automa_steps.RunBashScript(statusCheck, "")
-			if err == nil && output != "" {
-				// If cilium status succeeds, Cilium is already installed and running
-				meta[AlreadyInstalled] = "true"
-				return automa.SkippedReport(stp, automa.WithDetail("Cilium CNI is already installed and running"), automa.WithMetadata(meta))
-			}
+			defer removeChart()
 
-			// Install Cilium CNI
+			// --chart-directory overrides --version, so the chart that is
+			// installed is exactly the one verified above.
 			installScript := []string{
-				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --values %s/etc/weaver/cilium-config.yaml",
-					models.Paths().SandboxBinDir, version, models.Paths().SandboxDir),
+				fmt.Sprintf("/usr/bin/sudo %s/cilium install --wait --version \"%s\" --chart-directory %s --values %s/etc/weaver/cilium-config.yaml",
+					models.Paths().SandboxBinDir, version, shellQuote(chartDir), models.Paths().SandboxDir),
 			}
-			_, err = automa_steps.RunBashScript(installScript, "")
+			_, err = runCiliumScript(installScript, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
 			}
@@ -255,13 +315,185 @@ func installCiliumCNI(version string) *automa.StepBuilder {
 			scripts := []string{
 				fmt.Sprintf("/usr/bin/sudo %s/cilium uninstall", models.Paths().SandboxBinDir),
 			}
-			_, err := automa_steps.RunBashScript(scripts, "")
+			_, err := runCiliumScript(scripts, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
 			return automa.SuccessReport(stp)
 		})
+}
+
+// runCiliumScript runs cilium CLI commands. A var so tests can record them.
+var runCiliumScript = automa_steps.RunBashScript
+
+// fetchCiliumChart returns the unpacked, verified chart directory and a func
+// that removes it. A var so tests can avoid the network.
+var fetchCiliumChart = func(ctx context.Context, release ciliumRelease) (string, func(), error) {
+	hm, err := newHelmManager()
+	if err != nil {
+		return "", nil, err
+	}
+	return pullVerifiedCiliumChart(ctx, hm, release, os.TempDir())
+}
+
+// pullVerifiedCiliumChart downloads the release's chart into a fresh private
+// directory under base, checks it against the pinned checksum and unpacks it
+// for `cilium install --chart-directory`. The CLI bundles charts only up to its
+// own default release and would otherwise download a newer one itself, without
+// any checksum check.
+//
+// Only root can change the work directory, so the chart `cilium install` reads
+// is the one that was verified.
+func pullVerifiedCiliumChart(ctx context.Context, hm helm.Manager, release ciliumRelease, base string) (string, func(), error) {
+	workDir, err := privateWorkDir(base, "solo-provisioner-cilium-chart-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(workDir) }
+
+	chartDir, err := pullAndUnpackCiliumChart(ctx, hm, release, workDir)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return chartDir, cleanup, nil
+}
+
+func pullAndUnpackCiliumChart(ctx context.Context, hm helm.Manager, release ciliumRelease, workDir string) (string, error) {
+	if _, err := hm.AddRepo(ciliumChartRepoAlias, release.ChartRepo, helm.RepoAddOptions{}); err != nil {
+		return "", chartDownloadError(err, release)
+	}
+
+	archive, err := hm.PullAndVerify(ctx, workDir, ciliumChartRef, release.Version, "sha256", release.ChartSHA256)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrChecksumMismatch) {
+			return "", chartIntegrityError(err, release)
+		}
+		return "", chartDownloadError(err, release)
+	}
+
+	return unpackVerifiedChart(archive, release, workDir)
+}
+
+// unpackVerifiedChart unpacks exactly the bytes it has checked: the archive is
+// read once, hashed against the pinned digest, and its Chart.yaml must name the
+// release, because --chart-directory makes the CLI ignore --version.
+func unpackVerifiedChart(archive string, release ciliumRelease, dest string) (string, error) {
+	data, err := os.ReadFile(archive)
+	if err != nil {
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to read the Cilium chart %s", archive), dest)
+	}
+
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); !strings.EqualFold(got, release.ChartSHA256) {
+		return "", chartIntegrityError(errorx.IllegalState.New(
+			"Cilium chart %s has sha256 %s, expected %s", archive, got, release.ChartSHA256), release)
+	}
+
+	ch, err := loader.LoadArchive(bytes.NewReader(data))
+	if err != nil {
+		return "", chartIntegrityError(errorx.IllegalFormat.Wrap(err, "cannot load the Cilium chart %s", archive), release)
+	}
+	if ch.Metadata.Name != "cilium" || ch.Metadata.Version != release.Version {
+		return "", chartIntegrityError(errorx.IllegalState.New(
+			"Cilium chart %s is %s %s, expected cilium %s", archive, ch.Metadata.Name, ch.Metadata.Version, release.Version), release)
+	}
+
+	if err := chartutil.Expand(dest, bytes.NewReader(data)); err != nil {
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to unpack the verified Cilium chart %s", archive), dest)
+	}
+	return filepath.Join(dest, ch.Metadata.Name), nil
+}
+
+// privateWorkDir creates a 0700 directory under base and checks that no other
+// user can replace it or any directory above it: each must be owned by root or
+// by this process, and writable by group or others only with the sticky bit.
+// It returns the canonical path it checked, with no symlinks, so every later
+// use of the directory names exactly that path.
+func privateWorkDir(base, pattern string) (string, error) {
+	canonicalBase, err := filepath.Abs(base)
+	if err == nil {
+		canonicalBase, err = filepath.EvalSymlinks(canonicalBase)
+	}
+	if err != nil {
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to resolve %s", base), base)
+	}
+
+	dir, err := os.MkdirTemp(canonicalBase, pattern)
+	if err != nil {
+		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to create a work directory under %s", canonicalBase), canonicalBase)
+	}
+
+	resolved, err := filepath.EvalSymlinks(dir)
+	switch {
+	case err != nil:
+		err = errorx.ExternalError.Wrap(err, "failed to resolve %s", dir)
+	case resolved != dir:
+		err = errorx.IllegalState.New("%s resolves to %s; the work directory path must not change", dir, resolved)
+	default:
+		err = checkNotReplaceable(dir)
+	}
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", errx.Decorate(err, reasons.PreconditionNotMet,
+			"Use a temporary directory only root can modify, for example unset TMPDIR so /tmp is used",
+			fmt.Sprintf("Check the owners and modes of %s and its parents: namei -l %s", canonicalBase, canonicalBase))
+	}
+	return dir, nil
+}
+
+// shellQuote quotes s as one word for the bash scripts the cilium CLI runs in.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func checkNotReplaceable(dir string) error {
+	for p := dir; ; p = filepath.Dir(p) {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return errorx.ExternalError.Wrap(err, "failed to inspect %s", p)
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok {
+			return errorx.IllegalState.New("cannot read the owner of %s", p)
+		}
+		if st.Uid != 0 && int(st.Uid) != os.Geteuid() {
+			return errorx.IllegalState.New("%s is owned by uid %d, so another user could replace the Cilium chart", p, st.Uid)
+		}
+		mode := fi.Mode()
+		writableByOthers := mode.Perm()&0o022 != 0
+		if p == dir && mode.Perm()&0o077 != 0 {
+			return errorx.IllegalState.New("%s has mode %s, expected no group or other access", p, mode.Perm())
+		}
+		if writableByOthers && mode&os.ModeSticky == 0 {
+			return errorx.IllegalState.New("%s has mode %s: writable by group or others without the sticky bit, so the Cilium chart could be replaced", p, mode.Perm())
+		}
+		if parent := filepath.Dir(p); parent == p {
+			return nil
+		}
+	}
+}
+
+func chartIntegrityError(err error, release ciliumRelease) error {
+	return errx.Decorate(
+		errorx.Decorate(err, "the downloaded Cilium chart failed verification, so 'cilium install' was not run"),
+		reasons.IntegrityCheckFailed,
+		fmt.Sprintf("The pinned sha256 for cilium %s is %s", release.Version, release.ChartSHA256),
+		fmt.Sprintf("Compare with the digest %s publishes for cilium %s: curl -s %s/index.yaml", release.ChartRepo, release.Version, release.ChartRepo))
+}
+
+func unpackError(err error, dir string) error {
+	return errx.Decorate(err, reasons.PreconditionNotMet,
+		fmt.Sprintf("Check that %s is writable and the disk has free space: df -h %s", dir, dir))
+}
+
+func chartDownloadError(err error, release ciliumRelease) error {
+	return errx.Decorate(
+		errorx.Decorate(err, "failed to download the Cilium %s chart, so 'cilium install' was not run", release.Version),
+		reasons.DownloadFailed,
+		fmt.Sprintf("Check that %s is reachable from this host, including any proxy: curl -sSI %s/index.yaml", release.ChartRepo, release.ChartRepo),
+		"Re-run 'solo-provisioner kube cluster install' once the repository is reachable")
 }
 
 // Cilium agent config surfaces the Bandwidth Manager guard inspects. The

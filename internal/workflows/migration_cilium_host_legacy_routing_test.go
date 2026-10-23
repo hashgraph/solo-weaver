@@ -47,13 +47,16 @@ func TestCiliumHostLegacyRoutingMigration_Execute(t *testing.T) {
 	origReconfigure := reconfigureCiliumConfig
 	origShell := runShell
 	origVerify := verifyCiliumExecutable
+	origVersion := installedCiliumVersion
 	t.Cleanup(func() {
 		kubernetesInstalled = origK8s
 		readHostLegacyRoutingState = origState
 		reconfigureCiliumConfig = origReconfigure
 		runShell = origShell
 		verifyCiliumExecutable = origVerify
+		installedCiliumVersion = origVersion
 	})
+	installedCiliumVersion = func(context.Context) (string, error) { return "1.18.1", nil }
 
 	m := NewCiliumHostLegacyRoutingMigration()
 	mctx := newMctx("0.20.0", ciliumHostLegacyRoutingMinVersion)
