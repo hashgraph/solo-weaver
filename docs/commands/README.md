@@ -10,6 +10,7 @@ Every `solo-provisioner` command, by stack.
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
 | `daemon service` | [below](#daemon-service) | The `solo-provisioner-daemon` systemd service |
+| `consensus node` | [below](#consensus-node) | Install and uninstall a consensus node (experimental) |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
 | `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
 | `version` | [below](#utilities) | Version information |
@@ -97,6 +98,10 @@ sudo solo-provisioner daemon service install --from-config=<path>
 sudo solo-provisioner daemon service uninstall
 sudo solo-provisioner daemon service check          # alias: status
 sudo solo-provisioner daemon service start|stop
+
+# CONSENSUS NODE (experimental: needs --experimental)
+sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>]
+sudo solo-provisioner consensus node uninstall --experimental --namespace=<ns> --node-id=<id> [--force]
 
 # CONSENSUS MIGRATION SOAK
 sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
@@ -347,6 +352,58 @@ sudo solo-provisioner daemon service start
 sudo solo-provisioner daemon service stop
 sudo solo-provisioner daemon service uninstall
 ```
+
+---
+
+## Consensus node
+
+> **Experimental.** The `consensus` group is hidden and runs only with `--experimental` or
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1`. Under `sudo`, use the flag, because `sudo` drops the
+> environment.
+
+`consensus node install` creates the solo-operator CRs of one node: the Orbit, 11 config CRs and the
+ConsensusCapsule. For the full install procedure, see
+[acceptance-tests §F](../dev/acceptance-tests.md#f-consensus-node-deployment).
+
+Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus node` subcommand. The
+other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
+`consensus node install --profile local`, not `consensus node --profile local install`.
+
+### Uninstall
+
+`consensus node uninstall` removes one node:
+
+1. It removes the ConsensusCapsule ownerReference from the node's PVCs. The solo-operator makes the
+   capsule the owner of the PVCs, so without this step Kubernetes deletes the PVCs with the capsule.
+2. It deletes the node's ConsensusCapsule and waits until the capsule is gone.
+3. It deletes the node's 11 config CRs.
+4. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
+5. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.
+
+The command keeps the gossip and gRPC TLS Secrets, the PVCs and the hostPath data. When the last
+node is removed, the solo-operator also deletes the orbit's `NetworkGenesis` CR together with the
+Orbit. The genesis ConfigMaps that it generated (for example `genesis-config`) stay. To install the
+network again, run `consensus network genesis` again after the nodes are installed.
+When the node is already gone, the command succeeds and changes nothing.
+
+```bash
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0
+
+# Skip the confirmation prompt
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0 --force
+```
+
+`--node-id` is required, because `0` is a valid ID. The global `--force` and `--non-interactive`
+flags skip the confirmation prompt.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--node-id` | yes | Consensus node ID (0-based). |
+| `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
+
+> **The node stops.** Deleting the ConsensusCapsule removes the node's pod. The Secrets, PVC data
+> and hostPath data stay. To remove them, delete them manually. emptyDir data (the default volume
+> type) is deleted with the pod.
 
 ---
 

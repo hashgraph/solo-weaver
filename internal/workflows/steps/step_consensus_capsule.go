@@ -47,6 +47,8 @@ type CapsuleKubeClient interface {
 	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
+	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+	RemoveOwnerReference(ctx context.Context, kind kube.ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error)
 }
 
 // CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,
@@ -90,7 +92,7 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again — pass --force to re-apply", inputs.NodeId, capsuleName),
 					reasons.PreconditionNotMet,
 					"Pass --force to re-apply the install over the existing node",
-					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
+					fmt.Sprintf("Or run 'solo-provisioner consensus node uninstall --namespace %s --node-id %d' first", inputs.Namespace, inputs.NodeId),
 					"Or use 'solo-provisioner consensus node upgrade' for day-2 changes (planned)")))
 			}
 
@@ -170,7 +172,7 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 						reasons.PreconditionNotMet,
 						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
 						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
-						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
+						"To change the Orbit, uninstall every consensus node on it (the last uninstall deletes the Orbit)")))
 				}
 				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{

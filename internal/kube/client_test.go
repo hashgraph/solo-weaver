@@ -14,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/testutil"
 	"github.com/joomcode/errorx"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -789,5 +790,145 @@ func TestDeleteResource_UnmappedKind(t *testing.T) {
 	}
 	if !errorx.IsOfType(err, errorx.IllegalArgument) {
 		t.Fatalf("expected an IllegalArgument error, got %v", err)
+	}
+	if !IsKindNotServed(err) {
+		t.Fatalf("expected IsKindNotServed to detect the absent CRD, got %v", err)
+	}
+}
+
+func TestIsKindNotServed(t *testing.T) {
+	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "operator.solo.hiero.org", Kind: "Orbit"}}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"bare no-match", noMatch, true},
+		{"errorx-wrapped no-match", errorx.IllegalArgument.Wrap(noMatch, "mapping"), true},
+		{"other error", errorx.ExternalError.New("connection refused"), false},
+		{"not found", kerrors.NewNotFound(schema.GroupResource{Resource: "orbits"}, "x"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsKindNotServed(tt.err); got != tt.want {
+				t.Fatalf("IsKindNotServed(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+type fakeResourceChecker struct {
+	exists bool
+	err    error
+}
+
+func (f fakeResourceChecker) ResourceExists(context.Context, string, string, string, string) (bool, error) {
+	return f.exists, f.err
+}
+
+func TestResourceAbsent(t *testing.T) {
+	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "operator.solo.hiero.org", Kind: "Orbit"}}
+	connErr := errorx.ExternalError.New("connection refused")
+
+	tests := []struct {
+		name       string
+		checker    fakeResourceChecker
+		wantAbsent bool
+		wantErr    error
+	}{
+		{"exists", fakeResourceChecker{exists: true}, false, nil},
+		{"absent", fakeResourceChecker{exists: false}, true, nil},
+		{"kind not served", fakeResourceChecker{err: errorx.IllegalArgument.Wrap(noMatch, "mapping")}, true, nil},
+		{"other error", fakeResourceChecker{err: connErr}, false, connErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			absent, err := ResourceAbsent(context.Background(), tt.checker, "operator.solo.hiero.org/v1alpha1", "Orbit", "", "x")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if absent != tt.wantAbsent {
+				t.Fatalf("absent = %v, want %v", absent, tt.wantAbsent)
+			}
+		})
+	}
+}
+
+func newOwnedPVC(namespace, name string, owners ...string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion("v1")
+	u.SetKind("PersistentVolumeClaim")
+	u.SetNamespace(namespace)
+	u.SetName(name)
+	var refs []metav1.OwnerReference
+	for _, o := range owners {
+		refs = append(refs, metav1.OwnerReference{APIVersion: SoloOperatorGroup + "/" + SoloOperatorVersion, Kind: "ConsensusCapsule", Name: o})
+	}
+	u.SetOwnerReferences(refs)
+	return u
+}
+
+func pvcOwners(t *testing.T, c *Client, namespace, name string) []metav1.OwnerReference {
+	t.Helper()
+	gvr, _ := ToGroupVersionResource(KindPVC)
+	obj, err := c.Dyn.Resource(gvr).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get PVC %s/%s: %v", namespace, name, err)
+	}
+	return obj.GetOwnerReferences()
+}
+
+func TestRemoveOwnerReference_KeepsOtherOwners(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-0", "other"))
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if err != nil {
+		t.Fatalf("RemoveOwnerReference returned an error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected changed=true")
+	}
+	owners := pvcOwners(t, c, "ns", "data")
+	if len(owners) != 1 || owners[0].Name != "other" {
+		t.Fatalf("expected only the other owner to stay, got %v", owners)
+	}
+}
+
+func TestRemoveOwnerReference_NoMatchingOwnerIsNoOp(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-1"))
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if err != nil {
+		t.Fatalf("RemoveOwnerReference returned an error: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected changed=false when the owner is not referenced")
+	}
+	if owners := pvcOwners(t, c, "ns", "data"); len(owners) != 1 {
+		t.Fatalf("expected the PVC to keep its owner, got %v", owners)
+	}
+}
+
+func TestRemoveOwnerReference_MissingResourceIsNotAnError(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources())
+
+	changed, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "missing", "ConsensusCapsule", "capsule-0")
+	if err != nil || changed {
+		t.Fatalf("expected (false, nil) for a missing PVC, got (%v, %v)", changed, err)
+	}
+}
+
+func TestRemoveOwnerReference_UpdateFailureIsExternalError(t *testing.T) {
+	c := newFakeClient(t, coreOnlyAPIResources(), newOwnedPVC("ns", "data", "capsule-0"))
+	dyn := c.Dyn.(*dynamicfake.FakeDynamicClient)
+	dyn.PrependReactor("update", "persistentvolumeclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, kerrors.NewForbidden(schema.GroupResource{Resource: "persistentvolumeclaims"}, "data", errors.New("rbac"))
+	})
+
+	_, err := c.RemoveOwnerReference(context.Background(), KindPVC, "ns", "data", "ConsensusCapsule", "capsule-0")
+	if !errorx.IsOfType(err, errorx.ExternalError) {
+		t.Fatalf("expected an ExternalError, got %v", err)
 	}
 }

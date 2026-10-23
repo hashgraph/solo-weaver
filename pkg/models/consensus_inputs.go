@@ -26,6 +26,10 @@ const (
 	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
 	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
 
+	// Default node identity for --account-id and --weight.
+	ConsensusDefaultAccountId = "0.0.3"
+	ConsensusDefaultWeight    = 500
+
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
 	ConsensusDefaultJavaHeapMax   = "2g"
@@ -374,10 +378,21 @@ func ConsensusCapsuleName(orbitName string, nodeId int64) string {
 	return fmt.Sprintf("%s-consensus-%d", orbitName, nodeId)
 }
 
-// Validate checks that required fields are present.
+// Validate checks the fields that every action requires.
 func (c *ConsensusNodeInputs) Validate() error {
 	if c.Namespace == "" {
 		return errorx.IllegalArgument.New("--namespace is required")
+	}
+	return nil
+}
+
+// ValidateFor also checks the fields that the action requires. Only install sets the node identity.
+func (c *ConsensusNodeInputs) ValidateFor(action ActionType) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if action != ActionInstall {
+		return nil
 	}
 	if c.AccountId == "" {
 		return errorx.IllegalArgument.New("--account-id is required")

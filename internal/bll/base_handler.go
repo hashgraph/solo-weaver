@@ -79,7 +79,7 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 		return errorx.IllegalArgument.New("intent target mismatch: expected %s, got %s", target, intent.Target)
 	}
 
-	if err := inputs.Validate(); err != nil {
+	if err := inputs.ValidateFor(intent.Action); err != nil {
 		return errorx.IllegalArgument.New("invalid user inputs: %v", err)
 	}
 
