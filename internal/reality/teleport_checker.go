@@ -58,8 +58,17 @@ func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState
 	return ts, nil
 }
 
+// newTeleportNodeAgentInstaller is a package var so tests can report an
+// installed agent without real binaries.
+var newTeleportNodeAgentInstaller = software.NewTeleportNodeAgentInstaller
+
+// refreshNodeAgentState records the installed node agent's version by the same
+// rules as the teleport entry in MachineState.Software: a recorded catalog
+// version is kept, anything else is identified by checksum, and an unknown
+// version is left empty. The agent's own persisted version is not read back,
+// because earlier releases stored the catalog default there.
 func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState, error) {
-	installer, err := software.NewTeleportNodeAgentInstaller()
+	installer, err := newTeleportNodeAgentInstaller()
 	if err != nil {
 		return state.TeleportNodeAgentState{}, err
 	}
@@ -69,11 +78,15 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 		return state.TeleportNodeAgentState{}, err
 	}
 
-	return state.TeleportNodeAgentState{
+	agent := state.TeleportNodeAgentState{
 		Installed:  st.Installed,
 		Configured: st.Configured,
-		Version:    st.Version,
-	}, nil
+	}
+	if st.Installed {
+		prev, found := recordedSoftware(t.sm.State().MachineState.Software, software.TeleportBinaryName, software.TeleportBinaryName)
+		agent.Version = installedVersion(software.TeleportBinaryName, prev, found)
+	}
+	return agent, nil
 }
 
 // refreshClusterAgentState records the cluster agent as absent only when Helm,

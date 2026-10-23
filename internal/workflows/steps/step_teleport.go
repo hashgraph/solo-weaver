@@ -4,11 +4,15 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -16,9 +20,14 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
+	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
 )
+
+// teleportClusterAgent is the catalog name of the Teleport kube agent chart.
+const teleportClusterAgent = "teleport-cluster-agent"
 
 const (
 	SetupTeleportStepId                = "setup-teleport"
@@ -290,6 +299,14 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 				return automa.SkippedReport(stp, automa.WithDetail("teleport is already installed"), automa.WithMetadata(meta))
 			}
 
+			leftovers, err := teleportNodeAgentLeftovers(installer.Version())
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(teleportFilesUnreadable(err)), automa.WithMetadata(meta))
+			}
+			if len(leftovers) > 0 {
+				return automa.FailureReport(stp, automa.WithError(teleportLeftoversRefused(installer.Version(), leftovers)), automa.WithMetadata(meta))
+			}
+
 			err = installer.Download()
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(err), automa.WithMetadata(meta))
@@ -340,6 +357,41 @@ func installTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder
 		})
 }
 
+// teleportNodeAgentLeftovers and teleportNodeAgentConfiguration are package vars
+// so tests can describe the host's Teleport files without creating them.
+var (
+	teleportNodeAgentLeftovers     = software.TeleportNodeAgentLeftovers
+	teleportNodeAgentConfiguration = software.TeleportNodeAgentConfiguration
+)
+
+func teleportLeftoversRefused(version string, files []string) error {
+	return errx.Decorate(
+		errorx.IllegalState.New("the Teleport node agent is only partly installed, so installing Teleport %s over it was refused; these files were left unchanged: %s",
+			version, strings.Join(files, ", ")),
+		reasons.PreconditionNotMet,
+		"To keep the existing agent, restore its missing binaries from the Teleport release it runs, then re-run 'solo-provisioner teleport node install'",
+		teleportReplaceHint)
+}
+
+func teleportPartlyConfiguredRefused(files []string) error {
+	return errx.Decorate(
+		errorx.IllegalState.New("the Teleport node agent is only partly configured, so it was not configured again; these files were left unchanged: %s",
+			strings.Join(files, ", ")),
+		reasons.PreconditionNotMet,
+		fmt.Sprintf("To keep the existing agent, restore its missing command links in %s (each points to the binary of the same name in %s), then re-run 'solo-provisioner teleport node install'",
+			models.SystemBinDir, models.Paths().SandboxBinDir),
+		teleportReplaceHint)
+}
+
+const teleportReplaceHint = "To replace it, run 'solo-provisioner teleport node uninstall', delete any of the files above that remain, then re-run 'solo-provisioner teleport node install'"
+
+func teleportFilesUnreadable(err error) error {
+	return errx.Decorate(
+		errorx.Decorate(err, "cannot check this host for an existing Teleport node agent"),
+		reasons.PreconditionNotMet,
+		fmt.Sprintf("Check that solo-provisioner runs as root and can read %s, %s and /etc/teleport", models.Paths().SandboxBinDir, models.SystemBinDir))
+}
+
 // configureTeleportNodeAgent configures the Teleport node agent (following kubelet pattern)
 // This runs "teleport configure" to generate the config file and creates the systemd service
 func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Builder {
@@ -370,6 +422,17 @@ func configureTeleportNodeAgent(provider teleportInstallerProvider) automa.Build
 			if configured {
 				meta[AlreadyConfigured] = "true"
 				return automa.SkippedReport(stp, automa.WithDetail("teleport is already configured"), automa.WithMetadata(meta))
+			}
+
+			// Configure rewrites the command links before teleport configure can
+			// refuse an existing config file, so a partly configured agent must be
+			// refused here.
+			files, err := teleportNodeAgentConfiguration(installer.Version())
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(teleportFilesUnreadable(err)), automa.WithMetadata(meta))
+			}
+			if len(files) > 0 {
+				return automa.FailureReport(stp, automa.WithError(teleportPartlyConfiguredRefused(files)), automa.WithMetadata(meta))
 			}
 
 			err = installer.Configure()
@@ -450,61 +513,60 @@ func CreateTeleportNamespace() automa.Builder {
 }
 
 func InstallTeleportKubeAgent() automa.Builder {
-	spec := chartSpec("teleport-cluster-agent")
+	return installTeleportKubeAgent(newHelmManager)
+}
+
+func installTeleportKubeAgent(newManager func() (helm.Manager, error)) automa.Builder {
+	spec := chartSpec(teleportClusterAgent)
 	return automa.NewStepBuilder().WithId(InstallTeleportStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Teleport
 
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			rel, err := deployedRelease(hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if rel != nil {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("Teleport agent is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
 
-			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
+			chart, verified, err := teleportKubeAgentChart(cfg.Version)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Determine chart version: explicit --version flag overrides the catalog default.
-			// Per-component version overrides remain a legacy carve-out for teleport
-			// (see issue #589 "Out of scope: removing the teleport --version flag").
-			chartVersion := cfg.Version
-			expectedChecksum := spec.Checksum
-			if chartVersion == "" {
-				chartVersion = spec.Version
-			} else if chartVersion != spec.Version {
-				// Operator pinned a non-catalog version; we cannot verify integrity
-				// because the catalog only records checksums for declared versions.
-				expectedChecksum = ""
+			_, err = hm.AddRepo(chart.RepoAlias, chart.Repo, helm.RepoAddOptions{})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			l.Info().Str("path", cfg.ValuesFile).Msg("Using Teleport values file")
 
-			var chartRef string
-			if expectedChecksum != "" {
-				localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, chartVersion, spec.Algorithm, expectedChecksum)
+			chartRef, chartVersion := chart.Chart, chart.Version
+			if verified {
+				localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), chart.Chart, chart.Version, chart.Algorithm, chart.Checksum)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
-				chartRef = localChart
-				chartVersion = ""
+				chartRef, chartVersion = localChart, ""
 			} else {
-				chartRef = spec.Chart
-				l.Warn().Str("version", chartVersion).Msg("Skipping chart integrity verification for operator-pinned Teleport version (not in catalog)")
+				l.Warn().
+					Str("version", chart.Version).
+					Strs("catalogVersions", catalogChartVersions(teleportClusterAgent)).
+					Msg("The requested Teleport chart version is not in the infrastructure catalog, so its integrity is not verified")
 			}
+			meta["chartVersion"] = chart.Version
+			meta["chartVerified"] = strconv.FormatBool(verified)
 
 			_, err = hm.InstallChart(
 				ctx,
@@ -536,7 +598,7 @@ func InstallTeleportKubeAgent() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -558,6 +620,34 @@ func InstallTeleportKubeAgent() automa.Builder {
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Teleport agent installed successfully")
 		})
+}
+
+// teleportKubeAgentChart returns the kube agent chart to install for the
+// requested version, and whether it can be checked against a catalog checksum.
+// Only an explicit version the catalog does not list comes back unverified.
+func teleportKubeAgentChart(requested string) (*helmChartSpec, bool, error) {
+	if requested == "" {
+		spec, err := resolveCatalogChart(teleportClusterAgent)
+		return spec, err == nil, err
+	}
+
+	listed, err := catalogListsChartVersion(teleportClusterAgent, requested)
+	if err != nil {
+		return nil, false, err
+	}
+	if listed {
+		spec, err := resolveCatalogChartVersion(teleportClusterAgent, requested)
+		return spec, err == nil, err
+	}
+
+	spec, err := resolveCatalogChart(teleportClusterAgent)
+	if err != nil {
+		return nil, false, err
+	}
+	unverified := *spec
+	unverified.Version = requested
+	unverified.Algorithm, unverified.Checksum = "", ""
+	return &unverified, false, nil
 }
 
 func IsTeleportPodsReady() automa.Builder {
