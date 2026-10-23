@@ -1424,6 +1424,29 @@ func ProbeCluster() (configured, reachable bool) {
 	return true, true
 }
 
+// ProbeAPIServer asks the API server named in kubeconfigPath for /readyz and
+// gives up after timeout. Unlike ProbeCluster it reads only that file, so a
+// missing or stale default kubeconfig cannot hide a cluster that exists.
+func ProbeAPIServer(kubeconfigPath string, timeout time.Duration) error {
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return errorx.IllegalArgument.Wrap(err, "failed to load kubeconfig %s", kubeconfigPath)
+	}
+	cfg.Timeout = timeout
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to create discovery client")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if _, err := disco.RESTClient().Get().AbsPath("/readyz").DoRaw(ctx); err != nil {
+		return errorx.ExternalError.Wrap(err, "API server %s is not ready", cfg.Host)
+	}
+	return nil
+}
+
 // resolveKubeconfigPath returns the kubeconfig path that loadKubeConfig would
 // use, without actually loading it.  Returns "" if no path can be determined.
 func resolveKubeconfigPath() string {
