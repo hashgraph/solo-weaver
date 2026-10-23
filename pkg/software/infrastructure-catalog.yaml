@@ -465,11 +465,14 @@ cluster:
   chart: 'grafana/alloy'
   namespace: 'grafana-alloy'
   release: 'grafana-alloy'
-  default: "1.4.0"
+  default: "1.13.1"
   versions:
     1.4.0:
       algorithm: 'sha256'
       checksum: 'b1adbb6344301b8353c9d5d39bb5de196e3735441ca1742913d60922a96bffcb'
+    1.13.1:
+      algorithm: 'sha256'
+      checksum: '6c2b7df23e39438bb11f1e1fcf19eb9eb7c8bfeab7d49b7c975b6212abd0f99a'
 
 - name: teleport-cluster-agent
   type: classic
@@ -541,11 +544,14 @@ cluster:
   chart: 'oci://ghcr.io/prometheus-community/charts/prometheus-operator-crds'
   namespace: 'grafana-alloy'
   release: 'prometheus-operator-crds'
-  default: "24.0.1"
+  default: "32.0.1"
   versions:
     24.0.1:
       algorithm: 'sha256'
       checksum: 'e940c5ce899ec16aa6d868ecf49e2c21193728bef3a0a453b29e05e2d1601288'
+    32.0.1:
+      algorithm: 'sha256'
+      checksum: '6a5f0e0d7e53f0c9336d6ff56fbf4ff506a1a0d8251a26567b11cbbdef2c01b2'
 
 - name: solo-operator
   type: oci

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -22,12 +23,14 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 const (
 	SetupAlloyStepId                = "setup-alloy"
 	PreflightAlloyPhaseId           = "preflight-alloy"
 	PreCheckAlloyStepId             = "precheck-alloy"
+	CheckAlloyReleasesStepId        = "check-alloy-releases"
 	InstallAlloyStepId              = "install-alloy"
 	InstallNodeExporterStepId       = "install-node-exporter"
 	DeployAlloyConfigStepId         = "deploy-alloy-config"
@@ -79,6 +82,7 @@ func TeardownAlloyStack() *automa.WorkflowBuilder {
 func PreflightAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(PreflightAlloyPhaseId).Steps(
 		preCheckAlloy(),
+		checkAlloyReleases(newHelmManager),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Preflight Checks")
@@ -230,15 +234,86 @@ func preCheckAlloy() automa.Builder {
 		})
 }
 
+// checkAlloyReleases reads the Alloy, Prometheus Operator CRD and node-exporter
+// releases before anything is changed. An Alloy release must run a chart
+// version this build supports; the other two must be deployed or absent. Any
+// other state stops the run here rather than after the ConfigMap is replaced.
+func checkAlloyReleases(newManager func() (helm.Manager, error)) automa.Builder {
+	return automa.NewStepBuilder().WithId(CheckAlloyReleasesStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			hm, err := newManager()
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			spec, existing, err := resolveDeployedChart(hm, "alloy")
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			if _, err := alloy.ChartJSONValues(spec.Version); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.Internal)))
+			}
+			for _, name := range []string{"prometheus-operator-crds", "node-exporter"} {
+				if _, err := deployedRelease(hm, chartSpec(name)); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+			}
+
+			meta := map[string]string{"alloyChartVersion": spec.Version}
+			if existing {
+				meta["alloyInstalled"] = "true"
+			}
+			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking existing Alloy releases")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Existing Alloy releases cannot be changed safely")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Existing Alloy releases checked")
+		})
+}
+
+// manifestApplier is the part of the kube client the Alloy manifest steps use.
+type manifestApplier interface {
+	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+	ApplyManifest(ctx context.Context, manifestPath string) error
+	DeleteManifest(ctx context.Context, manifestPath string) error
+}
+
+func newManifestApplier() (manifestApplier, error) {
+	k, err := kube.NewClient()
+	if err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+// applyManifestOwned applies a manifest for one object and reports whether the
+// object was created by this call rather than updated.
+func applyManifestOwned(ctx context.Context, k manifestApplier, manifestPath, apiVersion, kind, namespace, name string) (bool, error) {
+	existed, err := k.ResourceExists(ctx, apiVersion, kind, namespace, name)
+	if err != nil {
+		return false, err
+	}
+	if err := k.ApplyManifest(ctx, manifestPath); err != nil {
+		return false, err
+	}
+	return !existed, nil
+}
+
 // SetupAlloy returns a workflow builder that sets up Grafana Alloy for observability.
 func SetupAlloy() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(SetupAlloyStepId).Steps(
 		createAlloyNamespace(),
-		installNodeExporter(),
+		installNodeExporter(newHelmManager),
 		isNodeExporterPodsReady(),
-		deployAlloyConfig(),
-		installAlloy(),
-		deployBlockNodeMonitoring(),
+		deployAlloyConfig(newManifestApplier),
+		installAlloy(newHelmManager),
+		deployBlockNodeMonitoring(newManifestApplier),
 		isAlloyPodsReady(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -253,23 +328,25 @@ func SetupAlloy() *automa.WorkflowBuilder {
 		})
 }
 
-func installNodeExporter() automa.Builder {
+func installNodeExporter(newManager func() (helm.Manager, error)) automa.Builder {
 	spec := chartSpec("node-exporter")
 	return automa.NewStepBuilder().WithId(InstallNodeExporterStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			// Whatever chart a deployed release runs is left alone: clusters
+			// built by earlier releases still run the Bitnami chart.
+			rel, err := deployedRelease(hm, spec)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if isInstalled {
+			if rel != nil {
 				meta[AlreadyInstalled] = "true"
 				l.Info().Msg("Node Exporter is already installed, skipping installation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
@@ -308,7 +385,7 @@ func installNodeExporter() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -404,33 +481,35 @@ func createAlloyNamespace() automa.Builder {
 		})
 }
 
-func installAlloy() automa.Builder {
-	spec := chartSpec("alloy")
+func installAlloy(newManager func() (helm.Manager, error)) automa.Builder {
+	defaults := chartSpec("alloy")
 	return automa.NewStepBuilder().WithId(InstallAlloyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
 
 			l := logx.As()
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
 			meta := map[string]string{}
 
-			// Check if already installed to provide better logging and track for rollback
-			isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
+			// An existing release is reconfigured at the chart version it runs,
+			// never moved to the catalog default.
+			spec, existing, err := resolveDeployedChart(hm, "alloy")
 			if err != nil {
-				l.Warn().Err(err).Msg("Failed to check if Grafana Alloy is installed, proceeding with install/upgrade")
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			chartValues, err := alloy.ChartJSONValues(spec.Version)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.Internal)))
 			}
 
-			// Track whether this is a fresh install (for rollback purposes)
-			isFreshInstall := !isInstalled
-
-			if isInstalled {
-				l.Info().Msg("Grafana Alloy is already installed, upgrading configuration")
+			if existing {
+				l.Info().Str("chartVersion", spec.Version).Msg("Grafana Alloy is already installed, reconfiguring it at its chart version")
 			} else {
-				l.Info().Msg("Installing Grafana Alloy")
+				l.Info().Str("chartVersion", spec.Version).Msg("Installing Grafana Alloy")
 			}
 
 			_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
@@ -463,8 +542,6 @@ func installAlloy() automa.Builder {
 				l.Info().Msg("Enabling hostNetwork for Alloy to access localhost services")
 			}
 
-			// Use DeployChart for idempotent install/upgrade
-			// This will install if not present, or upgrade if already installed
 			_, err = hm.DeployChart(
 				ctx,
 				spec.Release,
@@ -473,7 +550,8 @@ func installAlloy() automa.Builder {
 				spec.Namespace,
 				helm.DeployChartOptions{
 					ValueOpts: &values.Options{
-						Values: helmValues,
+						Values:     helmValues,
+						JSONValues: chartValues,
 					},
 					CreateNamespace: true,
 					Atomic:          true,
@@ -485,13 +563,13 @@ func installAlloy() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Only set InstalledByThisStep if this was a fresh install
-			// This prevents rollback from uninstalling a pre-existing release
-			if isFreshInstall {
+			meta["chartVersion"] = spec.Version
+			// Rollback may only uninstall a release this run created.
+			if existing {
+				meta["upgraded"] = "true"
+			} else {
 				meta[InstalledByThisStep] = "true"
 				stp.State().Local().Set(InstalledByThisStep, true)
-			} else {
-				meta["upgraded"] = "true"
 			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
@@ -501,12 +579,12 @@ func installAlloy() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newHelmManager()
+			hm, err := newManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = hm.UninstallChart(spec.Release, spec.Namespace)
+			err = hm.UninstallChart(defaults.Release, defaults.Namespace)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -525,14 +603,14 @@ func installAlloy() automa.Builder {
 		})
 }
 
-func deployAlloyConfig() automa.Builder {
+func deployAlloyConfig(newClient func() (manifestApplier, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(DeployAlloyConfigStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
 			meta := map[string]string{}
 
 			l := logx.As()
-			k, err := kube.NewClient()
+			k, err := newClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -570,16 +648,21 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Apply the ConfigMap
-			err = k.ApplyManifest(ctx, configMapManifestPath)
+			created, err := applyManifestOwned(ctx, k, configMapManifestPath, "v1", "ConfigMap", chartSpec("alloy").Namespace, alloy.ConfigMapName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			meta[InstalledByThisStep] = "true"
 			meta["modules"] = strings.Join(moduleNames, ",")
-			stp.State().Local().Set(InstalledByThisStep, true)
-			stp.State().Local().Set("configMapManifestPath", configMapManifestPath)
+			// Rollback deletes the ConfigMap only if this run created it. An
+			// existing one keeps the new content: its old content is not saved.
+			if created {
+				meta[InstalledByThisStep] = "true"
+				stp.State().Local().Set(InstalledByThisStep, true)
+				stp.State().Local().Set("configMapManifestPath", configMapManifestPath)
+			} else {
+				meta["updated"] = "true"
+			}
 
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
@@ -588,7 +671,7 @@ func deployAlloyConfig() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			k, err := kube.NewClient()
+			k, err := newClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -623,7 +706,7 @@ func deployAlloyConfig() automa.Builder {
 // This step assumes the ServiceMonitor CRD has already been installed (for example via the
 // Prometheus Operator CRDs workflow). Block-node log collection uses file-based discovery
 // (loki.source.file) instead of the PodLogs CRD, so no PodLogs resource is needed.
-func deployBlockNodeMonitoring() automa.Builder {
+func deployBlockNodeMonitoring(newClient func() (manifestApplier, error)) automa.Builder {
 	return automa.NewStepBuilder().WithId(DeployBlockNodeMonitoringStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			cfg := config.Get().Alloy
@@ -640,7 +723,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			k, err := kube.NewClient()
+			k, err := newClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -666,16 +749,21 @@ func deployBlockNodeMonitoring() automa.Builder {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = k.ApplyManifest(ctx, serviceMonitorPath)
+			created, err := applyManifestOwned(ctx, k, serviceMonitorPath, "monitoring.coreos.com/v1", "ServiceMonitor", blockNodeNamespace, alloy.BlockNodeServiceMonitorName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			stp.State().Local().Set("serviceMonitorPath", serviceMonitorPath)
 
 			l.Info().Str("namespace", blockNodeNamespace).Msg("Block Node ServiceMonitor deployed for metrics discovery")
 
-			meta[InstalledByThisStep] = "true"
-			stp.State().Local().Set(InstalledByThisStep, true)
+			// Rollback deletes the ServiceMonitor only if this run created it.
+			if created {
+				meta[InstalledByThisStep] = "true"
+				stp.State().Local().Set(InstalledByThisStep, true)
+				stp.State().Local().Set("serviceMonitorPath", serviceMonitorPath)
+			} else {
+				meta["updated"] = "true"
+			}
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -683,7 +771,7 @@ func deployBlockNodeMonitoring() automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			k, err := kube.NewClient()
+			k, err := newClient()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
