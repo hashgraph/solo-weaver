@@ -211,13 +211,13 @@ No `InitMigrations()` to update. The migration runs automatically on the next CL
 
 `RunStartupMigrations()` (called from `RunPersistentPreRun` before every command) drives a single ordered pass over all `"startup"`-scoped migrations:
 
-1. Reads the provisioner version last written to disk via `state.ReadProvisionerVersionFromDisk()` — this is the *installed* CLI version.
+1. Reads the provisioner version last written to disk via `state.ReadProvisionerVersionFromDisk()`: the *installed* CLI version, from `provisioner.yaml` (or from `state.yaml` on a host the per-component split has not reached yet).
 2. Gets the *current* CLI version from `version.Number()`.
 3. Builds a `migration.Context` with both version keys populated.
 4. Calls `migration.GetApplicableMigrations(migration.ScopeStartup, mctx)`.
 5. Executes the workflow with rollback on error.
 
-After the first command runs, `stateManager.Refresh()` stamps `ProvisionerState.Version = version.Number()` to disk, so subsequent invocations of the same binary version see no applicable CLI-version-gated migrations.
+After a successful pass on a host with Kubernetes installed, `state.PersistProvisionerVersion()` records the running version in `provisioner.yaml`. Kubernetes setup records it too, when a command creates the cluster. Subsequent invocations of the same binary version then see no applicable CLI-version-gated migrations.
 
 ## Block-Node Upgrade Workflow
 

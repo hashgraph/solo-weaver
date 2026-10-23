@@ -31,13 +31,9 @@ func unmarshalStateDoc(data []byte, doc interface{}) error {
 
 // readComponentOrLegacyBytes returns id's persisted file if it exists, else
 // falls back to a legacy single state.yaml so these readers also work on a
-// host that has not run the per-component split migration yet. This matters
-// because ReadProvisionerVersionFromDisk is read to decide which startup
-// migrations apply — including the split migration itself — before any
-// migration for this invocation has run, so the component file may not exist
-// yet even though the host has a perfectly good recorded version in the
-// legacy file. The two files share the same YAML shape (both marshal a
-// State), so parsing either with the same doc type works unchanged.
+// host that has not run the per-component split migration yet. The two files
+// share the same YAML shape (both marshal a State), so parsing either with the
+// same doc type works unchanged.
 func readComponentOrLegacyBytes(id ComponentID) ([]byte, error) {
 	data, err := readComponentFileBytes(id)
 	if err != nil || data != nil {
@@ -82,12 +78,13 @@ func readLegacyStateFileBytes() ([]byte, error) {
 // tests can reuse the exact same struct definitions and YAML tags, preventing
 // drift between production code and test assertions.
 
-// ProvisionerVersionDoc is the minimal YAML shape for extracting the provisioner version.
+// ProvisionerVersionDoc is the YAML shape of the provisioner fields that a
+// legacy single state.yaml kept inside its state record. They now live in
+// provisioner.yaml.
 type ProvisionerVersionDoc struct {
 	State struct {
-		Provisioner struct {
-			Version string `yaml:"version"`
-		} `yaml:"provisioner"`
+		Version     string          `yaml:"version"`
+		Provisioner ProvisionerInfo `yaml:"provisioner"`
 	} `yaml:"state"`
 }
 
@@ -148,11 +145,21 @@ type SoftwareVersionsDoc struct {
 	} `yaml:"state"`
 }
 
-// ReadProvisionerVersionFromDisk extracts the provisioner version from the
-// on-disk machine state file without loading the full state into memory.
-// Returns an empty string when that file does not exist.
+// ReadProvisionerVersionFromDisk returns the CLI version recorded in
+// provisioner.yaml, or "" when nothing is recorded. It is read to decide which
+// startup migrations apply — including the per-component split itself —
+// before any of them has run, so on a host the split has not reached yet it
+// falls back to the legacy single state.yaml.
 func ReadProvisionerVersionFromDisk() (string, error) {
-	data, err := readComponentOrLegacyBytes(ComponentMachine)
+	rec, ok, err := readProvisionerRecord(models.Paths().StateDir)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return rec.CLI.Version, nil
+	}
+
+	data, err := readLegacyStateFileBytes()
 	if err != nil || data == nil {
 		return "", err
 	}

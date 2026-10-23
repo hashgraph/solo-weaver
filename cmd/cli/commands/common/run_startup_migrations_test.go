@@ -152,7 +152,7 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+	persistProvisionerVersion = func() error {
 		persistCalled++
 		return errors.New("simulated persist failure")
 	}

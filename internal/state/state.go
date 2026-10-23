@@ -3,11 +3,8 @@
 package state
 
 import (
-	"os"
 	"path"
 
-	"github.com/automa-saga/logx"
-	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -27,16 +24,15 @@ const StateFileName = "state.yaml"
 //	stateFile: /opt/solo/weaver/state/state.yaml
 //	lastSync: "2026-03-17T..."
 //	state:
-//	  version: v2
 //	  machineState:
 //	    profile: mainnet
 //	    ...
 //	  clusterState: ...
 //	  blockNodeState: ...
 //
-// Go field promotion still applies — all StateRecord fields (Version,
-// MachineState, …) are accessible directly as state.Version, state.MachineState,
-// etc. without going through state.StateRecord.
+// Go field promotion still applies — all StateRecord fields (MachineState,
+// ClusterState, …) are accessible directly as state.MachineState,
+// state.ClusterState, etc. without going through state.StateRecord.
 type State struct {
 	// Envelope — excluded from hash; never add domain data here
 	Hash      string     `yaml:"hash,omitempty"     json:"hash,omitempty"`     // digest of StateRecord
@@ -45,8 +41,8 @@ type State struct {
 	LastSync  htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was flushed to disk
 
 	// Domain content — serialised as a nested "state" object for readability.
-	// The named YAML/JSON tag does not affect Go field promotion: state.Version,
-	// state.MachineState, etc. all still resolve directly.
+	// The named YAML/JSON tag does not affect Go field promotion: state.MachineState,
+	// state.ClusterState, etc. all still resolve directly.
 	StateRecord `yaml:"state" json:"state"`
 }
 
@@ -57,13 +53,11 @@ type State struct {
 // intentionally excluded from hashing because they are bookkeeping metadata,
 // not provisioning state.
 type StateRecord struct {
-	Version          string                        `yaml:"version" json:"version"`
-	ProvisionerState ProvisionerInfo               `yaml:"provisioner" json:"provisioner"`
-	MachineState     MachineState                  `yaml:"machineState" json:"machineState"`
-	ClusterState     ClusterState                  `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState   BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
-	ConsensusNodes   map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
-	TeleportState    TeleportState                 `yaml:"teleportState" json:"teleportState"`
+	MachineState   MachineState                  `yaml:"machineState" json:"machineState"`
+	ClusterState   ClusterState                  `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
+	ConsensusNodes map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
+	TeleportState  TeleportState                 `yaml:"teleportState" json:"teleportState"`
 }
 
 // Hashable returns the canonical input for the content hash: the domain
@@ -179,11 +173,15 @@ type OwnedDriftRecord struct {
 	Unobserved bool `yaml:"unobserved,omitempty" json:"unobserved,omitempty"`
 }
 
+// ProvisionerInfo describes a solo-provisioner binary, as recorded in
+// provisioner.yaml.
 type ProvisionerInfo struct {
 	Version    string `yaml:"version" json:"version"`
 	Commit     string `yaml:"commit" json:"commit"`
 	GoVersion  string `yaml:"goversion" json:"goversion"`
 	Executable string `yaml:"executable" json:"executable"` // location of the executable
+	// StateVersion is the state model version (ModelVersion) this binary writes.
+	StateVersion string `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
 }
 
 type MachineState struct {
@@ -387,30 +385,16 @@ func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {
 func NewState(stateFile string) State {
 	p := models.Paths().Clone()
 
-	// set provisioner state based on current version and executable path, this is informational only and does not impact any functionality
-	exePath, err := os.Executable()
-	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to get executable path for provisioner state, using empty string")
-	}
-
 	if stateFile == "" {
 		stateFile = path.Join(p.StateDir, StateFileName)
 	}
 
-	versionInfo := version.Get()
 	return State{
 		// Envelope fields
 		StateFile: stateFile,
 		LastSync:  htime.Time{},
 		// Domain content
 		StateRecord: StateRecord{
-			Version: ModelVersion,
-			ProvisionerState: ProvisionerInfo{
-				Version:    versionInfo.Version,
-				Commit:     versionInfo.Commit,
-				GoVersion:  versionInfo.GoVersion,
-				Executable: exePath,
-			},
 			MachineState:   NewMachineState(),
 			ClusterState:   NewClusterState(),
 			BlockNodeState: NewBlockNodeState(),

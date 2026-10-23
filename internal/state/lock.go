@@ -98,6 +98,24 @@ func AcquireStartupMigrationsLock(dir string, wait time.Duration) (release func(
 	return unlock, nil
 }
 
+// AcquireProvisionerLock takes the lock that guards provisioner.yaml. It is
+// never part of a command's owned components: each writer holds it only
+// around its own write, except `kube cluster uninstall`, which deletes the file.
+func AcquireProvisionerLock(dir string, wait time.Duration) (release func(), err error) {
+	path := filepath.Join(dir, ".provisioner.lock")
+	unlock, acquired, pid, err := acquireOneLock(path, wait)
+	if err != nil {
+		return func() {}, lockOpenError(ProvisionerFileName, path, err)
+	}
+	if !acquired {
+		return func() {}, errx.Decorate(
+			errorx.IllegalState.New("%s is being modified (held by %s)", ProvisionerFileName, lockHolder(pid)),
+			reasons.PreconditionNotMet,
+			waitForHolderHint(pid, "to finish"))
+	}
+	return unlock, nil
+}
+
 // acquireOneLock tries to lock path, retrying every lockPollInterval until
 // wait has elapsed. wait == 0 still tries exactly once. A lock still held
 // elsewhere once wait runs out is not an error: acquired is false and pid is
