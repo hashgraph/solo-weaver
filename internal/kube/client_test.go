@@ -819,6 +819,43 @@ func TestIsKindNotServed(t *testing.T) {
 	}
 }
 
+type fakeResourceChecker struct {
+	exists bool
+	err    error
+}
+
+func (f fakeResourceChecker) ResourceExists(context.Context, string, string, string, string) (bool, error) {
+	return f.exists, f.err
+}
+
+func TestResourceAbsent(t *testing.T) {
+	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "operator.solo.hiero.org", Kind: "Orbit"}}
+	connErr := errorx.ExternalError.New("connection refused")
+
+	tests := []struct {
+		name       string
+		checker    fakeResourceChecker
+		wantAbsent bool
+		wantErr    error
+	}{
+		{"exists", fakeResourceChecker{exists: true}, false, nil},
+		{"absent", fakeResourceChecker{exists: false}, true, nil},
+		{"kind not served", fakeResourceChecker{err: errorx.IllegalArgument.Wrap(noMatch, "mapping")}, true, nil},
+		{"other error", fakeResourceChecker{err: connErr}, false, connErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			absent, err := ResourceAbsent(context.Background(), tt.checker, "operator.solo.hiero.org/v1alpha1", "Orbit", "", "x")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if absent != tt.wantAbsent {
+				t.Fatalf("absent = %v, want %v", absent, tt.wantAbsent)
+			}
+		})
+	}
+}
+
 func newOwnedPVC(namespace, name string, owners ...string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion("v1")

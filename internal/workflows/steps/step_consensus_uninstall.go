@@ -180,11 +180,11 @@ func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, 
 	defer ticker.Stop()
 
 	for {
-		exists, err := kc.ResourceExists(ctx, apiVersion, kind, namespace, name)
-		if err != nil && !kube.IsKindNotServed(err) {
+		absent, err := kube.ResourceAbsent(ctx, kc, apiVersion, kind, namespace, name)
+		if err != nil {
 			return errorx.ExternalError.Wrap(err, "failed to check %s %s", kind, name)
 		}
-		if !exists {
+		if absent {
 			return nil
 		}
 		if time.Now().After(deadline) {

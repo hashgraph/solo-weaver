@@ -79,34 +79,23 @@ func pruneUninstalledConsensusState(
 			return nil
 		}
 
-		capsuleGone, err := resourceGone(ctx, kc, kube.KindConsensusCapsule, ins.Namespace, capsuleName)
-		if err != nil || !capsuleGone {
+		apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+		capsuleAbsent, err := kube.ResourceAbsent(ctx, kc, apiVersion, string(kube.KindConsensusCapsule), ins.Namespace, capsuleName)
+		if err != nil || !capsuleAbsent {
 			l.Warn().Err(err).Str("capsule", capsuleName).Msg("ConsensusCapsule not confirmed gone; keeping consensus node in state")
 			return nil
 		}
 		delete(full.ConsensusNodes, stateKey)
 		l.Info().Msg("Removed consensus node from state")
 
-		orbitGone, err := resourceGone(ctx, kc, kube.KindOrbit, "", ins.OrbitName)
-		if err != nil || !orbitGone {
+		orbitAbsent, err := kube.ResourceAbsent(ctx, kc, apiVersion, string(kube.KindOrbit), "", ins.OrbitName)
+		if err != nil || !orbitAbsent {
 			return nil
 		}
 		delete(full.ConsensusOrbits, ins.OrbitName)
 		l.Info().Str("orbit", ins.OrbitName).Msg("Removed Orbit from state")
 		return nil
 	}
-}
-
-// resourceGone reports whether a solo-operator CR is absent. An absent CRD counts as absent.
-func resourceGone(ctx context.Context, kc steps.CapsuleKubeClient, kind kube.ResourceKind, namespace, name string) (bool, error) {
-	exists, err := kc.ResourceExists(ctx, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kind), namespace, name)
-	if err != nil {
-		if kube.IsKindNotServed(err) {
-			return true, nil
-		}
-		return false, err
-	}
-	return !exists, nil
 }
 
 // NewUninstallHandler creates a new UninstallHandler backed by the live cluster.
