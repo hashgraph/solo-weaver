@@ -356,7 +356,7 @@ var persistProvisionerVersion = state.PersistProvisionerVersion
 const startupMigrationsLockWait = 5 * time.Minute
 
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
-// It is a no-op when no migrations apply.
+// It is a no-op when no migrations apply and the recorded version is current.
 func RunStartupMigrations(ctx context.Context) error {
 	onDiskCLIVersion, mctx, migrations, err := pendingStartupMigrations()
 	if err != nil {
@@ -379,35 +379,43 @@ func RunStartupMigrations(ctx context.Context) error {
 	}
 	currentCLIVersion := version.Get().Version
 
-	if len(migrations) > 0 {
-		migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
-		wf, err := migrationWf.Build()
-		if err != nil {
-			return err
-		}
-
-		logx.As().Info().Msg("Running startup migrations...")
-		report := wf.Execute(ctx)
-		if report.Error != nil {
-			return report.Error
-		}
-		logx.As().Info().Msg("Startup migrations completed successfully")
-	} else {
-		logx.As().Debug().Msg("No startup migrations needed")
-	}
-
 	// Record the running version so boundary migrations aren't re-run next time and
 	// pre-state-tracking clusters get a provisioner.yaml. Persist regardless of whether a
 	// migration applied — coupling it to that would stop backfilling once nothing
 	// crosses the baseline. Gate on a version change and a provisioned host so a
 	// fresh machine keeps no state file. Best-effort.
+	var stamp func() (bool, error)
 	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
-		if _, err := persistProvisionerVersion(); err != nil {
-			logx.As().Warn().Err(err).
-				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
+		stamp = func() (bool, error) { return persistProvisionerVersion() }
+	}
+	if len(migrations) == 0 && stamp == nil {
+		logx.As().Debug().Msg("No startup migrations needed")
+		return nil
+	}
+
+	var wf automa.Step
+	if len(migrations) > 0 {
+		if wf, err = migration.MigrationsToWorkflow(migrations, mctx).Build(); err != nil {
+			return err
 		}
 	}
-	return nil
+
+	pass := &state.StartupPass{FromVersion: onDiskCLIVersion, ToVersion: currentCLIVersion, Pending: migrations}
+	return state.RecordStartupPass(models.Paths().StateDir, pass, stamp, func() (state.StartupPassRun, error) {
+		if wf == nil {
+			logx.As().Debug().Msg("No startup migrations needed")
+			return state.StartupPassRun{}, nil
+		}
+		logx.As().Info().Msg("Running startup migrations...")
+		report := wf.Execute(ctx)
+		run := state.StartupPassRun{Outcome: steps.OutcomeOf(report)}
+		run.Migrations, run.Failed = migration.RanIDs(report)
+		if report.Error != nil {
+			return run, report.Error
+		}
+		logx.As().Info().Msg("Startup migrations completed successfully")
+		return run, nil
+	})
 }
 
 // pendingStartupMigrations reads the provisioner version last written to disk

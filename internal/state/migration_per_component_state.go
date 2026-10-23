@@ -48,6 +48,19 @@ func NewPerComponentStateMigration() *PerComponentStateMigration {
 }
 
 func (m *PerComponentStateMigration) ID() string { return "per-component-state" }
+
+// stateFiles is every state file Execute or Rollback can write in dir: the
+// legacy state.yaml and the copies it leaves, every component file, and
+// provisioner.yaml.
+func (m *PerComponentStateMigration) stateFiles(dir string) []string {
+	files := []string{
+		filepath.Join(dir, StateFileName),
+		filepath.Join(dir, StateFileName+legacyStateBackupSuffix),
+		filepath.Join(dir, StateFileName+".diverged-*"),
+		provisionerFilePath(dir),
+	}
+	return append(files, componentFiles(dir)...)
+}
 func (m *PerComponentStateMigration) Description() string {
 	return "Split the single state.yaml into one file per component (profile, firewall, system, cluster, blocknode, consensus, teleport) plus provisioner.yaml"
 }

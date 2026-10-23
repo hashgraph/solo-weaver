@@ -23,11 +23,25 @@ import (
 // over-match but never miss a call.
 var writerCalls = []string{
 	"Commit", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
-	"AcquireComponentLocks", "AcquireProvisionerLock",
+	"RecordStartupPass", "AcquireComponentLocks", "AcquireProvisionerLock",
+}
+
+// fileCalls write, remove or move a file. They count only in the files that
+// handle the state directory directly, since elsewhere they touch everything
+// else: the state package and the uninstall cleanup. (Other packages have
+// their own atomicWriteFile.)
+var fileCalls = []string{"atomicWriteFile", "WriteFile", "Remove", "RemoveAll", "Rename"}
+
+func handlesStateDir(rel string) bool {
+	return (strings.HasPrefix(rel, "internal/state/") && !strings.Contains(strings.TrimPrefix(rel, "internal/state/"), "/")) ||
+		rel == "internal/workflows/steps/step_cluster_uninstall.go"
 }
 
 const exemptStartupMigration = "exempt: a startup migration writes under .startup-migrations.lock, " +
 	"which its invocation takes before any command locks a component"
+
+const inStartupPass = "inside RecordStartupPass, which records the pass and compares the files the migration " +
+	"declares: TestStateMigrations_TouchOnlyTheirDeclaredFiles"
 
 // writerRow says how one writer site holds the lock for what it writes, and
 // how what it writes reaches the action history. Each names the test that
@@ -89,14 +103,39 @@ var stateWriters = map[string]writerRow{
 		history: "the entry of the command whose workflow ran the version step names provisioner: TestProvisionerVersionPersisted_ReadsTheStepsMetadata",
 	},
 
-	"internal/state/migration_per_component_state.go:Execute": {
-		lock:    exemptStartupMigration,
-		history: "none yet: the startup pass is not recorded",
+	// The startup pass: one migrate/system entry for all its migrations' writes.
+	"cmd/cli/commands/common/run.go:RunStartupMigrations": {
+		lock: "takes .startup-migrations.lock when migrations are pending: TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce; " +
+			"a stamp-only pass takes only the provisioner lock, inside PersistProvisionerVersion",
+		history: "TestRunStartupMigrations_RecordsThePass",
 	},
-	"internal/state/migration_unified_state.go:Execute": {
-		lock:    exemptStartupMigration,
-		history: "none yet: the startup pass is not recorded",
+	"internal/state/startup_pass.go:appendEntry": {
+		lock: "appends to action_history.yaml only, which no lock guards (one append per batch); RecordStartupPass's caller " +
+			"holds .startup-migrations.lock when migrations are pending",
+		history: "TestRecordStartupPass_RecordsOnePassEntry",
 	},
+	"internal/state/migration_per_component_state.go:Execute":                            {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_per_component_state.go:Rollback":                           {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_per_component_state.go:recomposeLegacyStateFromComponents": {lock: exemptStartupMigration, history: "called by Rollback: " + inStartupPass},
+	"internal/state/migration_unified_state.go:Execute":                                  {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_unified_state.go:Rollback":                                 {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_helm_release_schema_v2.go:Execute":                         {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_helm_release_schema_v2.go:Rollback":                        {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_mgmt_ports_v1.go:Execute":                                  {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_mgmt_ports_v1.go:Rollback":                                 {lock: exemptStartupMigration, history: inStartupPass},
+
+	// Helpers: their callers have rows.
+	"internal/state/atomic_write.go:atomicWriteFile":       {lock: "helper", history: "helper"},
+	"internal/state/provisioner.go:writeProvisionerRecord": {lock: "helper", history: "helper"},
+	"internal/state/state_manager.go:commitComponentFlush": {lock: "inside Commit and writeUnrecorded", history: "inside Commit and writeUnrecorded"},
+
+	// kube cluster uninstall.
+	"internal/workflows/steps/step_cluster_uninstall.go:CleanupWeaverFiles": {
+		lock:    "kube cluster uninstall holds every state lock: TestLockAllState_FailsFastOnEveryStateLock",
+		history: "none yet: it deletes action_history.yaml with the rest of the state dir",
+	},
+	"internal/workflows/steps/step_cluster_uninstall.go:RemoveSystemdServiceFiles": {lock: "not state: systemd unit files", history: "not state"},
+	"internal/workflows/steps/step_cluster_uninstall.go:RemoveConfigDirectories":   {lock: "not state: configuration directories", history: "not state"},
 }
 
 // Fails when code that writes state, or takes a state lock, is added or moved
@@ -114,8 +153,13 @@ func TestEveryStateWriterIsAccountedFor(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			for _, decl := range writerSitesIn(t, path) {
-				found[filepath.ToSlash(rel)+":"+decl] = true
+			rel = filepath.ToSlash(rel)
+			calls := writerCalls
+			if handlesStateDir(rel) {
+				calls = append(slices.Clone(writerCalls), fileCalls...)
+			}
+			for _, decl := range writerSitesIn(t, path, calls) {
+				found[rel+":"+decl] = true
 			}
 			return nil
 		}))
@@ -149,9 +193,9 @@ func TestEveryStateWriterIsAccountedFor(t *testing.T) {
 }
 
 // writerSitesIn returns the top-level declarations in path that call one of
-// writerCalls: a function or method name, or a variable's name for a call made
+// writerCalls (the names given): a function or method name, or a variable's name for a call made
 // inside its initializer.
-func writerSitesIn(t *testing.T, path string) []string {
+func writerSitesIn(t *testing.T, path string, writerCalls []string) []string {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
 	require.NoError(t, err)
@@ -221,4 +265,40 @@ func repoRoot(t *testing.T) string {
 	_, err = os.Stat(filepath.Join(root, "go.mod"))
 	require.NoError(t, err, "expected the module root at %s", root)
 	return root
+}
+
+// TestStartupMigrationsOutsideStateWriteNoState: the startup pass compares only
+// the files a migration declares, and only migrations in this package can
+// declare them. A host migration that wrote state would go unrecorded.
+func TestStartupMigrationsOutsideStateWriteNoState(t *testing.T) {
+	root := repoRoot(t)
+	paths, err := filepath.Glob(filepath.Join(root, "internal", "workflows", "migration_*.go"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, err := filepath.Rel(root, path)
+		require.NoError(t, err)
+		require.Emptyf(t, writerSitesIn(t, path, writerCalls), "%s writes state; startup migrations that write state belong in internal/state", rel)
+		require.Falsef(t, usesIdent(t, path, "StateDir"), "%s touches the state directory; startup migrations that write state belong in internal/state", rel)
+	}
+}
+
+// usesIdent reports whether the Go file at path names the identifier name,
+// on its own or as a selector, so a comment or a string mentioning it doesn't
+// count.
+func usesIdent(t *testing.T, path, name string) bool {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+	require.NoError(t, err)
+	found := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
