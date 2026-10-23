@@ -1464,6 +1464,27 @@ func resolveKubeconfigPath() string {
 	return ""
 }
 
+// ServerVersion returns the API server's version, such as "v1.36.5". It reads
+// the same kubeconfig as NewClient and gives up after timeout.
+func ServerVersion(timeout time.Duration) (string, error) {
+	cfg, err := loadKubeConfig()
+	if err != nil {
+		return "", err
+	}
+	cfg.Timeout = timeout
+
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to create discovery client")
+	}
+
+	info, err := disco.ServerVersion()
+	if err != nil {
+		return "", errorx.ExternalError.Wrap(err, "failed to read the API server version from %s", cfg.Host)
+	}
+	return info.GitVersion, nil
+}
+
 func RetrieveClusterInfo() (*models.ClusterInfo, error) {
 	cfg, err := loadKubeConfig()
 	if err != nil {
