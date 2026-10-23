@@ -365,6 +365,10 @@ sudo solo-provisioner daemon service uninstall
 ConsensusCapsule. For the full install procedure, see
 [acceptance-tests §F](../dev/acceptance-tests.md#f-consensus-node-deployment).
 
+Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus node` subcommand. The
+other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
+`consensus node install --profile local`, not `consensus node --profile local install`.
+
 ### Uninstall
 
 `consensus node uninstall` removes one node:
@@ -397,8 +401,9 @@ flags skip the confirmation prompt.
 | `--node-id` | yes | Consensus node ID (0-based). |
 | `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
 
-> **The node stops.** Deleting the ConsensusCapsule removes the node's pod. To remove the Secrets
-> or the volume data, delete them manually.
+> **The node stops.** Deleting the ConsensusCapsule removes the node's pod. The Secrets, PVC data
+> and hostPath data stay. To remove them, delete them manually. emptyDir data (the default volume
+> type) is deleted with the pod.
 
 ---
 

@@ -22,7 +22,8 @@ var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Uninstall a Hedera consensus node",
 	Long: "Delete a consensus node's ConsensusCapsule and config CRs, and the Orbit when no other node uses it. " +
-		"Secrets and volume data are kept. Idempotent: a node that is already gone is a success.",
+		"Secrets, PVC data and hostPath data are kept; emptyDir data (the default) is lost. " +
+		"Idempotent: a node that is already gone is a success.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateUninstallFlags(cmd.Flags().Changed("node-id"), flagNamespace, flagNodeId); err != nil {
 			return err
@@ -40,7 +41,8 @@ var uninstallCmd = &cobra.Command{
 			ok, err := prompt.RunConfirm(
 				fmt.Sprintf("Uninstall consensus node %d from namespace %s?", flagNodeId, flagNamespace),
 				"This deletes the node's ConsensusCapsule and config CRs, which stops the node. The Orbit is deleted "+
-					"when no other node uses it. Secrets and volume data are kept.",
+					"when no other node uses it. Secrets, PVC data and hostPath data are kept; "+
+					"emptyDir data (the default) is lost.",
 				false)
 			if err != nil {
 				return err

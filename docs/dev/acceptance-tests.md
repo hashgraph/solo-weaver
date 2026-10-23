@@ -494,7 +494,8 @@ Expected (both F1 and F2):
 
 ### F3. Uninstall consensus nodes
 
-`consensus node uninstall` removes one node. It keeps the Secrets and the volume data. It deletes
+`consensus node uninstall` removes one node. It keeps the Secrets, the PVC data and the hostPath
+data. emptyDir data (the default volume type) is deleted with the pod. It deletes
 the Orbit only together with the last node in the namespace. The solo-operator then also deletes
 the orbit's `NetworkGenesis` CR. The genesis ConfigMaps that it generated (for example
 `genesis-config`) stay.
