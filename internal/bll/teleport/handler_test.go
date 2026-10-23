@@ -5,8 +5,16 @@
 package teleport
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +31,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 type funcChecker[T any] func() (T, error)
@@ -39,6 +48,13 @@ func newRegistry(t *testing.T) *HandlerRegistry {
 // points at no kubeconfig, so a cluster step that ran anyway would skip rather
 // than reach the developer's cluster.
 func newRegistryWith(t *testing.T, persisted, live state.TeleportState) *HandlerRegistry {
+	t.Helper()
+	return newRegistryReading(t, persisted, func() state.TeleportState { return live })
+}
+
+// newRegistryReading is newRegistryWith with the Teleport agents read from
+// live on every refresh.
+func newRegistryReading(t *testing.T, persisted state.TeleportState, live func() state.TeleportState) *HandlerRegistry {
 	t.Helper()
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "no-kubeconfig"))
@@ -60,7 +76,7 @@ func newRegistryWith(t *testing.T, persisted, live state.TeleportState) *Handler
 		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
 			return map[string]state.ConsensusNodeState{}, nil
 		}),
-		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) { return live, nil }),
+		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) { return live(), nil }),
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
@@ -148,4 +164,129 @@ func TestUninstall_EffectiveInputsKeepTheGuardFlags(t *testing.T) {
 		models.UserInputs[models.TeleportClusterInputs]{Common: common})
 	require.NoError(t, err)
 	require.Equal(t, common, cluster.Common)
+}
+
+// stubCluster is a local API server that answers every request with its
+// version. It counts the requests it gets, and the deletes among them.
+type stubCluster struct {
+	requests, deletes atomic.Int32
+}
+
+// serveStubCluster points the kube environment at a new stubCluster.
+func serveStubCluster(t *testing.T) *stubCluster {
+	t.Helper()
+	var stub stubCluster
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stub.requests.Add(1)
+		if r.Method == http.MethodDelete {
+			stub.deletes.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"major":"1","minor":"33","gitVersion":"v1.33.4"}`))
+	}))
+	t.Cleanup(srv.Close)
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, os.WriteFile(kubeconfig, []byte(fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- name: stub
+  cluster:
+    server: %s
+contexts:
+- name: stub
+  context:
+    cluster: stub
+    user: stub
+current-context: stub
+users:
+- name: stub
+  user: {}
+`, srv.URL)), 0o600))
+	t.Setenv("KUBECONFIG", kubeconfig)
+	return &stub
+}
+
+// lastOwnedDrift reads the newest action history entry's owned drift.
+func lastOwnedDrift(t *testing.T, reg *HandlerRegistry) []state.OwnedDriftRecord {
+	t.Helper()
+	b, err := os.ReadFile(state.ActionHistoryFilePath(reg.clusterUninstall.Runtime.StateDir()))
+	require.NoError(t, err)
+	var last state.ActionHistory
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	for {
+		var e state.ActionHistory
+		err := dec.Decode(&e)
+		if errors.Is(err, io.EOF) {
+			return last.OwnedDrift
+		}
+		require.NoError(t, err)
+		last = e
+	}
+}
+
+// uninstallWith runs the real cluster uninstall with common's guard flags.
+func uninstallWith(reg *HandlerRegistry, common models.CommonInputs) (*automa.Report, error) {
+	common.ExecutionOptions = models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.ContinueOnError}
+	return reg.clusterUninstall.HandleIntent(context.Background(),
+		models.Intent{Action: models.ActionUninstall, Target: models.TargetTeleportCluster},
+		models.UserInputs[models.TeleportClusterInputs]{Common: common})
+}
+
+// uninstallOverridden runs the real cluster uninstall with --override-drift.
+func uninstallOverridden(t *testing.T, reg *HandlerRegistry) *automa.Report {
+	t.Helper()
+	report, err := uninstallWith(reg, models.CommonInputs{OverrideDrift: true})
+	require.NoError(t, err)
+	return report
+}
+
+// The race from review: the pre-run refresh could not read the cluster agent,
+// and the cluster may answer by the time the step would run. No flag gets past
+// that: --override-drift, --force and a non-interactive run all stop with
+// "cannot verify", and the cluster is never asked anything.
+func TestClusterUninstall_NoFlagGetsPastAnAgentTheRefreshCouldNotRead(t *testing.T) {
+	for name, common := range map[string]models.CommonInputs{
+		"override":        {OverrideDrift: true},
+		"force":           {Force: true},
+		"non-interactive": {NonInteractive: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			unread := clusterAgent(true, "18.6.4")
+			unread.ClusterAgent.Unobserved = true
+			reg := newRegistryWith(t, clusterAgent(true, "18.6.4"), unread)
+			cluster := serveStubCluster(t)
+
+			_, err := uninstallWith(reg, common)
+
+			require.ErrorContains(t, err, "teleport-cluster uninstall cannot verify teleport:")
+			require.Zero(t, cluster.requests.Load(), "the run must not ask the cluster anything")
+			require.NoFileExists(t, state.ActionHistoryFilePath(reg.clusterUninstall.Runtime.StateDir()))
+		})
+	}
+}
+
+// The same overridden run over an agent the refresh did read reaches the
+// cluster, so the stub above is reachable. The stub has no release, so the
+// step skips. The Teleport read follows the stub: the agent reads as gone once
+// the stub has seen a delete, so the test fails if the step uninstalls. The
+// entry says the run was allowed to destroy the change, and that it did not.
+func TestClusterUninstall_SkippedUninstallIsAllowedButNotConfirmedDestroyed(t *testing.T) {
+	var cluster *stubCluster
+	reg := newRegistryReading(t, clusterAgent(true, "18.6.4"), func() state.TeleportState {
+		if cluster != nil && cluster.deletes.Load() > 0 {
+			return clusterAgent(false, "")
+		}
+		return clusterAgent(true, "18.7.1-hotfix")
+	})
+	cluster = serveStubCluster(t)
+
+	report := uninstallOverridden(t, reg)
+
+	require.NoError(t, report.Error)
+	require.NotZero(t, cluster.requests.Load())
+	require.Zero(t, cluster.deletes.Load())
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.6.4", Live: "18.7.1-hotfix",
+		DestroyAllowed: true,
+	}}, lastOwnedDrift(t, reg))
 }

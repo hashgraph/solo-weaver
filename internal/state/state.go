@@ -169,10 +169,18 @@ type OwnedDriftRecord struct {
 	Persisted string `yaml:"persisted" json:"persisted"`
 	// Live is the out-of-band value the action found.
 	Live string `yaml:"live" json:"live"`
-	// Destroyed is set when the guard let the action destroy the change: the
-	// run went ahead over it. Whether the workflow then succeeded is in the
-	// run's report and log, not here.
+	// DestroyAllowed is set when the guard let the run go ahead over a change
+	// its action destroys, before the workflow ran.
+	DestroyAllowed bool `yaml:"destroyAllowed" json:"destroyAllowed"`
+	// Destroyed is set when the run was allowed to destroy the change and its
+	// own read after the workflow no longer finds it. A run can fail and still
+	// have removed it. The read matches the same field with the same live
+	// value, so a second hand change to that field during the run would also
+	// read as destroyed.
 	Destroyed bool `yaml:"destroyed" json:"destroyed"`
+	// Unobserved is set when the run could not read the live value, so Live is
+	// empty. No destructive run goes ahead over such a change.
+	Unobserved bool `yaml:"unobserved,omitempty" json:"unobserved,omitempty"`
 }
 
 type ProvisionerInfo struct {
@@ -463,6 +471,9 @@ type TeleportNodeAgentState struct {
 	Installed  bool   `yaml:"installed" json:"installed"`
 	Configured bool   `yaml:"configured" json:"configured"`
 	Version    string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Unobserved is set by a refresh that could not read the agent and kept
+	// its recorded state instead. It is never written to disk or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 // TeleportClusterAgentState represents the persisted state of the Teleport cluster agent (Helm-based).
@@ -471,6 +482,9 @@ type TeleportClusterAgentState struct {
 	Release      string `yaml:"release,omitempty" json:"release,omitempty"`
 	Namespace    string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 	ChartVersion string `yaml:"chartVersion,omitempty" json:"chartVersion,omitempty"`
+	// Unobserved is set by a refresh that could not read the agent and kept
+	// its recorded state instead. It is never written to disk or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {

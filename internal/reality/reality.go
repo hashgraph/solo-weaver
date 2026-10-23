@@ -47,6 +47,9 @@ type KubeClient interface {
 // Reachable means the cluster was observed. For the other two a checker falls
 // back as it would for no cluster, and must not record what it could not see
 // as gone: no kubeconfig on this host does not prove a cluster was removed.
+// Unobservable proves nothing either way: the Teleport checker marks the agent
+// it keeps then as unobserved, so a destructive action doesn't take it for
+// unchanged.
 type ClusterReachability int
 
 const (
