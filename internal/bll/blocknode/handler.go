@@ -34,6 +34,7 @@ func NewHandlerFactory(
 ) (*Handlers, error) {
 	base, err := bll.NewBaseHandler[models.BlockNodeInputs](runtime, models.TargetBlockNode,
 		bll.WithProfileExtractor(func(i models.BlockNodeInputs) string { return i.Profile }),
+		bll.WithManagedComponents[models.BlockNodeInputs](bll.BlockNode),
 	)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
