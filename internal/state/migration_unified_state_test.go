@@ -241,9 +241,10 @@ func TestUnifiedStateMigration_RetryAfterSyncFailure(t *testing.T) {
 	require.Empty(t, recorded)
 }
 
-// TestUnifiedStateMigration_RefusesOlderSchemaStateFile verifies that legacy files are not
-// merged into a state.yaml that helm-release-schema-v2 has yet to convert.
-func TestUnifiedStateMigration_RefusesOlderSchemaStateFile(t *testing.T) {
+// TestUnifiedStateMigration_MergesIntoOlderSchemaStateFile verifies that legacy files merge
+// into a state.yaml that helm-release-schema-v2 has yet to convert, without dropping the
+// older-schema fields that migration still has to read.
+func TestUnifiedStateMigration_MergesIntoOlderSchemaStateFile(t *testing.T) {
 	restore := models.SetPaths(t.TempDir())
 	defer restore()
 	stateDir := models.Paths().StateDir
@@ -256,9 +257,39 @@ func TestUnifiedStateMigration_RefusesOlderSchemaStateFile(t *testing.T) {
 
 	err := NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{Component: migration.ScopeStartup})
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	got, readErr := os.ReadFile(stateFile)
 	require.NoError(t, readErr)
-	require.Equal(t, v1, string(got))
+	require.Contains(t, string(got), "chartVersion: \"0.28.1\"")
+	require.Contains(t, string(got), "cilium")
+	require.NoFileExists(t, legacy)
+}
+
+// TestUnifiedStateMigration_RetryAfterSyncFailureOnStateFile verifies that a failed directory
+// sync leaves the legacy files in place and that the next run merges them exactly once.
+func TestUnifiedStateMigration_RetryAfterSyncFailureOnStateFile(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	stateDir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	stateFile := filepath.Join(stateDir, StateFileName)
+	v1 := strings.Replace(v1StateYAML, "stateFile: /opt/solo/weaver/state/state.yaml", "stateFile: "+stateFile, 1)
+	require.NoError(t, os.WriteFile(stateFile, []byte(v1), 0o644))
+	legacy := filepath.Join(stateDir, "cilium.installed")
+	require.NoError(t, os.WriteFile(legacy, []byte("installed at version 1.16.0\n"), 0o644))
+	m := NewUnifiedStateMigration()
+	mctx := &migration.Context{Component: migration.ScopeStartup}
+
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+	require.Error(t, m.Execute(context.Background(), mctx))
 	require.FileExists(t, legacy)
+
+	recordDirSyncs(t, nil)
+	require.NoError(t, m.Execute(context.Background(), mctx))
+	require.NoFileExists(t, legacy)
+
+	got, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(got), "name: cilium"))
+	require.Contains(t, string(got), "chartVersion: \"0.28.1\"")
 }
