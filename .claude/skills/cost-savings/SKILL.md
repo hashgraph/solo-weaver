@@ -26,13 +26,17 @@ Every turn re-sends the whole context. Long sessions, raw logs and repeated UAT 
 - Write full command output to log files. Read a log only when its check fails.
 - Compare before and after snapshots with a diff that prints only changed lines. Use one fact per line, and hash Secret data and other values.
 
-## 3. Suggest a new session for the next PR
+## 3. Suggest a separate session for the next PR
 
-When the developer starts another PR in a session that already delivered one, suggest a handover:
+When the developer starts another PR in a session that already delivered one, suggest one session per PR. The earlier session stays intact for review feedback.
 
 1. Write down what the next PR needs: memory notes, design and review notes, branch and PR state.
-2. Start a fresh `claude` session in the new worktree. Alternatively run `/compact` with a short keep-list.
-3. Open the new session with a short brief that points to those notes.
+2. Pick the route:
+   - **Next PR builds on the previous one (stack):** fork the session (`/branch`, or `claude --resume <id> --fork-session`), then run `/compact` in the fork with a keep-list: branch, parent PR, decisions, open risks.
+   - **Unrelated PR, or a noisy context:** start a fresh `claude` session in the new worktree with a short brief that points to the notes.
+3. Never run `/compact` in the original session if the developer may return to that PR in it. The detail is lost.
+
+Resuming a large original session later pays for its full context again. Compact it then if the review work is small.
 
 Make the suggestion once. Do not block the request.
 
