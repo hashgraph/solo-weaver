@@ -41,11 +41,10 @@ var (
 		name:    "blocknode",
 		restore: func(dst *state.State, b state.State) { dst.BlockNodeState = b.BlockNodeState },
 	}
-	// ConsensusNode has no drift producer on this branch; drift.ConsensusNode is
-	// wired in with #1187. The flush scope applies now regardless.
 	ConsensusNode = Component{
-		name:    "consensus",
-		restore: func(dst *state.State, b state.State) { dst.ConsensusNodes = b.ConsensusNodes },
+		name:     "consensus",
+		producer: drift.ConsensusNode,
+		restore:  func(dst *state.State, b state.State) { dst.ConsensusNodes = b.ConsensusNodes },
 	}
 	Teleport = Component{
 		name:     "teleport",
