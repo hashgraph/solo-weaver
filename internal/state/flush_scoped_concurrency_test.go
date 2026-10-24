@@ -51,3 +51,22 @@ func TestFlushScoped_DisjointComponentsBothSucceedConcurrently(t *testing.T) {
 	require.Contains(t, final.State().ConsensusNodes, "node1")
 	require.True(t, final.State().TeleportState.NodeAgent.Configured)
 }
+
+// TestFlushScoped_ConsensusComponentPersistsOrbits verifies that the consensus component's
+// file carries the orbits next to the nodes, so a consensus write is not lost on re-read.
+func TestFlushScoped_ConsensusComponentPersistsOrbits(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	fm := newTestFileManager(t)
+
+	sm, err := NewStateManager(WithState(NewState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+	s := sm.State()
+	s.ConsensusOrbits = map[string]ConsensusOrbitState{"orbit1": {LedgerId: "0x01"}}
+	require.NoError(t, sm.Set(s).FlushScoped(ComponentConsensus))
+
+	reread, err := NewStateManager(WithState(NewState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, reread.Refresh())
+	require.Equal(t, "0x01", reread.State().ConsensusOrbits["orbit1"].LedgerId)
+}

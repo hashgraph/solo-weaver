@@ -64,6 +64,7 @@ func applyComponentSection(dst *State, id ComponentID, src State) {
 		dst.BlockNodeState = src.BlockNodeState
 	case ComponentConsensus:
 		dst.ConsensusNodes = src.ConsensusNodes
+		dst.ConsensusOrbits = src.ConsensusOrbits
 	case ComponentTeleport:
 		dst.TeleportState = src.TeleportState
 	}
