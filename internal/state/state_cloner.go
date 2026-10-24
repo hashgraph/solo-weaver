@@ -178,6 +178,14 @@ func (s *State) Clone() (*State, error) {
 		}
 	}
 
+	var consensusOrbits map[string]ConsensusOrbitState
+	if s.ConsensusOrbits != nil {
+		consensusOrbits = make(map[string]ConsensusOrbitState, len(s.ConsensusOrbits))
+		for k, v := range s.ConsensusOrbits {
+			consensusOrbits[k] = v.Clone()
+		}
+	}
+
 	return &State{
 		// Envelope fields
 		Hash:      s.Hash,
@@ -186,11 +194,20 @@ func (s *State) Clone() (*State, error) {
 		LastSync:  s.LastSync,
 		// Domain content
 		StateRecord: StateRecord{
-			MachineState:   *ms,
-			ClusterState:   *cs,
-			BlockNodeState: *bs,
-			ConsensusNodes: consensusNodes,
-			TeleportState:  s.TeleportState,
+			MachineState:    *ms,
+			ClusterState:    *cs,
+			BlockNodeState:  *bs,
+			ConsensusNodes:  consensusNodes,
+			ConsensusOrbits: consensusOrbits,
+			TeleportState:   s.TeleportState,
 		},
 	}, nil
+}
+
+// Clone returns a copy of the orbit that shares no slice with the original.
+func (o ConsensusOrbitState) Clone() ConsensusOrbitState {
+	if o.ExternalAddresses != nil {
+		o.ExternalAddresses = append(make([]OrbitExternalAddress, 0, len(o.ExternalAddresses)), o.ExternalAddresses...)
+	}
+	return o
 }
