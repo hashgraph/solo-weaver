@@ -61,14 +61,14 @@ func newTestFileManager(t *testing.T) fsx.Manager {
 }
 
 // TestFlushWritesFile checks that FlushState writes each component's YAML
-// representation to its own file, keyed by the shared Version field (which
-// lives in the machine component's file).
+// representation to its own file, keyed by the profile (which lives in the
+// profile component's file).
 func TestFlushWritesFile(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "state.yaml")
 
 	s := newTestState(tmp)
-	s.Version = "v1-test-flush"
+	s.MachineState.Profile = "v1-test-flush"
 
 	m, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
 	if err != nil {
@@ -82,9 +82,9 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("FlushState returned error: %v", err)
 	}
 
-	data, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	data, err := os.ReadFile(componentFilePath(dir, ComponentProfile))
 	if err != nil {
-		t.Fatalf("failed to read persisted machine state file: %v", err)
+		t.Fatalf("failed to read persisted profile state file: %v", err)
 	}
 
 	var loaded State
@@ -92,20 +92,20 @@ func TestFlushWritesFile(t *testing.T) {
 		t.Fatalf("failed to unmarshal persisted YAML: %v", err)
 	}
 
-	if loaded.Version != "v1-test-flush" {
-		t.Fatalf("unexpected Version in persisted state: got %q want %q", loaded.Version, "v1-test-flush")
+	if loaded.MachineState.Profile != "v1-test-flush" {
+		t.Fatalf("unexpected profile in persisted state: got %q want %q", loaded.MachineState.Profile, "v1-test-flush")
 	}
 }
 
 // TestRefreshLoadsFile checks that Refresh loads each component's on-disk file
-// into the manager, keyed by the shared Version field.
+// into the manager, keyed by the profile.
 func TestRefreshLoadsFile(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "state.yaml")
 
 	// Seed a state on disk through a real flush, the way production writes it.
 	onDisk := newTestState(tmp)
-	onDisk.Version = "v2-test-refresh"
+	onDisk.MachineState.Profile = "v2-test-refresh"
 	fm := newTestFileManager(t)
 	seedMgr, err := NewStateManager(WithState(onDisk), WithFileManager(fm))
 	if err != nil {
@@ -117,7 +117,7 @@ func TestRefreshLoadsFile(t *testing.T) {
 
 	// Create a manager with a different in-memory state, pointing to the same directory.
 	mem := newTestState(tmp)
-	mem.Version = "before-refresh"
+	mem.MachineState.Profile = "before-refresh"
 
 	m, err := NewStateManager(WithState(mem), WithFileManager(fm))
 	if err != nil {
@@ -128,8 +128,8 @@ func TestRefreshLoadsFile(t *testing.T) {
 		t.Fatalf("Refresh returned error: %v", err)
 	}
 
-	if got := m.State().Version; got != "v2-test-refresh" {
-		t.Fatalf("Refresh did not update state Version: got %q want %q", got, "v2-test-refresh")
+	if got := m.State().MachineState.Profile; got != "v2-test-refresh" {
+		t.Fatalf("Refresh did not update the profile: got %q want %q", got, "v2-test-refresh")
 	}
 }
 
@@ -140,9 +140,9 @@ func TestNewStateManager_DoesNotAutoRefresh(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "state.yaml")
 	fm := newTestFileManager(t)
 
-	// Seed an on-disk state with a recognisable version through a real flush.
+	// Seed an on-disk state with a recognisable profile through a real flush.
 	onDisk := newTestState(tmp)
-	onDisk.Version = "on-disk-version"
+	onDisk.MachineState.Profile = "on-disk-version"
 	seedMgr, err := NewStateManager(WithState(onDisk), WithFileManager(fm))
 	if err != nil {
 		t.Fatalf("NewStateManager for seed returned error: %v", err)
@@ -151,18 +151,18 @@ func TestNewStateManager_DoesNotAutoRefresh(t *testing.T) {
 		t.Fatalf("failed to seed on-disk state: %v", err)
 	}
 
-	// Construct a manager with a different in-memory version and the same directory.
+	// Construct a manager with a different in-memory profile and the same directory.
 	mem := newTestState(tmp)
-	mem.Version = "in-memory-version"
+	mem.MachineState.Profile = "in-memory-version"
 
 	m, err := NewStateManager(WithState(mem), WithFileManager(fm))
 	if err != nil {
 		t.Fatalf("NewStateManager returned error: %v", err)
 	}
 
-	// Construction must NOT have loaded the on-disk state — the in-memory version must be unchanged.
-	if got := m.State().Version; got != "in-memory-version" {
-		t.Fatalf("NewStateManager auto-refreshed state from disk: got version %q, want %q", got, "in-memory-version")
+	// Construction must NOT have loaded the on-disk state — the in-memory profile must be unchanged.
+	if got := m.State().MachineState.Profile; got != "in-memory-version" {
+		t.Fatalf("NewStateManager auto-refreshed state from disk: got profile %q, want %q", got, "in-memory-version")
 	}
 }
 
@@ -173,7 +173,7 @@ func TestHasPersistedState(t *testing.T) {
 	tmp := filepath.Join(dir, "state.yaml")
 
 	// write a component file directly
-	if err := os.WriteFile(componentFilePath(dir, ComponentMachine), []byte("dummy"), 0o644); err != nil {
+	if err := os.WriteFile(componentFilePath(dir, ComponentProfile), []byte("dummy"), 0o644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 	m.AddActionHistory(ActionHistory{
 		Intent:     models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs:     map[string]any{"key": "value"},
-		Components: []ComponentID{ComponentMachine, ComponentBlockNode},
+		Components: []ComponentID{ComponentProfile, ComponentBlockNode},
 	})
 	if err := m.FlushActionHistory(); err != nil {
 		t.Fatalf("FlushActionHistory: %v", err)
@@ -414,7 +414,7 @@ func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
 	if entry.Timestamp.IsZero() {
 		t.Error("Timestamp is zero after AddActionHistory")
 	}
-	require.Equal(t, []ComponentID{ComponentMachine, ComponentBlockNode}, entry.Components,
+	require.Equal(t, []ComponentID{ComponentProfile, ComponentBlockNode}, entry.Components,
 		"action_history entry must record which components the action wrote")
 }
 
@@ -602,12 +602,12 @@ func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
 
 	// Simulate a hand edit: change the content but leave the stored hash field
 	// exactly as it was written.
-	machineFile := componentFilePath(dir, ComponentMachine)
-	raw, err := os.ReadFile(machineFile)
+	profileFile := componentFilePath(dir, ComponentProfile)
+	raw, err := os.ReadFile(profileFile)
 	require.NoError(t, err)
 	edited := bytes.Replace(raw, []byte("profile: before"), []byte("profile: hand-edited"), 1)
 	require.NotEqual(t, string(raw), string(edited), "precondition: the replacement must have matched something")
-	require.NoError(t, os.WriteFile(machineFile, edited, 0o644))
+	require.NoError(t, os.WriteFile(profileFile, edited, 0o644))
 
 	changed := m.State()
 	changed.MachineState.Profile = "after"

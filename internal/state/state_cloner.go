@@ -2,7 +2,12 @@
 
 package state
 
-import "github.com/hashgraph/solo-weaver/pkg/models"
+import (
+	"maps"
+	"slices"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
+)
 
 // Clone creates a deep copy of SoftwareState
 func (s *SoftwareState) Clone() (*SoftwareState, error) {
@@ -117,7 +122,28 @@ func (m *MachineState) Clone() (*MachineState, error) {
 		clone.Hardware = make(map[string]HardwareState)
 	}
 
+	if m.Firewall != nil {
+		clone.Firewall = m.Firewall.Clone()
+	}
+
 	return &clone, nil
+}
+
+// Clone creates a deep copy of HostFirewallState
+func (f *HostFirewallState) Clone() *HostFirewallState {
+	clone := *f
+	clone.ManagementCIDRs = slices.Clone(f.ManagementCIDRs)
+	clone.BlockedCIDRs = slices.Clone(f.BlockedCIDRs)
+	clone.MgmtPorts = slices.Clone(f.MgmtPorts)
+	clone.InClusterPorts = slices.Clone(f.InClusterPorts)
+	return &clone
+}
+
+// Clone creates a deep copy of ConsensusNodeState
+func (c *ConsensusNodeState) Clone() *ConsensusNodeState {
+	clone := *c
+	clone.ConfigHashes = maps.Clone(c.ConfigHashes)
+	return &clone
 }
 
 // Clone creates a deep copy of ClusterState
@@ -144,6 +170,22 @@ func (s *State) Clone() (*State, error) {
 		return nil, err
 	}
 
+	var consensusNodes map[string]ConsensusNodeState
+	if s.ConsensusNodes != nil {
+		consensusNodes = make(map[string]ConsensusNodeState, len(s.ConsensusNodes))
+		for k, v := range s.ConsensusNodes {
+			consensusNodes[k] = *v.Clone()
+		}
+	}
+
+	var consensusOrbits map[string]ConsensusOrbitState
+	if s.ConsensusOrbits != nil {
+		consensusOrbits = make(map[string]ConsensusOrbitState, len(s.ConsensusOrbits))
+		for k, v := range s.ConsensusOrbits {
+			consensusOrbits[k] = v.Clone()
+		}
+	}
+
 	return &State{
 		// Envelope fields
 		Hash:      s.Hash,
@@ -152,11 +194,20 @@ func (s *State) Clone() (*State, error) {
 		LastSync:  s.LastSync,
 		// Domain content
 		StateRecord: StateRecord{
-			Version:          s.Version,
-			ProvisionerState: s.ProvisionerState,
-			MachineState:     *ms,
-			ClusterState:     *cs,
-			BlockNodeState:   *bs,
+			MachineState:    *ms,
+			ClusterState:    *cs,
+			BlockNodeState:  *bs,
+			ConsensusNodes:  consensusNodes,
+			ConsensusOrbits: consensusOrbits,
+			TeleportState:   s.TeleportState,
 		},
 	}, nil
+}
+
+// Clone returns a copy of the orbit that shares no slice with the original.
+func (o ConsensusOrbitState) Clone() ConsensusOrbitState {
+	if o.ExternalAddresses != nil {
+		o.ExternalAddresses = append(make([]OrbitExternalAddress, 0, len(o.ExternalAddresses)), o.ExternalAddresses...)
+	}
+	return o
 }

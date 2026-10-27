@@ -5,7 +5,7 @@
 // This migration consolidates multiple legacy state files (*.installed, *.configured)
 // into the unified State model by writing SoftwareState entries into
 // MachineState.Software: into state.yaml when it exists, otherwise into
-// machine.yaml. The marker files are removed once the merge is persisted.
+// system.yaml. The marker files are removed once the merge is persisted.
 
 package state
 
@@ -89,11 +89,7 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 
 	case os.IsNotExist(readErr):
 		// Already split, or old enough to have only marker files: the software
-		// entries belong to machine.yaml, so merge into that alone.
-		installed, err := ReadProvisionerVersionFromDisk()
-		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to read provisioner version before unified-state migration")
-		}
+		// entries belong to system.yaml, so merge into that alone.
 		sm, err := NewStateManager()
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
@@ -102,12 +98,10 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 			return errorx.IllegalState.Wrap(err, "failed to read state for unified-state migration")
 		}
 		current := sm.State()
-		// RunStartupMigrations records the running version once every startup migration has run.
-		current.ProvisionerState.Version = installed
 		for _, mk := range markers {
 			current = SetSoftwareState(current, mk.component, mk.applyTo(GetSoftwareState(current, mk.component)))
 		}
-		if err := sm.Set(current).FlushScoped(ComponentMachine); err != nil {
+		if err := sm.Set(current).FlushScoped(ComponentSystem); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
 		}
 

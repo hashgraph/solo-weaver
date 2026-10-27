@@ -46,9 +46,10 @@ func NewHandlerFactory(
 	}
 
 	// Both targets manage the one Teleport component, but each records only its
-	// own agent: the other stays as it was on disk.
+	// own agent: the other stays as it was on disk. The node agent is also a
+	// host binary, so the node target writes the system record too.
 	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode,
-		bll.WithManagedComponents[models.TeleportNodeInputs](bll.Teleport),
+		bll.WithManagedComponents[models.TeleportNodeInputs](bll.Teleport, bll.System),
 		bll.WithKeptAtBaseline[models.TeleportNodeInputs](keepClusterAgent, drift.OnTeleportClusterAgent))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create node BaseHandler: %v", err)

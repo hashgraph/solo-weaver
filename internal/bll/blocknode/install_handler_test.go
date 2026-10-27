@@ -7,18 +7,21 @@ package blocknode
 import (
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // newMinimalInstallHandler returns a handler with only the fields used by
-// BuildWorkflow (runtime and mr are not accessed during workflow construction).
-func newMinimalInstallHandler() *InstallHandler {
-	return &InstallHandler{BaseHandler: bll.BaseHandler[models.BlockNodeInputs]{}}
+// BuildWorkflow (runtime and mr are not accessed during workflow construction),
+// owning managed.
+func newMinimalInstallHandler(managed ...bll.Component) *InstallHandler {
+	return &InstallHandler{BaseHandler: bll.BaseHandler[models.BlockNodeInputs]{Managed: managed}}
 }
 
 // installInputs returns minimal valid UserInputs for an install. Traffic
@@ -71,7 +74,7 @@ func TestInstallHandler_BuildWorkflow_ExistingCluster_MediaCheckRunsEarly(t *tes
 // stand up the substrate, so the operator sees a non-local storage warning
 // before the (potentially long) cluster bootstrap even starts.
 func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testing.T) {
-	h := newMinimalInstallHandler()
+	h := newMinimalInstallHandler(bll.BlockNode, bll.Profile, bll.Firewall, bll.System)
 	currentState := state.State{StateRecord: state.StateRecord{
 		ClusterState: state.ClusterState{Created: false},
 	}}
@@ -93,4 +96,26 @@ func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testin
 		"block-node-network-setup",
 		steps.SetupBlockNodeStepId,
 	}, ids, "traffic shaping disabled: no daemon-config step")
+}
+
+// TestInstallHandler_BuildWorkflow_NoClusterWithoutSystemIsRefused: standing up
+// Kubernetes writes the system record, so the install handler that does not
+// own it, picked because Kubernetes was installed when the command started,
+// refuses instead of guessing.
+func TestInstallHandler_BuildWorkflow_NoClusterWithoutSystemIsRefused(t *testing.T) {
+	h := newMinimalInstallHandler(bll.BlockNode, bll.Profile, bll.Firewall)
+	noCluster := state.State{StateRecord: state.StateRecord{ClusterState: state.ClusterState{Created: false}}}
+
+	wb, err := h.BuildWorkflow(noCluster, installInputs("/mnt/storage", false))
+	require.Nil(t, wb)
+	require.ErrorContains(t, err,
+		"found no running Kubernetes cluster, although Kubernetes was installed when this command started")
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason attached")
+	require.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok, "no hints attached")
+	require.Len(t, hints, 2)
+	require.Contains(t, hints[0], "systemctl status kubelet")
+	require.Contains(t, hints[1], "Re-run this command")
 }
