@@ -375,7 +375,8 @@ other install flags, `--profile` included, belong to `install`. Put them after t
 
 1. It removes the ConsensusCapsule ownerReference from the node's PVCs. The solo-operator makes the
    capsule the owner of the PVCs, so without this step Kubernetes deletes the PVCs with the capsule.
-2. It deletes the node's ConsensusCapsule and waits until the capsule is gone.
+2. It deletes the node's ConsensusCapsule and waits until the capsule is gone. Directly before the
+   delete, and on each poll while it waits, it releases any PVC that the capsule owns again.
 3. It deletes the node's 11 config CRs.
 4. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
 5. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.

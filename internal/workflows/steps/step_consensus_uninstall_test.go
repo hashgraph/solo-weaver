@@ -94,7 +94,7 @@ func pvcOwnedBy(name string, capsules ...string) unstructured.Unstructured {
 	var refs []metav1.OwnerReference
 	for _, c := range capsules {
 		refs = append(refs, metav1.OwnerReference{
-			APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+			APIVersion: kube.SoloOperatorAPIVersion,
 			Kind:       string(kube.KindConsensusCapsule),
 			Name:       c,
 		})
@@ -186,9 +186,9 @@ func TestDeleteConsensusCapsule_AlreadyAbsent(t *testing.T) {
 }
 
 func TestDeleteConsensusCapsule_TimesOutWhenCapsuleStays(t *testing.T) {
-	origInterval, origTimeout := capsuleDeletePollInterval, capsuleDeleteTimeout
-	capsuleDeletePollInterval, capsuleDeleteTimeout = 5*time.Millisecond, 20*time.Millisecond
-	t.Cleanup(func() { capsuleDeletePollInterval, capsuleDeleteTimeout = origInterval, origTimeout })
+	origInterval, origTimeout := resourceDeletePollInterval, resourceDeleteTimeout
+	resourceDeletePollInterval, resourceDeleteTimeout = 5*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { resourceDeletePollInterval, resourceDeleteTimeout = origInterval, origTimeout })
 
 	capsuleName := models.ConsensusCapsuleName("orbit", 0)
 	stuck := &stuckDeleteClient{&fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}}
@@ -273,9 +273,9 @@ func newReadoptClient(listErr error) *readoptClient {
 
 // If the operator owns a PVC again while the capsule is deleting, the next poll releases it.
 func TestDeleteConsensusCapsule_ReleasesPVCsWhileWaiting(t *testing.T) {
-	origInterval := capsuleDeletePollInterval
-	capsuleDeletePollInterval = time.Millisecond
-	t.Cleanup(func() { capsuleDeletePollInterval = origInterval })
+	origInterval := resourceDeletePollInterval
+	resourceDeletePollInterval = time.Millisecond
+	t.Cleanup(func() { resourceDeletePollInterval = origInterval })
 
 	kc := newReadoptClient(nil)
 
@@ -288,9 +288,9 @@ func TestDeleteConsensusCapsule_ReleasesPVCsWhileWaiting(t *testing.T) {
 
 // A release that fails after the delete is sent must fail the step with the PVC error, not a timeout.
 func TestDeleteConsensusCapsule_ReleaseErrorWhileWaitingFails(t *testing.T) {
-	origInterval := capsuleDeletePollInterval
-	capsuleDeletePollInterval = time.Millisecond
-	t.Cleanup(func() { capsuleDeletePollInterval = origInterval })
+	origInterval := resourceDeletePollInterval
+	resourceDeletePollInterval = time.Millisecond
+	t.Cleanup(func() { resourceDeletePollInterval = origInterval })
 
 	kc := newReadoptClient(errorx.ExternalError.New("forbidden: cannot list pvcs"))
 
@@ -305,8 +305,8 @@ func TestDeleteConsensusCapsule_ReleaseErrorWhileWaitingFails(t *testing.T) {
 func allConfigCRNames(nodeId int64) map[string]string {
 	scope := models.ConsensusNodeScope(nodeId)
 	names := map[string]string{}
-	for _, c := range consensusConfigCRKinds {
-		names[models.ConsensusConfigCRName(scope, c.key)] = "deployed"
+	for _, key := range models.ConsensusConfigKeys() {
+		names[models.ConsensusConfigCRName(scope, key)] = "deployed"
 	}
 	return names
 }
@@ -360,8 +360,8 @@ func TestConsensusConfigCRKinds_MatchEnsureConfigCRs(t *testing.T) {
 	}
 
 	want := map[string]string{}
-	for _, c := range consensusConfigCRKinds {
-		want[models.ConsensusConfigCRName("node0", c.key)] = c.kind
+	for _, key := range models.ConsensusConfigKeys() {
+		want[models.ConsensusConfigCRName("node0", key)] = models.ConsensusConfigCRKind(key)
 	}
 	assert.Equal(t, want, applied)
 }
@@ -396,9 +396,9 @@ func TestDeleteOrbitIfLast_DeletesWhenOnlyThisNodeListed(t *testing.T) {
 }
 
 func TestDeleteOrbitIfLast_TimesOutWhenOrbitStays(t *testing.T) {
-	origInterval, origTimeout := capsuleDeletePollInterval, capsuleDeleteTimeout
-	capsuleDeletePollInterval, capsuleDeleteTimeout = 5*time.Millisecond, 20*time.Millisecond
-	t.Cleanup(func() { capsuleDeletePollInterval, capsuleDeleteTimeout = origInterval, origTimeout })
+	origInterval, origTimeout := resourceDeletePollInterval, resourceDeleteTimeout
+	resourceDeletePollInterval, resourceDeleteTimeout = 5*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { resourceDeletePollInterval, resourceDeleteTimeout = origInterval, origTimeout })
 
 	stuck := &stuckDeleteClient{&fakeCapsuleClient{existing: map[string]string{"orbit": "deployed"}}}
 	provider := func(context.Context) (CapsuleKubeClient, error) { return stuck, nil }
