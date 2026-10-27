@@ -59,7 +59,23 @@ type Policy struct {
 	Ports           []string  `json:"ports"`             // static workload listener ports (from --ports); nil if none or ManagedPorts
 	ManagedPorts    bool      `json:"managed_ports"`     // true when <name>_ports is filled by the daemon from statusz, not seeded here
 	FromEntityWorld bool      `json:"from_entity_world"` // true if --from-entity world (no IP-set clause)
+	DenyNonMembers  bool      `json:"deny_non_members"`  // sources outside @<name> are dropped on <name>_ports; set by block node install, not a CLI flag
 	CreatedAt       time.Time `json:"created_at"`        // tiebreaker within a tier, preserved across a --force replace
+}
+
+// SameDefinition reports whether p and o declare the same policy: every
+// registry field except CreatedAt (a tiebreaker, not configuration) and
+// Direction (derived from Stamp by Validate, so it may be unset on a policy that
+// has not been validated yet).
+func (p *Policy) SameDefinition(o *Policy) bool {
+	return p.Name == o.Name &&
+		p.Action == o.Action &&
+		p.Stamp == o.Stamp &&
+		p.ReplyStamp == o.ReplyStamp &&
+		portsKey(p.Ports) == portsKey(o.Ports) &&
+		p.ManagedPorts == o.ManagedPorts &&
+		p.FromEntityWorld == o.FromEntityWorld &&
+		p.DenyNonMembers == o.DenyNonMembers
 }
 
 // Validate rejects any policy + initial-CIDR combination that would be unsafe
@@ -91,6 +107,12 @@ func (p *Policy) Validate(cidrs []string) error {
 	for _, port := range p.Ports {
 		if err := sanity.ValidatePort(port); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid --ports entry %q", port)
+		}
+	}
+
+	if p.DenyNonMembers {
+		if err := p.validateDenyNonMembers(); err != nil {
+			return err
 		}
 	}
 
@@ -154,6 +176,25 @@ func (p *Policy) validateDeny() error {
 	// bare `drop` and takes down every forwarded packet on the node.
 	if p.FromEntityWorld && len(p.Ports) == 0 {
 		return errorx.IllegalArgument.New("--deny with --from-entity world requires --ports")
+	}
+	return nil
+}
+
+// validateDenyNonMembers runs after the action-specific checks, so for a stamp
+// policy Direction is already derived from the class.
+func (p *Policy) validateDenyNonMembers() error {
+	if p.Action != ActionStamp {
+		return errorx.IllegalArgument.New("deny-non-members requires a stamp policy (a deny already drops its own matches)")
+	}
+	if p.Direction != DirectionIngress {
+		return errorx.IllegalArgument.New(
+			"deny-non-members requires an ingress stamp class (got %q): it guards the policy's listener ports", p.Stamp)
+	}
+	if !p.hasCIDRSet() {
+		return errorx.IllegalArgument.New("deny-non-members is mutually exclusive with --from-entity world: there is no member set to exempt")
+	}
+	if !p.hasPortsSet() {
+		return errorx.IllegalArgument.New("deny-non-members requires listener ports: without a port clause the drop would cover every port")
 	}
 	return nil
 }

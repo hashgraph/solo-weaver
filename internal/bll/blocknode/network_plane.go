@@ -4,6 +4,7 @@ package blocknode
 
 import (
 	"github.com/automa-saga/automa"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -28,12 +29,13 @@ import (
 // daemon.yaml changed). See workflows.NetworkPlaneSteps for the step semantics.
 //
 // trafficShapingEnabled is the resolved traffic-shaping target. force is the
-// operator's --force. healthPort is the resolved block-node health/statusz port.
-func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown bool, healthPort string) []automa.Builder {
+// operator's --force. ports are the block-node facility ports resolved by
+// resolveBlockNodePorts.
+func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown bool, ports workflows.BlockNodePorts) []automa.Builder {
 	return workflows.NetworkPlaneSteps(workflows.NetworkPlaneOptions{
 		Force:                 force,
 		TrafficShapingEnabled: trafficShapingEnabled,
-		HealthPort:            healthPort,
+		Ports:                 ports,
 		Namespace:             ins.Namespace,
 		Statusz:               daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval},
 		EgressInterface:       ins.EgressInterface,
@@ -42,4 +44,20 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 		AllowTeardown:         allowTeardown,
 		WithDaemonReload:      true,
 	})
+}
+
+// resolveBlockNodePorts reads the health and publish ports from the operator's
+// effective --values, so the bn-health and bn-publisher policies track the ports
+// the BN actually listens on; each falls back to the chart default when the
+// operator supplies no override.
+func resolveBlockNodePorts(valuesFile string) (workflows.BlockNodePorts, error) {
+	health, err := bnpkg.ResolveHealthPort(valuesFile)
+	if err != nil {
+		return workflows.BlockNodePorts{}, err
+	}
+	publisher, err := bnpkg.ResolvePublisherPort(valuesFile)
+	if err != nil {
+		return workflows.BlockNodePorts{}, err
+	}
+	return workflows.BlockNodePorts{Health: health, Publisher: publisher}, nil
 }

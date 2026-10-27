@@ -21,10 +21,16 @@ import (
 // override the port solo-weaver drops and the port the BN listens on can never
 // diverge, and the traffic-shaper daemon builds its statusz base URL on it.
 //
-// The publisher / subscriber / block-access / server-status listener ports are
-// deliberately NOT pinned here: the daemon reconciles them into the inet weaver-workload-policy
-// `<name>_ports` sets from the BN's statusz `local.port` at runtime.
+// The subscriber / block-access / server-status listener ports are not pinned:
+// the daemon reconciles them into the inet weaver-workload-policy `<name>_ports`
+// sets from the BN's statusz `local.port` at runtime.
 const DefaultBlockNodeHealthPort = "40983"
+
+// DefaultBlockNodeServicePort is the upstream hiero-block-node chart's
+// `service.port` default — the main server port, which every facility without
+// its own `blockNode.ports.<facility>` entry shares. solo-weaver's base values
+// set the same value.
+const DefaultBlockNodeServicePort = "40840"
 
 // ResolveHealthPort returns the block-node health/statusz port solo-weaver should
 // drop off-node (bn-health) and, later, dial for statusz. It reads
@@ -61,6 +67,45 @@ func ResolveHealthPort(valuesFile string) (string, error) {
 		return p, nil
 	}
 	return DefaultBlockNodeHealthPort, nil
+}
+
+// ResolvePublisherPort returns the port the block node serves its publish API
+// on, which bn-publisher restricts to known publishers. It reads
+// `blockNode.ports.publisher` from the operator's effective --values file, falls
+// back to `service.port` (the chart shares that port with every facility left at
+// null), and then to DefaultBlockNodeServicePort.
+//
+// It is pinned from the values rather than read from statusz because statusz
+// reports the publish port only alongside a configured publisher: with an empty
+// roster the port would be unknown and the publish port left unguarded.
+func ResolvePublisherPort(valuesFile string) (string, error) {
+	if valuesFile == "" {
+		return DefaultBlockNodeServicePort, nil
+	}
+	data, err := oslib.ReadFile(valuesFile)
+	if err != nil {
+		return "", errorx.ExternalError.Wrap(err, "read block node values file %s", valuesFile)
+	}
+	var v struct {
+		BlockNode struct {
+			Ports struct {
+				Publisher any `yaml:"publisher"`
+			} `yaml:"ports"`
+		} `yaml:"blockNode"`
+		Service struct {
+			Port any `yaml:"port"`
+		} `yaml:"service"`
+	}
+	if err := yaml.Unmarshal(data, &v); err != nil {
+		return "", errorx.IllegalFormat.Wrap(err, "parse block node values file %s", valuesFile)
+	}
+	if p := scalarPort(v.BlockNode.Ports.Publisher); p != "" {
+		return p, nil
+	}
+	if p := scalarPort(v.Service.Port); p != "" {
+		return p, nil
+	}
+	return DefaultBlockNodeServicePort, nil
 }
 
 // scalarPort renders a YAML scalar port value (which may decode as an int or a

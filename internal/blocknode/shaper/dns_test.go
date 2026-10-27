@@ -484,14 +484,14 @@ func TestResolveRemotes_UnresolvedPeerDoesNotDisturbOtherPolicies(t *testing.T) 
 func TestCheck_UnresolvedPeerKeepsItsPolicyListenerPort(t *testing.T) {
 	shrinkResolveTimeout(t)
 
-	// One inbound publisher endpoint whose remote is a name that will not
+	// One inbound partner endpoint whose remote is a name that will not
 	// resolve. local.port is the BLOCK NODE's listener, so it has nothing to do
 	// with whether the peer on the other end can be looked up.
 	rec := &Reconciler{
 		fetcher: &fakeFetcher{inbound: nd(NetworkConnection{
 			Local:    Endpoint{Address: "10.0.0.5", Port: "40840"},
 			Remote:   Endpoint{Address: "dead.example.com", Port: "*"},
-			Category: "publisher",
+			Category: "partner",
 		})},
 		resolver: &fakeResolver{hang: map[string]bool{"dead.example.com": true}},
 	}
@@ -499,10 +499,10 @@ func TestCheck_UnresolvedPeerKeepsItsPolicyListenerPort(t *testing.T) {
 	res, err := rec.Check(context.Background())
 	require.NoError(t, err)
 
-	require.Equal(t, []NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-publisher"}}}, res.Unresolved)
-	require.Empty(t, res.Desired["bn-publisher"],
+	require.Equal(t, []NamedIssue{{Name: "dead.example.com", Policies: []string{"bn-partner-out"}}}, res.Unresolved)
+	require.Empty(t, res.Desired["bn-partner-out"],
 		"the peer itself cannot be classified — that part is expected")
-	require.Equal(t, []string{"40840"}, res.DesiredPorts["bn-publisher"],
+	require.Equal(t, []string{"40840"}, res.DesiredPorts["bn-partner-out"],
 		"the listener port must survive: deriving it from the resolved payload lets an "+
 			"unreachable peer empty <policy>_ports and stop the rule matching at all")
 }

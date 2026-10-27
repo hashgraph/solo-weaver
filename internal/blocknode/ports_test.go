@@ -51,3 +51,34 @@ func TestResolveHealthPort_MissingFileErrors(t *testing.T) {
 	_, err := ResolveHealthPort(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	require.Error(t, err)
 }
+
+func TestResolvePublisherPort(t *testing.T) {
+	tests := []struct {
+		name   string
+		values string
+		want   string
+	}{
+		{name: "dedicated publisher port wins", values: "service:\n  port: 40840\nblockNode:\n  ports:\n    publisher: 40984\n", want: "40984"},
+		{name: "string value supported", values: "blockNode:\n  ports:\n    publisher: \"40984\"\n", want: "40984"},
+		{name: "null publisher shares service.port", values: "service:\n  port: 41840\nblockNode:\n  ports:\n    publisher: null\n", want: "41840"},
+		{name: "neither set falls back to the chart default", values: "blockNode:\n  ports:\n    health: 40983\n", want: DefaultBlockNodeServicePort},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := ResolvePublisherPort(writeValues(t, tc.values))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, p)
+		})
+	}
+}
+
+func TestResolvePublisherPort_NoFileReturnsDefault(t *testing.T) {
+	p, err := ResolvePublisherPort("")
+	require.NoError(t, err)
+	require.Equal(t, DefaultBlockNodeServicePort, p)
+}
+
+func TestResolvePublisherPort_MissingFileErrors(t *testing.T) {
+	_, err := ResolvePublisherPort(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	require.Error(t, err)
+}

@@ -219,7 +219,7 @@ func sampleBNPolicies() []*Policy {
 		{Name: "bn-partner-out", Action: ActionStamp, Stamp: "partner", Direction: DirectionEgress, Ports: []string{"40980", "40981"}, CreatedAt: at},
 		{Name: "bn-public-out", Action: ActionStamp, Stamp: "public", Direction: DirectionEgress, FromEntityWorld: true, Ports: []string{"40980", "40981"}, CreatedAt: at},
 		{Name: "bn-health", Action: ActionDeny, FromEntityWorld: true, Ports: []string{"40983"}, CreatedAt: at},
-		{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Direction: DirectionIngress, Ports: []string{"40840"}, CreatedAt: at},
+		{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Direction: DirectionIngress, Ports: []string{"40840"}, DenyNonMembers: true, CreatedAt: at},
 		{Name: "bn-restricted", Action: ActionDeny, CreatedAt: at},
 		{Name: "bn-subscriber-in", Action: ActionStamp, Stamp: "reserve-ingress", Direction: DirectionIngress, FromEntityWorld: true, Ports: []string{"40980", "40981"}, CreatedAt: at},
 	}

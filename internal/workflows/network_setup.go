@@ -14,6 +14,15 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
+// BlockNodePorts are the block-node facility ports solo-weaver pins from the
+// chart values rather than reading back from statusz.
+type BlockNodePorts struct {
+	// Health is the /healthz + statusz port (blockNode.ports.health).
+	Health string
+	// Publisher is the publish API port (blockNode.ports.publisher, else service.port).
+	Publisher string
+}
+
 // NetworkPlaneOptions parameterizes NetworkPlaneSteps for the three block-node
 // commands that converge the static network plane (install, reconfigure,
 // upgrade). All three share the same host-firewall + traffic-shaping step
@@ -24,9 +33,10 @@ type NetworkPlaneOptions struct {
 	// TrafficShapingEnabled is the resolved traffic-shaping target: the BN
 	// workload policy plane + tc HTB shaping + daemon monitor as one bundle.
 	TrafficShapingEnabled bool
-	// HealthPort is the resolved block-node health/statusz port, threaded into
-	// NetworkPolicyCreate so the bn-health drop tracks the port the BN listens on.
-	HealthPort string
+	// Ports are the block-node facility ports resolved from the operator's values,
+	// threaded into NetworkPolicyCreate so bn-health and bn-publisher match the
+	// ports the BN listens on.
+	Ports BlockNodePorts
 	// Namespace is the block-node namespace, used by the daemon-config step when
 	// WithDaemonReload is set.
 	Namespace string
@@ -100,7 +110,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 		// (re)installed. RestartDaemonServiceStep self-skips when the daemon is not
 		// running (fresh enable), where post-workflow ensureBlockNodeDaemon installs it.
 		out = append(out,
-			steps.NetworkPolicyCreate(opts.Force, opts.HealthPort),
+			steps.NetworkPolicyCreate(opts.Force, opts.Ports.Health, opts.Ports.Publisher),
 			steps.NftWeaverPersist(),
 			steps.TcEgressPersist(opts.EgressInterface, opts.LinkRate, opts.ShapeOverrides),
 			steps.TcIngressRecord(opts.EgressInterface, opts.LinkRate, opts.ShapeOverrides),
@@ -157,7 +167,7 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 // included — it is gated separately by hostCfg.Disabled inside its own step).
 // When false, none of the four steps are added: there is no inet weaver-workload-policy table
 // to persist and no tc config to shape traffic with.
-func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, healthPort string) *automa.WorkflowBuilder {
+func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[string]shape.ClassOverride, force bool, trafficShapingEnabled bool, ports BlockNodePorts) *automa.WorkflowBuilder {
 	// Install shares the network-plane bundle with reconfigure/upgrade via
 	// NetworkPlaneSteps but never tears down (AllowTeardown=false) and defers
 	// the daemon config write + restart to BlockNodeDaemonConfigWorkflow, after
@@ -165,7 +175,7 @@ func NetworkSetupWorkflow(egressInterface, linkRate string, shapeOverrides map[s
 	stepList := NetworkPlaneSteps(NetworkPlaneOptions{
 		Force:                 force,
 		TrafficShapingEnabled: trafficShapingEnabled,
-		HealthPort:            healthPort,
+		Ports:                 ports,
 		EgressInterface:       egressInterface,
 		LinkRate:              linkRate,
 		ShapeOverrides:        shapeOverrides,
