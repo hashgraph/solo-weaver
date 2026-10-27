@@ -160,6 +160,32 @@ var blockNodePluginHistory = []blockNodePluginConfig{
 			"stream-subscriber",
 		},
 	},
+	{
+		// BN 0.46.0: facility-app-state added; the node fails to start without it.
+		// The "-0" floor covers every 0.46.0 prerelease. Otherwise identical to 0.39.1.
+		MinVersion: "0.46.0-0",
+		Presets: map[string]string{
+			PresetTier1LFH: "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber",
+			PresetTier1RFH: "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status",
+		},
+		AllPlugins: []string{
+			"backfill",
+			"block-access-service",
+			"block-verification",
+			"blocks-file-historic",
+			"blocks-file-recent",
+			"cloud-storage-archive",
+			"cloud-storage-expanded",
+			"facility-app-state",
+			"facility-messaging",
+			"health",
+			"roster-bootstrap-rsa",
+			"roster-bootstrap-tss",
+			"server-status",
+			"stream-publisher",
+			"stream-subscriber",
+		},
+	},
 }
 
 // AllBlockNodePlugins is the ordered list of available plugins for the current
