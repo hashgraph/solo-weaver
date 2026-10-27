@@ -26,6 +26,8 @@ import (
 type UpgradeHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
 	runtime *rsl.BlockNodeRuntimeResolver
+	// readRelease is nil in unit tests, which then resolve ports from --values alone.
+	readRelease releaseValuesReader
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
@@ -91,11 +93,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
-	// Resolve the health/statusz port from the operator's effective --values so the
-	// re-asserted bn-health policy tracks the port the BN actually listens on
-	// rather than a value baked into solo-weaver; falls back to the chart default
-	// when the operator supplies no override. Mirrors the install path.
-	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
+	ports, err := resolveBlockNodePorts(ins, h.readRelease)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +105,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// decision recorded on BlockNodeState — upgrade never prompts and never resolves
 	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
 	// enabled, is handled post-workflow in the CLI layer.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, healthPort)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, ports)
 
 	// Warn (never block) when a storage path is not on local block storage.
 	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
@@ -152,5 +150,5 @@ func (h *UpgradeHandler) HandleIntent(
 
 func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
-	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState}, nil
+	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState, readRelease: readDeployedReleaseValues}, nil
 }

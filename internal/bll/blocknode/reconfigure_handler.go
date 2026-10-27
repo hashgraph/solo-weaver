@@ -22,6 +22,8 @@ import (
 type ReconfigureHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
 	runtime *rsl.BlockNodeRuntimeResolver
+	// readRelease is nil in unit tests, which then resolve ports from --values alone.
+	readRelease releaseValuesReader
 }
 
 // PrepareEffectiveInputs resolves fields for a reconfigure.
@@ -91,11 +93,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
-	// Resolve the health/statusz port from the operator's effective --values so the
-	// bn-health policy drops the port the BN actually listens on rather than a
-	// value baked into solo-weaver; falls back to the chart default when the
-	// operator supplies no override. Mirrors the install path.
-	healthPort, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
+	ports, err := resolveBlockNodePorts(ins, h.readRelease)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +103,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// fresh (in the CLI layer, seeded from the current on-host state), so the
 	// convergence assembler is driven by the operator's decision and is allowed to
 	// tear a feature down when it is turned off. See networkPlaneSteps.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, healthPort)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, ports)
 
 	// Warn (never block) when a storage path is not on local block storage.
 	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
@@ -175,5 +173,5 @@ func (h *ReconfigureHandler) HandleIntent(
 // NewReconfigureHandler creates a new ReconfigureHandler.
 func NewReconfigureHandler(base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver) (*ReconfigureHandler, error) {
-	return &ReconfigureHandler{BaseHandler: base, runtime: runtimeState}, nil
+	return &ReconfigureHandler{BaseHandler: base, runtime: runtimeState, readRelease: readDeployedReleaseValues}, nil
 }

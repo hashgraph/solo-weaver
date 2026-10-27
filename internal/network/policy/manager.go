@@ -96,6 +96,31 @@ func NewManagerWithConfig(cfg Config) *Manager {
 // it is rendered into the .nft as set elements along with every sibling's live
 // membership, so the re-applied table and the boot artifact agree.
 func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDRs []string, force bool) (bool, error) {
+	return m.create(ctx, p, cidrs, podCIDRs, force, false)
+}
+
+// Redefine replaces an existing policy's definition with p while keeping the
+// membership currently live in the kernel, so peers already admitted by its sets
+// are not cut off by the re-render. It is a no-op (returns false) when the
+// registry already holds the same definition, and an error when the policy does
+// not exist.
+func (m *Manager) Redefine(ctx context.Context, p *Policy, podCIDRs []string) (bool, error) {
+	existing, err := readEntry(m.registryDir, p.Name)
+	if err != nil {
+		return false, err
+	}
+	if existing == nil {
+		return false, errorx.IllegalState.New("policy %q not found; nothing to redefine", p.Name)
+	}
+	if existing.SameDefinition(p) {
+		return false, nil
+	}
+	return m.create(ctx, p, nil, podCIDRs, true, true)
+}
+
+// create is Create, plus keepMembership: when set, target's live membership is
+// carried into the re-render instead of being replaced by cidrs.
+func (m *Manager) create(ctx context.Context, p *Policy, cidrs []string, podCIDRs []string, force, keepMembership bool) (bool, error) {
 	if err := p.Validate(cidrs); err != nil {
 		return false, err
 	}
@@ -221,7 +246,7 @@ func (m *Manager) Create(ctx context.Context, p *Policy, cidrs []string, podCIDR
 		for setName, elems := range snapshot {
 			desired[setName] = elems
 		}
-		if target.hasCIDRSet() {
+		if target.hasCIDRSet() && !keepMembership {
 			targetV4, targetV6 := setElementsByFamily(target, newCIDRs)
 			desired[target.Name] = targetV4
 			desired[V6SetName(target.Name)] = targetV6
@@ -460,6 +485,16 @@ func (m *Manager) Add(ctx context.Context, name string, cidrs []string) error {
 		}
 		return m.persistMembership(ctx)
 	})
+}
+
+// Members returns the named policy's live membership across both address
+// families. A policy with no CIDR set (--from-entity world) has none.
+func (m *Manager) Members(ctx context.Context, name string) ([]string, error) {
+	p, err := m.requirePolicyWithCIDRSet(name)
+	if err != nil {
+		return nil, err
+	}
+	return m.liveMembership(ctx, p)
 }
 
 // liveMembership returns the policy's current membership across both its IPv4
@@ -871,6 +906,9 @@ func (m *Manager) showOne(ctx context.Context, p *Policy) (string, error) {
 	}
 	if p.FromEntityWorld {
 		b.WriteString("  from-entity: world\n")
+	}
+	if p.DenyNonMembers {
+		b.WriteString("  deny-non-members: true (sources outside the live set are dropped on these ports)\n")
 	}
 	fmt.Fprintf(&b, "  created: %s\n", p.CreatedAt.Format(time.RFC3339))
 

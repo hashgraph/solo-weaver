@@ -35,6 +35,34 @@ func TestValidate(t *testing.T) {
 			policy: &Policy{Name: "bn-public-out", Action: ActionStamp, Stamp: "public", FromEntityWorld: true, Ports: []string{"40980"}},
 		},
 		{
+			name:   "valid deny-non-members on static ports",
+			policy: &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", Ports: []string{"40840"}, DenyNonMembers: true},
+		},
+		{
+			name:   "valid deny-non-members on managed ports",
+			policy: &Policy{Name: "bn-publisher", Action: ActionStamp, Stamp: "publisher", ManagedPorts: true, DenyNonMembers: true},
+		},
+		{
+			name:    "deny-non-members on a deny rejected",
+			policy:  &Policy{Name: "x", Action: ActionDeny, Ports: []string{"40840"}, DenyNonMembers: true},
+			wantErr: "deny-non-members requires a stamp policy",
+		},
+		{
+			name:    "deny-non-members on an egress class rejected",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "partner", Ports: []string{"40980"}, DenyNonMembers: true},
+			wantErr: "requires an ingress stamp class",
+		},
+		{
+			name:    "deny-non-members with from-entity world rejected",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "reserve-ingress", FromEntityWorld: true, Ports: []string{"40980"}, DenyNonMembers: true},
+			wantErr: "mutually exclusive with --from-entity world",
+		},
+		{
+			name:    "deny-non-members without ports rejected",
+			policy:  &Policy{Name: "x", Action: ActionStamp, Stamp: "publisher", DenyNonMembers: true},
+			wantErr: "deny-non-members requires listener ports",
+		},
+		{
 			name:    "empty name",
 			policy:  &Policy{Action: ActionStamp, Stamp: "publisher"},
 			wantErr: "invalid --name",

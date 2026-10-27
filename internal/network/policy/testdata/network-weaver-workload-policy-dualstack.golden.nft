@@ -36,6 +36,7 @@ table inet weaver-workload-policy {
 		# evaluated against these drops too. A membership deny drops both
 		# directions; a port-scoped deny drops the request leg only.
 		ip daddr 10.4.0.0/24 tcp dport @bn-health_ports ct direction original drop
+		ip daddr 10.4.0.0/24 ip saddr != @bn-publisher tcp dport @bn-publisher_ports ct direction original drop
 		ip saddr @bn-restricted drop
 		ip daddr @bn-restricted drop
 
@@ -63,6 +64,7 @@ table inet weaver-workload-policy {
 		# evaluated against these drops too. A membership deny drops both
 		# directions; a port-scoped deny drops the request leg only.
 		ip6 daddr 2001:db8:c0de::/64 tcp dport @bn-health_ports ct direction original drop
+		ip6 daddr 2001:db8:c0de::/64 ip6 saddr != @bn-publisher6 tcp dport @bn-publisher_ports ct direction original drop
 		ip6 saddr @bn-restricted6 drop
 		ip6 daddr @bn-restricted6 drop
 

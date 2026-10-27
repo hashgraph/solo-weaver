@@ -311,8 +311,11 @@ func renderFamilyChain(policies []*Policy, f family) ([]string, error) {
 	// Tier 1: drops, both directions.
 	var deny []string
 	for _, p := range policies {
-		if p.Action == ActionDeny {
+		switch {
+		case p.Action == ActionDeny:
 			deny = append(deny, renderDenyRules(p, f)...)
+		case p.DenyNonMembers:
+			deny = append(deny, renderDenyNonMembersRule(p, f)...)
 		}
 	}
 	if len(deny) > 0 {
@@ -497,6 +500,27 @@ func renderDenyRules(p *Policy, f family) []string {
 	}
 	fmt.Fprintf(&b, " tcp dport @%s ct direction original drop", PortsSetName(p.Name))
 	return []string{b.String()}
+}
+
+// renderDenyNonMembersRule renders the guard a DenyNonMembers stamp policy
+// places in the deny tier: the request leg of a connection to its listener ports
+// is dropped unless the source is in its membership set. It has to sit in the
+// deny tier rather than after its own classification accept, because a
+// fallthrough policy sharing the port (a single-port block node serves every
+// facility on one port) would otherwise accept the non-member first.
+//
+// An empty membership set closes the ports to every source. That is the intent:
+// an unconfigured roster admits no one.
+//
+// `ct direction original` excludes the reply leg of an unrelated connection that
+// drew the listener port as its ephemeral source port, for the reason given on
+// renderDenyRules.
+func renderDenyNonMembersRule(p *Policy, f family) []string {
+	if f.podCIDR == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("\t\t%s daddr %s %s saddr != @%s tcp dport @%s ct direction original drop",
+		f.proto, f.podCIDR, f.proto, f.setName(p.Name), PortsSetName(p.Name))}
 }
 
 // renderReplyRestoreRule renders the ingress restore rule for a --reply-stamp

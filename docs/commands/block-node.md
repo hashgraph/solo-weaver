@@ -300,6 +300,16 @@ What install sets up for you:
 - **Seven BN policies**, created idempotently on the `inet weaver-workload-policy` plane:
   `bn-publisher`, `bn-subscriber-in`, `bn-partner-out`, `bn-public-out`, `bn-health`,
   `bn-restricted`, `bn-backfill`. The rendered `.nft` is persisted for boot replay.
+- **The publish port restricted to known publishers.** `bn-publisher` drops every source
+  outside its membership set on the publish port, so only publishers listed in the block
+  node's `known-publishers.json` can stream blocks. The port is read from the chart values
+  (`blockNode.ports.publisher`, else `service.port`, else `40840`). An upgrade or reconfigure
+  that reuses the release's values also keeps a `blockNode.ports.publisher` the release already
+  has when `--values` leaves it out. Until the daemon reports a
+  publisher the port is closed to everyone, and install warns about it. On a block node that
+  serves every facility on one port, subscribers, block-access and server-status clients are
+  restricted to the same sources; set `blockNode.ports.publisher` to give the publisher its
+  own port.
 - **Both tc shapes** — the egress NIC hierarchy and the per-pod ingress hierarchy — using the
   default per-class budgets, so the daemon can attach ingress shaping on the next pod create
   with no manual step. Ingress bandwidth defaults to the egress `--link-rate`.
@@ -617,13 +627,13 @@ Two different things, from two different parts of statusz:
 
 | statusz category | Ports set(s) |
 |---|---|
-| publisher | `bn-publisher` |
 | partner | `bn-partner-out` |
 | public | `bn-subscriber-in`, `bn-public-out` |
 
 Not touched by the reconciler: the public category has no membership binding (its policies
-match any source), and `bn-health` has no binding at all — its match key is a static port
-list, not membership.
+match any source), `bn-health` has no binding at all — its match key is a static port
+list, not membership — and `bn-publisher`'s port is pinned from the chart values at install,
+so it guards the publish port even before any publisher is reported.
 
 ### What it reports
 
@@ -633,7 +643,7 @@ not a fourth bucket — it is the subset of `applied` that went to empty.
 ```
 applied:   bn-publisher, bn-restricted
 skipped:   (none)
-unchanged: bn-backfill, bn-partner-out, bn-partner-out_ports, bn-public-out_ports, bn-publisher_ports, bn-subscriber-in_ports
+unchanged: bn-backfill, bn-partner-out, bn-partner-out_ports, bn-public-out_ports, bn-subscriber-in_ports
 cleared:   bn-restricted
 digest:    3f9a…
 ```
