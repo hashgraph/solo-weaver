@@ -3,11 +3,14 @@
 package blocknode
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/automa"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/daemon"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 )
 
 // networkPlaneSteps builds the static network-plane step list shared by
@@ -46,16 +49,41 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 	})
 }
 
+// releaseValuesReader returns the deployed block node release's user-supplied
+// values, or nil when there is no release.
+type releaseValuesReader func(ins models.BlockNodeInputs) (map[string]any, error)
+
+func readDeployedReleaseValues(ins models.BlockNodeInputs) (map[string]any, error) {
+	m, err := bnpkg.NewManager(ins)
+	if err != nil {
+		return nil, err
+	}
+	return m.GetReleaseValues()
+}
+
 // resolveBlockNodePorts reads the health and publish ports from the operator's
 // effective --values, so the bn-health and bn-publisher policies track the ports
 // the BN actually listens on; each falls back to the chart default when the
 // operator supplies no override.
-func resolveBlockNodePorts(valuesFile string) (workflows.BlockNodePorts, error) {
-	health, err := bnpkg.ResolveHealthPort(valuesFile)
+//
+// When the chart upgrade reuses the release's values, a publish port set on the
+// release survives a --values file that omits it, so it is read from the release
+// too. readRelease is nil on install, which never reuses values.
+func resolveBlockNodePorts(ins models.BlockNodeInputs, readRelease releaseValuesReader) (workflows.BlockNodePorts, error) {
+	health, err := bnpkg.ResolveHealthPort(ins.ValuesFile)
 	if err != nil {
 		return workflows.BlockNodePorts{}, err
 	}
-	publisher, err := bnpkg.ResolvePublisherPort(valuesFile)
+	var released map[string]any
+	if ins.ReuseValues && readRelease != nil {
+		if released, err = readRelease(ins); err != nil {
+			return workflows.BlockNodePorts{}, errorx.Decorate(err, "failed to read the deployed block node release values").
+				WithProperty(models.ErrPropertyResolution,
+					fmt.Sprintf("check the release with 'helm get values %s -n %s', "+
+						"or pass --no-reuse-values with a --values file that sets the publish port", ins.Release, ins.Namespace))
+		}
+	}
+	publisher, err := bnpkg.ResolvePublisherPort(ins.ValuesFile, released)
 	if err != nil {
 		return workflows.BlockNodePorts{}, err
 	}

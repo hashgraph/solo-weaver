@@ -64,7 +64,7 @@ func (h *InstallHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
-	ports, err := resolveBlockNodePorts(ins.ValuesFile)
+	ports, err := resolveBlockNodePorts(ins, nil)
 	if err != nil {
 		return nil, err
 	}

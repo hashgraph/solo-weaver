@@ -26,6 +26,8 @@ import (
 type UpgradeHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
 	runtime *rsl.BlockNodeRuntimeResolver
+	// readRelease is nil in unit tests, which then resolve ports from --values alone.
+	readRelease releaseValuesReader
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
@@ -91,7 +93,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
-	ports, err := resolveBlockNodePorts(ins.ValuesFile)
+	ports, err := resolveBlockNodePorts(ins, h.readRelease)
 	if err != nil {
 		return nil, err
 	}
@@ -148,5 +150,5 @@ func (h *UpgradeHandler) HandleIntent(
 
 func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
-	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState}, nil
+	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState, readRelease: readDeployedReleaseValues}, nil
 }

@@ -202,6 +202,10 @@ blocks. statusz reports the publish port only as the `local.port` of a configure
 publisher, so a port read from statusz would be unknown exactly when the roster is
 empty, and the guard would match nothing. The install resolves it instead from the
 chart values: `blockNode.ports.publisher`, else `service.port`, else `40840`.
+Upgrade and reconfigure also read `blockNode.ports.publisher` from the deployed
+release when they reuse its values, because Helm keeps that key when `--values`
+leaves it out. They don't read `service.port` or `blockNode.ports.health` from the
+release: the base values template pins both, so the reused values never survive.
 
 On a block node that serves every facility on one port, the publish port is also
 the subscriber, block-access and server-status port, so all of them are restricted

@@ -65,7 +65,7 @@ func TestResolvePublisherPort(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := ResolvePublisherPort(writeValues(t, tc.values))
+			p, err := ResolvePublisherPort(writeValues(t, tc.values), nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, p)
 		})
@@ -73,12 +73,49 @@ func TestResolvePublisherPort(t *testing.T) {
 }
 
 func TestResolvePublisherPort_NoFileReturnsDefault(t *testing.T) {
-	p, err := ResolvePublisherPort("")
+	p, err := ResolvePublisherPort("", nil)
 	require.NoError(t, err)
 	require.Equal(t, DefaultBlockNodeServicePort, p)
 }
 
 func TestResolvePublisherPort_MissingFileErrors(t *testing.T) {
-	_, err := ResolvePublisherPort(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	_, err := ResolvePublisherPort(filepath.Join(t.TempDir(), "does-not-exist.yaml"), nil)
 	require.Error(t, err)
+}
+
+func TestResolvePublisherPort_ReusedReleaseValues(t *testing.T) {
+	// Shaped like helm's rel.Config, which decodes numbers as float64.
+	release := map[string]any{
+		"blockNode": map[string]any{"ports": map[string]any{"publisher": float64(40850)}},
+		"service":   map[string]any{"port": float64(41000)},
+	}
+	tests := []struct {
+		name   string
+		values string
+		want   string
+	}{
+		{name: "no values file keeps the release's publish port", want: "40850"},
+		{name: "values file without the key keeps the release's publish port", values: "service:\n  port: 41840\n", want: "40850"},
+		{name: "values file publish port wins", values: "blockNode:\n  ports:\n    publisher: 40984\n", want: "40984"},
+		{name: "explicit null drops the release's publish port", values: "service:\n  port: 41840\nblockNode:\n  ports:\n    publisher: null\n", want: "41840"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ""
+			if tc.values != "" {
+				f = writeValues(t, tc.values)
+			}
+			p, err := ResolvePublisherPort(f, release)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, p)
+		})
+	}
+}
+
+func TestResolvePublisherPort_IgnoresReleaseServicePort(t *testing.T) {
+	// The base values template pins service.port, which overrides the reused value.
+	release := map[string]any{"service": map[string]any{"port": float64(41000)}}
+	p, err := ResolvePublisherPort("", release)
+	require.NoError(t, err)
+	require.Equal(t, DefaultBlockNodeServicePort, p)
 }

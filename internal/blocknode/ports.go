@@ -71,41 +71,61 @@ func ResolveHealthPort(valuesFile string) (string, error) {
 
 // ResolvePublisherPort returns the port the block node serves its publish API
 // on, which bn-publisher restricts to known publishers. It reads
-// `blockNode.ports.publisher` from the operator's effective --values file, falls
-// back to `service.port` (the chart shares that port with every facility left at
-// null), and then to DefaultBlockNodeServicePort.
+// `blockNode.ports.publisher` from the operator's --values file, then from
+// releaseValues, falls back to `service.port` from the file (the chart shares
+// that port with every facility left at null), and then to
+// DefaultBlockNodeServicePort.
+//
+// releaseValues are the deployed release's user-supplied values when the chart
+// upgrade reuses them, else nil. Helm keeps a reused key the new values leave
+// unset and deletes one they set to null, so an explicit null in the file skips
+// the release. The release's service.port is never consulted: the base values
+// template pins it, so the reused value is always overridden.
 //
 // It is pinned from the values rather than read from statusz because statusz
 // reports the publish port only alongside a configured publisher: with an empty
 // roster the port would be unknown and the publish port left unguarded.
-func ResolvePublisherPort(valuesFile string) (string, error) {
-	if valuesFile == "" {
-		return DefaultBlockNodeServicePort, nil
+func ResolvePublisherPort(valuesFile string, releaseValues map[string]any) (string, error) {
+	file := map[string]any{}
+	if valuesFile != "" {
+		data, err := oslib.ReadFile(valuesFile)
+		if err != nil {
+			return "", errorx.ExternalError.Wrap(err, "read block node values file %s", valuesFile)
+		}
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return "", errorx.IllegalFormat.Wrap(err, "parse block node values file %s", valuesFile)
+		}
 	}
-	data, err := oslib.ReadFile(valuesFile)
-	if err != nil {
-		return "", errorx.ExternalError.Wrap(err, "read block node values file %s", valuesFile)
+	if v, set := lookupValue(file, "blockNode", "ports", "publisher"); set {
+		if p := scalarPort(v); p != "" {
+			return p, nil
+		}
+	} else if v, _ := lookupValue(releaseValues, "blockNode", "ports", "publisher"); scalarPort(v) != "" {
+		return scalarPort(v), nil
 	}
-	var v struct {
-		BlockNode struct {
-			Ports struct {
-				Publisher any `yaml:"publisher"`
-			} `yaml:"ports"`
-		} `yaml:"blockNode"`
-		Service struct {
-			Port any `yaml:"port"`
-		} `yaml:"service"`
-	}
-	if err := yaml.Unmarshal(data, &v); err != nil {
-		return "", errorx.IllegalFormat.Wrap(err, "parse block node values file %s", valuesFile)
-	}
-	if p := scalarPort(v.BlockNode.Ports.Publisher); p != "" {
-		return p, nil
-	}
-	if p := scalarPort(v.Service.Port); p != "" {
-		return p, nil
+	if v, _ := lookupValue(file, "service", "port"); scalarPort(v) != "" {
+		return scalarPort(v), nil
 	}
 	return DefaultBlockNodeServicePort, nil
+}
+
+// lookupValue walks a nested values map along path. It reports whether the last
+// key is present, since a present key may hold null.
+func lookupValue(values map[string]any, path ...string) (any, bool) {
+	cur := values
+	for i, key := range path {
+		v, ok := cur[key]
+		if !ok {
+			return nil, false
+		}
+		if i == len(path)-1 {
+			return v, true
+		}
+		if cur, ok = v.(map[string]any); !ok {
+			return nil, false
+		}
+	}
+	return nil, false
 }
 
 // scalarPort renders a YAML scalar port value (which may decode as an int or a

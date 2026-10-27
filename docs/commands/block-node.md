@@ -298,7 +298,9 @@ What install sets up for you:
 - **The publish port restricted to known publishers.** `bn-publisher` drops every source
   outside its membership set on the publish port, so only publishers listed in the block
   node's `known-publishers.json` can stream blocks. The port is read from the chart values
-  (`blockNode.ports.publisher`, else `service.port`, else `40840`). Until the daemon reports a
+  (`blockNode.ports.publisher`, else `service.port`, else `40840`). An upgrade or reconfigure
+  that reuses the release's values also keeps a `blockNode.ports.publisher` the release already
+  has when `--values` leaves it out. Until the daemon reports a
   publisher the port is closed to everyone, and install warns about it. On a block node that
   serves every facility on one port, subscribers, block-access and server-status clients are
   restricted to the same sources; set `blockNode.ports.publisher` to give the publisher its

@@ -22,6 +22,8 @@ import (
 type ReconfigureHandler struct {
 	bll.BaseHandler[models.BlockNodeInputs]
 	runtime *rsl.BlockNodeRuntimeResolver
+	// readRelease is nil in unit tests, which then resolve ports from --values alone.
+	readRelease releaseValuesReader
 }
 
 // PrepareEffectiveInputs resolves fields for a reconfigure.
@@ -91,7 +93,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 
 	ins := inputs.Custom
 
-	ports, err := resolveBlockNodePorts(ins.ValuesFile)
+	ports, err := resolveBlockNodePorts(ins, h.readRelease)
 	if err != nil {
 		return nil, err
 	}
@@ -171,5 +173,5 @@ func (h *ReconfigureHandler) HandleIntent(
 // NewReconfigureHandler creates a new ReconfigureHandler.
 func NewReconfigureHandler(base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver) (*ReconfigureHandler, error) {
-	return &ReconfigureHandler{BaseHandler: base, runtime: runtimeState}, nil
+	return &ReconfigureHandler{BaseHandler: base, runtime: runtimeState, readRelease: readDeployedReleaseValues}, nil
 }
