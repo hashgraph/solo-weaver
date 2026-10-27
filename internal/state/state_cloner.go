@@ -157,7 +157,6 @@ func (s *State) Clone() (*State, error) {
 			MachineState:     *ms,
 			ClusterState:     *cs,
 			BlockNodeState:   *bs,
-			LastAction:       s.LastAction,
 		},
 	}, nil
 }
