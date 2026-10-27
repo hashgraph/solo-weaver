@@ -4,6 +4,7 @@ package reality_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -27,6 +28,13 @@ type fakeHelmManager struct {
 
 func (f *fakeHelmManager) ListAll() ([]*release.Release, error) {
 	return f.releases, nil
+}
+
+// failingHelmManager is a Helm whose release list fails.
+type failingHelmManager struct{}
+
+func (failingHelmManager) ListAll() ([]*release.Release, error) {
+	return nil, errors.New("list failed")
 }
 
 func newTeleportTestStateManager(t *testing.T) state.Manager {
@@ -199,11 +207,13 @@ func TestTeleportChecker_ClusterUnobservable_KeepsPersistedClusterAgent(t *testi
 	require.NoError(t, err)
 
 	assert.False(t, helmCalled)
-	assert.Equal(t, persisted, ts.ClusterAgent)
+	persisted.Unobserved = true
+	assert.Equal(t, persisted, ts.ClusterAgent, "the recorded agent stands, marked unobserved")
 }
 
 // No kubeconfig on this host says nothing about the Helm release, so the
-// recorded agent stands.
+// recorded agent stands. There's no cluster to act on either, so it isn't
+// marked unobserved.
 func TestTeleportChecker_NoKubeconfig_KeepsPersistedClusterAgent(t *testing.T) {
 	sm := newTeleportTestStateManager(t)
 	persisted := persistInstalledClusterAgent(t, sm)
@@ -240,4 +250,23 @@ func TestTeleportChecker_ReachableClusterWithoutRelease_ClearsPersistedClusterAg
 	require.NoError(t, err)
 
 	assert.Equal(t, state.TeleportClusterAgentState{}, ts.ClusterAgent)
+}
+
+// A reachable cluster whose Helm release list fails says nothing about the
+// release either: the recorded agent stands, marked unobserved.
+func TestTeleportChecker_HelmListFails_KeepsPersistedClusterAgentUnobserved(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	persisted := persistInstalledClusterAgent(t, sm)
+
+	probe := func() reality.ClusterReachability { return reality.Reachable }
+	newHelm := func() (reality.HelmManager, error) { return failingHelmManager{}, nil }
+
+	checker, err := reality.NewTeleportChecker(sm, newHelm, probe)
+	require.NoError(t, err)
+
+	ts, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+
+	persisted.Unobserved = true
+	assert.Equal(t, persisted, ts.ClusterAgent)
 }

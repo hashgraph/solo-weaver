@@ -256,6 +256,16 @@ Remove it, stopping the systemd service and cleaning up binaries and config:
 sudo solo-provisioner teleport node uninstall
 ```
 
+`uninstall` stops before removing a node agent that changed since solo-provisioner last
+recorded it, or that it can't read: see [Drift guard](#drift-guard). For the node agent, a
+change is its binaries installed or its `/usr/local/bin` links created. A hand edit of
+`/etc/teleport/teleport.yaml` or of the service unit is not detected, and `uninstall` removes
+it.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
+
 ### Cluster agent (kubectl)
 
 ```bash
@@ -277,6 +287,47 @@ Remove the Helm release:
 ```bash
 sudo solo-provisioner teleport cluster uninstall
 ```
+
+`uninstall` stops before removing a cluster agent that changed since solo-provisioner last
+recorded it (its chart version pinned with a hand-run `helm upgrade`, say), or that it can't
+read: see [Drift guard](#drift-guard). `teleport cluster install` keeps an existing release
+and records it as it finds it.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
+
+### Drift guard
+
+`teleport node uninstall` and `teleport cluster uninstall` stop before removing an agent
+that changed since solo-provisioner last recorded it, by hand or by an earlier run that
+stopped before recording. The run lists each changed field and exits non-zero, having
+changed nothing.
+
+- Re-run with `--override-drift` to remove it anyway. `--force`, `--non-interactive` and
+  `--output=json` also go ahead.
+- A run that goes ahead records the overwritten values in
+  `/opt/solo/weaver/state/action_history.yaml`. Each change in the entry's `ownedDrift` says
+  whether the run was allowed to destroy it (`destroyAllowed`), and whether the run's own read
+  after the uninstall no longer finds it (`destroyed`). A run can fail and still have removed
+  it; one that left it in place records `destroyed: false`.
+- Each uninstall checks its own agent only. A change to the other agent never stops it, and
+  stays on record for that agent's commands. An agent already removed by hand never stops it
+  either.
+- `install` records the agent as it finds it, so after it `uninstall` no longer stops for
+  that change.
+
+If solo-provisioner can't read the agent before the run, `uninstall` stops and says it
+cannot verify it, even with `--override-drift`, `--force` or `--output=json`: nothing goes
+past an agent nobody could see.
+
+- For the cluster agent, that's a kubeconfig whose API server doesn't answer within 3
+  seconds, or a Helm release list that fails. A flaky or unreachable API server now stops
+  the uninstall: re-run once it answers.
+- A host with no kubeconfig has no cluster to act on, so that never stops it. For a cluster
+  that's gone for good, remove its kubeconfig first.
+- `install` over an agent it can't read records `could not be read` and adopts what it
+  finds.
 
 ---
 

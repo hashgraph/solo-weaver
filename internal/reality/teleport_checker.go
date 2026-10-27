@@ -38,10 +38,12 @@ func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState
 	now := htime.Now()
 	ts := t.sm.State().TeleportState
 
-	// Refresh node agent state via live binary verification
+	// Refresh node agent state via live binary verification. An agent that
+	// could not be read keeps its recorded state, marked unobserved.
 	nodeState, err := t.refreshNodeAgentState()
 	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to refresh teleport node agent state")
+		logx.As().Warn().Err(err).Msg("Failed to refresh teleport node agent state; keeping the recorded node agent")
+		ts.NodeAgent.Unobserved = true
 	} else {
 		ts.NodeAgent = nodeState
 	}
@@ -49,7 +51,8 @@ func (t *teleportChecker) RefreshState(ctx context.Context) (state.TeleportState
 	// Refresh cluster agent state via Helm
 	clusterState, err := t.refreshClusterAgentState(ts.ClusterAgent)
 	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to refresh teleport cluster agent state")
+		logx.As().Warn().Err(err).Msg("Failed to refresh teleport cluster agent state; keeping the recorded cluster agent")
+		ts.ClusterAgent.Unobserved = true
 	} else {
 		ts.ClusterAgent = clusterState
 	}
@@ -78,7 +81,10 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 
 // refreshClusterAgentState records the cluster agent as absent only when Helm,
 // reached through a live cluster, has no deployed release for it. A cluster it
-// cannot observe proves nothing about the release, so the persisted agent stands.
+// cannot observe proves nothing about the release, so the persisted agent
+// stands. When a kubeconfig exists but the API server did not answer, the
+// release may still be there, so the kept agent is marked unobserved. With no
+// kubeconfig there is no cluster to act on either.
 func (t *teleportChecker) refreshClusterAgentState(persisted state.TeleportClusterAgentState) (state.TeleportClusterAgentState, error) {
 	if r := t.probe(); !r.Observed() {
 		if r.Configured() {
@@ -86,6 +92,7 @@ func (t *teleportChecker) refreshClusterAgentState(persisted state.TeleportClust
 		} else {
 			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded teleport cluster agent")
 		}
+		persisted.Unobserved = r.Configured()
 		return persisted, nil
 	}
 

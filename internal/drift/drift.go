@@ -22,10 +22,21 @@ type Change struct {
 	Field     string
 	Persisted string
 	Live      string
+	// Removed is set when the change is the removal of what Field belongs to,
+	// such as a Teleport agent uninstalled out of band.
+	Removed bool
+	// Unobserved is set when this run could not read the live value at all,
+	// such as a Teleport cluster agent behind an API server that did not
+	// answer. Live is then empty.
+	Unobserved bool
 }
 
 // String renders the change as one operator-facing warning line.
 func (c Change) String() string {
+	if c.Unobserved {
+		return fmt.Sprintf("%s %s could not be read from the live system: recorded %q",
+			c.Component, c.Field, c.Persisted)
+	}
 	return fmt.Sprintf("%s %s differs from persisted state: recorded %q, live %q",
 		c.Component, c.Field, c.Persisted, c.Live)
 }
@@ -33,8 +44,11 @@ func (c Change) String() string {
 // Producer compares one component's persisted baseline with the live state.
 //
 // It must return only differences an operator should act on. A field the live
-// system cannot report, or could not report on this run, is left out rather
-// than reported as changed.
+// system can never report is left out. A part it could not read on this run is
+// reported once, as an Unobserved change on the field that says whether the
+// part exists, so a destructive action never takes "not read" for "unchanged".
+// A change that reports something gone from the live system must set Removed:
+// no action can destroy a removal, so the drift guard never stops a run for one.
 type Producer func(baseline, live state.State) []Change
 
 // Detect runs every producer against the same baseline and live state, keeping

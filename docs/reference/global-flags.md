@@ -13,6 +13,13 @@ Flags on this page work on every `solo-provisioner` command.
 | `--version` | `-v` | Print the version and exit. | — |
 | `--help` | `-h` | Print help for the command you typed it on. | — |
 
+> `--force`, `--non-interactive` and `--output=json` also let a command that would destroy
+> changes made outside solo-provisioner go ahead, and record the overwritten values in the
+> action history. Without them, such a command stops and names `--override-drift`. None of
+> them gets past something solo-provisioner couldn't read. Today that is
+> `teleport node uninstall` and `teleport cluster uninstall`: see
+> [Drift guard](../commands/README.md#drift-guard).
+
 > `--profile` is **not** a global flag. It lives on the command stacks that need it —
 > `block node …` and `alloy cluster install`. `kube cluster install` does not take one.
 > See [Deployment profiles](deployment-profiles.md).

@@ -551,6 +551,37 @@ func TestFlushActionHistory_KeepsEntriesAddedDuringAppend(t *testing.T) {
 	require.Equal(t, models.ActionUninstall, entries[1].Intent.Action)
 }
 
+// An entry records the owned drift its action ran over; an entry with none
+// carries no ownedDrift key.
+func TestActionHistory_EntryRecordsOwnedDrift(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	drifted := []OwnedDriftRecord{{
+		Component: "teleport", Field: "clusterAgent.chartVersion", Persisted: "18.1.0", Live: "18.2.1",
+		DestroyAllowed: true, Destroyed: true,
+	}}
+
+	m.AddActionHistory(ActionHistory{
+		Intent:     models.Intent{Action: models.ActionUninstall, Target: models.TargetTeleportCluster},
+		OwnedDrift: drifted,
+	})
+	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetTeleportCluster}})
+	require.NoError(t, m.FlushActionHistory())
+
+	f, err := os.Open(ActionHistoryFilePath(dir))
+	require.NoError(t, err)
+	defer f.Close()
+	dec := yaml.NewDecoder(f)
+	var drifting ActionHistory
+	require.NoError(t, dec.Decode(&drifting))
+	var plain map[string]any
+	require.NoError(t, dec.Decode(&plain))
+
+	require.Equal(t, drifted, drifting.OwnedDrift)
+	require.NotContains(t, plain, "ownedDrift")
+}
+
 // TestFlushState_HandEditWithStaleHashFieldIsDetected verifies the optimistic-
 // concurrency check recomputes the on-disk hash from content rather than
 // trusting the file's own stored hash field. A hand edit naturally leaves
@@ -589,4 +620,29 @@ func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
 	require.NoError(t, reread.Refresh())
 	require.Equal(t, "hand-edited", reread.State().MachineState.Profile,
 		"the hand edit must survive — it must not be silently overwritten")
+}
+
+// An agent marked unobserved by a refresh is never written to its file, nor
+// part of the content hash: the flag says what one run could read, not what the
+// host holds.
+func TestFlushState_UnobservedAgentIsNeverWrittenOrHashed(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestState(filepath.Join(dir, "state.yaml"))
+	st.TeleportState.ClusterAgent = TeleportClusterAgentState{Installed: true, ChartVersion: "18.6.4"}
+	read := st
+	st.TeleportState.ClusterAgent.Unobserved = true
+	st.TeleportState.NodeAgent.Unobserved = true
+	m, err := NewStateManager(WithState(st), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+
+	require.NoError(t, m.FlushState())
+
+	b, err := os.ReadFile(ComponentFilePath(dir, ComponentTeleport))
+	require.NoError(t, err)
+	require.NotContains(t, strings.ToLower(string(b)), "unobserved:")
+	unread, err := stateContentHash(st)
+	require.NoError(t, err)
+	readHash, err := stateContentHash(read)
+	require.NoError(t, err)
+	require.Equal(t, readHash, unread)
 }

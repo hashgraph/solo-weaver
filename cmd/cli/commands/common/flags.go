@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/ui"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
@@ -647,6 +649,26 @@ func ExtractRootFlags(cmd *cobra.Command, args []string, flags *RootFlags) error
 	}
 
 	logx.As().Info().Any("root-flags", flags).Msg("Extracted root command flags")
+	return nil
+}
+
+// ExtractDriftGuardFlags sets the CommonInputs fields the BLL's drift guard
+// reads: --force, --override-drift (false on a command that does not register
+// it), and whether the run is non-interactive (--non-interactive or --output json).
+func ExtractDriftGuardFlags(cmd *cobra.Command, args []string, in *models.CommonInputs) error {
+	force, err := FlagForce().Value(cmd, args)
+	if err != nil {
+		return errx.WithReason(errorx.InternalError.Wrap(err, "failed to get force flag"), reasons.Internal)
+	}
+
+	override := false
+	if cmd.Flags().Lookup(FlagOverrideDrift().Name) != nil {
+		if override, err = FlagOverrideDrift().Value(cmd, args); err != nil {
+			return errx.WithReason(errorx.InternalError.Wrap(err, "failed to get override-drift flag"), reasons.Internal)
+		}
+	}
+
+	in.Force, in.OverrideDrift, in.NonInteractive = force, override, ui.NonInteractive
 	return nil
 }
 

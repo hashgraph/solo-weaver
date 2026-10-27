@@ -20,11 +20,11 @@ import (
 //   - ChartRef: the OCI / repo reference is not stored in Helm release metadata.
 //   - Storage.BasePath: a weaver concept; Kubernetes only knows the individual PV
 //     hostPaths that the reality checker reads back. Without this patch, BasePath
-//     is lost after every FlushState → Refresh cycle, and the next interactive
+//     is lost after every flushState → Refresh cycle, and the next interactive
 //     prompt would re-fill the PV-derived individual paths instead of the
 //     operator-chosen base path.
 //
-// Profile persistence is handled centrally by BaseHandler.FlushState via ProfileExtractor.
+// Profile persistence is handled centrally by BaseHandler.flushState via ProfileExtractor.
 func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
