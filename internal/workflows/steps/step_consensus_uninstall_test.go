@@ -200,6 +200,106 @@ func TestDeleteConsensusCapsule_TimesOutWhenCapsuleStays(t *testing.T) {
 	assert.Contains(t, rpt.Error.Error(), "still exists")
 }
 
+// releaseCheckClient fails the capsule delete if a PVC is still owned by the capsule at that time.
+type releaseCheckClient struct {
+	*fakeCapsuleClient
+	t *testing.T
+}
+
+func (r *releaseCheckClient) DeleteResource(ctx context.Context, apiVersion, kind, ns, name string) (bool, error) {
+	for _, p := range r.pvcs {
+		assert.False(r.t, ownedBy(p.GetOwnerReferences(), string(kube.KindConsensusCapsule), name), "PVC %s still owned at delete", p.GetName())
+	}
+	return r.fakeCapsuleClient.DeleteResource(ctx, apiVersion, kind, ns, name)
+}
+
+// The operator can own the PVCs again after ReleaseConsensusPVCs, so the delete step releases them first.
+func TestDeleteConsensusCapsule_ReleasesPVCsBeforeDelete(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	kc := &releaseCheckClient{&fakeCapsuleClient{
+		existing: map[string]string{capsuleName: "deployed"},
+		pvcs:     []unstructured.Unstructured{pvcOwnedBy(capsuleName+"-saved", capsuleName)},
+	}, t}
+
+	rpt := runUninstallStep(t, DeleteConsensusCapsule(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.Equal(t, []string{capsuleName + "-saved"}, kc.released)
+	assert.Equal(t, []string{capsuleName}, kc.deleted)
+}
+
+// readoptClient keeps the capsule for one poll after the delete, and the operator owns the PVC again then.
+type readoptClient struct {
+	*fakeCapsuleClient
+	capsule  string
+	deleting bool
+	polls    int
+	listErr  error
+}
+
+func (r *readoptClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
+	r.deleting = true
+	return true, nil
+}
+
+func (r *readoptClient) ResourceExists(_ context.Context, _, _, _, _ string) (bool, error) {
+	if !r.deleting {
+		return true, nil
+	}
+	r.polls++
+	if r.polls == 1 {
+		owned := pvcOwnedBy("", r.capsule)
+		r.pvcs[0].SetOwnerReferences(owned.GetOwnerReferences())
+		return true, nil
+	}
+	return false, nil
+}
+
+func (r *readoptClient) List(ctx context.Context, kind kube.ResourceKind, ns string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	if r.deleting && r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.fakeCapsuleClient.List(ctx, kind, ns, opts)
+}
+
+func newReadoptClient(listErr error) *readoptClient {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	return &readoptClient{
+		fakeCapsuleClient: &fakeCapsuleClient{pvcs: []unstructured.Unstructured{pvcOwnedBy(capsuleName + "-saved")}},
+		capsule:           capsuleName,
+		listErr:           listErr,
+	}
+}
+
+// If the operator owns a PVC again while the capsule is deleting, the next poll releases it.
+func TestDeleteConsensusCapsule_ReleasesPVCsWhileWaiting(t *testing.T) {
+	origInterval := capsuleDeletePollInterval
+	capsuleDeletePollInterval = time.Millisecond
+	t.Cleanup(func() { capsuleDeletePollInterval = origInterval })
+
+	kc := newReadoptClient(nil)
+
+	rpt := runUninstallStep(t, DeleteConsensusCapsule(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.Equal(t, []string{kc.capsule + "-saved"}, kc.released)
+	assert.Empty(t, kc.pvcs[0].GetOwnerReferences())
+}
+
+// A release that fails after the delete is sent must fail the step with the PVC error, not a timeout.
+func TestDeleteConsensusCapsule_ReleaseErrorWhileWaitingFails(t *testing.T) {
+	origInterval := capsuleDeletePollInterval
+	capsuleDeletePollInterval = time.Millisecond
+	t.Cleanup(func() { capsuleDeletePollInterval = origInterval })
+
+	kc := newReadoptClient(errorx.ExternalError.New("forbidden: cannot list pvcs"))
+
+	rpt := runUninstallStep(t, DeleteConsensusCapsule(uninstallInputs(), func(context.Context) (CapsuleKubeClient, error) { return kc, nil }))
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "failed to list PVCs")
+}
+
 // --- DeleteConsensusConfigCRs ---
 
 func allConfigCRNames(nodeId int64) map[string]string {

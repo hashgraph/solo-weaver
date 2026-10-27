@@ -64,32 +64,14 @@ func ReleaseConsensusPVCs(inputs models.ConsensusNodeInputs, provider CapsuleKub
 			}
 
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
-			capsuleKind := string(kube.KindConsensusCapsule)
 
-			list, err := kc.List(ctx, kube.KindPVC, inputs.Namespace, kube.WaitOptions{})
+			released, err := releaseCapsulePVCs(ctx, kc, inputs.Namespace, capsuleName)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.ExternalError.Wrap(err, "failed to list PVCs in namespace %s", inputs.Namespace),
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
 					reasons.PreconditionNotMet,
-					"Verify cluster connectivity and RBAC for listing PersistentVolumeClaims",
+					"Verify cluster connectivity and RBAC for listing and updating PersistentVolumeClaims",
+					fmt.Sprintf("Inspect the owners: kubectl -n %s get pvc -o custom-columns=NAME:.metadata.name,OWNERS:.metadata.ownerReferences", inputs.Namespace),
 					"Re-run uninstall; the capsule is not deleted until its PVCs are released")))
-			}
-
-			var released []string
-			for i := range list.Items {
-				name := list.Items[i].GetName()
-				if !ownedBy(list.Items[i].GetOwnerReferences(), capsuleKind, capsuleName) {
-					continue
-				}
-				if _, err := kc.RemoveOwnerReference(ctx, kube.KindPVC, inputs.Namespace, name, capsuleKind, capsuleName); err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.ExternalError.Wrap(err, "failed to release PVC %s from ConsensusCapsule %s", name, capsuleName),
-						reasons.PreconditionNotMet,
-						"Verify RBAC for updating PersistentVolumeClaims",
-						fmt.Sprintf("Inspect the owners: kubectl -n %s get pvc %s -o jsonpath='{.metadata.ownerReferences}'", inputs.Namespace, name),
-						"Re-run uninstall; the capsule is not deleted until its PVCs are released")))
-				}
-				released = append(released, name)
 			}
 
 			logx.As().Info().Str("capsule", capsuleName).Strs("pvcs", released).Msg("PVCs released from ConsensusCapsule")
@@ -109,6 +91,30 @@ func ReleaseConsensusPVCs(inputs models.ConsensusNodeInputs, provider CapsuleKub
 		})
 }
 
+// releaseCapsulePVCs removes the capsule ownerReference from each PVC in the namespace that has it,
+// and returns the names of the PVCs it released.
+func releaseCapsulePVCs(ctx context.Context, kc CapsuleKubeClient, namespace, capsuleName string) ([]string, error) {
+	capsuleKind := string(kube.KindConsensusCapsule)
+
+	list, err := kc.List(ctx, kube.KindPVC, namespace, kube.WaitOptions{})
+	if err != nil {
+		return nil, errorx.ExternalError.Wrap(err, "failed to list PVCs in namespace %s", namespace)
+	}
+
+	var released []string
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if !ownedBy(list.Items[i].GetOwnerReferences(), capsuleKind, capsuleName) {
+			continue
+		}
+		if _, err := kc.RemoveOwnerReference(ctx, kube.KindPVC, namespace, name, capsuleKind, capsuleName); err != nil {
+			return released, errorx.ExternalError.Wrap(err, "failed to release PVC %s from ConsensusCapsule %s", name, capsuleName)
+		}
+		released = append(released, name)
+	}
+	return released, nil
+}
+
 // ownedBy reports whether refs name the given owner.
 func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
 	for _, r := range refs {
@@ -121,6 +127,7 @@ func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
 
 // DeleteConsensusCapsule deletes the node's ConsensusCapsule and waits until the capsule object is gone.
 // The wait does not cover the capsule's pods, which can still be stopping. An absent capsule is a success.
+// It releases the PVCs again before the delete and on each poll, in case the operator owns them again.
 func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(DeleteConsensusCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -136,6 +143,23 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 			kind := string(kube.KindConsensusCapsule)
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
+			pvcHints := []string{
+				"Verify cluster connectivity and RBAC for listing and updating PersistentVolumeClaims",
+				fmt.Sprintf("Inspect the owners: kubectl -n %s get pvc -o custom-columns=NAME:.metadata.name,OWNERS:.metadata.ownerReferences", inputs.Namespace),
+			}
+			release := func(ctx context.Context) error {
+				released, err := releaseCapsulePVCs(ctx, kc, inputs.Namespace, capsuleName)
+				if len(released) > 0 {
+					logx.As().Warn().Str("capsule", capsuleName).Strs("pvcs", released).Msg("PVCs were owned by the ConsensusCapsule again; released them")
+				}
+				return err
+			}
+
+			if err := release(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
+					reasons.PreconditionNotMet, append(pvcHints, "Re-run uninstall; the capsule is not deleted until its PVCs are released")...)))
+			}
+
 			// An absent CRD means its CRs are gone too, so treat it as already deleted.
 			deleted, err := kc.DeleteResource(ctx, apiVersion, kind, inputs.Namespace, capsuleName)
 			if err != nil && !kube.IsKindNotServed(err) {
@@ -150,7 +174,18 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				return automa.StepSuccessReport(stp.Id())
 			}
 
-			if err := waitForResourceGone(ctx, kc, apiVersion, kind, inputs.Namespace, capsuleName); err != nil {
+			// The delete is already sent, so a failed release here can lose the PVCs; report it on its own.
+			var releaseErr error
+			pollRelease := func(ctx context.Context) error {
+				releaseErr = release(ctx)
+				return releaseErr
+			}
+			if err := waitForResourceGone(ctx, kc, apiVersion, kind, inputs.Namespace, capsuleName, pollRelease); err != nil {
+				if releaseErr != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(releaseErr,
+						reasons.PreconditionNotMet, append(pvcHints,
+							fmt.Sprintf("Check that the node's PVCs still exist: kubectl -n %s get pvc", inputs.Namespace))...)))
+				}
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
 					reasons.PreconditionNotMet,
 					fmt.Sprintf("Check what blocks the delete: kubectl -n %s get consensuscapsule %s -o jsonpath='{.metadata.finalizers}'", inputs.Namespace, capsuleName),
@@ -174,7 +209,8 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 }
 
 // waitForResourceGone polls until the resource no longer exists, the timeout ends, or ctx is cancelled.
-func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, kind, namespace, name string) error {
+// If onPoll is not nil, it runs each time the resource still exists; its error stops the wait.
+func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, kind, namespace, name string, onPoll func(context.Context) error) error {
 	deadline := time.Now().Add(capsuleDeleteTimeout)
 	ticker := time.NewTicker(capsuleDeletePollInterval)
 	defer ticker.Stop()
@@ -186,6 +222,11 @@ func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, 
 		}
 		if absent {
 			return nil
+		}
+		if onPoll != nil {
+			if err := onPoll(ctx); err != nil {
+				return err
+			}
 		}
 		if time.Now().After(deadline) {
 			return errorx.TimeoutElapsed.New("%s %s still exists %s after delete", kind, name, capsuleDeleteTimeout)
@@ -296,7 +337,7 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 
 			// The delete is asynchronous; the state prune after the workflow needs the Orbit gone.
 			if deleted {
-				if err := waitForResourceGone(ctx, kc, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName); err != nil {
+				if err := waitForResourceGone(ctx, kc, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, nil); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
 						reasons.PreconditionNotMet,
 						"Check what blocks the delete: kubectl get orbit "+inputs.OrbitName+" -o jsonpath='{.metadata.finalizers}'",
