@@ -41,6 +41,17 @@ func NewUnifiedStateMigration() *UnifiedStateMigration {
 func (m *UnifiedStateMigration) ID() string          { return m.id }
 func (m *UnifiedStateMigration) Description() string { return m.description }
 
+// stateFiles is every state file Execute or Rollback can write in dir: the
+// marker files, state.yaml, and system.yaml when there is no state.yaml.
+func (m *UnifiedStateMigration) stateFiles(dir string) []string {
+	return []string{
+		filepath.Join(dir, "*.installed"),
+		filepath.Join(dir, "*.configured"),
+		filepath.Join(dir, StateFileName),
+		componentFilePath(dir, ComponentSystem),
+	}
+}
+
 // Applies returns true when legacy *.installed or *.configured files are present.
 func (m *UnifiedStateMigration) Applies(mctx *migration.Context) (bool, error) {
 	stateDir := models.Paths().StateDir
@@ -90,7 +101,7 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 	case os.IsNotExist(readErr):
 		// Already split, or old enough to have only marker files: the software
 		// entries belong to system.yaml, so merge into that alone.
-		sm, err := NewStateManager()
+		sm, err := newStateManager()
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
 		}
@@ -101,7 +112,8 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 		for _, mk := range markers {
 			current = SetSoftwareState(current, mk.component, mk.applyTo(GetSoftwareState(current, mk.component)))
 		}
-		if err := sm.Set(current).FlushScoped(ComponentSystem); err != nil {
+		sm.Set(current)
+		if err := sm.writeUnrecorded(ComponentSystem); err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to flush migrated state")
 		}
 

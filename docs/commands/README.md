@@ -180,6 +180,11 @@ It holds the `system` record for its whole run. While another command holds it (
 cluster itself), it fails at once with `system is being modified (held by pid N)` and
 changes nothing. Re-run it once that command finishes.
 
+Each run whose workflow started adds one `install` / `cluster` entry to
+`/opt/solo/weaver/state/action_history.yaml`, even when it fails. A failed install leaves
+`system.yaml` as it was, and its entry records `outcome: failed`. See
+[Action history](../dev/action-history.md).
+
 ### Two things it deliberately does not do
 
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
@@ -235,10 +240,14 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 
 > **Every running workload stops.** This includes the block node.
 
-It also deletes everything under `/opt/solo/weaver/state/`, so it takes every state lock
-first. While any other solo-provisioner command holds one, it fails at once with
-`<record> is being modified (held by pid N)`, before tearing anything down. Re-run it once
-that command finishes.
+It also deletes everything under `/opt/solo/weaver/state/` except `action_history.yaml`, so it
+takes every state lock first. While any other solo-provisioner command holds one, it fails at
+once with `<record> is being modified (held by pid N)`, before tearing anything down. Re-run it
+once that command finishes.
+
+The action history survives the uninstall and gains one `uninstall` / `cluster` entry naming
+every state file it removed, even when the uninstall fails. A later `kube cluster install` on
+the host appends to the same history. See [Action history](../dev/action-history.md).
 
 ---
 

@@ -13,6 +13,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	osutil "github.com/hashgraph/solo-weaver/pkg/os"
@@ -154,57 +155,86 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 				return automa.SuccessReport(stp)
 			}
 
-			weaverHome := "/opt/solo/weaver"
-
-			// Open the directory so its entries can be read in batches instead of all at once.
-			dir, err := os.Open(weaverHome)
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					// Directory doesn't exist, nothing to clean
-					logx.As().Debug().Err(err).Msg("Weaver home directory doesn't exist, nothing to clean")
-					return automa.SuccessReport(stp)
-				}
-
-				// Best-effort teardown: log and continue.
-				logx.As().Warn().Err(err).Msg("Failed to open weaver home directory, continuing with teardown")
-				return automa.SuccessReport(stp)
-			}
-			defer fsx.Close(dir)
-
-			// Remove each top-level directory/file except the below ones
-			skipDirs := map[string]bool{
-				models.Paths().DownloadsDir: true,
-				models.Paths().BinDir:       true,
-				models.Paths().LogsDir:      true,
-			}
-
-			// Remove every top-level entry except the preserved folders.
-			for {
-				entries, readErr := dir.ReadDir(weaverHomeReadBatchSize)
-				for _, entry := range entries {
-					entryPath := filepath.Join(weaverHome, entry.Name())
-
-					// Skip the downloads, bin, and logs folders
-					if skipDirs[entryPath] {
-						logx.As().Debug().Str("path", entryPath).Msg("Preserving directory during cleanup")
-						continue
-					}
-
-					// Remove directories/files
-					if err := fsManager.RemoveAll(entryPath); err != nil {
-						logx.As().Warn().Err(err).Msgf("Failed to remove %s, continuing with teardown", entryPath)
-					}
-				}
-
-				if errors.Is(readErr, io.EOF) {
-					break
-				}
-				if readErr != nil {
-					logx.As().Warn().Err(readErr).Msg("Failed to read weaver home directory, continuing with teardown")
-					break
-				}
-			}
-
+			cleanupWeaverHome(fsManager, "/opt/solo/weaver")
 			return automa.SuccessReport(stp)
 		})
+}
+
+// cleanupWeaverHome removes every top-level entry of weaverHome except the
+// downloads, bin and logs folders, and empties the state directory except its
+// action history. It is best-effort: a failure is logged and teardown goes on.
+func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
+	// Open the directory so its entries can be read in batches instead of all at once.
+	dir, err := os.Open(weaverHome)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Directory doesn't exist, nothing to clean
+			logx.As().Debug().Err(err).Msg("Weaver home directory doesn't exist, nothing to clean")
+			return
+		}
+
+		// Best-effort teardown: log and continue.
+		logx.As().Warn().Err(err).Msg("Failed to open weaver home directory, continuing with teardown")
+		return
+	}
+	defer fsx.Close(dir)
+
+	// Remove each top-level directory/file except the below ones
+	skipDirs := map[string]bool{
+		models.Paths().DownloadsDir: true,
+		models.Paths().BinDir:       true,
+		models.Paths().LogsDir:      true,
+	}
+
+	// Remove every top-level entry except the preserved folders.
+	for {
+		entries, readErr := dir.ReadDir(weaverHomeReadBatchSize)
+		for _, entry := range entries {
+			entryPath := filepath.Join(weaverHome, entry.Name())
+
+			// Skip the downloads, bin, and logs folders
+			if skipDirs[entryPath] {
+				logx.As().Debug().Str("path", entryPath).Msg("Preserving directory during cleanup")
+				continue
+			}
+
+			// Empty the state directory but keep the action history, which
+			// records this uninstall too.
+			if entryPath == models.Paths().StateDir {
+				removeAllExcept(fsManager, entryPath, state.ActionHistoryFileName)
+				continue
+			}
+
+			// Remove directories/files
+			if err := fsManager.RemoveAll(entryPath); err != nil {
+				logx.As().Warn().Err(err).Msgf("Failed to remove %s, continuing with teardown", entryPath)
+			}
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			logx.As().Warn().Err(readErr).Msg("Failed to read weaver home directory, continuing with teardown")
+			break
+		}
+	}
+}
+
+// removeAllExcept removes every entry of dir but the one named keep.
+func removeAllExcept(fsManager fsx.Manager, dir, keep string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		logx.As().Warn().Err(err).Msgf("Failed to read %s, continuing with teardown", dir)
+		return
+	}
+	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := fsManager.RemoveAll(path); err != nil {
+			logx.As().Warn().Err(err).Msgf("Failed to remove %s, continuing with teardown", path)
+		}
+	}
 }

@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFlushScoped_DisjointComponentsBothSucceedConcurrently is the
+// TestCommit_DisjointComponentsBothSucceedConcurrently is the
 // acceptance criterion: a daemon writing consensus state concurrently with a
 // CLI writing teleport state must both succeed, because they touch disjoint
 // files with independent hashes and locks — not the one shared state.yaml
 // hash the pre-split design serialized everything through.
-func TestFlushScoped_DisjointComponentsBothSucceedConcurrently(t *testing.T) {
+func TestCommit_DisjointComponentsBothSucceedConcurrently(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "state.yaml")
 	fm := newTestFileManager(t)
@@ -37,12 +37,12 @@ func TestFlushScoped_DisjointComponentsBothSucceedConcurrently(t *testing.T) {
 
 	daemonState := daemonSM.State()
 	daemonState.ConsensusNodes = map[string]ConsensusNodeState{"node1": {NodeId: 1}}
-	require.NoError(t, daemonSM.Set(daemonState).FlushScoped(ComponentConsensus),
+	require.NoError(t, daemonSM.Set(daemonState).Commit(ActionHistory{}, ComponentConsensus),
 		"daemon's consensus write must succeed while the CLI holds the teleport lock")
 
 	cliState := cliSM.State()
 	cliState.TeleportState.NodeAgent = TeleportNodeAgentState{Installed: true, Configured: true}
-	require.NoError(t, cliSM.Set(cliState).FlushScoped(ComponentTeleport),
+	require.NoError(t, cliSM.Set(cliState).Commit(ActionHistory{}, ComponentTeleport),
 		"the CLI's teleport write must succeed while the daemon holds the consensus lock")
 
 	final, err := NewStateManager(WithState(NewState(stateFile)), WithFileManager(fm))
@@ -63,7 +63,7 @@ func TestFlushScoped_ConsensusComponentPersistsOrbits(t *testing.T) {
 	require.NoError(t, sm.Refresh())
 	s := sm.State()
 	s.ConsensusOrbits = map[string]ConsensusOrbitState{"orbit1": {LedgerId: "0x01"}}
-	require.NoError(t, sm.Set(s).FlushScoped(ComponentConsensus))
+	require.NoError(t, sm.Set(s).Commit(ActionHistory{}, ComponentConsensus))
 
 	reread, err := NewStateManager(WithState(NewState(stateFile)), WithFileManager(fm))
 	require.NoError(t, err)

@@ -4,6 +4,7 @@ package state
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/user"
@@ -11,11 +12,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -78,7 +82,7 @@ func TestFlushWritesFile(t *testing.T) {
 	err = m.Refresh()
 	require.NoError(t, err)
 
-	if err := m.FlushState(); err != nil {
+	if err := m.Commit(ActionHistory{}, AllComponentIDs...); err != nil {
 		t.Fatalf("FlushState returned error: %v", err)
 	}
 
@@ -111,7 +115,7 @@ func TestRefreshLoadsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStateManager for seed returned error: %v", err)
 	}
-	if err := seedMgr.FlushState(); err != nil {
+	if err := seedMgr.Commit(ActionHistory{}, AllComponentIDs...); err != nil {
 		t.Fatalf("failed to seed on-disk state: %v", err)
 	}
 
@@ -147,7 +151,7 @@ func TestNewStateManager_DoesNotAutoRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStateManager for seed returned error: %v", err)
 	}
-	if err := seedMgr.FlushState(); err != nil {
+	if err := seedMgr.Commit(ActionHistory{}, AllComponentIDs...); err != nil {
 		t.Fatalf("failed to seed on-disk state: %v", err)
 	}
 
@@ -223,217 +227,131 @@ func decodeHistoryFile(t *testing.T, path string) []ActionHistory {
 	return entries
 }
 
-// TestActionHistory_SingleFlush verifies that a single FlushState call writes all pending
-// entries to the history file as individual YAML documents and clears the in-memory buffer.
-func TestActionHistory_SingleFlush(t *testing.T) {
+// TestCommit_AppendsEachEntryWithItsTimestamp verifies that every Commit
+// appends its entry to the history file as its own YAML document, stamped with
+// the time it was recorded.
+func TestCommit_AppendsEachEntryWithItsTimestamp(t *testing.T) {
 	dir := t.TempDir()
-	stateFile := filepath.Join(dir, "state.yaml")
 	historyFile := filepath.Join(dir, "action_history.yaml")
 
-	s := newTestState(stateFile)
-	m, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
-	if err != nil {
-		t.Fatalf("NewStateManager: %v", err)
-	}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
 
-	m.AddActionHistory(ActionHistory{
+	require.NoError(t, m.Commit(ActionHistory{
 		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"profile": "local", "version": "0.1.0"},
-	})
-	m.AddActionHistory(ActionHistory{
+	}, ComponentBlockNode))
+	require.NoError(t, m.Commit(ActionHistory{
 		Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode},
 		Inputs: map[string]any{"profile": "local"},
-	})
-
-	if err := m.FlushAll(); err != nil {
-		t.Fatalf("FlushState: %v", err)
-	}
+	}, ComponentBlockNode))
 
 	entries := decodeHistoryFile(t, historyFile)
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 history entries after flush, got %d", len(entries))
-	}
-
-	if entries[0].Intent.Action != models.ActionInstall {
-		t.Errorf("entry[0] action: got %q, want %q", entries[0].Intent.Action, models.ActionInstall)
-	}
-
+	require.Len(t, entries, 2)
+	require.Equal(t, models.ActionInstall, entries[0].Intent.Action)
+	require.Equal(t, models.ActionUninstall, entries[1].Intent.Action)
 	// After YAML round-trip, Inputs is decoded as map[string]interface{}.
 	inputs0, ok := entries[0].Inputs.(map[string]interface{})
-	if !ok {
-		t.Fatalf("entry[0] Inputs: expected map[string]interface{}, got %T", entries[0].Inputs)
-	}
-	if inputs0["version"] != "0.1.0" {
-		t.Errorf("entry[0] version input: got %v, want 0.1.0", inputs0["version"])
-	}
-	if entries[1].Intent.Action != models.ActionUninstall {
-		t.Errorf("entry[1] action: got %q, want %q", entries[1].Intent.Action, models.ActionUninstall)
-	}
-
-	// Timestamps must be set by AddActionHistory (non-zero)
-	if entries[0].Timestamp.IsZero() {
-		t.Error("entry[0] Timestamp is zero, expected it to be set by AddActionHistory")
-	}
-	if entries[1].Timestamp.IsZero() {
-		t.Error("entry[1] Timestamp is zero, expected it to be set by AddActionHistory")
-	}
+	require.True(t, ok, "entry[0] Inputs: got %T", entries[0].Inputs)
+	require.Equal(t, "0.1.0", inputs0["version"])
+	require.False(t, entries[0].Timestamp.IsZero(), "Commit stamps the timestamp")
+	require.False(t, entries[1].Timestamp.IsZero(), "Commit stamps the timestamp")
 }
 
-// TestActionHistory_FlushClearsInMemoryBuffer verifies that after a FlushState the in-memory
-// action list is cleared so a second FlushState with no new entries appends nothing.
-func TestActionHistory_FlushClearsInMemoryBuffer(t *testing.T) {
+// TestCommit_AccumulatesWithoutRewriting verifies that successive commits
+// append to the history file without rewriting earlier entries.
+func TestCommit_AccumulatesWithoutRewriting(t *testing.T) {
 	dir := t.TempDir()
-	stateFile := filepath.Join(dir, "state.yaml")
 	historyFile := filepath.Join(dir, "action_history.yaml")
 
-	s := newTestState(stateFile)
-	m, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
-	if err != nil {
-		t.Fatalf("NewStateManager: %v", err)
-	}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
 
-	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
-		Inputs: map[string]any{"step": "first"},
-	})
+	require.NoError(t, m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionSetup, Target: models.TargetCluster}}, ComponentCluster))
+	first, err := os.ReadFile(historyFile)
+	require.NoError(t, err)
 
-	if err := m.FlushAll(); err != nil {
-		t.Fatalf("first FlushState: %v", err)
-	}
-
-	// Second FlushState with nothing new — file should still have exactly 1 entry.
-	if err := m.FlushAll(); err != nil {
-		t.Fatalf("second FlushState: %v", err)
-	}
+	require.NoError(t, m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode))
+	require.NoError(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode}}, nil))
+	second, err := os.ReadFile(historyFile)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(second, first), "earlier entries must not be rewritten")
 
 	entries := decodeHistoryFile(t, historyFile)
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 history entry after two flushes (second was empty), got %d", len(entries))
-	}
-}
-
-// TestActionHistory_MultipleFlushes_Accumulates verifies that successive FlushState calls
-// accumulate entries incrementally in the history file without re-writing earlier entries.
-func TestActionHistory_MultipleFlushes_Accumulates(t *testing.T) {
-	dir := t.TempDir()
-	stateFile := filepath.Join(dir, "state.yaml")
-	historyFile := filepath.Join(dir, "action_history.yaml")
-
-	s := newTestState(stateFile)
-	m, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
-	if err != nil {
-		t.Fatalf("NewStateManager: %v", err)
-	}
-
-	// First flush — 1 entry
-	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionSetup, Target: models.TargetCluster},
-		Inputs: map[string]any{"round": "1"},
-	})
-	if err := m.FlushAll(); err != nil {
-		t.Fatalf("first FlushState: %v", err)
-	}
-
-	sizeAfterFirst, err := os.Stat(historyFile)
-	if err != nil {
-		t.Fatalf("stat after first flush: %v", err)
-	}
-
-	// Second flush — 2 more entries
-	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
-		Inputs: map[string]any{"round": "2a"},
-	})
-	m.AddActionHistory(ActionHistory{
-		Intent: models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode},
-		Inputs: map[string]any{"round": "2b"},
-	})
-	if err := m.FlushAll(); err != nil {
-		t.Fatalf("second FlushState: %v", err)
-	}
-
-	sizeAfterSecond, err := os.Stat(historyFile)
-	if err != nil {
-		t.Fatalf("stat after second flush: %v", err)
-	}
-
-	// File must have grown (entries were appended, not overwritten)
-	if sizeAfterSecond.Size() <= sizeAfterFirst.Size() {
-		t.Fatalf("history file did not grow: size after first=%d, after second=%d",
-			sizeAfterFirst.Size(), sizeAfterSecond.Size())
-	}
-
-	entries := decodeHistoryFile(t, historyFile)
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 accumulated history entries, got %d", len(entries))
-	}
-
 	wantActions := []models.ActionType{models.ActionSetup, models.ActionInstall, models.ActionUpgrade}
+	require.Len(t, entries, len(wantActions))
 	for i, want := range wantActions {
-		if entries[i].Intent.Action != want {
-			t.Errorf("entry[%d] action: got %q, want %q", i, entries[i].Intent.Action, want)
-		}
+		require.Equal(t, want, entries[i].Intent.Action, "entry[%d]", i)
 	}
 }
 
-// TestActionHistory_EntryRecordedWithProvenance verifies that AddActionHistory
-// stamps the entry's timestamp and that FlushActionHistory persists it — with
-// the components it wrote — to the append-only action_history.yaml, the single
-// record of what changed the state after LastAction was dropped from State (#1242).
-func TestActionHistory_EntryRecordedWithProvenance(t *testing.T) {
+// TestCommit_RecordsTheFilesItChanged verifies that an entry names the files
+// whose content the commit changed, first writes included, and none it only
+// rewrote; files the caller names that belong to no component are kept.
+func TestCommit_RecordsTheFilesItChanged(t *testing.T) {
 	dir := t.TempDir()
-	stateFile := filepath.Join(dir, "state.yaml")
+	historyFile := filepath.Join(dir, "action_history.yaml")
 
-	s := newTestState(stateFile)
-	m, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
-	if err != nil {
-		t.Fatalf("NewStateManager: %v", err)
-	}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
 
-	m.AddActionHistory(ActionHistory{
-		Intent:     models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode},
-		Inputs:     map[string]any{"key": "value"},
-		Components: []ComponentID{ComponentProfile, ComponentBlockNode},
-	})
-	if err := m.FlushActionHistory(); err != nil {
-		t.Fatalf("FlushActionHistory: %v", err)
-	}
+	install := ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}
+	require.NoError(t, m.Commit(install, ComponentProfile, ComponentBlockNode))
+	require.NoError(t, m.Commit(install, ComponentProfile, ComponentBlockNode))
+	changed := m.State()
+	changed.MachineState.Profile = "testnet"
+	stamped := install
+	stamped.Components = []ChangedFile{ChangedProvisioner}
+	require.NoError(t, m.Set(changed).Commit(stamped, ComponentProfile, ComponentBlockNode))
 
-	b, err := os.ReadFile(filepath.Join(dir, "action_history.yaml"))
-	if err != nil {
-		t.Fatalf("read action_history.yaml: %v", err)
-	}
+	entries := decodeHistoryFile(t, historyFile)
+	require.Len(t, entries, 3)
+	require.Equal(t, []ChangedFile{ComponentProfile.File(), ComponentBlockNode.File()}, entries[0].Components,
+		"a first write changes the file")
+	require.Empty(t, entries[1].Components, "rewriting the same content changes nothing")
+	require.Equal(t, []ChangedFile{ComponentProfile.File(), ChangedProvisioner}, entries[2].Components)
+}
 
-	var entry ActionHistory
-	if err := yaml.Unmarshal(b, &entry); err != nil {
-		t.Fatalf("unmarshal action_history.yaml: %v", err)
-	}
-	if entry.Intent.Action != models.ActionInstall {
-		t.Errorf("Intent.Action: got %q, want %q", entry.Intent.Action, models.ActionInstall)
-	}
-	if entry.Timestamp.IsZero() {
-		t.Error("Timestamp is zero after AddActionHistory")
-	}
-	require.Equal(t, []ComponentID{ComponentProfile, ComponentBlockNode}, entry.Components,
-		"action_history entry must record which components the action wrote")
+// TestRecord_RendersTheCauseForTheOperator verifies that a recorded error keeps
+// the operator's message and moves its reason code into its own field.
+func TestRecord_RendersTheCauseForTheOperator(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+
+	cause := errx.Decorate(errorx.IllegalState.New("kubeadm init failed"), reasons.StateOperationFailed, "Re-run.")
+	require.NoError(t, m.Record(ActionHistory{
+		Intent:  models.Intent{Action: models.ActionInstall, Target: models.TargetCluster},
+		Outcome: OutcomeFailed,
+	}, cause))
+
+	entries := decodeHistoryFile(t, ActionHistoryFilePath(dir))
+	require.Len(t, entries, 1)
+	require.Equal(t, OutcomeFailed, entries[0].Outcome)
+	require.Contains(t, entries[0].Error, "kubeadm init failed")
+	require.NotContains(t, entries[0].Error, "reason", "the reason code belongs in its own field")
+	require.Equal(t, reasons.StateOperationFailed, entries[0].Reason)
+	require.False(t, entries[0].NotPersisted)
 }
 
 // TestFlushState_DirectorySyncFailureAdvancesBaseline verifies that a flush whose directory
 // sync fails still replaced the file, so the next flush doesn't see it as an external change.
 func TestFlushState_DirectorySyncFailureAdvancesBaseline(t *testing.T) {
-	m, err := NewStateManager(WithState(newTestState(filepath.Join(t.TempDir(), "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	m, err := newStateManager(WithState(newTestState(filepath.Join(t.TempDir(), "state.yaml"))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	require.NoError(t, m.FlushState())
+	require.NoError(t, m.writeUnrecorded(AllComponentIDs...))
 
 	syncErr := fsx.FileSyncError.New("disk gone")
 	recordDirSyncs(t, syncErr)
 	s := m.State()
 	s.MachineState.Profile = "local"
-	require.ErrorIs(t, m.Set(s).FlushState(), syncErr)
+	m.Set(s)
+	require.ErrorIs(t, m.writeUnrecorded(AllComponentIDs...), syncErr)
 
 	recordDirSyncs(t, nil)
 	s.MachineState.Profile = "perfnet"
-	require.NoError(t, m.Set(s).FlushState())
+	m.Set(s)
+	require.NoError(t, m.writeUnrecorded(AllComponentIDs...))
 }
 
 // TestFlushAll_DirectorySyncFailureStillAppendsHistory verifies that a state flush whose
@@ -442,11 +360,10 @@ func TestFlushAll_DirectorySyncFailureStillAppendsHistory(t *testing.T) {
 	dir := t.TempDir()
 	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
 	syncErr := fsx.FileSyncError.New("disk gone")
 	recordDirSyncs(t, syncErr)
 
-	require.ErrorIs(t, m.FlushAll(), syncErr)
+	require.ErrorIs(t, m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, AllComponentIDs...), syncErr)
 
 	require.Len(t, decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml")), 1)
 }
@@ -473,12 +390,11 @@ func TestFlushActionHistory_SyncFailureClearsPending(t *testing.T) {
 	dir := t.TempDir()
 	syncErr := fsx.FileSyncError.New("disk gone")
 	fm := &unsyncedAppender{Manager: newTestFileManager(t), err: syncErr}
-	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
+	m, err := newStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
 	require.NoError(t, err)
-	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
 
-	require.ErrorIs(t, m.FlushActionHistory(), syncErr)
-	require.NoError(t, m.FlushActionHistory())
+	require.ErrorIs(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, nil), syncErr)
+	require.NoError(t, m.flushActionHistory())
 
 	require.Len(t, decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml")), 1)
 }
@@ -487,10 +403,10 @@ func TestFlushActionHistory_SyncFailureClearsPending(t *testing.T) {
 // entries doesn't create the history file.
 func TestFlushActionHistory_NothingPendingWritesNothing(t *testing.T) {
 	dir := t.TempDir()
-	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	m, err := newStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
 
-	require.NoError(t, m.FlushActionHistory())
+	require.NoError(t, m.flushActionHistory())
 
 	require.NoFileExists(t, filepath.Join(dir, "action_history.yaml"))
 }
@@ -503,9 +419,8 @@ func TestFlushActionHistory_AfterTornEntryStartsOnNewLine(t *testing.T) {
 	require.NoError(t, os.WriteFile(historyFile, []byte("---\nintent:\n  action: [inst"), 0o644))
 	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}})
 
-	require.NoError(t, m.FlushActionHistory())
+	require.NoError(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}}, nil))
 
 	got, err := os.ReadFile(historyFile)
 	require.NoError(t, err)
@@ -536,15 +451,15 @@ func (a *concurrentAdder) AppendToFile(path string, payload []byte) error {
 func TestFlushActionHistory_KeepsEntriesAddedDuringAppend(t *testing.T) {
 	dir := t.TempDir()
 	fm := &concurrentAdder{Manager: newTestFileManager(t)}
-	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
+	m, err := newStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
 	require.NoError(t, err)
-	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
+	m.addActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}})
 	fm.add = func() {
-		m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}})
+		m.addActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}})
 	}
 
-	require.NoError(t, m.FlushActionHistory())
-	require.NoError(t, m.FlushActionHistory())
+	require.NoError(t, m.flushActionHistory())
+	require.NoError(t, m.flushActionHistory())
 
 	entries := decodeHistoryFile(t, filepath.Join(dir, "action_history.yaml"))
 	require.Len(t, entries, 2)
@@ -562,12 +477,11 @@ func TestActionHistory_EntryRecordsOwnedDrift(t *testing.T) {
 		DestroyAllowed: true, Destroyed: true,
 	}}
 
-	m.AddActionHistory(ActionHistory{
+	require.NoError(t, m.Record(ActionHistory{
 		Intent:     models.Intent{Action: models.ActionUninstall, Target: models.TargetTeleportCluster},
 		OwnedDrift: drifted,
-	})
-	m.AddActionHistory(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetTeleportCluster}})
-	require.NoError(t, m.FlushActionHistory())
+	}, nil))
+	require.NoError(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetTeleportCluster}}, nil))
 
 	f, err := os.Open(ActionHistoryFilePath(dir))
 	require.NoError(t, err)
@@ -598,7 +512,7 @@ func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
 	m, err := NewStateManager(WithState(s), WithFileManager(fm))
 	require.NoError(t, err)
 	require.NoError(t, m.Refresh())
-	require.NoError(t, m.FlushState())
+	require.NoError(t, m.Commit(ActionHistory{}, AllComponentIDs...))
 
 	// Simulate a hand edit: change the content but leave the stored hash field
 	// exactly as it was written.
@@ -611,9 +525,14 @@ func TestFlushState_HandEditWithStaleHashFieldIsDetected(t *testing.T) {
 
 	changed := m.State()
 	changed.MachineState.Profile = "after"
-	err = m.Set(changed).FlushState()
+	err = m.Set(changed).Commit(ActionHistory{}, AllComponentIDs...)
 	require.Error(t, err, "a hand edit with an untouched hash field must still be detected")
 	require.Contains(t, err.Error(), "changed externally on disk")
+	entries := decodeHistoryFile(t, ActionHistoryFilePath(dir))
+	refused := entries[len(entries)-1]
+	require.True(t, refused.NotPersisted, "a commit whose files did not land is still recorded, marked")
+	require.Contains(t, refused.Error, "changed externally on disk")
+	require.Empty(t, refused.Components)
 
 	reread, err := NewStateManager(WithState(newTestState(stateFile)), WithFileManager(fm))
 	require.NoError(t, err)
@@ -635,7 +554,7 @@ func TestFlushState_UnobservedAgentIsNeverWrittenOrHashed(t *testing.T) {
 	m, err := NewStateManager(WithState(st), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
 
-	require.NoError(t, m.FlushState())
+	require.NoError(t, m.Commit(ActionHistory{}, AllComponentIDs...))
 
 	b, err := os.ReadFile(ComponentFilePath(dir, ComponentTeleport))
 	require.NoError(t, err)
@@ -645,4 +564,130 @@ func TestFlushState_UnobservedAgentIsNeverWrittenOrHashed(t *testing.T) {
 	readHash, err := stateContentHash(read)
 	require.NoError(t, err)
 	require.Equal(t, readHash, unread)
+}
+
+// TestCommit_LandedStateWithALostEntryIsItsOwnError: when the files land but the
+// entry can't be appended, Commit says exactly that, so a caller can tell a
+// saved state from one that never reached disk. A re-run records its entry with
+// no components: the files already hold its content.
+func TestCommit_LandedStateWithALostEntryIsItsOwnError(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
+
+	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode)
+
+	require.True(t, errorx.IsOfType(err, EntryNotAppendedError), "got %v", err)
+	require.FileExists(t, componentFilePath(dir, ComponentBlockNode), "the state landed")
+
+	require.NoError(t, os.Remove(ActionHistoryFilePath(dir)))
+	fresh, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, fresh.Refresh())
+	require.NoError(t, fresh.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode))
+	entries := decodeHistoryFile(t, ActionHistoryFilePath(dir))
+	require.Len(t, entries, 1)
+	require.Empty(t, entries[0].Components, "the accepted limit: the re-run can't name what the lost entry changed")
+}
+
+// TestRecord_UnsyncedEntryOfAFailedActionIsAWarning: with a cause, an entry
+// appended but not synced is a warning that says so, and Record returns nil.
+func TestRecord_UnsyncedEntryOfAFailedActionIsAWarning(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	fm := &unsyncedAppender{Manager: newTestFileManager(t), err: fsx.FileSyncError.New("disk gone")}
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(fm))
+	require.NoError(t, err)
+
+	require.NoError(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}}, actionFailure()))
+
+	require.Len(t, decodeHistoryFile(t, ActionHistoryFilePath(dir)), 1)
+	warnings := TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was appended but not synced to disk")
+}
+
+// TestCommit_LostEntryOfAStateThatDidNotLandIsAWarning: when a file does not
+// land and the entry can't be appended either, Commit returns the write error
+// and the lost entry is a state warning.
+func TestCommit_LostEntryOfAStateThatDidNotLandIsAWarning(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(componentFilePath(dir, ComponentBlockNode), 0o755)) // the component file can't be read or replaced
+	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755))                 // appending to a directory fails
+
+	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode)
+
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "action history")
+	requireLostEntryWarning(t, dir)
+}
+
+// TestCommit_FailedActionWithAnUnsyncedWriteIsAWarning: a failed action whose
+// state landed but was not synced returns nil, so the command reports the
+// action's own failure, and the unsynced write is a warning.
+func TestCommit_FailedActionWithAnUnsyncedWriteIsAWarning(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+
+	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, Outcome: OutcomeFailed}, ComponentBlockNode)
+
+	require.NoError(t, err)
+	entries := decodeHistoryFile(t, ActionHistoryFilePath(dir))
+	require.Len(t, entries, 1)
+	require.False(t, entries[0].NotPersisted)
+	requireWarning(t, "The state was written but not synced to disk", "Check the disk holding "+dir+".")
+}
+
+// TestCommit_UnsyncedWriteAndALostEntry: when the state lands unsynced and its
+// entry is lost, Commit returns EntryNotAppendedError and the unsynced write is
+// a warning, so the operator learns both.
+func TestCommit_UnsyncedWriteAndALostEntry(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+
+	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode)
+
+	require.True(t, errorx.IsOfType(err, EntryNotAppendedError), "got %v", err)
+	requireWarning(t, "The state was written but not synced to disk")
+}
+
+// failingAppender is an fsx.Manager whose first AppendToFile fails and writes
+// nothing.
+type failingAppender struct {
+	fsx.Manager
+	failed bool
+}
+
+func (a *failingAppender) AppendToFile(path string, payload []byte) error {
+	if !a.failed {
+		a.failed = true
+		return errors.New("disk full")
+	}
+	return a.Manager.AppendToFile(path, payload)
+}
+
+// TestFlushActionHistory_AFailedAppendLosesItsEntries: an append takes the
+// queued entries, so a failed one is not appended again by the next.
+func TestFlushActionHistory_AFailedAppendLosesItsEntries(t *testing.T) {
+	dir := t.TempDir()
+	m, err := newStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(&failingAppender{Manager: newTestFileManager(t)}))
+	require.NoError(t, err)
+
+	require.Error(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, nil))
+	require.NoError(t, m.Record(ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetBlockNode}}, nil))
+
+	entries := decodeHistoryFile(t, ActionHistoryFilePath(dir))
+	require.Len(t, entries, 1)
+	require.Equal(t, models.ActionUninstall, entries[0].Intent.Action)
 }

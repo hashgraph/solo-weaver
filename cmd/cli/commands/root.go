@@ -209,6 +209,10 @@ func Execute(ctx context.Context) error {
 
 	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
+	// Here and not in a post-run hook: cobra skips those when the command or a
+	// pre-run fails, and a failing startup pass is that case. A workflow's run
+	// summary takes the warnings queued before it renders; this prints the rest.
+	common.PrintStateWarnings(os.Stderr, state.TakeWarnings())
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to execute command")
 	}

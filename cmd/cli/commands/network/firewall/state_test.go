@@ -11,20 +11,25 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeStateManager is an in-memory state.Manager: Set/FlushState record the
-// flushed state instead of writing a file, so a verb's decision write is
-// observable without touching the host's real state (or needing the generated
-// principal mocks that a real fsx.Manager would chown through).
+// fakeStateManager is an in-memory state.Manager: Set/Commit record the
+// committed state and entry instead of writing files, so a verb's decision
+// write is observable without touching the host's real state (or needing the
+// generated principal mocks that a real fsx.Manager would chown through).
 type fakeStateManager struct {
 	current  state.State
 	flushed  *state.State
-	scoped   [][]state.ComponentID // the ids of every FlushScoped call
+	scoped   [][]state.ComponentID // the ids of every Commit call
+	entries  []state.ActionHistory // every entry committed or recorded
 	refresh  error
 	flushErr error
+	// commitErr is returned after a successful flush, as Commit does when the
+	// state landed but its entry was not appended.
+	commitErr error
 }
 
 func (f *fakeStateManager) State() state.State { return f.current }
@@ -32,25 +37,30 @@ func (f *fakeStateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	return nil, false, nil
 }
 func (f *fakeStateManager) Set(s state.State) state.Writer { f.current = s; return f }
-func (f *fakeStateManager) AddActionHistory(state.ActionHistory) state.Writer {
-	return f
-}
-func (f *fakeStateManager) FlushState() error {
+func (f *fakeStateManager) Commit(entry state.ActionHistory, ids ...state.ComponentID) error {
+	f.scoped = append(f.scoped, ids)
 	if f.flushErr != nil {
+		entry.NotPersisted = true
+		f.entries = append(f.entries, entry)
 		return f.flushErr
 	}
 	snapshot := f.current
 	f.flushed = &snapshot
+	if f.commitErr != nil {
+		return f.commitErr
+	}
+	f.entries = append(f.entries, entry)
 	return nil
 }
-func (f *fakeStateManager) FlushScoped(ids ...state.ComponentID) error {
-	f.scoped = append(f.scoped, ids)
-	return f.FlushState()
+
+// Record never fails here: the verbs call it only with a cause, and then a lost
+// entry is a state warning, not an error.
+func (f *fakeStateManager) Record(entry state.ActionHistory, _ error) error {
+	f.entries = append(f.entries, entry)
+	return nil
 }
-func (f *fakeStateManager) FlushActionHistory() error { return nil }
-func (f *fakeStateManager) FlushAll() error           { return f.FlushState() }
-func (f *fakeStateManager) Refresh() error            { return f.refresh }
-func (f *fakeStateManager) FileManager() fsx.Manager  { return nil }
+func (f *fakeStateManager) Refresh() error           { return f.refresh }
+func (f *fakeStateManager) FileManager() fsx.Manager { return nil }
 
 // stubStateManager points the package's state seam at an in-memory manager and
 // returns it, so a test can assert on what a verb flushed. Its state directory,
@@ -163,9 +173,11 @@ allow:
 
 	require.NoError(t, run(t, "create", "--from-file", rules))
 	fake.flushed = nil // only observe what the rule delete does
+	entries := len(fake.entries)
 
 	require.NoError(t, run(t, "delete", "--name", "k8s-node"))
 	require.Nil(t, fake.flushed, "deleting one allow rule is not a decision to disable the firewall")
+	require.Len(t, fake.entries, entries, "a rule delete changes no state file, so it records nothing")
 }
 
 // TestCreateCmd_FailsBeforeApplyingWhenStateIsUnavailable: with no state to
@@ -255,4 +267,60 @@ func TestCreateCmd_FailsWhenTheDecisionCannotBeRecorded(t *testing.T) {
 	fw := flushedFirewall(t, fake)
 	require.NotNil(t, fw)
 	require.False(t, fw.Disabled, "the re-run must record the enable decision")
+}
+
+// TestFirewallVerbs_RecordAnEntry: create and delete each leave an action
+// history entry naming the firewall, so a firewall decision is never a state
+// change with no record of what made it.
+func TestFirewallVerbs_RecordAnEntry(t *testing.T) {
+	stubManager(t)
+	fake := stubStateManager(t)
+
+	require.NoError(t, run(t, "create", "--mgmt-cidrs", "192.168.50.0/24"))
+	require.NoError(t, run(t, "delete", "--all"))
+
+	require.Len(t, fake.entries, 2)
+	require.Equal(t, models.Intent{Action: models.ActionInstall, Target: models.TargetFirewall}, fake.entries[0].Intent)
+	require.Equal(t, map[string]bool{"disabled": false}, fake.entries[0].Inputs)
+	require.Equal(t, state.OutcomeSucceeded, fake.entries[0].Outcome)
+	require.Equal(t, models.Intent{Action: models.ActionUninstall, Target: models.TargetFirewall}, fake.entries[1].Intent)
+	require.Equal(t, map[string]bool{"disabled": true}, fake.entries[1].Inputs)
+	require.Equal(t, state.OutcomeSucceeded, fake.entries[1].Outcome)
+}
+
+// TestCreateCmd_LostEntryIsReportedAsALostEntry: when the decision is recorded
+// but its history entry can't be appended, the command says that, not that the
+// decision was lost.
+func TestCreateCmd_LostEntryIsReportedAsALostEntry(t *testing.T) {
+	stubManager(t)
+	fake := stubStateManager(t)
+	fake.commitErr = state.EntryNotAppendedError.New("the state was written but its action history entry was not appended")
+
+	err := run(t, "create", "--mgmt-cidrs", "192.168.50.0/24")
+
+	require.ErrorContains(t, err, "its decision recorded, but its action history entry was not appended")
+	require.NotContains(t, err.Error(), "the decision was not recorded")
+	fw := flushedFirewall(t, fake)
+	require.NotNil(t, fw)
+	require.False(t, fw.Disabled, "the decision landed")
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+}
+
+// TestCreateCmd_UnsyncedDecisionIsReportedAsRecorded: a decision written but not
+// synced to disk is recorded, so the command says it was not synced, not that
+// it was lost.
+func TestCreateCmd_UnsyncedDecisionIsReportedAsRecorded(t *testing.T) {
+	stubManager(t)
+	fake := stubStateManager(t)
+	fake.commitErr = fsx.FileSyncError.New("disk gone")
+
+	err := run(t, "create", "--mgmt-cidrs", "192.168.50.0/24")
+
+	require.ErrorContains(t, err, "applied and its decision recorded, but not synced to disk")
+	require.NotContains(t, err.Error(), "the decision was not recorded")
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	require.Equal(t, reasons.StateOperationFailed, reason)
 }

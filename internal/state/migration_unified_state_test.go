@@ -171,7 +171,7 @@ func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesSystemOnly(t *testi
 	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
 	sm, err := NewStateManager(WithState(existing))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushScoped(ComponentProfile, ComponentSystem, ComponentBlockNode))
+	require.NoError(t, sm.Commit(ActionHistory{}, ComponentProfile, ComponentSystem, ComponentBlockNode))
 	untouched := map[ComponentID][]byte{}
 	for _, id := range []ComponentID{ComponentProfile, ComponentBlockNode} {
 		b, err := os.ReadFile(componentFilePath(dir, id))

@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -225,30 +228,33 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 	return currentState, nil
 }
 
-func (r *RuntimeResolver) AddActionHistory(entry state.ActionHistory) state.Writer {
-	return r.sm.AddActionHistory(entry)
+// Commit persists only the listed components' state from currentState, then
+// appends entry to the action history; see state.Writer.Commit. State that
+// landed with its entry lost (state.EntryNotAppendedError) or not synced
+// (fsx.FileSyncError) keeps its type, with the reason and hint the operator
+// needs; any other failure is "failed to persist state".
+func (r *RuntimeResolver) Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error {
+	err := r.sm.Set(currentState).Commit(entry, ids...)
+	switch {
+	case err == nil:
+		return nil
+	case errorx.IsOfType(err, state.EntryNotAppendedError):
+		// Its own message already says the state was written and the entry was not.
+		return errx.Decorate(err, reasons.StateOperationFailed,
+			"Check that "+state.ActionHistoryFilePath(r.StateDir())+" is writable.")
+	case errorx.IsOfType(err, fsx.FileSyncError):
+		return errx.Decorate(
+			errorx.Decorate(err, "the state was saved and its action history entry appended, but not synced to disk"),
+			reasons.StateOperationFailed,
+			"Check the disk holding "+r.StateDir()+".")
+	}
+	return errorx.IllegalState.Wrap(err, "failed to persist state")
 }
 
-func (r *RuntimeResolver) FlushAll(currentState state.State) error {
-	if err := r.sm.Set(currentState).FlushAll(); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush state to disk")
-	}
-
-	return nil
-}
-
-// FlushScoped persists only the listed components' state, then flushes the
-// pending action history — the scoped equivalent of FlushAll.
-func (r *RuntimeResolver) FlushScoped(currentState state.State, ids ...state.ComponentID) error {
-	w := r.sm.Set(currentState)
-	if err := w.FlushScoped(ids...); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush scoped state to disk")
-	}
-	if err := w.FlushActionHistory(); err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to flush action history")
-	}
-
-	return nil
+// Record appends entry to the action history for an action whose state never
+// reached Commit; see state.Writer.Record.
+func (r *RuntimeResolver) Record(entry state.ActionHistory, cause error) error {
+	return r.sm.Record(entry, cause)
 }
 
 // StateDir returns the directory holding every component's persisted file, for

@@ -28,7 +28,7 @@ func TestReadPromptDefaultsFromDisk_FilesDoNotClobberEachOther(t *testing.T) {
 
 	sm, err := NewStateManager(WithState(s), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushState())
+	require.NoError(t, sm.Commit(ActionHistory{}, AllComponentIDs...))
 
 	got, err := ReadPromptDefaultsFromDisk()
 	require.NoError(t, err)

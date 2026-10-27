@@ -5,7 +5,7 @@ package state
 import "path/filepath"
 
 // ComponentID names one of the components whose persisted state lives in its
-// own file under the state directory. Refresh/FlushScoped key off this type to
+// own file under the state directory. Refresh/Commit key off this type to
 // decide which file to read or write.
 type ComponentID string
 
@@ -39,6 +39,21 @@ var AllComponentIDs = []ComponentID{
 	ComponentTeleport,
 }
 
+// ChangedFile names a state file in ActionHistory.Components: a component's
+// file, or one of the files below that belong to no component.
+type ChangedFile string
+
+const (
+	// ChangedProvisioner is provisioner.yaml.
+	ChangedProvisioner ChangedFile = "provisioner"
+	// ChangedLegacy is the pre-split state: state.yaml, its .legacy and
+	// .diverged-* copies, and the *.installed / *.configured marker files.
+	ChangedLegacy ChangedFile = "legacy"
+)
+
+// File returns id's file as recorded in the action history.
+func (id ComponentID) File() ChangedFile { return ChangedFile(id) }
+
 // ComponentFilePath returns the path of id's persisted file inside dir, for
 // callers outside this package that need to check a component's file directly
 // (tests mainly; production code should go through Manager).
@@ -46,9 +61,12 @@ func ComponentFilePath(dir string, id ComponentID) string {
 	return componentFilePath(dir, id)
 }
 
+// ActionHistoryFileName is the action history's file in the state directory.
+const ActionHistoryFileName = "action_history.yaml"
+
 // ActionHistoryFilePath returns the path of the action history inside dir.
 func ActionHistoryFilePath(dir string) string {
-	return filepath.Join(dir, "action_history.yaml")
+	return filepath.Join(dir, ActionHistoryFileName)
 }
 
 // componentFilePath returns the path of id's persisted file inside dir.
@@ -101,7 +119,7 @@ func projectComponentSection(full State, id ComponentID) State {
 // component twice would otherwise flock it twice in the same call (two open
 // file descriptions on the same file conflict even within one process, so
 // the second attempt would see its own first lock as held and fail or hang
-// on itself); FlushScoped needs it because flushComponents has no dedup of
+// on itself); Commit needs it because flushComponents has no dedup of
 // its own and would otherwise prepare and write the same file twice.
 func DedupeComponentIDs(ids []ComponentID) []ComponentID {
 	seen := make(map[ComponentID]struct{}, len(ids))

@@ -3,8 +3,12 @@
 package firewall
 
 import (
+	"path/filepath"
+
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
@@ -31,7 +35,9 @@ var stateManager = func() (state.Manager, error) { return state.NewStateManager(
 // above the recorded state — mirroring it here would have to squeeze a Rule's
 // port specs into HostConfig's []int and would silently drop any inclusive range.
 //
-// The lock is taken before apply, so a command that could not record its
+// The decision and the action history entry are written together, and the
+// entry is appended even when apply fails, since apply may have changed the
+// kernel. The lock is taken before apply, so a command that could not record its
 // decision fails before touching the kernel. A record that still fails after
 // apply is returned, never only logged: a dropped decision is what makes the
 // next reconfigure undo this command.
@@ -41,8 +47,17 @@ func applyHostFirewallChange(disabled bool, apply func() error) error {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
+	// create records install/firewall, delete records uninstall/firewall.
+	entry := state.ActionHistory{
+		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetFirewall},
+		Inputs: map[string]bool{"disabled": disabled},
+	}
+	if disabled {
+		entry.Intent.Action = models.ActionUninstall
+	}
+
 	applied := false
-	err = state.RunOwning(sm, []state.ComponentID{state.ComponentFirewall},
+	err = state.RunOwning(sm, entry, []state.ComponentID{state.ComponentFirewall},
 		func() error {
 			if err := apply(); err != nil {
 				return err
@@ -59,6 +74,20 @@ func applyHostFirewallChange(disabled bool, apply func() error) error {
 			st.MachineState.Firewall = fw
 			return nil
 		})
+	if err != nil && applied && errorx.IsOfType(err, state.EntryNotAppendedError) {
+		return errx.Decorate(
+			errorx.Decorate(err, "the host firewall change was applied and its decision recorded, but its action history entry was not appended"),
+			reasons.StateOperationFailed,
+			"Check that "+state.ActionHistoryFilePath(filepath.Dir(sm.State().StateFile))+" is writable. "+
+				"The decision is already recorded; a re-run records a new entry, which can't name the files this run changed.")
+	}
+	if err != nil && applied && errorx.IsOfType(err, fsx.FileSyncError) {
+		return errx.Decorate(
+			errorx.Decorate(err, "the host firewall change was applied and its decision recorded, but not synced to disk"),
+			reasons.StateOperationFailed,
+			"Check the disk holding "+filepath.Dir(sm.State().StateFile)+". "+
+				"The decision is already recorded; re-running the same command is safe.")
+	}
 	if err != nil && applied {
 		return errx.Decorate(
 			errorx.IllegalState.Wrap(err, "the host firewall change was applied but the decision was not recorded"),

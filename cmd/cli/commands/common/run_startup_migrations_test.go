@@ -3,8 +3,10 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -152,9 +154,9 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func() error {
+	persistProvisionerVersion = func() (bool, error) {
 		persistCalled++
-		return errors.New("simulated persist failure")
+		return false, errors.New("simulated persist failure")
 	}
 
 	// The migration applies (baseline crosses the boundary) and the persist fails —
@@ -225,4 +227,36 @@ func TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce(t *testing.T) 
 	}
 	assert.Equal(t, "mainnet", read(state.ComponentProfile).MachineState.Profile)
 	assert.Equal(t, "block-node", read(state.ComponentBlockNode).BlockNodeState.ReleaseInfo.Name)
+}
+
+// TestRunStartupMigrations_RecordsThePass: a pass that ran a migration and
+// stamped the version leaves one migrate/system entry naming the migration it
+// ran and provisioner.yaml; a later invocation with nothing to do adds none.
+func TestRunStartupMigrations_RecordsThePass(t *testing.T) {
+	registerFakeStartupMigration(t)
+	origK8s := workflows.KubernetesInstalled
+	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
+	workflows.KubernetesInstalled = func() bool { return true }
+
+	require.NoError(t, RunStartupMigrations(context.Background()))
+	require.NoError(t, RunStartupMigrations(context.Background()))
+
+	b, err := os.ReadFile(state.ActionHistoryFilePath(models.Paths().StateDir))
+	require.NoError(t, err)
+	var entry struct {
+		Intent     models.Intent       `yaml:"intent"`
+		Outcome    state.Outcome       `yaml:"outcome"`
+		Inputs     state.StartupPass   `yaml:"inputs"`
+		Components []state.ChangedFile `yaml:"components"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	require.NoError(t, dec.Decode(&entry))
+	require.Equal(t, models.Intent{Action: models.ActionMigrate, Target: models.TargetSystem}, entry.Intent)
+	require.Equal(t, state.OutcomeSucceeded, entry.Outcome)
+	require.Empty(t, entry.Inputs.FromVersion, "no version was recorded on disk before the pass")
+	require.Equal(t, "1.2.3", entry.Inputs.ToVersion)
+	require.Equal(t, []string{"fake-startup-v1"}, entry.Inputs.Migrations)
+	require.Equal(t, []state.ChangedFile{state.ChangedProvisioner}, entry.Components)
+	var next map[string]any
+	require.ErrorIs(t, dec.Decode(&next), io.EOF, "the second invocation had nothing to record")
 }

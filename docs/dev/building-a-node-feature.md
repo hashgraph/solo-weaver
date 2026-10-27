@@ -88,7 +88,7 @@ BaseHandler runs the fixed sequence (internal/bll/base_handler.go):
   3. PrepareEffectiveInputs  ← [handler] resolve via EffectiveValue, validate
   4. BuildWorkflow           ← [handler] preconditions + ordered steps
   5. wf.Execute              ← run the automa workflow (steps do the real work)
-  6. FlushState(callback)    ← [handler] persist what THIS action decided
+  6. flushState(callback)    ← [handler] persist what THIS action decided, and record its entry
 ```
 
 The **invariant sequence** lives once in `BaseHandler`; the concrete handler
@@ -110,7 +110,7 @@ precedence walk (Reality > State > UserInput > Env > Config > Default > Zero).
 
 ### The state-patch callback (why install ≠ upgrade)
 
-`BaseHandler.FlushState` refreshes state a final time, then calls the handler's
+`BaseHandler.flushState` refreshes state a final time, then calls the handler's
 callback to write back **exactly the fields this action is authoritative for**.
 This is where install and upgrade diverge:
 

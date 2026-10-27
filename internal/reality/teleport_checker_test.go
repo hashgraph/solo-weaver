@@ -44,7 +44,7 @@ func newTeleportTestStateManager(t *testing.T) state.Manager {
 	sm, err := state.NewStateManager(state.WithStateFile(stateFile))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
-	require.NoError(t, sm.FlushAll())
+	require.NoError(t, sm.Commit(state.ActionHistory{}, state.AllComponentIDs...))
 	return sm
 }
 
