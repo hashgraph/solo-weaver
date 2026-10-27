@@ -22,6 +22,7 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/internal/provenance"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
@@ -338,9 +339,47 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 		doctor.CheckReportErr(cmd.Context(), report)
 	}
 
-	// Run any pending startup migrations before any command executes.
-	if err := RunStartupMigrations(cmd.Context()); err != nil {
+	// Filesystem startup migrations (ScopeStartupFilesystem): reshape weaver's
+	// on-disk state. They run BEFORE the provenance gate, which reads their output
+	// (design sections 5.0 and 8.1).
+	if err := RunStartupFilesystemMigrations(cmd.Context()); err != nil {
 		return err
+	}
+
+	// Provenance gate (sections 5, 5.0): runs after the filesystem migrations and
+	// before the host/cluster migrations and the command body. Commands opt in by
+	// declaring a Need; a NeedNone command is not gated and runs no host/cluster
+	// migrations (those are provisioned-only). As more commands declare needs
+	// (section 5.3), they trigger the host/cluster phases they require.
+	need := ProvenanceNeed(cmd)
+	if need == provenance.NeedNone {
+		return nil
+	}
+	origin, err := RunProvenanceGate(cmd, need)
+	if err != nil {
+		return err
+	}
+
+	// Post-gate startup migrations (section 8.1):
+	//   - Host migrations are provisioned-only — there is no host in external mode.
+	//   - Cluster migrations run against any verified, reachable cluster (an `api`
+	//     or `host+api` need), provisioned OR external, because they migrate
+	//     weaver's own cluster components. Each cluster migration's Applies() is
+	//     ownership-aware, so it never touches a resource weaver did not create (the
+	//     Cilium migrations therefore stay effectively provisioned-only).
+	if origin == provenance.Provisioned {
+		if err := RunStartupHostMigrations(cmd.Context()); err != nil {
+			return err
+		}
+	}
+	if need == provenance.NeedAPI || need == provenance.NeedHostAPI {
+		if err := RunStartupClusterMigrations(cmd.Context()); err != nil {
+			return err
+		}
+		// Record the running version after the cluster migrations have run. It
+		// self-gates on a provisioned host (KubernetesInstalled), so it no-ops in
+		// external mode and after a host-only invocation.
+		recordProvisionerVersionIfChanged()
 	}
 
 	return nil
@@ -351,63 +390,87 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 // RunStartupMigrations without a writable state dir.
 var persistProvisionerVersion = state.PersistProvisionerVersion
 
-// RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
-// It is a no-op when no migrations apply.
-func RunStartupMigrations(ctx context.Context) error {
+// runStartupScope runs the migrations registered under one startup scope. It is a
+// no-op when none apply.
+func runStartupScope(ctx context.Context, scope string) error {
 	// Read the provisioner version last written to disk — this is the "installed"
 	// CLI version before the current binary ran for the first time.
 	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
 	if err != nil {
 		return err
 	}
-	currentCLIVersion := version.Get().Version
 
-	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it as the
-	// 0.0.0 baseline so pending migrations still run instead of being skipped as a fresh
-	// install
+	// An absent state.yaml (pre-state-tracking cluster) reads back as "". Treat it
+	// as the 0.0.0 baseline so pending migrations still run instead of being skipped
+	// as a fresh install.
 	installedCLIVersion := migration.ResolveInstalledCLIVersion(onDiskCLIVersion)
 
 	mctx := &migration.Context{
-		Component: migration.ScopeStartup,
+		Component: scope,
 		Data:      &automa.SyncStateBag{},
 	}
 	mctx.Data.Set(migration.CtxKeyInstalledCLIVersion, installedCLIVersion)
-	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, currentCLIVersion)
+	mctx.Data.Set(migration.CtxKeyCurrentCLIVersion, version.Get().Version)
 
-	migrations, err := migration.GetApplicableMigrations(migration.ScopeStartup, mctx)
+	migrations, err := migration.GetApplicableMigrations(scope, mctx)
 	if err != nil {
 		return err
 	}
-
-	if len(migrations) > 0 {
-		migrationWf := migration.MigrationsToWorkflow(migrations, mctx)
-		wf, err := migrationWf.Build()
-		if err != nil {
-			return err
-		}
-
-		logx.As().Info().Msg("Running startup migrations...")
-		report := wf.Execute(ctx)
-		if report.Error != nil {
-			return report.Error
-		}
-		logx.As().Info().Msg("Startup migrations completed successfully")
-	} else {
-		logx.As().Debug().Msg("No startup migrations needed")
+	if len(migrations) == 0 {
+		logx.As().Debug().Str("scope", scope).Msg("No startup migrations needed")
+		return nil
 	}
 
-	// Record the running version so boundary migrations aren't re-run next time and
-	// pre-state-tracking clusters get a state.yaml. Persist regardless of whether a
-	// migration applied — coupling it to that would stop backfilling once nothing
-	// crosses the baseline. Gate on a version change and a provisioned host so a
-	// fresh machine keeps no state file. Best-effort.
-	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
+	wf, err := migration.MigrationsToWorkflow(migrations, mctx).Build()
+	if err != nil {
+		return err
+	}
+	logx.As().Info().Str("scope", scope).Msg("Running startup migrations...")
+	report := wf.Execute(ctx)
+	if report.Error != nil {
+		return report.Error
+	}
+	logx.As().Info().Str("scope", scope).Msg("Startup migrations completed successfully")
+	return nil
+}
+
+// RunStartupFilesystemMigrations runs the filesystem-only startup migrations that
+// reshape on-disk state. They run before the provenance gate, which reads their
+// output (design section 8.1).
+func RunStartupFilesystemMigrations(ctx context.Context) error {
+	return runStartupScope(ctx, migration.ScopeStartupFilesystem)
+}
+
+// RunStartupHostMigrations runs the host-level startup migrations (systemd units,
+// sysctl, host files). They run after the gate resolves a provisioned host and do
+// not need the cluster API (design section 8.1).
+func RunStartupHostMigrations(ctx context.Context) error {
+	return runStartupScope(ctx, migration.ScopeStartupHost)
+}
+
+// RunStartupClusterMigrations runs the cluster-level startup migrations (Kubernetes
+// API). They run after the gate resolves a provisioned, reachable cluster (design
+// section 8.1).
+func RunStartupClusterMigrations(ctx context.Context) error {
+	return runStartupScope(ctx, migration.ScopeStartupCluster)
+}
+
+// recordProvisionerVersionIfChanged stamps the running version to disk after the
+// startup migrations have run, so boundary migrations are not re-run next time and
+// pre-state-tracking clusters get a state file. Best-effort, and gated on a version
+// change and a provisioned host so a fresh machine keeps no state file.
+func recordProvisionerVersionIfChanged() {
+	onDiskCLIVersion, err := state.ReadProvisionerVersionFromDisk()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to read provisioner version; skipping version record")
+		return
+	}
+	if onDiskCLIVersion != version.Get().Version && workflows.KubernetesInstalled() {
 		if err := persistProvisionerVersion(); err != nil {
 			logx.As().Warn().Err(err).
 				Msg("Failed to record provisioner version after startup migrations; boundary migrations may re-run next invocation")
 		}
 	}
-	return nil
 }
 
 // DefaultRunE is a default RunE function that shows help message and provides a placeholder to add common behaviour.
