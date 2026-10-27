@@ -31,24 +31,9 @@ const (
 
 // Variables, not constants, so tests can shorten the wait.
 var (
-	capsuleDeletePollInterval = 2 * time.Second
-	capsuleDeleteTimeout      = 5 * time.Minute
+	resourceDeletePollInterval = 2 * time.Second
+	resourceDeleteTimeout      = 5 * time.Minute
 )
-
-// consensusConfigCRKinds is the kind of each config CR that EnsureConfigCRs applies.
-var consensusConfigCRKinds = []struct{ key, kind string }{
-	{models.ConfigKeyLog4j2, "Log4j2Config"},
-	{models.ConfigKeySettings, "NodeSettings"},
-	{models.ConfigKeyAppProperties, "ApplicationProperties"},
-	{models.ConfigKeyAppOverride, "ApplicationOverrideProperties"},
-	{models.ConfigKeyApiPermission, "ApiPermissionProperties"},
-	{models.ConfigKeyBootstrap, "BootstrapProperties"},
-	{models.ConfigKeyNodeProperties, "NodePropertiesConfig"},
-	{models.ConfigKeyFeeSchedules, "FeeSchedules"},
-	{models.ConfigKeySimpleFeesSchedules, "SimpleFeesSchedules"},
-	{models.ConfigKeyThrottles, "ThrottlesConfig"},
-	{models.ConfigKeyBlockNodes, "BlockNodesConfig"},
-}
 
 // ReleaseConsensusPVCs removes the ConsensusCapsule ownerReference from the node's PVCs. The operator
 // makes the capsule their controller, so the capsule delete would otherwise garbage-collect the node's data.
@@ -139,7 +124,7 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			kind := string(kube.KindConsensusCapsule)
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
@@ -211,8 +196,8 @@ func DeleteConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 // waitForResourceGone polls until the resource no longer exists, the timeout ends, or ctx is cancelled.
 // If onPoll is not nil, it runs each time the resource still exists; its error stops the wait.
 func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, kind, namespace, name string, onPoll func(context.Context) error) error {
-	deadline := time.Now().Add(capsuleDeleteTimeout)
-	ticker := time.NewTicker(capsuleDeletePollInterval)
+	deadline := time.Now().Add(resourceDeleteTimeout)
+	ticker := time.NewTicker(resourceDeletePollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -229,7 +214,7 @@ func waitForResourceGone(ctx context.Context, kc CapsuleKubeClient, apiVersion, 
 			}
 		}
 		if time.Now().After(deadline) {
-			return errorx.TimeoutElapsed.New("%s %s still exists %s after delete", kind, name, capsuleDeleteTimeout)
+			return errorx.TimeoutElapsed.New("%s %s still exists %s after delete", kind, name, resourceDeleteTimeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -251,16 +236,17 @@ func DeleteConsensusConfigCRs(inputs models.ConsensusNodeInputs, provider Capsul
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			scope := models.ConsensusNodeScope(inputs.NodeId)
 
 			deletedCount := 0
-			for _, c := range consensusConfigCRKinds {
-				name := models.ConsensusConfigCRName(scope, c.key)
-				deleted, err := kc.DeleteResource(ctx, apiVersion, c.kind, inputs.Namespace, name)
+			for _, key := range models.ConsensusConfigKeys() {
+				kind := models.ConsensusConfigCRKind(key)
+				name := models.ConsensusConfigCRName(scope, key)
+				deleted, err := kc.DeleteResource(ctx, apiVersion, kind, inputs.Namespace, name)
 				if err != nil && !kube.IsKindNotServed(err) {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.ExternalError.Wrap(err, "failed to delete %s %s", c.kind, name),
+						errorx.ExternalError.Wrap(err, "failed to delete %s %s", kind, name),
 						reasons.PreconditionNotMet,
 						"Verify cluster connectivity and RBAC for deleting solo-operator config CRs",
 						"Re-run uninstall; config CRs that are already gone are skipped")))
@@ -300,7 +286,8 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			// Without the CRD the list path is NotFound and no capsule can exist.
+			// Without the CRD the list path is NotFound and no capsule can exist. List uses a static GVR, not the
+			// REST mapper, so the error is a raw 404, never the no-match error that IsKindNotServed detects.
 			list, err := kc.List(ctx, kube.KindConsensusCapsule, inputs.Namespace, kube.WaitOptions{})
 			if err != nil && !kerrors.IsNotFound(err) {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
@@ -326,7 +313,7 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 				}))
 			}
 
-			deleted, err := kc.DeleteResource(ctx, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName)
+			deleted, err := kc.DeleteResource(ctx, kube.SoloOperatorAPIVersion, string(kube.KindOrbit), "", inputs.OrbitName)
 			if err != nil && !kube.IsKindNotServed(err) {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to delete Orbit %s", inputs.OrbitName),
@@ -337,7 +324,7 @@ func DeleteOrbitIfLast(inputs models.ConsensusNodeInputs, provider CapsuleKubePr
 
 			// The delete is asynchronous; the state prune after the workflow needs the Orbit gone.
 			if deleted {
-				if err := waitForResourceGone(ctx, kc, kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, nil); err != nil {
+				if err := waitForResourceGone(ctx, kc, kube.SoloOperatorAPIVersion, string(kube.KindOrbit), "", inputs.OrbitName, nil); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
 						reasons.PreconditionNotMet,
 						"Check what blocks the delete: kubectl get orbit "+inputs.OrbitName+" -o jsonpath='{.metadata.finalizers}'",

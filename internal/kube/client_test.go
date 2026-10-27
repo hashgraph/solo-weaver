@@ -864,7 +864,7 @@ func newOwnedPVC(namespace, name string, owners ...string) *unstructured.Unstruc
 	u.SetName(name)
 	var refs []metav1.OwnerReference
 	for _, o := range owners {
-		refs = append(refs, metav1.OwnerReference{APIVersion: SoloOperatorGroup + "/" + SoloOperatorVersion, Kind: "ConsensusCapsule", Name: o})
+		refs = append(refs, metav1.OwnerReference{APIVersion: SoloOperatorAPIVersion, Kind: "ConsensusCapsule", Name: o})
 	}
 	u.SetOwnerReferences(refs)
 	return u

@@ -342,6 +342,40 @@ var consensusConfigCRSuffix = map[string]string{
 	ConfigKeyBlockNodes:          "block-nodes",
 }
 
+// consensusConfigCRKinds maps each config key to the solo-operator CR kind that carries it, in a fixed order.
+var consensusConfigCRKinds = []struct{ key, kind string }{
+	{ConfigKeyLog4j2, "Log4j2Config"},
+	{ConfigKeySettings, "NodeSettings"},
+	{ConfigKeyAppProperties, "ApplicationProperties"},
+	{ConfigKeyAppOverride, "ApplicationOverrideProperties"},
+	{ConfigKeyApiPermission, "ApiPermissionProperties"},
+	{ConfigKeyBootstrap, "BootstrapProperties"},
+	{ConfigKeyNodeProperties, "NodePropertiesConfig"},
+	{ConfigKeyFeeSchedules, "FeeSchedules"},
+	{ConfigKeySimpleFeesSchedules, "SimpleFeesSchedules"},
+	{ConfigKeyThrottles, "ThrottlesConfig"},
+	{ConfigKeyBlockNodes, "BlockNodesConfig"},
+}
+
+// ConsensusConfigKeys returns every config key, in a fixed order.
+func ConsensusConfigKeys() []string {
+	keys := make([]string, 0, len(consensusConfigCRKinds))
+	for _, c := range consensusConfigCRKinds {
+		keys = append(keys, c.key)
+	}
+	return keys
+}
+
+// ConsensusConfigCRKind returns the solo-operator CR kind for a config key, or "" for an unknown key.
+func ConsensusConfigCRKind(configKey string) string {
+	for _, c := range consensusConfigCRKinds {
+		if c.key == configKey {
+			return c.kind
+		}
+	}
+	return ""
+}
+
 // ConsensusConfigCRName returns the config CR / managed ConfigMap / capsule ref
 // name for a config key on a node, e.g.
 // ConsensusConfigCRName("node0", ConfigKeyAppProperties) == "node0-application-properties".

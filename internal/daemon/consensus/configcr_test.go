@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,24 @@ func newTestDeployer(client *fake.FakeDynamicClient, upgradePath string) *config
 		operationID:  testOperationID,
 		pollInterval: time.Millisecond,
 	}
+}
+
+// The daemon must create the same kind and name suffix as install, or an upgrade and uninstall miss CRs.
+func TestConfigFileKinds_MatchModels(t *testing.T) {
+	entries := []kindEntry{blockNodesEntry}
+	for _, e := range configFileKinds {
+		entries = append(entries, e)
+	}
+
+	want := map[string]string{}
+	for _, key := range models.ConsensusConfigKeys() {
+		want[models.ConsensusConfigCRKind(key)] = strings.TrimPrefix(models.ConsensusConfigCRName("x", key), "x-")
+	}
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.kind] = e.nameSuffix
+	}
+	assert.Equal(t, want, got)
 }
 
 func TestScanConfigFiles_RecognisedRootAndIgnored(t *testing.T) {

@@ -48,12 +48,12 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 			}
 
 			alreadyExists, _ := kc.ResourceExists(ctx,
-				kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion,
+				kube.SoloOperatorAPIVersion,
 				string(kube.KindNetworkGenesis), namespace, NetworkGenesisName)
 
 			ng := &operatorv1alpha1.NetworkGenesis{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+					APIVersion: kube.SoloOperatorAPIVersion,
 					Kind:       string(kube.KindNetworkGenesis),
 				},
 				ObjectMeta: metav1.ObjectMeta{

@@ -37,6 +37,17 @@ func TestConsensusNodeInputs_ValidateFor(t *testing.T) {
 	}
 }
 
+// Each config key needs both a CR kind and a name suffix, or install and uninstall miss a CR.
+func TestConsensusConfigKeys_HaveKindAndSuffix(t *testing.T) {
+	keys := ConsensusConfigKeys()
+	assert.Len(t, keys, len(consensusConfigCRSuffix))
+	for _, key := range keys {
+		assert.NotEmpty(t, ConsensusConfigCRKind(key), "kind for %s", key)
+		assert.Contains(t, consensusConfigCRSuffix, key)
+	}
+	assert.Empty(t, ConsensusConfigCRKind("unknown"))
+}
+
 func validCommonInputs() CommonInputs {
 	mode := AllExecutionModes()[0]
 	return CommonInputs{ExecutionOptions: WorkflowExecutionOptions{ExecutionMode: mode, RollbackMode: mode}}

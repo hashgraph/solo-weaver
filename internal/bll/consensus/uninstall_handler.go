@@ -79,7 +79,7 @@ func pruneUninstalledConsensusState(
 			return nil
 		}
 
-		apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+		apiVersion := kube.SoloOperatorAPIVersion
 		capsuleAbsent, err := kube.ResourceAbsent(ctx, kc, apiVersion, string(kube.KindConsensusCapsule), ins.Namespace, capsuleName)
 		if err != nil || !capsuleAbsent {
 			l.Warn().Err(err).Str("capsule", capsuleName).Msg("ConsensusCapsule not confirmed gone; keeping consensus node in state")
