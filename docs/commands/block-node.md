@@ -197,6 +197,11 @@ Set `--base-path` and the rest default under it, or set each path yourself.
 | `--plugins-size` | PV/PVC size for plugin storage (`5Gi`, `10Gi`) |
 | `--plugins-path` | Path for plugin storage |
 
+> **facility-app-state.** From chart **0.45.0-rc2**, the block node does not start without
+> the `facility-app-state` plugin (`No ApplicationStateFacility provided`). The
+> `tier1-lfh` and `tier1-rfh` presets include it. A custom `--plugins` list, or
+> `plugins.names` in your `--values` file, must include it too.
+
 ### Retention flags
 
 | Flag | What it does | Default |

@@ -160,6 +160,38 @@ var blockNodePluginHistory = []blockNodePluginConfig{
 			"stream-subscriber",
 		},
 	},
+	{
+		// BN 0.45.0-rc2: ApplicationStateFacility moved out of the app into the new
+		// facility-app-state plugin, and the node fails to start without it ("No
+		// ApplicationStateFacility provided"). Boundary is rc2, not "0.45.0-0": rc1 was
+		// tagged before the plugin existed. The experimental side tags 0.45.0-sha256.*
+		// and 0.45.0-tssupdate also lack it but sort above rc2, so they are not
+		// supported. Otherwise identical to the 0.39.1 entry. Strings copied verbatim
+		// from the chart's values-overrides/plugin-profile-{lfh,rfh,all}.yaml at tag
+		// v0.45.0-rc2.
+		MinVersion: "0.45.0-rc2",
+		Presets: map[string]string{
+			PresetTier1LFH: "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber",
+			PresetTier1RFH: "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status",
+		},
+		AllPlugins: []string{
+			"backfill",
+			"block-access-service",
+			"block-verification",
+			"blocks-file-historic",
+			"blocks-file-recent",
+			"cloud-storage-archive",
+			"cloud-storage-expanded",
+			"facility-app-state",
+			"facility-messaging",
+			"health",
+			"roster-bootstrap-rsa",
+			"roster-bootstrap-tss",
+			"server-status",
+			"stream-publisher",
+			"stream-subscriber",
+		},
+	},
 }
 
 // AllBlockNodePlugins is the ordered list of available plugins for the current

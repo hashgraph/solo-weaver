@@ -536,7 +536,7 @@ func TestReconfigure_FailedReleaseSkipsChartGuards(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	inputs := reconfigureInputs("/mnt/fast-storage", false)
-	inputs.Custom.ChartVersion = "0.41.0" // deps.BLOCK_NODE_VERSION, not the release's
+	inputs.Custom.ChartVersion = "0.44.3" // deps.BLOCK_NODE_VERSION, not the release's
 	inputs.Common.Force = true
 
 	wb, err := h.BuildWorkflow(
