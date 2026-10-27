@@ -44,12 +44,14 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("expected TeleportRuntime to be *rsl.TeleportRuntimeResolver but got %T", runtime.TeleportRuntime)
 	}
 
-	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode)
+	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode,
+		bll.WithManagedComponents[models.TeleportNodeInputs](bll.Teleport))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create node BaseHandler: %v", err)
 	}
 
-	clusterBase, err := bll.NewBaseHandler[models.TeleportClusterInputs](runtime, models.TargetTeleportCluster)
+	clusterBase, err := bll.NewBaseHandler[models.TeleportClusterInputs](runtime, models.TargetTeleportCluster,
+		bll.WithManagedComponents[models.TeleportClusterInputs](bll.Teleport))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create cluster BaseHandler: %v", err)
 	}
