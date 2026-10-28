@@ -222,7 +222,7 @@ func TestJudge_QuietLaneWarnsOnceAfterAnHour(t *testing.T) {
 	assert.Empty(t, j.state.Problems, "quiet is not a problem")
 }
 
-func TestJudge_ResetSkipsTheMinuteButKeepsTheStreak(t *testing.T) {
+func TestJudge_ResetRestartsTheStreak(t *testing.T) {
 	b := baseline()
 	broken := func(s sample) sample { return s.grow(map[string]uint64{"publisher": 5 * mib}, nil, 5*mib, 0) }
 
@@ -238,17 +238,21 @@ func TestJudge_ResetSkipsTheMinuteButKeepsTheStreak(t *testing.T) {
 			m1 := broken(b)
 			m2 := reset(broken(m1))
 			m3 := broken(m2)
+			m4 := broken(m3)
 
 			j := newJudge()
-			var raised []string
-			for i, s := range []sample{b, m1, m2, m3} {
-				raised = append(raised, reasons(j.observe(okChecks(s.build()), t0.Add(time.Duration(i)*time.Minute)), eventRaised)...)
+			raisedAt := map[int][]string{}
+			for i, s := range []sample{b, m1, m2, m3, m4} {
+				if r := reasons(j.observe(okChecks(s.build()), t0.Add(time.Duration(i)*time.Minute)), eventRaised); len(r) > 0 {
+					raisedAt[i] = r
+				}
 				if i == 2 {
 					assert.Equal(t, laneNotVerified, j.state.Lanes[0].Status)
 					assert.Equal(t, "*", j.state.Lanes[0].Category)
 				}
 			}
-			assert.Equal(t, []string{reasonLaneBroken}, raised, "m1 and m3 are two judged minutes in a row")
+			assert.Equal(t, map[int][]string{4: {reasonLaneBroken}}, raisedAt,
+				"m1 and m3 are not in a row; m3 and m4 are")
 		})
 	}
 }

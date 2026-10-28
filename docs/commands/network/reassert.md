@@ -265,8 +265,8 @@ compares each category's rule counter with its lane counter over the last minute
 `broken`, `suspicious`, and `NetworkRulesBypassed` — lanes busy while the `forward` counter
 stays flat, meaning traffic skips the rules (for example Cilium host routing changed) — must
 hold **two minutes in a row**, so one odd sample during a pod restart raises nothing. A rules
-reload, a recreated veth, or a counter going backwards restarts the comparison and skips that
-minute. Lanes are not judged at all while the live rules are `older-format`, since they carry
+reload, a recreated veth, or a counter going backwards restarts the comparison, skips that
+minute, and restarts the two-minute count. Lanes are not judged at all while the live rules are `older-format`, since they carry
 no counters yet; on an upgraded host that lasts until the daemon's first run reloads them.
 
 Every result has a fixed reason — `NetworkRulesDrifted`, `NetworkRulesOlderFormat`,

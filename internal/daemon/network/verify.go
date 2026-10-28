@@ -234,7 +234,9 @@ func (j *judge) fold(findings []finding, judged map[string]bool, unread map[stri
 		events = append(events, event{kind: eventCleared, problem: a.Problem})
 	}
 	for k := range j.pending {
-		if !seen[k] && !kept(k) {
+		// "In a row" means judged runs in a row, so a run that could not judge lanes restarts a lane streak.
+		restart := k.check == checkLanes && !judged[checkLanes]
+		if restart || (!seen[k] && !kept(k)) {
 			delete(j.pending, k)
 		}
 	}
