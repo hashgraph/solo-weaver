@@ -82,6 +82,9 @@ func UninstallOperatorWorkflow() *automa.WorkflowBuilder {
 // (e.g. block node install) after their own workload preflight + system setup.
 func KubernetesSetupWorkflow(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	wfSteps := []automa.Builder{
+		// Must run before any Kubernetes component is installed or configured.
+		steps.CheckKubernetesHost(mr),
+
 		// setup env for k8s
 		steps.DisableSwap(),
 		steps.ConfigureSysctlForKubernetes(),
