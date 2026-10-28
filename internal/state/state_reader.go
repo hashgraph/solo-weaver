@@ -109,8 +109,9 @@ type SoftwareVersionsDoc struct {
 	State struct {
 		MachineState struct {
 			Software map[string]struct {
-				Name    string `yaml:"name"`
-				Version string `yaml:"version"`
+				Name      string `yaml:"name"`
+				Version   string `yaml:"version"`
+				Installed bool   `yaml:"installed"`
 			} `yaml:"software"`
 		} `yaml:"machineState"`
 	} `yaml:"state"`
@@ -152,14 +153,22 @@ func ReadSoftwareVersionFromDisk(name string) (string, error) {
 // softwareVersionFromDoc resolves a component's recorded version, preferring a
 // direct map-key hit and falling back to matching an entry's recorded name (so a
 // lookup by artifact name finds an entry keyed by its installer key). Returns an
-// empty string when the component is not recorded.
+// empty string when the component is not recorded as installed: a not-installed
+// entry still carries the catalog default of whichever provisioner wrote it,
+// which says nothing about a binary installed later.
 func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
 	software := doc.State.MachineState.Software
 	if entry, ok := software[name]; ok {
+		if !entry.Installed {
+			return ""
+		}
 		return entry.Version
 	}
 	for _, entry := range software {
 		if entry.Name == name {
+			if !entry.Installed {
+				return ""
+			}
 			return entry.Version
 		}
 	}
