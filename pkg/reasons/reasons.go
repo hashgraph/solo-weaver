@@ -23,6 +23,15 @@ const (
 	// NotInstalled - a component is absent; the operator must run its install command first.
 	NotInstalled errx.Reason = "NotInstalled"
 
+	// DownloadFailed - an artifact download failed: network error, HTTP status, truncated body; retrying is reasonable.
+	DownloadFailed errx.Reason = "DownloadFailed"
+
+	// IntegrityCheckFailed - a checksum, signature or tamper check failed on an artifact; do not retry, report it.
+	IntegrityCheckFailed errx.Reason = "IntegrityCheckFailed"
+
+	// K8sAPIFailed - a Kubernetes API operation failed, so the cluster state could not be read or changed.
+	K8sAPIFailed errx.Reason = "K8sAPIFailed"
+
 	// PreconditionNotMet - the system is in the wrong state for this command; change the
 	// state or use a different verb.
 	PreconditionNotMet errx.Reason = "PreconditionNotMet"
