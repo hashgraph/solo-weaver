@@ -159,8 +159,9 @@ func logReassertOutcome(report ra.Report, checkOnly bool) {
 				Int("to_format", c.Rules.LiveFormat).
 				Msg("reloaded the workload-policy rules an older version wrote; peer lists were kept")
 		}
+		// INFO, not WARN: the daemon runs this every minute and logs the problem itself, once an hour.
 		if c.Rules.Status == ra.CheckFailed || c.Filters.Status == ra.CheckFailed {
-			logx.As().Warn().
+			logx.As().Info().
 				Str("rules", c.Rules.Status).
 				Str("filters", c.Filters.Status).
 				Msg("weaver network state is present but not right; see the CHECK rows")

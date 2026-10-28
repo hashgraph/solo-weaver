@@ -77,13 +77,9 @@ func (r *execTCRunner) QdiscAddFqCodel(ctx context.Context, nic, minor, handle s
 }
 
 func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error) {
-	cmd := exec.CommandContext(ctx, tcBin, "-s", "-j", "class", "show", "dev", dev)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := tcOutput(ctx, "-s", "-j", "class", "show", "dev", dev)
 	if err != nil {
-		return nil, errorx.ExternalError.Wrap(err,
-			"tc -s -j class show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+		return nil, err
 	}
 
 	var raw []tcClassJSON
@@ -120,14 +116,10 @@ func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]C
 
 // QdiscRootExists implements TCRunner.
 func (r *execTCRunner) QdiscRootExists(ctx context.Context, dev string) (bool, error) {
-	cmd := exec.CommandContext(ctx, tcBin, "-j", "qdisc", "show", "dev", dev)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := tcOutput(ctx, "-j", "qdisc", "show", "dev", dev)
 	if err != nil {
 		// A missing device lands here: "cannot determine", not "no qdisc".
-		return false, errorx.ExternalError.Wrap(err,
-			"tc -j qdisc show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+		return false, err
 	}
 
 	return qdiscRootPresent(out, dev)
