@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
@@ -136,64 +137,106 @@ func IsCatalogVersion(artifactName, version string) (bool, error) {
 	return ok, nil
 }
 
-// identifyArtifactVersions returns the catalog versions whose binaries all match
-// the installed files. Each file is hashed at most once per algorithm. It
-// returns a FileNotFoundError when no version matched and at least one binary
-// was missing for every candidate version, so an absent install is not
-// reported as an unknown one.
-func identifyArtifactVersions(artifact *ArtifactMetadata, resolve func(binaryName string) string) ([]string, error) {
-	digests := map[string]string{}
-	var missing error
+// digestCache hashes each (algorithm, path) pair at most once, so a binary
+// shared by several catalog versions is read from disk only once.
+type digestCache map[string]string
+
+func (c digestCache) get(path, algorithm string) (string, error) {
+	key := algorithm + "\x00" + path
+	if d, ok := c[key]; ok {
+		return d, nil
+	}
+	d, err := fileDigest(path, algorithm)
+	if err != nil {
+		return "", err
+	}
+	c[key] = d
+	return d, nil
+}
+
+// versionVerdict is the outcome of checking one catalog version against the
+// binaries installed on disk.
+type versionVerdict int
+
+const (
+	notVerifiable   versionVerdict = iota // no checksums for this platform
+	notReadable                           // a binary exists but could not be read
+	binaryMissing                         // a binary is absent from disk
+	binariesPresent                       // every binary exists (see matched)
+)
+
+// versionCheck is one version's verdict. checkError carries the cause for the
+// notReadable and binaryMissing verdicts, and is nil otherwise.
+type versionCheck struct {
+	verdict    versionVerdict
+	matched    bool  // binariesPresent only: did every checksum agree?
+	checkError error // notReadable / binaryMissing only: the underlying error
+}
+
+// checkVersion checks every binary of one catalog version against the files on
+// disk and reports a single verdict.
+func (c digestCache) checkVersion(artifact *ArtifactMetadata, version string, resolve func(string) string) versionCheck {
+	binaries, err := platformBinaries(artifact, version, resolve)
+	if err != nil {
+		return versionCheck{verdict: notVerifiable}
+	}
+
+	for _, b := range binaries {
+		digest, err := c.get(b.path, b.algorithm)
+		switch {
+		case errorx.IsOfType(err, FileNotFoundError):
+			return versionCheck{verdict: binaryMissing, checkError: err}
+		case err != nil:
+			return versionCheck{verdict: notReadable, checkError: err}
+		}
+		if digest != b.checksum {
+			return versionCheck{verdict: binariesPresent, matched: false}
+		}
+	}
+	return versionCheck{verdict: binariesPresent, matched: true}
+}
+
+// identifyArtifactVersions checks each catalog version, then decides from all
+// the verdicts together:
+//   - a binary exists but can't be read -> that error (fail closed)
+//   - no version verifiable here        -> PlatformNotFoundError
+//   - every version missing a binary    -> FileNotFoundError (install is absent);
+//     any of those errors will do, as they all mean the same thing
+//   - otherwise                         -> the matching versions, in version
+//     order (empty = present but matching none)
+func identifyArtifactVersions(artifact *ArtifactMetadata, resolve func(string) string) ([]string, error) {
+	cache := digestCache{}
 	var matches []string
-	candidates := 0
-	completeCandidate := false
+	var missingError error
+	var verifiable, present bool
 
 	for _, version := range sortedVersions(artifact) {
-		binaries, err := platformBinaries(artifact, version, resolve)
-		if err != nil {
-			continue // this version cannot be verified on this platform
-		}
-		candidates++
-
-		matched, complete := true, true
-		for _, b := range binaries {
-			key := b.algorithm + "\x00" + b.path
-			digest, ok := digests[key]
-			if !ok {
-				digest, err = fileDigest(b.path, b.algorithm)
-				if errorx.IsOfType(err, FileNotFoundError) {
-					missing = err
-					matched, complete = false, false
-					break
-				}
-				if err != nil {
-					return nil, err
-				}
-				digests[key] = digest
-			}
-			if digest != b.checksum {
-				matched = false
-				break
+		check := cache.checkVersion(artifact, version, resolve)
+		switch check.verdict {
+		case notVerifiable:
+			continue
+		case notReadable:
+			return nil, check.checkError
+		case binaryMissing:
+			verifiable = true
+			missingError = check.checkError
+		case binariesPresent:
+			verifiable, present = true, true
+			if check.matched {
+				matches = append(matches, version)
 			}
 		}
-
-		if complete {
-			completeCandidate = true
-		}
-		if matched {
-			matches = append(matches, version)
-		}
 	}
 
-	if candidates == 0 {
-		platform := artifact.getPlatform()
-		return nil, NewPlatformNotFoundError(artifact.Name, "any", platform.os, platform.arch)
+	switch {
+	case !verifiable:
+		p := artifact.getPlatform()
+		return nil, NewPlatformNotFoundError(artifact.Name, "any", p.os, p.arch)
+	case !present:
+		return nil, missingError
+	default:
+		return matches, nil
 	}
-	if len(matches) == 0 && !completeCandidate && missing != nil {
-		return nil, missing
-	}
-
-	return matches, nil
 }
 
 // platformBinary is one binary of a catalog version, resolved for the running
@@ -243,12 +286,21 @@ func platformBinaries(artifact *ArtifactMetadata, version string, resolve func(b
 	return result, nil
 }
 
+// sortedVersions returns the artifact's catalog versions in semver order,
+// falling back to lexical order for any version that is not valid semver.
 func sortedVersions(artifact *ArtifactMetadata) []string {
 	versions := make([]string, 0, len(artifact.Versions))
 	for v := range artifact.Versions {
 		versions = append(versions, string(v))
 	}
-	sort.Strings(versions)
+	sort.Slice(versions, func(i, j int) bool {
+		vi, ei := semver.NewVersion(versions[i])
+		vj, ej := semver.NewVersion(versions[j])
+		if ei != nil || ej != nil {
+			return versions[i] < versions[j]
+		}
+		return vi.LessThan(vj)
+	})
 	return versions
 }
 

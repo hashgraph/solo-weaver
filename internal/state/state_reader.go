@@ -159,21 +159,20 @@ func ReadSoftwareVersionFromDisk(name string) (string, error) {
 func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
 	software := doc.State.MachineState.Software
 	if entry, ok := software[name]; ok {
-		return installedVersion(entry.Installed, entry.Version)
+		if !entry.Installed {
+			return ""
+		}
+		return entry.Version
 	}
 	for _, entry := range software {
 		if entry.Name == name {
-			return installedVersion(entry.Installed, entry.Version)
+			if !entry.Installed {
+				return ""
+			}
+			return entry.Version
 		}
 	}
 	return ""
-}
-
-func installedVersion(installed bool, version string) string {
-	if !installed {
-		return ""
-	}
-	return version
 }
 
 // BlockNodeSummary holds the prompt-relevant fields from BlockNodeState

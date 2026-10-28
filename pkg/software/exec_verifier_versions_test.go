@@ -213,3 +213,10 @@ func TestMixedVersionBinarySetMatchesNoVersion(t *testing.T) {
 		assert.True(t, errorx.IsOfType(err, ChecksumError), "recorded %q: expected ChecksumError, got %v", recorded, err)
 	}
 }
+
+func TestSortedVersions_SemverOrder(t *testing.T) {
+	artifact := &ArtifactMetadata{Versions: map[Version]VersionDetails{
+		"1.36.5": {}, "1.9.0": {}, "1.10.2": {}, "1.33.4": {},
+	}}
+	assert.Equal(t, []string{"1.9.0", "1.10.2", "1.33.4", "1.36.5"}, sortedVersions(artifact))
+}
