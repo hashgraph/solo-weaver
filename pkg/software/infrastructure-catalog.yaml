@@ -623,11 +623,14 @@ cluster:
   chart: 'external-secrets/external-secrets'
   namespace: 'external-secrets'
   release: 'external-secrets'
-  default: "0.20.2"
+  default: "2.13.0"
   versions:
     0.20.2:
       algorithm: 'sha256'
       checksum: 'f8e0b2f4f22fab223f79567df4786ae1873d5f45b993c9f94419650462d937be'
+    2.13.0:
+      algorithm: 'sha256'
+      checksum: 'f693a96f0d929a07e000dd39e68b92a1a1343c5bc440ebab091b03da30bcac3a'
 
 - name: node-exporter
   type: oci
