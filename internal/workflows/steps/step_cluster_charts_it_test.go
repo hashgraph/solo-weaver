@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/action"
@@ -253,4 +254,55 @@ func Test_PrometheusOperatorCRDsChart_Integration(t *testing.T) {
 			assert.ElementsMatch(t, want, names)
 		})
 	}
+}
+
+// Both kube agent chart versions render with the local test server's values:
+// 18.11.3 on new clusters, 18.6.4 on clusters built by earlier releases or
+// asked for with --version.
+func Test_TeleportKubeAgentChart_Integration(t *testing.T) {
+	for _, version := range []string{"18.6.4", "18.11.3"} {
+		t.Run(version, func(t *testing.T) {
+			spec, err := resolveCatalogChartVersion(teleportClusterAgent, version)
+			require.NoError(t, err)
+			objs := renderCatalogChartWith(t, spec, &values.Options{
+				ValueFiles: []string{"../../../test/teleport/teleport-values-local.yaml"},
+				Values:     []string{"authToken=test-token", "proxyAddr=192.0.2.10:3080"},
+			})
+
+			var images []string
+			for _, o := range objs {
+				if o.GetKind() != "StatefulSet" && o.GetKind() != "Deployment" {
+					continue
+				}
+				containers, _, _ := unstructured.NestedSlice(o.Object, "spec", "template", "spec", "containers")
+				for _, c := range containers {
+					images = append(images, c.(map[string]interface{})["image"].(string))
+				}
+			}
+			assert.Contains(t, images, "public.ecr.aws/gravitational/teleport-distroless:"+version)
+
+			var config string
+			for _, o := range objs {
+				if o.GetKind() == "ConfigMap" && o.GetName() == spec.Release {
+					config, _, _ = unstructured.NestedString(o.Object, "data", "teleport.yaml")
+				}
+			}
+			assert.Contains(t, config, "kube_cluster_name: solo-weaver-local")
+			assert.Contains(t, config, "192.0.2.10:3080")
+		})
+	}
+}
+
+func Test_TeleportKubeAgentChart_ChecksumMismatchIsRefused_Integration(t *testing.T) {
+	spec, err := resolveCatalogChartVersion(teleportClusterAgent, "18.6.4")
+	require.NoError(t, err)
+	hm := isolatedHelm(t)
+	_, err = hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{})
+	require.NoError(t, err)
+
+	// The 18.11.3 checksum, so the archive is real but the wrong one.
+	other, err := resolveCatalogChartVersion(teleportClusterAgent, "18.11.3")
+	require.NoError(t, err)
+	_, err = hm.PullAndVerify(context.Background(), t.TempDir(), spec.Chart, "18.6.4", spec.Algorithm, other.Checksum)
+	require.True(t, errorx.IsOfType(err, helm.ErrChecksumMismatch), "got %v", err)
 }

@@ -288,7 +288,7 @@ host:
               checksum: '9dcdd5ef0e38287bdbab49163d746ab6db5917c2baf721165124145637e3c94e4e645de288fe4b29fb564ea2cbf69de780e65d5b42cdaa9692709735c5d86a97' # from https://dl.k8s.io/release/v1.36.5/bin/linux/arm64/kubectl.sha512
 
 - name: helm
-  default: "3.18.6"
+  default: "3.22.1"
   versions:
     3.18.6:
       archives:
@@ -312,8 +312,30 @@ host:
               algorithm: 'sha256'
               checksum: 'c7550b38b3b7c9df31f7052432b5eb45e0cfec7238310de0133789598c2449e4'
 
+    3.22.1:
+      archives:
+        - name: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://get.helm.sh/helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea' # from https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: '4c29e286b279d170fa048ddfc3e4e83dcd069ca9c52102766ba672d7149e694d' # from https://get.helm.sh/helm-v3.22.1-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: '{{.OS}}-{{.ARCH}}/helm'
+          archive: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '46aeab5e043f62d01f7c168823b392cabc1cea3807b67906296290483791be43'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '2bd1b649ef89175bc0ae1e0fa7de7e0583a5b0401de9896b644b8acbcae1ba64'
+
 - name: k9s
-  default: "0.50.9"
+  default: "0.51.0"
   versions:
     0.50.9:
       archives:
@@ -336,6 +358,28 @@ host:
             arm64:
               algorithm: 'sha256'
               checksum: '26bcae69dd653838db00a0e777aa52e87877c325a06ad6f625857604c02e9efc'
+
+    0.51.0:
+      archives:
+        - name: 'k9s_Linux_{{.ARCH}}.tar.gz'
+          url: 'https://github.com/derailed/k9s/releases/download/v{{.VERSION}}/k9s_Linux_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'c3752ad51a5a4015a113819c4eeb6e55a4d0e4b8e652494797532f6fc8161dd7' # from https://github.com/derailed/k9s/releases/download/v0.51.0/checksums.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '3ee05c82e5f9198928a4e86133608ba6a2c10a2244d6a7789e820f78319d640c' # from https://github.com/derailed/k9s/releases/download/v0.51.0/checksums.sha256
+      binaries:
+        - name: 'k9s'
+          archive: 'k9s_Linux_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'da2a7b4844204e5f31da0e57536e85a848f4d2260cd58737402bbb04ce4c99a2'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '92ed2bc895004d08d080d08a9cff9e85d38603e6a34a8df15761481de7533801'
 
 - name: cilium
   default: "0.20.1"
@@ -384,7 +428,7 @@ host:
               checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
 
 - name: teleport
-  default: "18.6.4"
+  default: "18.11.3"
   versions:
     18.6.4:
       archives:
@@ -440,6 +484,60 @@ host:
           algorithm: 'sha256'
           checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
 
+    18.11.3:
+      archives:
+        - name: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          url: 'https://cdn.teleport.dev/teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '0be29e66c71e00162d40bc41d62f62c595d76654315c4dadadd6414a1d385f14' # from https://cdn.teleport.dev/teleport-ent-v18.11.3-linux-amd64-bin.tar.gz.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '8631d9003bd0228ff80477e1dc8cd30eeff3144ae615edffe1bfd3eaf3d4c4c6' # from https://cdn.teleport.dev/teleport-ent-v18.11.3-linux-arm64-bin.tar.gz.sha256
+      binaries:
+        - name: 'teleport-ent/teleport'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '0c7d4f41fceb30e7968d68aa2f545bc9888a6b832d062f7b0e3a2b6f92014940'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'f3d27cfd213353725440a9ccee5f5278a249f249f5f56db50307d7ad976dff4d'
+        - name: 'teleport-ent/teleport-update'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'dc0f3a5d55d6e9714a16a9fbb8d4075d0b94253265364ca7e42d87d6c3a5b117'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '7bf8d1af2885de24812dd6408bb77f2c8dce9fc88e0aa3f80e0b2fad42c8d62d'
+        - name: 'teleport-ent/tctl'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'a5c50967f40493f158c715b5298baa8f950c46064934b24f2fa1685e856ec386'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'bc2b9fd05b97917ee112cfb5776f97fd62d48310e84e3be0d221d8119274446b'
+        - name: 'teleport-ent/tsh'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'eba0132268ee3140b14fc3b2691b8e2200bc1aa25058a104a122e28ed8e7f9bb'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'df329b6a344c323085ae3fb28372d9bcd20a80fed345595a7d81821605e7c2f3'
+      configs:
+        - name: 'teleport-ent/examples/systemd/production/node/teleport.service'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          algorithm: 'sha256'
+          checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
+
 # solo-provisioner-daemon is built and released from this repo, alongside the CLI,
 # under the same release tag (vX.Y.Z). Unlike the third-party tools above, no
 # per-version SHA map can be pinned here: this catalog is embedded into the very
@@ -480,11 +578,14 @@ cluster:
   chart: 'teleport/teleport-kube-agent'
   namespace: 'teleport-agent'
   release: 'teleport-agent'
-  default: "18.6.4"
+  default: "18.11.3"
   versions:
     18.6.4:
       algorithm: 'sha256'
       checksum: 'f657f1f216ebfe6bd074d5c3509b6617205ae956d3e73b895e20d71b26002201'
+    18.11.3:
+      algorithm: 'sha256'
+      checksum: '60e7dd096337c6b817076f2d0a7695e7dc50cd8262306a9dc4537f7449865405'
 
 - name: metallb
   type: classic

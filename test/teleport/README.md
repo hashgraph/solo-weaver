@@ -178,6 +178,8 @@ task teleport:stop
 task teleport:clean
 ```
 
+The server runs Teleport 18.11.3, the version the agents install. An agent must not be newer than its server, so keep the two in step. When the server version changes, run `task teleport:clean` before `task teleport:start`: a data volume a newer server has used cannot be used by an older one again.
+
 ---
 
 ## 📋 What Gets Configured
@@ -302,7 +304,7 @@ For production with Teleport Cloud/Enterprise (e.g., `hashgraph.teleport.sh`):
 ```bash
 sudo solo-provisioner teleport cluster install \
   --values=/path/to/teleport-values.yaml \
-  --version=18.6.4
+  --version=18.11.3
 ```
 
 **Step 2: Install Host-Level SSH Agent (Optional)**
@@ -346,7 +348,7 @@ solo-provisioner teleport cluster install --values=<path-to-values.yaml> [--vers
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--values` | Path to Teleport Helm values file (required) | - |
-| `--version` | Teleport Helm chart version | `18.6.4` |
+| `--version` | Teleport Helm chart version | `18.11.3` (the catalog default) |
 | `--stop-on-error` | Stop execution on first error | `true` |
 | `--rollback-on-error` | Rollback executed steps on error | `false` |
 | `--continue-on-error` | Continue executing steps even if some fail | `false` |
