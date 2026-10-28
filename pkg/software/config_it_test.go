@@ -381,13 +381,13 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 		chartType ChartType
 		version   string
 	}{
-		"alloy":                    {ChartTypeClassic, "1.4.0"},
+		"alloy":                    {ChartTypeClassic, "1.13.1"},
 		"teleport-cluster-agent":   {ChartTypeClassic, "18.6.4"},
 		"metallb":                  {ChartTypeClassic, "0.16.1"},
 		"metrics-server":           {ChartTypeClassic, "3.14.0"},
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},
 		"node-exporter":            {ChartTypeOCI, "4.59.0"},
-		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
+		"prometheus-operator-crds": {ChartTypeOCI, "32.0.1"},
 		// solo-operator is intentionally excluded: its version is not pinned in this
 		// map because it is owned by deps.SOLO_OPERATOR_VERSION (injected as the
 		// catalog default). Test_Config_SoloOperatorVersionSourceOfTruth_Integration

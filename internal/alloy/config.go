@@ -20,6 +20,8 @@ const (
 	// Kubernetes resource names
 	ConfigMapName = "grafana-alloy-cm"
 	SecretsName   = "grafana-alloy-secrets"
+	// BlockNodeServiceMonitorName is the name in block-node-servicemonitor.yaml.
+	BlockNodeServiceMonitorName = "block-node-server"
 
 	// Template paths
 	CoreTemplatePath            = "files/alloy/core.alloy"

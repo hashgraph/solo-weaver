@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/joomcode/errorx"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -320,4 +321,28 @@ func CheckMaxVersionRequirement(progVersion string, maximum string) error {
 	}
 
 	return nil
+}
+
+// SortStrings sorts version strings in ascending semantic-version order, so
+// "1.4.0" comes before "1.13.1". Strings that do not parse sort after every
+// version that does, in string order.
+func SortStrings(versions []string) {
+	parsed := make(map[string]Semver, len(versions))
+	for _, s := range versions {
+		if v, err := NewSemver(s); err == nil {
+			parsed[s] = v
+		}
+	}
+	sort.SliceStable(versions, func(i, j int) bool {
+		a, aok := parsed[versions[i]]
+		b, bok := parsed[versions[j]]
+		switch {
+		case aok && bok:
+			return a.LessThan(b)
+		case aok != bok:
+			return aok
+		default:
+			return versions[i] < versions[j]
+		}
+	})
 }
