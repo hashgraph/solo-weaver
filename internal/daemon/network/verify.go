@@ -249,6 +249,12 @@ func (j *judge) trackIdle(lanes []LaneState, judged bool, now time.Time) []event
 	if !judged {
 		return nil
 	}
+	// A category that is gone loses its record, so if it returns its idle time starts again.
+	for cat := range j.idle {
+		if !slices.ContainsFunc(lanes, func(l LaneState) bool { return l.Category == cat }) {
+			delete(j.idle, cat)
+		}
+	}
 	var events []event
 	for i := range lanes {
 		l := &lanes[i]

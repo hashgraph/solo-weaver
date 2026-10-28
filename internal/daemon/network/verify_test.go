@@ -222,6 +222,29 @@ func TestJudge_QuietLaneWarnsOnceAfterAnHour(t *testing.T) {
 	assert.Empty(t, j.state.Problems, "quiet is not a problem")
 }
 
+// TestJudge_RemovedCategoryForgetsItsIdleTime: a category that is removed and
+// added back must not show the old idle time or skip its warning.
+func TestJudge_RemovedCategoryForgetsItsIdleTime(t *testing.T) {
+	without := func(m map[string]uint64, key string) map[string]uint64 {
+		out := pick(m, "partner", "publisher", "reserve-egress", "reserve-ingress")
+		delete(out, key)
+		return out
+	}
+	quiet := baseline().grow(nil, nil, mib, 0)
+	gone := quiet
+	gone.rules, gone.egressLanes = without(quiet.rules, "partner"), without(quiet.egressLanes, "partner")
+	back := gone.grow(map[string]uint64{"partner": 0}, map[string]uint64{"partner": 0}, mib, 0)
+	j := newJudge()
+
+	for i, s := range []sample{baseline(), quiet, gone, back} {
+		j.observe(okChecks(s.build()), t0.Add(time.Duration(i)*time.Minute))
+	}
+
+	l := laneStatus(t, j, "partner")
+	require.NotNil(t, l.IdleSince)
+	assert.Equal(t, t0.Add(3*time.Minute), *l.IdleSince, "idle time starts again when the category returns")
+}
+
 func TestJudge_ResetRestartsTheStreak(t *testing.T) {
 	b := baseline()
 	broken := func(s sample) sample { return s.grow(map[string]uint64{"publisher": 5 * mib}, nil, 5*mib, 0) }
