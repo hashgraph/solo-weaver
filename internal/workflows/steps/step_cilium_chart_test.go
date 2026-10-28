@@ -85,46 +85,31 @@ func isolatedHelm(t *testing.T) helm.Manager {
 	return hm
 }
 
-func TestPullVerifiedCiliumChart_VerifiedChartIsUnpackedInAPrivateDirectory(t *testing.T) {
+func TestPullVerifiedCiliumChart_VerifiedChartIsUnpackedInTheDownloadsDirectory(t *testing.T) {
 	release, _ := ciliumChartRepo(t, "1.20.2")
-	base := t.TempDir()
+	dest := t.TempDir()
 
-	dir, cleanup, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, base)
+	dir, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, dest)
 
 	require.NoError(t, err)
-	workDir := filepath.Dir(dir)
-	canonicalBase, err := filepath.EvalSymlinks(base)
-	require.NoError(t, err)
-	assert.Equal(t, canonicalBase, filepath.Dir(workDir))
-	assert.Equal(t, "cilium", filepath.Base(dir))
-	fi, err := os.Stat(workDir)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
+	assert.Equal(t, filepath.Join(dest, "cilium-1.20.2", "cilium"), dir)
+	assert.FileExists(t, filepath.Join(dest, "cilium-1.20.2.tgz"), "the archive stays next to the other charts")
 	chartYAML, err := os.ReadFile(filepath.Join(dir, "Chart.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(chartYAML), "version: 1.20.2")
-
-	cleanup()
-	assert.Empty(t, entries(t, base), "cleanup must remove the work directory")
 }
 
-func TestPullVerifiedCiliumChart_SymlinkedBaseUsesTheCheckedPath(t *testing.T) {
+func TestPullVerifiedCiliumChart_ReplacesAPreviousCopy(t *testing.T) {
 	release, _ := ciliumChartRepo(t, "1.20.2")
-	top := t.TempDir()
-	real := filepath.Join(top, "real")
-	require.NoError(t, os.Mkdir(real, 0o755))
-	link := filepath.Join(top, "link")
-	require.NoError(t, os.Symlink(real, link))
-	canonicalReal, err := filepath.EvalSymlinks(real)
-	require.NoError(t, err)
+	dest := t.TempDir()
+	stale := filepath.Join(dest, "cilium-1.20.2", "cilium", "templates", "stale.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0o755))
+	require.NoError(t, os.WriteFile(stale, []byte("kind: Secret\n"), 0o644))
 
-	dir, cleanup, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, link)
+	_, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, dest)
 
 	require.NoError(t, err)
-	assert.Equal(t, canonicalReal, filepath.Dir(filepath.Dir(dir)), "the chart directory handed to cilium must be under the checked, canonical path")
-	assert.FileExists(t, filepath.Join(dir, "Chart.yaml"))
-	cleanup()
-	assert.Empty(t, entries(t, real))
+	assert.NoFileExists(t, stale, "only files from the verified archive may be installed")
 }
 
 func TestShellQuote(t *testing.T) {
@@ -138,61 +123,45 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestPullVerifiedCiliumChart_EachCallUsesAFreshDirectory(t *testing.T) {
-	release, _ := ciliumChartRepo(t, "1.20.2")
-	base := t.TempDir()
-	hm := isolatedHelm(t)
-
-	first, cleanupFirst, err := pullVerifiedCiliumChart(context.Background(), hm, release, base)
-	require.NoError(t, err)
-	t.Cleanup(cleanupFirst)
-	second, cleanupSecond, err := pullVerifiedCiliumChart(context.Background(), hm, release, base)
-	require.NoError(t, err)
-	t.Cleanup(cleanupSecond)
-
-	assert.NotEqual(t, first, second)
-}
-
-func TestPullVerifiedCiliumChart_ChecksumMismatchLeavesNothing(t *testing.T) {
+func TestPullVerifiedCiliumChart_ChecksumMismatchIsNotUnpacked(t *testing.T) {
 	release, _ := ciliumChartRepo(t, "1.20.2")
 	release.ChartSHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
-	base := t.TempDir()
+	dest := t.TempDir()
 
-	dir, cleanup, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, base)
+	dir, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, dest)
 
 	require.Error(t, err)
 	assert.Empty(t, dir)
-	assert.Nil(t, cleanup)
 	assert.Contains(t, err.Error(), "failed verification, so 'cilium install' was not run")
 	assertReason(t, err, reasons.IntegrityCheckFailed)
-	assert.Empty(t, entries(t, base))
+	assert.NoDirExists(t, filepath.Join(dest, "cilium-1.20.2"))
 }
 
 func TestPullVerifiedCiliumChart_DownloadFailure(t *testing.T) {
 	t.Run("chart missing from the repository", func(t *testing.T) {
 		release, _ := ciliumChartRepo(t, "1.20.1")
 		release.Version = "1.20.2"
-		base := t.TempDir()
+		dest := t.TempDir()
 
-		dir, _, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, base)
+		dir, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, dest)
 
 		require.Error(t, err)
 		assert.Empty(t, dir)
 		assertReason(t, err, reasons.DownloadFailed)
-		assert.Empty(t, entries(t, base))
+		assert.NoDirExists(t, filepath.Join(dest, "cilium-1.20.2"))
 	})
 
 	t.Run("repository unreachable", func(t *testing.T) {
 		release, srv := ciliumChartRepo(t, "1.20.2")
 		srv.Close()
-		base := t.TempDir()
+		dest := t.TempDir()
 
-		dir, _, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, base)
+		dir, err := pullVerifiedCiliumChart(context.Background(), isolatedHelm(t), release, dest)
 
 		require.Error(t, err)
 		assert.Empty(t, dir)
 		assertReason(t, err, reasons.DownloadFailed)
-		assert.Empty(t, entries(t, base))
+		assert.NoDirExists(t, filepath.Join(dest, "cilium-1.20.2"))
 	})
 }
 
@@ -235,79 +204,6 @@ func TestUnpackVerifiedChart_ChartMustNameTheRelease(t *testing.T) {
 			assert.Empty(t, entries(t, dest))
 		})
 	}
-}
-
-func TestPrivateWorkDir(t *testing.T) {
-	t.Run("private directory under a safe base", func(t *testing.T) {
-		base := t.TempDir()
-		dir, err := privateWorkDir(base, "w-")
-		require.NoError(t, err)
-		fi, err := os.Stat(dir)
-		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
-	})
-
-	t.Run("sticky world-writable base, like /tmp", func(t *testing.T) {
-		base := t.TempDir()
-		require.NoError(t, os.Chmod(base, 0o777|os.ModeSticky))
-		_, err := privateWorkDir(base, "w-")
-		require.NoError(t, err)
-	})
-
-	t.Run("group-writable base without the sticky bit", func(t *testing.T) {
-		base := t.TempDir()
-		require.NoError(t, os.Chmod(base, 0o775))
-		dir, err := privateWorkDir(base, "w-")
-		require.Error(t, err)
-		assert.Empty(t, dir)
-		assert.Contains(t, err.Error(), "without the sticky bit")
-		assertReason(t, err, reasons.PreconditionNotMet)
-		assert.Empty(t, entries(t, base), "a rejected work directory is removed")
-	})
-
-	t.Run("symlinked base resolves to the path that is checked", func(t *testing.T) {
-		top := t.TempDir()
-		real := filepath.Join(top, "real")
-		require.NoError(t, os.Mkdir(real, 0o755))
-		link := filepath.Join(top, "link")
-		require.NoError(t, os.Symlink(real, link))
-		canonicalReal, err := filepath.EvalSymlinks(real)
-		require.NoError(t, err)
-
-		dir, err := privateWorkDir(link, "w-")
-
-		require.NoError(t, err)
-		assert.Equal(t, canonicalReal, filepath.Dir(dir), "the returned path must be the canonical one, not the symlink")
-		resolved, err := filepath.EvalSymlinks(dir)
-		require.NoError(t, err)
-		assert.Equal(t, dir, resolved)
-	})
-
-	t.Run("symlinked base pointing at an unsafe directory", func(t *testing.T) {
-		top := t.TempDir()
-		unsafe := filepath.Join(top, "unsafe")
-		require.NoError(t, os.Mkdir(unsafe, 0o755))
-		require.NoError(t, os.Chmod(unsafe, 0o775))
-		link := filepath.Join(top, "link")
-		require.NoError(t, os.Symlink(unsafe, link))
-
-		dir, err := privateWorkDir(link, "w-")
-
-		require.Error(t, err)
-		assert.Empty(t, dir)
-		assertReason(t, err, reasons.PreconditionNotMet)
-		assert.Empty(t, entries(t, unsafe))
-	})
-
-	t.Run("group-writable ancestor", func(t *testing.T) {
-		top := t.TempDir()
-		require.NoError(t, os.Chmod(top, 0o775))
-		base := filepath.Join(top, "charts")
-		require.NoError(t, os.Mkdir(base, 0o755))
-		_, err := privateWorkDir(base, "w-")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), top)
-	})
 }
 
 func TestNewClusterCilium_PinsTheChart(t *testing.T) {
