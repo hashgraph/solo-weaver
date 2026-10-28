@@ -257,7 +257,7 @@ compares each category's rule counter with its lane counter over the last minute
 | Rule counter | Lane counter | Reading |
 |---|---|---|
 | up | up | `working` (for a default lane: `not-verified` — its counter cannot tell stamped from unstamped traffic) |
-| up a lot (≥ 1 MiB) | flat | `broken` — packets are stamped but never reach the lane |
+| up a lot (≥ 1 MiB) | flat, or no lane at all | `broken` — packets are stamped but never reach the lane |
 | up a little | flat | `not-verified` — too little to judge; some stamped traffic never passes a lane |
 | flat | up a lot | `suspicious` on a normal lane — something else fills it; nothing on a default lane |
 | flat | flat | `idle` — one warning after an hour |

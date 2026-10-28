@@ -257,6 +257,20 @@ func TestJudge_ResetRestartsTheStreak(t *testing.T) {
 	}
 }
 
+// TestJudge_ATickWithoutCountersKeepsTheLastSample: one unreadable tick must not
+// cost the minute after it as well.
+func TestJudge_ATickWithoutCountersKeepsTheLastSample(t *testing.T) {
+	b := baseline()
+	busy := b.grow(map[string]uint64{"partner": 5 * mib}, map[string]uint64{"partner": 5 * mib}, 5*mib, 5*mib)
+	j := newJudge()
+
+	j.observe(okChecks(b.build()), t0)
+	j.observe(okChecks(nil), t0.Add(time.Minute))
+	j.observe(okChecks(busy.build()), t0.Add(2*time.Minute))
+
+	assert.Equal(t, laneWorking, laneStatus(t, j, "partner").Status, "compared with the sample before the gap")
+}
+
 // TestJudge_OlderFormatNeverJudgesLanes is the upgrade guard: a table without
 // counters would otherwise read as "every busy lane is suspicious".
 func TestJudge_OlderFormatNeverJudgesLanes(t *testing.T) {
@@ -282,6 +296,33 @@ func TestJudge_BusyLanesWithFlatRulesAreBypassed(t *testing.T) {
 	_, events := run(t, b, m1, skip(m1))
 
 	assert.Equal(t, []string{reasonRulesBypassed}, reasons(events, eventRaised))
+}
+
+// TestJudge_MissingLaneWithStampedTrafficIsBroken: the veth tree is gone (e.g. the
+// pod watcher failed), but the rules keep stamping traffic for its classes.
+func TestJudge_MissingLaneWithStampedTrafficIsBroken(t *testing.T) {
+	b := baseline()
+	b.noVeth = true
+	stamp := func(s sample) sample { return s.grow(map[string]uint64{"publisher": 5 * mib}, nil, 5*mib, 0) }
+	m1 := stamp(b)
+
+	j, events := run(t, b, m1, stamp(m1))
+
+	assert.Equal(t, []string{reasonLaneBroken}, reasons(events, eventRaised))
+	l := laneStatus(t, j, "publisher")
+	assert.Equal(t, laneBroken, l.Status)
+	assert.Contains(t, l.Detail, "no lane tree carries it")
+}
+
+func TestJudge_QuietMissingLaneIsNotVerified(t *testing.T) {
+	b := baseline()
+	b.noVeth = true
+	m1 := b.grow(nil, nil, mib, 0)
+
+	j, events := run(t, b, m1)
+
+	assert.Empty(t, reasons(events, eventRaised))
+	assert.Equal(t, laneNotVerified, laneStatus(t, j, "publisher").Status)
 }
 
 func TestJudge_BypassNeedsAPodVeth(t *testing.T) {

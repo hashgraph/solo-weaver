@@ -377,11 +377,12 @@ func filtersFindings(fc privexec.NetworkFiltersCheck) []finding {
 // judgeLanes diffs two samples; judged is false when they cannot be compared
 // (first sample, counter reset, no counters).
 func (j *judge) judgeLanes(cur *privexec.NetworkCounterSample) (lanes []LaneState, findings []finding, judged bool) {
-	prev := j.prev
-	j.prev = cur
+	// A tick with no counters keeps the last sample, so the next tick compares with it.
 	if cur == nil {
 		return nil, nil, false
 	}
+	prev := j.prev
+	j.prev = cur
 	if !cur.ForwardCounted {
 		return []LaneState{{Category: "*", Status: laneNotVerified,
 			Detail: "the live rules carry no counters yet (older render format)"}}, nil, false
@@ -502,15 +503,20 @@ func classifyLane(r laneReading) (LaneState, *finding) {
 	hintDev := firstDev(dev)
 	l := LaneState{Category: r.category, Interface: dev}
 	switch {
-	case !r.hasLane:
-		l.Status, l.Detail = laneNotVerified, "no lane tree carries this category right now"
+	// A stamped class always has a configured lane, so a missing one is broken too.
 	case r.hasRule && r.ruleDelta >= minJudgeBytes && r.laneDelta == 0:
 		l.Status = laneBroken
-		l.Detail = "the rules stamped " + bytesText(r.ruleDelta) + " for this category but its lane on " + dev + " received nothing"
+		where := "its lane on " + dev + " received nothing"
+		if !r.hasLane {
+			where = "no lane tree carries it"
+		}
+		l.Detail = "the rules stamped " + bytesText(r.ruleDelta) + " for this category but " + where
 		return l, &finding{confirmRuns: laneConfirmRuns, Problem: Problem{
 			Reason: reasonLaneBroken, Check: checkLanes, Interface: dev, Category: r.category, Detail: l.Detail,
 			Hint: "tc -s class show dev " + hintDev + " ; nft list table inet weaver-workload-policy ; cilium status | grep BandwidthManager",
 		}}
+	case !r.hasLane:
+		l.Status, l.Detail = laneNotVerified, "no lane tree carries this category right now"
 	case r.ruleDelta > 0 && r.laneDelta > 0 && r.isDefault:
 		l.Status, l.Detail = laneNotVerified, "this is the default lane, so its counter cannot tell stamped traffic from unstamped"
 	case r.ruleDelta > 0 && r.laneDelta > 0:
