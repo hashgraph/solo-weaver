@@ -34,11 +34,12 @@ const (
 type Option func(*unixManager) error
 
 type unixManager struct {
-	pm principal.Manager
+	pm      principal.Manager
+	syncDir func(dir string) error
 }
 
 func NewManager(opts ...Option) (Manager, error) {
-	manager := &unixManager{}
+	manager := &unixManager{syncDir: SyncDir}
 
 	for _, opt := range opts {
 		if err := opt(manager); err != nil {
@@ -526,7 +527,11 @@ func (m *unixManager) AppendToFile(path string, payload []byte) error {
 			WithUnderlyingErrors(err)
 	}
 
-	return nil
+	if err := file.Sync(); err != nil {
+		return FileSyncError.New("failed to fsync file %q", path).WithUnderlyingErrors(err)
+	}
+
+	return m.syncDir(filepath.Dir(path))
 }
 
 func (m *unixManager) checkAndOverwritePath(path string, overwrite bool) error {

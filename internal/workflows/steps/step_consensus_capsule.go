@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/automa-saga/version"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -28,11 +30,12 @@ import (
 )
 
 const (
-	EnsureOrbitStepId            = "ensure-orbit"
-	EnsureConfigCRsStepId        = "ensure-config-crs"
-	EnsureHostPathsStepId        = "ensure-consensus-host-paths"
-	CreateConsensusCapsuleStepId = "create-consensus-capsule"
-	ReportCapsuleStatusStepId    = "report-consensus-capsule-status"
+	PrecheckConsensusNotInstalledStepId = "precheck-consensus-not-installed"
+	EnsureOrbitStepId                   = "ensure-orbit"
+	EnsureConfigCRsStepId               = "ensure-config-crs"
+	EnsureHostPathsStepId               = "ensure-consensus-host-paths"
+	CreateConsensusCapsuleStepId        = "create-consensus-capsule"
+	ReportCapsuleStatusStepId           = "report-consensus-capsule-status"
 )
 
 // CapsuleKubeClient is the subset of *kube.Client used by the consensus capsule
@@ -41,6 +44,7 @@ const (
 type CapsuleKubeClient interface {
 	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
+	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
@@ -55,7 +59,72 @@ func DefaultCapsuleKubeProvider(context.Context) (CapsuleKubeClient, error) {
 	return kube.NewClient()
 }
 
+// PrecheckConsensusNotInstalled guards consensus node install against mutating an
+// already-deployed node. If the ConsensusCapsule CR exists and --force is not set,
+// the step fails fast before any CR is applied. With --force it logs a warning and
+// proceeds (re-apply path).
+func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(PrecheckConsensusNotInstalledStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+			}
+
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+
+			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to check ConsensusCapsule %s", capsuleName),
+					reasons.PreconditionNotMet,
+					"Verify cluster connectivity and RBAC for reading ConsensusCapsule resources")))
+			}
+
+			if exists && !force {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again — pass --force to re-apply", inputs.NodeId, capsuleName),
+					reasons.PreconditionNotMet,
+					"Pass --force to re-apply the install over the existing node",
+					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
+					"Or use 'solo-provisioner consensus node upgrade' for day-2 changes (planned)")))
+			}
+
+			if exists && force {
+				logx.As().Warn().Msgf("ConsensusCapsule %q already exists — re-applying because --force was passed", capsuleName)
+			}
+
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking consensus node not already installed")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Consensus node already installed")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Consensus node install guard passed")
+		})
+}
+
 // EnsureOrbit creates or updates the Orbit CR (cluster-scoped).
+// DesiredOrbitState is the Orbit this install requests: the fields weaver sets
+// from the install inputs, with every other tracked field at its zero value
+// (operator default). EnsureOrbit creates the Orbit from it, requires an existing
+// Orbit to match it, and the install handler records it as the drift baseline.
+func DesiredOrbitState(inputs models.ConsensusNodeInputs) state.ConsensusOrbitState {
+	return state.ConsensusOrbitState{
+		ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
+		LedgerId:                 inputs.LedgerId,
+		ChainId:                  inputs.ChainId,
+	}
+}
+
 func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureOrbitStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -79,6 +148,30 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			}
 
 			if exists {
+				// The Orbit is shared by every node that names it and is never
+				// re-applied here, so a node asking for a different Orbit would
+				// silently run against the wrong network or mode.
+				spec, _, err := kc.GetResourceNestedMap(ctx,
+					kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, "spec")
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read Orbit %s", inputs.OrbitName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
+				}
+				if diffs := DesiredOrbitState(inputs).Diff(state.ConsensusOrbitStateFromSpec(spec)); len(diffs) > 0 {
+					parts := make([]string, 0, len(diffs))
+					for _, d := range diffs {
+						parts = append(parts, fmt.Sprintf("%s: Orbit has %q, install requests %q", d.Field, d.Live, d.Want))
+					}
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.New("Orbit %q already exists and differs from this install (%s); every node on an Orbit must use the same Orbit settings",
+							inputs.OrbitName, strings.Join(parts, "; ")),
+						reasons.PreconditionNotMet,
+						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
+						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
+						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
+				}
 				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
 				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
 					AlreadyInstalled: "true",
@@ -104,11 +197,12 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 					},
 				},
 				Spec: operatorv1alpha1.OrbitSpec{
+					// When true, the UC sidecar runs UC_MODE=mainnet and defers the execute
+					// phase to the host solo-provisioner-daemon; false (default) is
+					// cluster-only (the in-pod UC runs execute). v0.8.0 moved this from
+					// spec.consensus up to spec (it is a network-wide, host-level fact).
+					ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 					Consensus: operatorv1alpha1.OrbitConsensus{
-						// When true, the UC sidecar runs UC_MODE=mainnet and defers the
-						// execute phase to the host solo-provisioner-daemon; false (default)
-						// is cluster-only (the in-pod UC runs execute).
-						ProvisionerDaemonEnabled: inputs.ProvisionerDaemonEnabled,
 						Genesis: operatorv1alpha1.OrbitGenesis{
 							AddressBook: operatorv1alpha1.OrbitAddressBook{
 								LedgerId: inputs.LedgerId,
@@ -429,11 +523,10 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository: imageRepository,
 									ImageName:  imageName,
 									ImageTag:   inputs.ConsensusImageTag,
-									// Set on every container's SoftwareVersion; the operator merges
-									// ImagePullSecrets across containers onto the pod and the node's
-									// ServiceAccount (dedup by name), so listing the same secret on
-									// consensus-node and UC is harmless.
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									// This secret is chosen by the image's host. The operator copies
+									// these onto the pod and its service account and drops duplicates,
+									// so sharing a name with the UC image is fine.
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(inputs.ConsensusImageRepo))),
 								},
 								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
 								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
@@ -452,12 +545,47 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 									Repository:       ucRepository,
 									ImageName:        ucImageName,
 									ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecret),
+									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(ucRepository))),
 								},
 							},
 						},
 					},
 				},
+			}
+
+			// Pick exactly one of SoftwareVersion / SoftwareVersionSource on the
+			// consensus-node container, per the v0.8.0 CRD rule (hashgraph/solo-operator#1372).
+			// A manifest multi-registry source wins; otherwise, when no new source and the
+			// user did not pin the image, preserve any source already on the live CR
+			// (ApplyTyped is server-side apply, so omitting the field would silently drop
+			// it). When a source is set we drop the single SoftwareVersion so the CR does
+			// not carry a misleading registries[0] duplicate.
+			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
+			if src == nil && !inputs.ImagePinned {
+				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to read existing ConsensusCapsule %s", capsuleName),
+						reasons.PreconditionNotMet,
+						"Verify cluster connectivity, or re-run with --deployment-package-dir so the image source is resolved from the manifest")))
+				}
+				src = existing
+			}
+			// SelectionStrategy precedence: --registry-selection-strategy flag beats
+			// the manifest's images.consensusNode.selectionStrategy, which beats the
+			// weaver default (Sequential — manifest primary first, deterministic
+			// failover). An empty src.SelectionStrategy here means neither the new
+			// manifest source nor the preserved live CR carried one.
+			if src != nil {
+				if inputs.RegistrySelectionStrategy != "" {
+					src.SelectionStrategy = inputs.RegistrySelectionStrategy
+				} else if src.SelectionStrategy == "" {
+					src.SelectionStrategy = models.RegistrySelectionSequential
+				}
+			}
+			if src != nil {
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion = nil
 			}
 
 			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
@@ -593,6 +721,73 @@ func splitConsensusImage(full string) (repository, imageName string) {
 		return full[:i], full[i+1:]
 	}
 	return "", full
+}
+
+// buildSoftwareVersionSource turns an ImageSource into the operator's
+// SoftwareVersionSource. Each registry gets its own pull secret, picked by host,
+// and one verification entry per platform (sorted, so the output is stable).
+// Returns nil when there is nothing to build. SelectionStrategy is left empty
+// here; the caller sets it (weaver default = Sequential, or the user override).
+func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.PullSecretSelector) *operatorv1alpha1.SoftwareVersionSource {
+	if src == nil || len(src.Repositories) == 0 || len(src.LayerHashes) == 0 {
+		return nil
+	}
+
+	repos := make([]operatorv1alpha1.ImageRepository, 0, len(src.Repositories))
+	for _, r := range src.Repositories {
+		repos = append(repos, operatorv1alpha1.ImageRepository{
+			Repository:       r.Repository,
+			ImageName:        r.ImageName,
+			ImageTag:         r.ImageTag,
+			ImagePullSecrets: consensusImagePullSecrets(pullSecrets.SecretForHost(models.RegistryHost(r.Repository))),
+		})
+	}
+
+	platforms := make([]string, 0, len(src.LayerHashes))
+	for p := range src.LayerHashes {
+		platforms = append(platforms, p)
+	}
+	sort.Strings(platforms)
+
+	specs := make([]operatorv1alpha1.ImageVerificationSpec, 0, len(platforms))
+	for _, p := range platforms {
+		osName, arch, ok := strings.Cut(p, "/")
+		if !ok || osName == "" || arch == "" || len(src.LayerHashes[p]) == 0 {
+			continue
+		}
+		specs = append(specs, operatorv1alpha1.ImageVerificationSpec{
+			OS:           osName,
+			Architecture: arch,
+			LayerHashes:  src.LayerHashes[p],
+		})
+	}
+	if len(specs) == 0 {
+		return nil
+	}
+
+	return &operatorv1alpha1.SoftwareVersionSource{
+		ImageRepositories:     repos,
+		ImageVerificationSpec: specs,
+		// Carry the manifest's preferred strategy through; the caller still applies
+		// the CLI override and the weaver default (Sequential) in that precedence.
+		SelectionStrategy: src.SelectionStrategy,
+	}
+}
+
+// existingConsensusSource reads the SoftwareVersionSource already set on the live
+// ConsensusCapsule's consensus-node container, or nil when the CR or field is absent.
+func existingConsensusSource(ctx context.Context, kc CapsuleKubeClient, namespace, name string) (*operatorv1alpha1.SoftwareVersionSource, error) {
+	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+	m, found, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindConsensusCapsule), namespace, name,
+		"spec", "podProperties", "containers", "consensusNode", "softwareVersionSource")
+	if err != nil || !found {
+		return nil, err
+	}
+	src := &operatorv1alpha1.SoftwareVersionSource{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, src); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "decoding existing softwareVersionSource")
+	}
+	return src, nil
 }
 
 // consensusImagePullSecrets maps an optional image-pull secret name to the

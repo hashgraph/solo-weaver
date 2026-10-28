@@ -106,3 +106,19 @@ func AtomicWriteFile(path string, payload []byte, perm fs.FileMode) error {
 	success = true
 	return nil
 }
+
+// SyncDir fsyncs the directory dir, so that entries created, renamed or removed
+// in it survive a power cut. Syncing a file does not sync its directory entry.
+// Any error is a FileSyncError.
+func SyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return FileSyncError.New("failed to open directory %s for fsync", dir).WithUnderlyingErrors(err)
+	}
+	defer Close(d)
+
+	if err := d.Sync(); err != nil {
+		return FileSyncError.New("failed to fsync directory %s", dir).WithUnderlyingErrors(err)
+	}
+	return nil
+}

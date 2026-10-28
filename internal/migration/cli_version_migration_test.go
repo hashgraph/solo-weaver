@@ -152,6 +152,16 @@ func TestResolveInstalledCLIVersion(t *testing.T) {
 			raw:  "0.0.0",
 			want: "0.0.0",
 		},
+		{
+			name: "unstamped \"dev\" version falls back to the baseline",
+			raw:  "dev",
+			want: BaselineCLIVersion,
+		},
+		{
+			name: "garbage non-semver falls back to the baseline",
+			raw:  "not-a-version",
+			want: BaselineCLIVersion,
+		},
 	}
 
 	for _, tt := range tests {

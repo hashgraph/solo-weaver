@@ -43,6 +43,7 @@ anywhere in the host firewall's rules or templates.
 | In-cluster → pod address directly, any port | Not constrained here — forwarded under `policy accept` | Cilium |
 | Either endpoint in `@bn-restricted` | Dropped, both directions and both families | Workload policy `forward` |
 | Anything → pod address, block-node health port | Request leg dropped, in each family that has a pod CIDR | Workload policy `forward` (`bn-health`) |
+| Source outside `@bn-publisher` → pod address, block-node publish port | Request leg dropped, in each family that has a pod CIDR. An empty `@bn-publisher` closes the port to every source | Workload policy `forward` (`bn-publisher`) |
 
 The first row misleads, because the mechanism is not the one the rule layout suggests. A packet
 addressed to a port with no service behind it gets **no load-balancer translation** — only
@@ -233,6 +234,30 @@ why the rule needs no source allowlist — and why there is no set to keep
 populated across a replay. The drop is keyed on a static port list, which comes
 from the policy registry rather than from statusz, and so is rendered into
 `network-weaver-workload-policy.nft` from the registry entry on every re-render.
+
+The publish port is pinned the same way, for a different reason. `bn-publisher`
+drops every source outside its membership on that port (`DenyNonMembers`, set only
+by the install — `network policy create` has no flag for it), so
+only publishers listed in the block node's `known-publishers.json` can stream
+blocks. statusz reports the publish port only as the `local.port` of a configured
+publisher, so a port read from statusz would be unknown exactly when the roster is
+empty, and the guard would match nothing. The install resolves it instead from the
+chart values: `blockNode.ports.publisher`, else `service.port`, else `40840`.
+Upgrade and reconfigure also read `blockNode.ports.publisher` from the deployed
+release when they reuse its values, because Helm keeps that key when `--values`
+leaves it out. They don't read `service.port` or `blockNode.ports.health` from the
+release: the base values template pins both, so the reused values never survive.
+
+On a block node that serves every facility on one port, the publish port is also
+the subscriber, block-access and server-status port, so all of them are restricted
+to `@bn-publisher` sources. Give the publisher its own port
+(`blockNode.ports.publisher`) to keep the other facilities public.
+
+`block node upgrade` and `reconfigure` re-assert the canonical policies. A
+registry entry whose definition differs from this release's — `bn-publisher` as an
+earlier release created it, with statusz-managed ports and no guard — is redefined
+in place with its live membership kept, so already-admitted publishers are not cut
+off. The step warns when `@bn-publisher` is empty after the re-assert.
 
 The rule drops the request leg only, and carries `ct direction original`. Both
 details matter: a listener port sits inside the default ephemeral range
@@ -500,7 +525,7 @@ it from a live snapshot (below) rather than from what the tick wrote.
 
 The judgement is per call, the granularity the client fetches at: an empty
 `/statusz/inbound` withholds `bn-publisher`, `bn-partner-out`, `bn-restricted` and
-all four managed `_ports` sets together, an empty `/statusz/outbound` withholds
+all three managed `_ports` sets together, an empty `/statusz/outbound` withholds
 `bn-backfill` alone. It reads the payload as it arrived, not the resolved copy: a
 roster whose names all failed to look up is a resolution outcome, handled by the
 last-known-good cache and reported through `Unresolved`/`Stale` — see
@@ -566,7 +591,7 @@ The two tables sit on opposite sides of that line, and the distinction matters:
 | `prerouting` (priority `raw`, −300) | host firewall | `accept` | Drops the operator block list ahead of conntrack. Covers the forward path too, so a blocked CIDR is blocked for pod-bound traffic as well. |
 | `input` (priority `filter`, 0) | host firewall | `drop` | **Enforcing.** Anything not explicitly accepted is dropped. |
 | `output` (priority `filter`, 0) | host firewall | `accept` | Block-list symmetry only — drops traffic *to* a blocked CIDR. Deliberately not an egress allowlist. |
-| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the deny tier — the `bn-restricted` quarantine and the `bn-health` port lockdown. |
+| `forward` (priority `filter`, 0) | workload policy | `accept` | **Classifying.** Stamps `meta priority` for the HTB hierarchy; the only drops are the deny tier — the `bn-restricted` quarantine, the `bn-health` port lockdown, and the `bn-publisher` guard on the publish port. |
 
 The block list is spelled on three hooks because one is not enough. Dropping a peer inbound
 does not stop the host from dialing it, and once the host initiates, the replies come back in

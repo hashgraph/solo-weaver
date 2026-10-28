@@ -6,11 +6,13 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -58,10 +60,24 @@ type canonicalPolicy struct {
 	managedPorts bool
 	// healthPort marks a policy whose ports come from the resolved block-node
 	// health port (chart blockNode.ports.health) rather than a literal or from
-	// statusz. The health port is the one a-priori facility port: it bootstraps
-	// statusz discovery (you fetch statusz on it), so it cannot itself be read
-	// back from statusz.
+	// statusz. It bootstraps statusz discovery (you fetch statusz on it), so it
+	// cannot itself be read back from statusz.
 	healthPort bool
+	// publisherPort marks a policy whose ports come from the resolved block-node
+	// publish port (chart blockNode.ports.publisher, else service.port). It is
+	// pinned rather than read from statusz because statusz only reports it for
+	// configured publishers: with an empty roster the port set would stay empty
+	// and the deny-non-members guard would match nothing.
+	publisherPort bool
+	// denyNonMembers drops sources outside the policy's membership set on its
+	// ports. It has no `network policy create` flag: only the canonical set uses it.
+	denyNonMembers bool
+}
+
+// bnPorts carries the block-node facility ports pinned from the chart values.
+type bnPorts struct {
+	health    string
+	publisher string
 }
 
 // canonicalBNPolicies is the fixed set of policies `block node install` creates,
@@ -70,15 +86,20 @@ type canonicalPolicy struct {
 // references the class names in the stable mark map; each class fixes its own
 // direction, so there is no direction flag.
 //
-// Listener ports are no longer baked in as literals: the publisher, subscriber,
-// block-access and server-status ports are read back from the BN's statusz
-// local.port and reconciled into the per-policy `<name>_ports` sets by the
-// daemon (managedPorts). Server-status is public to everyone, so it rides the
-// public port union on bn-subscriber-in (ingress) and bn-public-out (egress)
-// rather than a dedicated set — the old bn-status-in/bn-status-out policies are
-// folded away (see obsoleteBNPolicies). Only the bn-health port is pinned here,
-// from the chart's blockNode.ports.health (healthPort), because it bootstraps
-// statusz discovery and cannot come from statusz itself.
+// The subscriber, block-access and server-status listener ports are read back
+// from the BN's statusz local.port and reconciled into the per-policy
+// `<name>_ports` sets by the daemon (managedPorts). Server-status is public to
+// everyone, so it rides the public port union on bn-subscriber-in (ingress) and
+// bn-public-out (egress) rather than a dedicated set (see obsoleteBNPolicies).
+// The health and publish ports are pinned from the chart values instead
+// (healthPort, publisherPort), because each must be known before statusz can
+// report it.
+//
+// bn-publisher drops every source outside its membership set on the publish
+// port, so only publishers the BN lists in known-publishers.json can stream
+// blocks. On a block node that serves every facility on one port, that
+// restricts the subscriber, block-access and server-status APIs to the same
+// sources.
 //
 // bn-health drops the health/statusz port from every source. Its only legitimate
 // consumers are the node's kubelet and the provisioner, and both generate their
@@ -86,7 +107,7 @@ type canonicalPolicy struct {
 // never reach the forward hook this table registers on. Anything that does reach
 // it is off-node by construction and has no business on that port.
 var canonicalBNPolicies = []canonicalPolicy{
-	{name: "bn-publisher", managedPorts: true, stamp: "publisher"},
+	{name: "bn-publisher", publisherPort: true, stamp: "publisher", denyNonMembers: true},
 	{name: "bn-subscriber-in", managedPorts: true, stamp: "reserve-ingress", fromWorld: true},
 	{name: "bn-partner-out", managedPorts: true, stamp: "partner"},
 	{name: "bn-public-out", managedPorts: true, stamp: "public", fromWorld: true},
@@ -107,22 +128,25 @@ var canonicalBNPolicies = []canonicalPolicy{
 var obsoleteBNPolicies = []string{"bn-status-in", "bn-status-out", "bn-mgmt-in", "bn-mgmt-out"}
 
 // toPolicy builds the policy.Policy for a canonical entry, resolving a
-// healthPort entry's ports to the given block-node health port. Action/Direction
-// are resolved from the stamp/deny fields; Validate (called inside
-// Manager.Create) derives Direction from the class and rejects any invalid
-// combination.
-func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
-	ports := c.ports
-	if c.healthPort {
-		ports = []string{healthPort}
+// healthPort or publisherPort entry's ports from ports. Action/Direction are
+// resolved from the stamp/deny fields; Validate (called inside Manager.Create)
+// derives Direction from the class and rejects any invalid combination.
+func (c canonicalPolicy) toPolicy(ports bnPorts) *policy.Policy {
+	listen := c.ports
+	switch {
+	case c.healthPort:
+		listen = []string{ports.health}
+	case c.publisherPort:
+		listen = []string{ports.publisher}
 	}
 	p := &policy.Policy{
 		Name:            c.name,
 		Stamp:           c.stamp,
 		ReplyStamp:      c.replyStamp,
-		Ports:           ports,
+		Ports:           listen,
 		ManagedPorts:    c.managedPorts,
 		FromEntityWorld: c.fromWorld,
+		DenyNonMembers:  c.denyNonMembers,
 	}
 	if c.deny {
 		p.Action = policy.ActionDeny
@@ -143,11 +167,16 @@ func (c canonicalPolicy) toPolicy(healthPort string) *policy.Policy {
 // static rules are re-rendered from these definitions (membership is preserved
 // by the manager). No membership is seeded here: every set starts empty and is
 // filled by the daemon's statusz poll loop.
-// healthPort is the resolved block-node health/statusz port (from
-// blocknode.ResolveHealthPort against the operator's effective values), used for
-// bn-health so the port solo-weaver drops tracks the port the BN actually
-// listens on rather than a value baked into solo-weaver.
-func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
+// healthPort and publisherPort are the resolved block-node health/statusz and
+// publish ports (blocknode.ResolveHealthPort / ResolvePublisherPort against the
+// operator's effective values), so the ports bn-health and bn-publisher match
+// track the ports the BN actually listens on.
+//
+// A canonical policy that already exists with a different definition — one a
+// prior release created — is redefined in place with its live membership kept,
+// so an upgrade converges without --force and without cutting off peers.
+func NetworkPolicyCreate(force bool, healthPort, publisherPort string) *automa.StepBuilder {
+	ports := bnPorts{health: healthPort, publisher: publisherPort}
 	return automa.NewStepBuilder().WithId(NetworkPolicyCreateStepId).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Creating network policies (inet weaver-workload-policy)")
@@ -200,7 +229,7 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 				// Install-time wiring auto-detects a single (v4) pod CIDR; dual-stack
 				// v6 classification is opt-in via the `network policy create --pod-cidr`
 				// CLI (Manager.Create accepts a mixed v4/v6 list).
-				changed, err := mgr.Create(ctx, c.toPolicy(healthPort), nil, []string{podCIDR}, force)
+				changed, err := mgr.Create(ctx, c.toPolicy(ports), nil, []string{podCIDR}, force)
 				if err != nil {
 					stp.State().Local().Set(policyCreatedNamesKey, created)
 					return automa.FailureReport(stp, automa.WithError(
@@ -213,6 +242,22 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 				}
 				if changed && !preExisting {
 					created = append(created, c.name)
+				}
+				if preExisting && !force {
+					redefined, err := mgr.Redefine(ctx, c.toPolicy(ports), []string{podCIDR})
+					if err != nil {
+						stp.State().Local().Set(policyCreatedNamesKey, created)
+						return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+							errorx.Decorate(err, "failed to update network policy %q to this release's definition", c.name),
+							reasons.PreconditionNotMet,
+							"Inspect the policy registry entry: cat "+policy.RegistryDir+"/"+c.name+".json",
+							"Check the rendered chain for syntax errors: nft -c -f "+policy.WeaverNftPath,
+							"Re-run with --force to replace the policy outright (its membership is repopulated by the daemon)",
+						)))
+					}
+					if redefined {
+						logx.As().Info().Str("policy", c.name).Msg("updated network policy to this release's definition, keeping its live membership")
+					}
 				}
 			}
 			// Remove policies a prior release created that this release folded
@@ -249,6 +294,7 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 			stp.State().Local().Set(policyCreatedNamesKey, created)
 			logx.As().Info().Int("created", len(created)).Int("total", len(canonicalBNPolicies)).
 				Msg("network policies reconciled")
+			warnIfNoPublishers(ctx, stp, mgr, publisherPort)
 			return automa.SuccessReport(stp)
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -276,4 +322,29 @@ func NetworkPolicyCreate(force bool, healthPort string) *automa.StepBuilder {
 			}
 			return automa.SuccessReport(stp)
 		})
+}
+
+// knownPublishersPath is the block node's default publisher roster, inside the
+// BN pod. Its entries reach @bn-publisher through statusz/inbound.
+const knownPublishersPath = "/opt/hiero/block-node/application-state/known-publishers.json"
+
+// warnIfNoPublishers tells the operator when bn-publisher has no members: its
+// deny-non-members guard then closes the publish port to every source. On a
+// fresh install that is expected until the daemon's first statusz poll, so it is
+// a warning, not a failure. A failed read is logged and otherwise ignored — it
+// says nothing about whether the roster is configured.
+func warnIfNoPublishers(ctx context.Context, stp automa.Step, mgr *policy.Manager, publisherPort string) {
+	members, err := mgr.Members(ctx, "bn-publisher")
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("could not read bn-publisher membership; skipping the empty-roster check")
+		return
+	}
+	if len(members) > 0 {
+		return
+	}
+	logx.As().Warn().Str("port", publisherPort).Str("roster", knownPublishersPath).
+		Msg("bn-publisher has no members: the publish port is closed to every source until the block node reports a known publisher")
+	notify.As().StepDetail(ctx, stp,
+		"Publish port %s accepts only known publishers, and none are configured yet. Add them to %s in the block node; the daemon admits them on its next statusz poll. Check with: solo-provisioner network policy show --name bn-publisher",
+		publisherPort, knownPublishersPath)
 }

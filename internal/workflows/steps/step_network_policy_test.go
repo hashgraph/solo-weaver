@@ -10,8 +10,14 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/network/policy"
 )
 
-// testHealthPort is a representative resolved health port for toPolicy in tests.
-const testHealthPort = "40983"
+// testHealthPort and testPublisherPort are representative resolved ports for
+// toPolicy in tests.
+const (
+	testHealthPort    = "40983"
+	testPublisherPort = "40840"
+)
+
+var testPorts = bnPorts{health: testHealthPort, publisher: testPublisherPort}
 
 // TestCanonicalBNPolicies_Names pins the fixed BN static-plane policy set so a
 // change to the design list is a deliberate, reviewed edit. bn-status-in/out are
@@ -40,7 +46,7 @@ func TestCanonicalBNPolicies_Names(t *testing.T) {
 func TestCanonicalBNPolicies_Valid(t *testing.T) {
 	seen := map[string]string{} // group key → policy name, for specific stamps
 	for _, c := range canonicalBNPolicies {
-		p := c.toPolicy(testHealthPort)
+		p := c.toPolicy(testPorts)
 		// No membership is seeded at install: every set starts empty.
 		if err := p.Validate(nil); err != nil {
 			t.Fatalf("policy %q failed validation: %v", c.name, err)
@@ -90,7 +96,7 @@ func TestCanonicalBNPolicies_HealthIsADropFromEveryone(t *testing.T) {
 		t.Fatal("bn-health is not in canonicalBNPolicies")
 	}
 
-	p := health.toPolicy(testHealthPort)
+	p := health.toPolicy(testPorts)
 	if p.Action != policy.ActionDeny {
 		t.Errorf("bn-health action: got %q, want deny", p.Action)
 	}
@@ -124,17 +130,17 @@ func TestObsoleteBNPolicies_CoversRemovedMgmtSets(t *testing.T) {
 	}
 }
 
-// TestCanonicalBNPolicies_ManagedPortsAndHealth pins which sets have
-// daemon-reconciled listener ports (no static literals) versus bn-health, whose
-// port is seeded from the resolved health port.
-func TestCanonicalBNPolicies_ManagedPortsAndHealth(t *testing.T) {
+// TestCanonicalBNPolicies_PortSources pins which sets have daemon-reconciled
+// listener ports (no static literals) versus bn-health and bn-publisher, whose
+// ports are seeded from the chart values.
+func TestCanonicalBNPolicies_PortSources(t *testing.T) {
 	byName := map[string]canonicalPolicy{}
 	for _, c := range canonicalBNPolicies {
 		byName[c.name] = c
 	}
 
-	for _, n := range []string{"bn-publisher", "bn-subscriber-in", "bn-partner-out", "bn-public-out"} {
-		p := byName[n].toPolicy(testHealthPort)
+	for _, n := range []string{"bn-subscriber-in", "bn-partner-out", "bn-public-out"} {
+		p := byName[n].toPolicy(testPorts)
 		if !p.ManagedPorts {
 			t.Errorf("%s: want ManagedPorts (statusz-derived)", n)
 		}
@@ -143,11 +149,31 @@ func TestCanonicalBNPolicies_ManagedPortsAndHealth(t *testing.T) {
 		}
 	}
 
-	p := byName["bn-health"].toPolicy(testHealthPort)
-	if p.ManagedPorts {
-		t.Error("bn-health: the health port comes from Helm, not statusz")
+	for name, want := range map[string]string{"bn-health": testHealthPort, "bn-publisher": testPublisherPort} {
+		p := byName[name].toPolicy(testPorts)
+		if p.ManagedPorts {
+			t.Errorf("%s: the port comes from the chart values, not statusz", name)
+		}
+		if len(p.Ports) != 1 || p.Ports[0] != want {
+			t.Errorf("%s: want resolved port %q, got %v", name, want, p.Ports)
+		}
 	}
-	if len(p.Ports) != 1 || p.Ports[0] != testHealthPort {
-		t.Errorf("bn-health: want resolved health port %q, got %v", testHealthPort, p.Ports)
+}
+
+// TestCanonicalBNPolicies_PublisherDeniesNonMembers pins that bn-publisher
+// guards the publish port: sources outside its membership set are dropped, so
+// only publishers the block node knows about can stream blocks.
+func TestCanonicalBNPolicies_PublisherDeniesNonMembers(t *testing.T) {
+	for _, c := range canonicalBNPolicies {
+		p := c.toPolicy(testPorts)
+		if c.name == "bn-publisher" {
+			if !p.DenyNonMembers {
+				t.Error("bn-publisher must deny non-members on the publish port")
+			}
+			continue
+		}
+		if p.DenyNonMembers {
+			t.Errorf("%s: only bn-publisher denies non-members", c.name)
+		}
 	}
 }

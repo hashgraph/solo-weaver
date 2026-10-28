@@ -96,10 +96,14 @@ var categoryBindings = map[bindingKey]categoryBinding{
 // seeded present (empty) so a category the BN stops reporting clears the set
 // rather than leaving stale ports behind. All are fed by the single inbound call,
 // so an inbound call reporting nothing withholds them all — see desiredPorts.
+//
+// The publisher category has no port binding: bn-publisher's port is pinned from
+// the chart values at install, because statusz reports it only alongside a
+// configured publisher and bn-publisher must guard the port while the roster is
+// still empty.
 var portBindings = map[Category][]string{
-	CategoryPublisher: {"bn-publisher"},
-	CategoryPartner:   {"bn-partner-out"},
-	CategoryPublic:    {"bn-subscriber-in", "bn-public-out"},
+	CategoryPartner: {"bn-partner-out"},
+	CategoryPublic:  {"bn-subscriber-in", "bn-public-out"},
 }
 
 // managedPortsPolicyNames returns every policy name whose `<name>_ports` set the

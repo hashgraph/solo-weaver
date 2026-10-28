@@ -3,6 +3,9 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 
@@ -57,14 +60,15 @@ type State struct {
 // intentionally excluded from hashing because they are bookkeeping metadata,
 // not provisioning state.
 type StateRecord struct {
-	Version          string                        `yaml:"version" json:"version"`
-	ProvisionerState ProvisionerInfo               `yaml:"provisioner" json:"provisioner"`
-	MachineState     MachineState                  `yaml:"machineState" json:"machineState"`
-	ClusterState     ClusterState                  `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState   BlockNodeState                `yaml:"blockNodeState" json:"blockNodeState"`
-	ConsensusNodes   map[string]ConsensusNodeState `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
-	TeleportState    TeleportState                 `yaml:"teleportState" json:"teleportState"`
-	LastAction       ActionHistory                 `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
+	Version          string                         `yaml:"version" json:"version"`
+	ProvisionerState ProvisionerInfo                `yaml:"provisioner" json:"provisioner"`
+	MachineState     MachineState                   `yaml:"machineState" json:"machineState"`
+	ClusterState     ClusterState                   `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState   BlockNodeState                 `yaml:"blockNodeState" json:"blockNodeState"`
+	ConsensusNodes   map[string]ConsensusNodeState  `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
+	ConsensusOrbits  map[string]ConsensusOrbitState `yaml:"consensusOrbits,omitempty" json:"consensusOrbits,omitempty"`
+	TeleportState    TeleportState                  `yaml:"teleportState" json:"teleportState"`
+	LastAction       ActionHistory                  `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
 }
 
 // Hashable returns a deep copy of the domain StateRecord with all reconciliation
@@ -253,7 +257,117 @@ type ConsensusNodeState struct {
 	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
 	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
 	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
-	LastSync      htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+
+	// ManagedSpec records the deliberate install-time shape of the ConsensusCapsule
+	// beyond identity (sizing, JVM, images, volume backing, mode). A pointer so old
+	// state files (written before this field existed) load as nil rather than an
+	// empty shape. Populated at install; it is the baseline for drift detection,
+	// disaster-recovery reinstall, and migration adopt — resolving the node's
+	// intended shape instead of falling back to compiled-in defaults.
+	ManagedSpec *ConsensusNodeManagedSpec `yaml:"managedSpec,omitempty" json:"managedSpec,omitempty"`
+
+	// ObservedShape is the managed-spec-equivalent read from the live cluster
+	// during a reality refresh. It is never persisted — it exists only so the
+	// drift producer can compare ManagedSpec (what weaver set) against what the
+	// cluster actually has, without re-reading the CRDs.
+	ObservedShape *ConsensusNodeObservedShape `yaml:"-" json:"-"`
+
+	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"`
+}
+
+// ConsensusNodeObservedShape holds the managed-shape fields read from a live
+// ConsensusCapsule (and its Orbit) during a reality refresh. String fields use
+// empty = absent from the capsule (compared, so a deleted field is drift); the
+// whole shape is left nil when the capsule could not be read. Boolean and
+// composite fields use a *Set companion to distinguish "not observed" from a real
+// zero value.
+// Not persisted; populated transiently by the reality checker for drift
+// detection.
+type ConsensusNodeObservedShape struct {
+	ContainerName string
+	CPULimit      string
+	CPURequest    string
+	MemoryLimit   string
+	MemoryRequest string
+	JavaHeapMin   string
+	JavaHeapMax   string
+	JavaOpts      string
+	UCImageRepo   string
+	UCImageTag    string
+
+	// Orbit is the node's Orbit as read from the cluster (an Orbit-level fact
+	// reached via the node's OrbitName); nil when it could not be read. The drift
+	// producer compares it once per Orbit against ConsensusOrbitState, not per node.
+	Orbit *ConsensusOrbitState
+
+	Volumes    models.ConsensusVolumeConfig
+	VolumesSet bool
+
+	ImagePullSecrets    models.PullSecretSelector
+	ImagePullSecretsSet bool
+
+	// HostPathOwners is the on-disk owner of each hostpath-backed volume directory,
+	// keyed by volume name. Host-side readback (not capsule state); volumes whose
+	// directory could not be stat'ed are omitted.
+	HostPathOwners map[string]HostPathOwner
+}
+
+// HostPathOwner is the uid/gid owning a hostPath directory on the node.
+type HostPathOwner struct {
+	UID int
+	GID int
+}
+
+// ConsensusNodeManagedSpec is the portion of a ConsensusCapsule's spec that weaver
+// deliberately sets at install time, beyond the node's identity. It is the desired
+// (managed) shape — the `.spec` half of the Kubernetes spec/status split — as
+// opposed to the observed snapshots the other `…State` types hold. Persisting it
+// lets a later re-apply, drift check, DR reinstall, or migration adopt resolve
+// the node's intended shape rather than resetting unset fields to defaults.
+type ConsensusNodeManagedSpec struct {
+	ContainerName    string                       `yaml:"containerName,omitempty" json:"containerName,omitempty"`
+	CPULimit         string                       `yaml:"cpuLimit,omitempty" json:"cpuLimit,omitempty"`
+	CPURequest       string                       `yaml:"cpuRequest,omitempty" json:"cpuRequest,omitempty"`
+	MemoryLimit      string                       `yaml:"memoryLimit,omitempty" json:"memoryLimit,omitempty"`
+	MemoryRequest    string                       `yaml:"memoryRequest,omitempty" json:"memoryRequest,omitempty"`
+	JavaHeapMin      string                       `yaml:"javaHeapMin,omitempty" json:"javaHeapMin,omitempty"`
+	JavaHeapMax      string                       `yaml:"javaHeapMax,omitempty" json:"javaHeapMax,omitempty"`
+	JavaOpts         string                       `yaml:"javaOpts,omitempty" json:"javaOpts,omitempty"`
+	UCImageRepo      string                       `yaml:"ucImageRepo,omitempty" json:"ucImageRepo,omitempty"`
+	UCImageTag       string                       `yaml:"ucImageTag,omitempty" json:"ucImageTag,omitempty"`
+	ImagePullSecrets models.PullSecretSelector    `yaml:"imagePullSecrets,omitempty" json:"imagePullSecrets,omitempty"`
+	Volumes          models.ConsensusVolumeConfig `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	HostPathUID      int                          `yaml:"hostPathUid,omitempty" json:"hostPathUid,omitempty"`
+	HostPathGID      int                          `yaml:"hostPathGid,omitempty" json:"hostPathGid,omitempty"`
+}
+
+// Hash returns a stable SHA-256 fingerprint of the managed shape. Returns "" for
+// a nil receiver (a nil pointer wrapped in an interface would otherwise hash as
+// JSON "null"). Delegates to SpecHash so every component hashes identically.
+func (m *ConsensusNodeManagedSpec) Hash() string {
+	if m == nil {
+		return ""
+	}
+	return SpecHash(m)
+}
+
+// SpecHash returns a stable SHA-256 fingerprint of v, for recording a managed
+// component's desired shape so a later run can detect out-of-band drift.
+// encoding/json emits struct fields in declaration order and map keys sorted, so
+// the output is deterministic for a given value. Component-agnostic by design:
+// each component's ManagedSpec (consensus today; block/relay/mirror later) hashes
+// the same way without a shared "managed" god-struct. Returns "" when v is nil or
+// cannot be marshalled.
+func SpecHash(v any) string {
+	if v == nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%x", sum)
 }
 
 // ClusterNodeState represents a single Kubernetes node summary.

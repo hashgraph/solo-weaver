@@ -22,7 +22,7 @@
 # beacon needs a solo-operator checkout (SOLO_OPERATOR_DIR) for `bin/beacon` and
 # the upgrade zip (test/dev/staging/build-v<UPGRADE_VERSION>.zip). `prep` builds those
 # from an up-to-date main checkout; the in-cluster chart/image is the released
-# v0.7.1 (deps.SOLO_OPERATOR_VERSION), which includes the #1323 alignment.
+# version pinned by deps.SOLO_OPERATOR_VERSION (v0.10.0 at the time of writing).
 
 version: '3'
 
@@ -50,11 +50,18 @@ vars:
   # resolve regardless of where `task` is invoked.
   WEAVER_ROOT:
     sh: cd ../../.. && pwd
-  # Path to a solo-operator checkout at v0.7.0+ (provides bin/beacon and the test/dev
+  # Path to a solo-operator checkout at v0.10.0+ (provides bin/beacon and the test/dev
   # staging zips). Defaults to a sibling checkout beside solo-weaver (the standard
   # go-import layout, .../github.com/hashgraph/solo-operator); override with
   # `task -d docs/dev/daemon zip SOLO_OPERATOR_DIR=/path/to/solo-operator`.
   SOLO_OPERATOR_DIR: '{{.SOLO_OPERATOR_DIR | default (printf "%s/../solo-operator" .WEAVER_ROOT)}}'
+
+  # solo-operator git ref that `clone`/`prep` builds from. Defaults to main for a
+  # reproducible e2e. Override to build zips/beacon/manager from an unmerged branch,
+  # e.g. `task -d docs/dev/daemon prep SOLO_OPERATOR_REF=feat/multi-registry-manifest`.
+  # A ref with an origin/<ref> upstream is fast-forwarded; a purely local branch is
+  # used as-is (no pull).
+  SOLO_OPERATOR_REF: '{{.SOLO_OPERATOR_REF | default "main"}}'
 
   # Version map — mirrors solo-operator docs/beacon. beacon uploads the UPGRADE zip.
   BASE_VERSION: "0.74.0"
@@ -71,6 +78,17 @@ vars:
   # (e.g. PROVISIONER_VERSION=0.33.0). NOTE: the zip task is idempotent — remove
   # staging/*.zip to rebuild after changing the version.
   PROVISIONER_VERSION: '{{.PROVISIONER_VERSION | default .VERSION | default "0.0.0"}}'
+
+  # Multi-registry shape of the packages built by `zip` (forwarded to solo-operator's
+  # test/dev build). By default the manifest gets a decoy registry FIRST (a public
+  # image that is intentionally not published), so the operator must fail over to the
+  # real registry and the capsule carries a softwareVersionSource instead of a single
+  # softwareVersion — the shape that exercises the upgrade's source handling. A real
+  # mirror is added as well when it publishes the same version with identical layers.
+  # Set CN_DECOY_REGISTRY="" for a plain single-registry package.
+  CN_DECOY_REGISTRY: '{{.CN_DECOY_REGISTRY | default "docker.io/hashgraph/consensus-node:0.0.0-invalid"}}'
+  CN_DECOY_POSITION_0: '{{.CN_DECOY_POSITION_0 | default "true"}}'
+  CN_SELECTION_STRATEGY: '{{.CN_SELECTION_STRATEGY | default ""}}'
 
   # Orbit namespace where the CN + NetworkUpgradeExecute CRs live.
   NS: '{{.NS | default "hiero-network-1"}}'
@@ -164,7 +182,7 @@ tasks:
           T1  task -d docs/dev/daemon rebuild        # build CLI+daemon on the VM + self-install
           T2  task -d docs/dev/daemon cluster        # registry login + kube cluster install + orbit ns + hedera user + upgrade dir
           T3  task -d docs/dev/daemon secrets        # gossip/gRPC + pull secrets (reuses uat:secrets)
-          T4  task -d docs/dev/daemon operator       # kube operator install (v0.7.1 operator + CRDs)
+          T4  task -d docs/dev/daemon operator       # kube operator install (v0.10.0 operator + CRDs)
               #  ── how to run solo-operator (pick one) ──
               #  A) released image in-cluster: nothing more to do — `operator` (above) runs it.
               #  B) local binary out-of-cluster: run T5 (network) with the released operator
@@ -252,9 +270,9 @@ tasks:
           OPERATOR_NS: "{{.OPERATOR_NS}}"
           NODE: "node{{.NODE_ID}}"
 
-  # ── 4. operator (real CRDs, v0.7.0) ──────────────────────────────────────────
+  # ── 4. operator (real CRDs, v0.10.0) ─────────────────────────────────────────
   operator:
-    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.7.1 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
+    desc: "Inside VM: install the solo-operator IN-CLUSTER (v0.10.0 released chart + CRDs incl. networkupgradeexecutes). Choice A — the released image. For a local build, run this once for the CRDs, then `operator:local`."
     cmds:
       - |
         set -e
@@ -357,13 +375,14 @@ tasks:
         esac
         DAEMON_BIN=/mnt/solo-weaver/bin/solo-provisioner-daemon-linux-${ARCH}
 
-        echo "▶ daemon service install (--cn-orbit is aliased by --cn-namespace)"
+        echo "▶ daemon service install from local dev config"
         # --daemon-bin points at the freshly built dev binary (auto-download of the
-        # 0.0.0 placeholder version has no GitHub release and would fail).
+        # 0.0.0 placeholder version has no GitHub release and would fail). The
+        # from-config file pins the local CN namespace/node_id values for a repeatable
+        # dev run; the command-line flags are intentionally omitted because the file is
+        # the authoritative config in this path.
         sudo solo-provisioner daemon service install \
-          --components consensus-node \
-          --cn-node-id {{.NODE_ID}} \
-          --cn-orbit {{.NS}} \
+          --from-config "{{.WEAVER_ROOT}}/test/config/daemon-local.yaml" \
           --daemon-bin "$DAEMON_BIN" \
           --non-interactive
 
@@ -377,13 +396,41 @@ tasks:
         sudo solo-provisioner daemon service check || true
 
   daemon:logs:
-    desc: "Inside VM: tail the daemon log file (LEAVE RUNNING in its own terminal)"
+    desc: "Inside VM: follow the daemon journal (LEAVE RUNNING in its own terminal)"
     cmds:
-      # The daemon logs to a file via lumberjack, NOT journald — `journalctl -u ...`
-      # shows nothing for the provisioner user (needs sudo / systemd-journal group).
-      # -F follows across lumberjack's log rotation. For service start/crash output,
-      # use: sudo journalctl -u solo-provisioner-daemon.service -e
-      - tail -F /opt/solo/weaver/logs/solo-provisioner-daemon.log
+      # The daemon's stdout goes to journald as human-readable console output, which is
+      # the readable view for local debugging; -o cat drops the journal prefix. The
+      # file /opt/solo/weaver/logs/solo-provisioner-daemon.log is always NDJSON (the
+      # logx file sink), so it is for machine consumption, not for tailing. Needs sudo
+      # (or the systemd-journal group) to read the unit's journal.
+      - sudo journalctl -fu solo-provisioner-daemon -o cat
+
+  provisioner:logs:
+    desc: "Inside VM: follow the CLI log (solo-provisioner.log) as readable lines (LEAVE RUNNING in its own terminal)"
+    cmds:
+      # The CLI log file is always NDJSON and the CLI has no journal, so render it like
+      # the daemon's console output (colored level, `>` before the message, sorted
+      # key=value fields) with jq while tailing. A non-JSON line is passed through as-is
+      # so the stream survives it. Needs sudo only if the file is not world-readable.
+      - |
+        sudo tail -n 50 -F /opt/solo/weaver/logs/solo-provisioner.log \
+          | jq -R -r '
+              def c($n; $s): "\u001b[\($n)m\($s)\u001b[0m";
+              def lvl: {trace: ["TRC", 35], debug: ["DBG", 33], info: ["INF", 32],
+                        warn: ["WRN", 31], error: ["ERR", 31], fatal: ["FTL", 31],
+                        panic: ["PNC", 31]}[(.level // "") | ascii_downcase]
+                       // [((.level // "???") | ascii_upcase), 0];
+              (fromjson? // null) as $o
+              | if $o == null then . else
+                  $o | lvl as $l
+                  | (del(.time, .level, .caller, .message) | to_entries | sort_by(.key)
+                     | map(c(36; .key + "=") + (.value | if type == "string" then . else tojson end))
+                     | join(" ")) as $fields
+                  | [c(90; .time // ""), c($l[1]; $l[0]), c(1; .caller // ""), c(36; ">"),
+                     (.message // ""), $fields]
+                  | map(select(. != "" and . != c(90; "") and . != c(1; "")))
+                  | join(" ")
+                end'
 
   daemon:check:
     desc: "Inside VM: run `daemon service check` (prints the /status JSON incl. per-monitor state)"
@@ -395,9 +442,10 @@ tasks:
   # them into the weaver checkout (test/data + bin), and vm:sync into the VM. `prep`
   # chains all of it; run it once at the beginning.
   prep:
-    desc: "Host: ensure solo-operator is checked out on an up-to-date main (clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
+    desc: "Host: ensure solo-operator is checked out on SOLO_OPERATOR_REF (default main; clone if needed), build zips + beacon + the operator manager binary, stage into test/data + bin, and sync into the VM (run once, on the dev machine)"
     cmds:
       - task: clone
+      - task: clean
       - task: zip
       - task: package
       - task: beacon:build
@@ -405,13 +453,14 @@ tasks:
       - task: sync
 
   clone:
-    desc: "Host: ensure a solo-operator checkout at SOLO_OPERATOR_DIR on an up-to-date main — clone it if absent, otherwise fetch + checkout main + fast-forward. beacon/manager are built from this source, so the e2e must run against main unless you deliberately switch afterwards. Refuses to touch a dirty tree. Uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env."
+    desc: "Host: ensure a solo-operator checkout at SOLO_OPERATOR_DIR on SOLO_OPERATOR_REF (default main) — clone it if absent, otherwise fetch + checkout the ref. A ref with an origin/<ref> upstream is fast-forwarded; a local-only branch is used as-is. beacon/manager/zips are built from this source, so set SOLO_OPERATOR_REF to build from an unmerged branch. Refuses to touch a dirty tree. Uses GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env."
     cmds:
       - |
         set -e
         : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
         : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)}"
         DIR="{{.SOLO_OPERATOR_DIR}}"
+        REF="{{.SOLO_OPERATOR_REF}}"
         # Inject the PAT via env-only git config (insteadOf) for clone/fetch/pull, so the
         # token is never written into the checkout's remote URL or ~/.gitconfig.
         export GIT_CONFIG_COUNT=1
@@ -421,24 +470,42 @@ tasks:
           echo "▶ solo-operator not found at $DIR — cloning"
           git clone https://github.com/hashgraph/solo-operator.git "$DIR"
         fi
-        # Ensure the checkout is on an up-to-date main. Refuse to clobber a work-in-progress
-        # operator change (e.g. a fix under test via operator:local) — a dirty tree aborts
-        # with a clear message rather than being silently switched or reset.
+        # Refuse to clobber a work-in-progress operator change (e.g. a fix under test via
+        # operator:local) — a dirty tree aborts with a clear message rather than being
+        # silently switched or reset.
         if [ -n "$(git -C "$DIR" status --porcelain)" ]; then
-          echo "!! $DIR has uncommitted changes — commit/stash them (or switch it to main yourself) before running prep" >&2
+          echo "!! $DIR has uncommitted changes — commit/stash them (or switch it to $REF yourself) before running prep" >&2
           exit 1
         fi
-        echo "▶ solo-operator: fetch + checkout main + fast-forward"
+        echo "▶ solo-operator: fetch + checkout $REF"
         git -C "$DIR" fetch origin
-        git -C "$DIR" checkout main
-        git -C "$DIR" pull --ff-only origin main
-        echo "✓ solo-operator on main at $(git -C "$DIR" rev-parse --short HEAD)"
+        git -C "$DIR" checkout "$REF"
+        # Fast-forward only when the ref tracks origin; a local-only branch (an unmerged
+        # change under test) has no origin/<ref> and is used as-is.
+        if git -C "$DIR" rev-parse --verify --quiet "origin/$REF" >/dev/null; then
+          git -C "$DIR" pull --ff-only origin "$REF"
+        else
+          echo "▶ $REF has no origin upstream — using the local branch as-is"
+        fi
+        echo "✓ solo-operator on $REF at $(git -C "$DIR" rev-parse --short HEAD)"
+
+  clean:
+    desc: "Host: delete the staged v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} zips and the weaver test/data copies so `prep` always rebuilds them (the `zip` task skips when zips exist, which silently reuses stale packages). Source downloads in solo-operator test/dev are kept."
+    cmds:
+      - |
+        set -e
+        for v in {{.BASE_VERSION}} {{.UPGRADE_VERSION}}; do
+          rm -f  "{{.STAGING}}/build-v${v}.zip" "{{.WEAVER_ROOT}}/test/data/build-v${v}.zip"
+          rm -rf "{{.WEAVER_ROOT}}/test/data/build-v${v}"
+        done
+        echo "✓ removed staged and synced packages for {{.BASE_VERSION}} and {{.UPGRADE_VERSION}}"
 
   zip:
     desc: "Host: build the v{{.BASE_VERSION}} + v{{.UPGRADE_VERSION}} deployment zips in the solo-operator test/dev tree"
     status:
       # Idempotent: skip when both zips are already built. Remove them (or the
-      # staging dir) to force a rebuild.
+      # staging dir, or run the `clean` task — `prep` does) to force a rebuild — required after changing CN_DECOY_REGISTRY /
+      # CN_DECOY_POSITION_0 / CN_SELECTION_STRATEGY, since a skipped build ignores them.
       - test -f "{{.STAGING}}/build-v{{.BASE_VERSION}}.zip"
       - test -f "{{.ZIP_SRC}}"
     cmds:
@@ -452,7 +519,10 @@ tasks:
         # build's 0.0.0) rather than hardcoded in solo-operator's Taskfile.
         task build \
           PROVISIONER_DAEMON_VERSION={{.PROVISIONER_VERSION}} \
-          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}}   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
+          PROVISIONER_CLI_VERSION={{.PROVISIONER_VERSION}} \
+          CN_DECOY_REGISTRY="{{.CN_DECOY_REGISTRY}}" \
+          CN_DECOY_POSITION_0={{.CN_DECOY_POSITION_0}} \
+          CN_SELECTION_STRATEGY="{{.CN_SELECTION_STRATEGY}}"   # -> staging/build-v{{.BASE_VERSION}}.zip and build-v{{.UPGRADE_VERSION}}.zip
 
   package:
     desc: "Host: stage the base package (unzipped) + the upgrade zip into the weaver checkout's test/data (synced into the VM by `vm:sync`)"
@@ -532,6 +602,7 @@ tasks:
     desc: "Write {{.BEACON_HOME}} config.yaml + the 0.0.2 payer key (copied from solo-operator docs/beacon)"
     cmds:
       - mkdir -p {{.BEACON_HOME}}/keys
+      - sudo apt install -y xxd || true
       - |
         # 0.0.2 genesis key as an unencrypted PEM (+ empty passphrase file).
         { echo "-----BEGIN PRIVATE KEY-----"; \

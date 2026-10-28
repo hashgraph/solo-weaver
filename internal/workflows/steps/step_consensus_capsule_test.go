@@ -22,6 +22,7 @@ import (
 // `applied` records the CR names passed to ApplyTyped, in order.
 type fakeCapsuleClient struct {
 	existing    map[string]string
+	nested      map[string]map[string]interface{}
 	applied     []string
 	appliedObjs []runtime.Object
 	listResult  *unstructured.UnstructuredList
@@ -34,6 +35,11 @@ func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name stri
 
 func (f *fakeCapsuleClient) GetResourceNestedString(_ context.Context, _, _, _, name string, _ ...string) (string, error) {
 	return f.existing[name], nil
+}
+
+func (f *fakeCapsuleClient) GetResourceNestedMap(_ context.Context, _, _, _, name string, _ ...string) (map[string]interface{}, bool, error) {
+	m, ok := f.nested[name]
+	return m, ok, nil
 }
 
 func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) error {
@@ -53,6 +59,44 @@ func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ strin
 func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {
 	return func(context.Context) (CapsuleKubeClient, error) { return f, nil }
 }
+
+// --- PrecheckConsensusNotInstalled tests ---
+
+func TestPrecheckConsensusNotInstalled_Absent(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "absent capsule must pass without --force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsNoForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, false, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusFailed, rpt.Status, "existing capsule without --force must fail")
+	assert.Contains(t, rpt.Error.Error(), "already installed")
+	assert.Contains(t, rpt.Error.Error(), "--force")
+}
+
+func TestPrecheckConsensusNotInstalled_ExistsWithForce(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("orbit", 0)
+	fake := &fakeCapsuleClient{existing: map[string]string{capsuleName: "deployed"}}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0}
+
+	step, err := PrecheckConsensusNotInstalled(in, true, fake.provider()).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+	assert.Equal(t, automa.StatusSuccess, rpt.Status, "existing capsule with --force must pass")
+}
+
+// --- consensusInputsWithConfigs helper ---
 
 // consensusInputsWithConfigs returns inputs whose 11 config bodies are all set
 // to content and whose per-file source is all set to source.
@@ -279,6 +323,297 @@ func TestCreateConsensusCapsule_MatchesOperatorContract(t *testing.T) {
 	}
 }
 
+func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             0,
+		AccountId:          "0.0.3",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		// Host-keyed selector: each registry resolves its own secret by host.
+		ImagePullSecrets: models.PullSecretSelector{ByHost: map[string]string{
+			"gcr.io":    "gcr-creds",
+			"docker.io": "docker-creds",
+		}},
+		ConsensusImageSource: &models.ImageSource{
+			Repositories: []models.ImageRepositoryRef{
+				{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+				{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+			},
+			LayerHashes: map[string][]string{
+				"linux/amd64": {"sha256:aaa", "sha256:bbb"},
+				"linux/arm64": {"sha256:ccc"},
+			},
+		},
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
+
+	capsule := findCapsule(t, fake.appliedObjs)
+	cn := capsule.Spec.PodProperties.Containers.ConsensusNode
+
+	// SoftwareVersion is dropped when a source is set — one of the two is enough
+	// per the v0.8.0 contract (hashgraph/solo-operator#1372), and leaving a
+	// synthesized registries[0] duplicate on the CR would be misleading.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion")
+
+	src := cn.SoftwareVersionSource
+	require.NotNil(t, src)
+	require.Len(t, src.ImageRepositories, 2)
+	assert.Equal(t, "gcr.io/hedera-registry", src.ImageRepositories[0].Repository)
+	assert.Equal(t, "consensus-node", src.ImageRepositories[0].ImageName)
+	assert.Equal(t, "0.74.2", src.ImageRepositories[0].ImageTag)
+	assert.Equal(t, "docker.io/hashgraph", src.ImageRepositories[1].Repository)
+	// Each candidate carries its own host-resolved pull secret, not a shared one.
+	require.Len(t, src.ImageRepositories[0].ImagePullSecrets, 1)
+	assert.Equal(t, "gcr-creds", src.ImageRepositories[0].ImagePullSecrets[0].Name)
+	require.Len(t, src.ImageRepositories[1].ImagePullSecrets, 1)
+	assert.Equal(t, "docker-creds", src.ImageRepositories[1].ImagePullSecrets[0].Name)
+
+	// Verification entries are emitted one per platform, in sorted platform order.
+	require.Len(t, src.ImageVerificationSpec, 2)
+	assert.Equal(t, "linux", src.ImageVerificationSpec[0].OS)
+	assert.Equal(t, "amd64", src.ImageVerificationSpec[0].Architecture)
+	assert.Equal(t, []string{"sha256:aaa", "sha256:bbb"}, src.ImageVerificationSpec[0].LayerHashes)
+	assert.Equal(t, "arm64", src.ImageVerificationSpec[1].Architecture)
+	// Weaver defaults a multi-registry source to Sequential so the manifest's
+	// primary (registries[0]) is tried first — deterministic failover.
+	assert.Equal(t, "Sequential", src.SelectionStrategy)
+}
+
+func TestCreateConsensusCapsule_NoSource_SingleSoftwareVersion(t *testing.T) {
+	fake := &fakeCapsuleClient{existing: map[string]string{}}
+	in := models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             0,
+		AccountId:          "0.0.3",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		// ConsensusImageSource intentionally nil.
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
+
+	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
+	require.NotNil(t, cn.SoftwareVersion)
+	assert.Nil(t, cn.SoftwareVersionSource, "no manifest source ⇒ single SoftwareVersion only")
+}
+
+func TestCreateConsensusCapsule_PreservesExistingSourceWhenNoManifest(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("hiero-network-1", 0)
+	existing := &operatorv1alpha1.SoftwareVersionSource{
+		ImageRepositories: []operatorv1alpha1.ImageRepository{
+			{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+			{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+		},
+		ImageVerificationSpec: []operatorv1alpha1.ImageVerificationSpec{
+			{OS: "linux", Architecture: "amd64", LayerHashes: []string{"sha256:aaa"}},
+		},
+	}
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(existing)
+	require.NoError(t, err)
+
+	fake := &fakeCapsuleClient{
+		existing: map[string]string{},
+		nested:   map[string]map[string]interface{}{capsuleName: m},
+	}
+	in := models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             0,
+		AccountId:          "0.0.3",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		// No manifest source this run, and the image was not pinned by the user.
+		ConsensusImageSource: nil,
+		ImagePinned:          false,
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+
+	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
+	require.NotNil(t, cn.SoftwareVersionSource, "existing source must be preserved so SSA does not drop it")
+	require.Len(t, cn.SoftwareVersionSource.ImageRepositories, 2)
+	assert.Equal(t, "docker.io/hashgraph", cn.SoftwareVersionSource.ImageRepositories[1].Repository)
+	// Preserve path also drops the synthesized SoftwareVersion, keeping the CR to
+	// exactly one of the two fields.
+	assert.Nil(t, cn.SoftwareVersion, "source replaces the single SoftwareVersion on the preserve path too")
+}
+
+func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
+	capsuleName := models.ConsensusCapsuleName("hiero-network-1", 0)
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&operatorv1alpha1.SoftwareVersionSource{
+		ImageRepositories:     []operatorv1alpha1.ImageRepository{{Repository: "r", ImageName: "n", ImageTag: "t"}},
+		ImageVerificationSpec: []operatorv1alpha1.ImageVerificationSpec{{OS: "linux", Architecture: "amd64", LayerHashes: []string{"sha256:aaa"}}},
+	})
+	require.NoError(t, err)
+
+	fake := &fakeCapsuleClient{
+		existing: map[string]string{},
+		nested:   map[string]map[string]interface{}{capsuleName: m},
+	}
+	in := models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             0,
+		AccountId:          "0.0.3",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		ImagePinned:        true, // user pinned via --image-repo/--image-tag
+	}
+
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+
+	cn := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode
+	assert.Nil(t, cn.SoftwareVersionSource, "an explicit pin must drop the existing source")
+	// With no source, the single SoftwareVersion is the one of the two we emit.
+	require.NotNil(t, cn.SoftwareVersion, "pinned install keeps the single SoftwareVersion")
+	assert.Equal(t, "gcr.io/hedera-registry", cn.SoftwareVersion.Repository)
+}
+
+func TestBuildSoftwareVersionSource(t *testing.T) {
+	var none models.PullSecretSelector
+
+	// nil / empty inputs yield no source.
+	assert.Nil(t, buildSoftwareVersionSource(nil, none))
+	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{}, none))
+	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{{Repository: "r", ImageName: "n", ImageTag: "t"}},
+	}, none), "no layer hashes ⇒ nil")
+
+	// A source with a platform key that has no OS/arch split is skipped; if it is
+	// the only entry the whole source is nil (nothing verifiable).
+	assert.Nil(t, buildSoftwareVersionSource(&models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{{Repository: "r", ImageName: "n", ImageTag: "t"}},
+		LayerHashes:  map[string][]string{"bogus": {"sha256:x"}},
+	}, none))
+
+	// No secret selected for the host ⇒ no ImagePullSecrets on that repository.
+	src := buildSoftwareVersionSource(&models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{{Repository: "ghcr.io/x", ImageName: "n", ImageTag: "t"}},
+		LayerHashes:  map[string][]string{"linux/amd64": {"sha256:x"}},
+	}, none)
+	require.NotNil(t, src)
+	assert.Nil(t, src.ImageRepositories[0].ImagePullSecrets)
+
+	// The selector resolves the secret by registry host.
+	src = buildSoftwareVersionSource(&models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{{Repository: "ghcr.io/x", ImageName: "n", ImageTag: "t"}},
+		LayerHashes:  map[string][]string{"linux/amd64": {"sha256:x"}},
+	}, models.PullSecretSelector{ByHost: map[string]string{"ghcr.io": "regcred"}})
+	require.NotNil(t, src)
+	require.Len(t, src.ImageRepositories[0].ImagePullSecrets, 1)
+	assert.Equal(t, "regcred", src.ImageRepositories[0].ImagePullSecrets[0].Name)
+}
+
+// TestBuildSoftwareVersionSource_MultiRegistrySecrets checks the secret wiring for
+// a source with several registries: only one host is mapped, so its secret must
+// land on that repo alone and the other repo must stay secret-free. The
+// coordinates are solo-operator 0.7.3, which ships the same image (index digest
+// sha256:0c3ce3ca...) on both registries, so the shared layer hashes are valid.
+func TestBuildSoftwareVersionSource_MultiRegistrySecrets(t *testing.T) {
+	src := &models.ImageSource{
+		Repositories: []models.ImageRepositoryRef{
+			// Mapped host: gets the secret.
+			{Repository: "ghcr.io/hashgraph/solo-operator", ImageName: "solo-operator", ImageTag: "0.7.3"},
+			// Unmapped host: no secret.
+			{Repository: "artifacts.hashgraph.io/solo-operator-docker-release-local", ImageName: "solo-operator", ImageTag: "0.7.3"},
+		},
+		// Real layer hashes for 0.7.3 (first two layers per platform).
+		LayerHashes: map[string][]string{
+			"linux/amd64": {
+				"sha256:1c317bff3f3e33a6b7a13902b0ef7e0e700629354685f95643921e136031253b",
+				"sha256:2cc7ee286bf3a9e6af5f71756d7fc8e22e23ce65fec9047d774511ffcef79fa8",
+			},
+			"linux/arm64": {
+				"sha256:ff1b1d6ec9ee394d02ddd22a2a44618da9813780d28b83c5859eaf67a4f9fd05",
+				"sha256:401d177fd1e8a1e0d7a48139788d026e9a2e919ccb122bedd110ac7cf351f53e",
+			},
+		},
+	}
+	// Map only the private host; the public host is left unmapped.
+	sel := models.PullSecretSelector{ByHost: map[string]string{"ghcr.io": "private-registry-creds"}}
+
+	out := buildSoftwareVersionSource(src, sel)
+	require.NotNil(t, out)
+	require.Len(t, out.ImageRepositories, 2)
+
+	// Private registry (ghcr.io) carries the pull secret.
+	require.Len(t, out.ImageRepositories[0].ImagePullSecrets, 1)
+	assert.Equal(t, "private-registry-creds", out.ImageRepositories[0].ImagePullSecrets[0].Name)
+	// Public registry (artifacts.hashgraph.io) carries no secret.
+	assert.Nil(t, out.ImageRepositories[1].ImagePullSecrets)
+
+	// Both platforms are verified, in sorted order.
+	require.Len(t, out.ImageVerificationSpec, 2)
+	assert.Equal(t, "amd64", out.ImageVerificationSpec[0].Architecture)
+	assert.Equal(t, "arm64", out.ImageVerificationSpec[1].Architecture)
+}
+
+// TestCreateConsensusCapsule_SelectionStrategy verifies the three-way precedence:
+// --registry-selection-strategy flag > manifest selectionStrategy > weaver
+// default (Sequential).
+func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
+	mkInputs := func(flag, manifestStrategy string) models.ConsensusNodeInputs {
+		return models.ConsensusNodeInputs{
+			Namespace:                 "hiero-network-1",
+			OrbitName:                 "hiero-network-1",
+			NodeId:                    0,
+			AccountId:                 "0.0.3",
+			Weight:                    500,
+			ConsensusImageRepo:        "gcr.io/hedera-registry/consensus-node",
+			ConsensusImageTag:         "0.74.2",
+			RegistrySelectionStrategy: flag,
+			ConsensusImageSource: &models.ImageSource{
+				Repositories: []models.ImageRepositoryRef{
+					{Repository: "gcr.io/hedera-registry", ImageName: "consensus-node", ImageTag: "0.74.2"},
+					{Repository: "docker.io/hashgraph", ImageName: "consensus-node", ImageTag: "0.74.2"},
+				},
+				LayerHashes:       map[string][]string{"linux/amd64": {"sha256:aaa"}},
+				SelectionStrategy: manifestStrategy,
+			},
+		}
+	}
+
+	run := func(t *testing.T, flag, manifest, want string) {
+		t.Helper()
+		fake := &fakeCapsuleClient{existing: map[string]string{}}
+		step, err := CreateConsensusCapsule(mkInputs(flag, manifest), fake.provider()).Build()
+		require.NoError(t, err)
+		require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
+		src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
+		require.NotNil(t, src)
+		assert.Equal(t, want, src.SelectionStrategy)
+	}
+
+	// No flag, no manifest ⇒ weaver default Sequential (deterministic failover).
+	run(t, "", "", "Sequential")
+	// Manifest alone is honoured when no flag is set.
+	run(t, "", "Random", "Random")
+	// Explicit flag beats the manifest.
+	run(t, models.RegistrySelectionRandom, "Sequential", "Random")
+	run(t, models.RegistrySelectionSequential, "Random", "Sequential")
+	// Explicit flag with no manifest.
+	run(t, models.RegistrySelectionSequential, "", "Sequential")
+}
+
 func TestSplitConsensusImage(t *testing.T) {
 	repo, name := splitConsensusImage("gcr.io/hedera-registry/consensus-node")
 	assert.Equal(t, "gcr.io/hedera-registry", repo)
@@ -288,4 +623,64 @@ func TestSplitConsensusImage(t *testing.T) {
 	repo, name = splitConsensusImage("consensus-node")
 	assert.Equal(t, "", repo)
 	assert.Equal(t, "consensus-node", name)
+}
+
+// --- EnsureOrbit guard ---
+
+func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
+	orbitSpec := func(daemon bool, ledger, chain string, extra map[string]interface{}) map[string]interface{} {
+		ab := map[string]interface{}{"ledgerId": ledger}
+		if chain != "" {
+			ab["chainId"] = chain
+		}
+		spec := map[string]interface{}{
+			"consensus": map[string]interface{}{"genesis": map[string]interface{}{"addressBook": ab}},
+		}
+		if daemon {
+			spec["provisionerDaemonEnabled"] = true
+		}
+		for k, v := range extra {
+			spec[k] = v
+		}
+		return spec
+	}
+	in := models.ConsensusNodeInputs{
+		Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00", ChainId: "295", ProvisionerDaemonEnabled: true,
+	}
+
+	tests := []struct {
+		name      string
+		live      map[string]interface{}
+		inputs    models.ConsensusNodeInputs
+		wantField string
+	}{
+		{"matches", orbitSpec(true, "0x00", "295", nil), in, ""},
+		{"daemon mode differs", orbitSpec(false, "0x00", "295", nil), in, "provisionerDaemonEnabled"},
+		{"ledgerId differs", orbitSpec(true, "0x01", "295", nil), in, "ledgerId"},
+		{"chainId differs", orbitSpec(true, "0x00", "296", nil), in, "chainId"},
+		{"orbit has a realm the install does not request", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"deploymentModel": "MultipleKubernetesClusters"}), in, "deploymentModel"},
+		{"requireDigestOnDeploy set on the Orbit", orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"requireDigestOnDeploy": true}), in, "requireDigestOnDeploy"},
+		{"empty chainId equals zero", orbitSpec(false, "0x00", "0", nil),
+			models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeCapsuleClient{
+				existing: map[string]string{"orbit": "deployed"},
+				nested:   map[string]map[string]interface{}{"orbit": tc.live},
+			}
+			step, err := EnsureOrbit(tc.inputs, fake.provider()).Build()
+			require.NoError(t, err)
+			rpt := step.Execute(context.Background())
+			if tc.wantField != "" {
+				assert.Equal(t, automa.StatusFailed, rpt.Status)
+				assert.Contains(t, rpt.Error.Error(), tc.wantField)
+			} else {
+				assert.Equal(t, automa.StatusSuccess, rpt.Status)
+			}
+			assert.Empty(t, fake.applied, "an existing Orbit must never be re-applied")
+		})
+	}
 }

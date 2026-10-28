@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -70,6 +72,27 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	custom.LedgerId = h.runtime.LedgerId().Get().Val()
 	custom.ChainId = h.runtime.ChainId().Get().Val()
 
+	// Attach the manifest's multi-registry source unless the user explicitly pinned
+	// the image via --image-repo/--image-tag (which would contradict a candidate
+	// list). Reality/State are not a suppression signal — keying on them would flip
+	// the CR between source and single on re-runs.
+	//
+	// Only attach it when the manifest version agrees with the effective
+	// (arbitrated) image tag. The single SoftwareVersion tag arbitrates with
+	// Reality winning (StrategyReality > StrategyConfig), so a plain re-install of
+	// an already-running node resolves ConsensusImageTag to the live version and
+	// must not upgrade. The manifest source is unarbitrated and still carries the
+	// package version; since the operator prefers SoftwareVersionSource over
+	// SoftwareVersion, emitting a newer-versioned source here would silently
+	// upgrade the node. Leaving it nil lets the capsule step preserve the live
+	// source, which is consistent with the effective version.
+	custom.ImagePinned = inputs.Custom.ConsensusImageRepo != "" || inputs.Custom.ConsensusImageTag != ""
+	if !custom.ImagePinned {
+		if src := h.runtime.ConsensusImageSource(); src.VersionTag() == custom.ConsensusImageTag {
+			custom.ConsensusImageSource = src
+		}
+	}
+
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
 
@@ -91,6 +114,12 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
 
+	// Registries come from the manifest, so a --image-pull-secret HOST=NAME with an
+	// unknown host is a typo. Fail fast. The secret itself is picked by host later.
+	if err := validateConsensusPullSecretHosts(custom); err != nil {
+		return nil, err
+	}
+
 	// Apply namespace=orbit convention
 	custom.OrbitName = custom.Namespace
 
@@ -102,6 +131,44 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		Msg("Resolved effective consensus node inputs")
 
 	return &resolved, nil
+}
+
+// validateConsensusPullSecretHosts rejects a --image-pull-secret HOST=NAME whose
+// host is not a registry used by this deployment. The CLI supplies credentials,
+// never registries, so an unknown host means a typo. Known hosts are the
+// multi-registry source (or the single consensus image) plus the UC image.
+func validateConsensusPullSecretHosts(c *models.ConsensusNodeInputs) error {
+	ucRepo := c.UCImageRepo
+	if ucRepo == "" {
+		ucRepo = models.ConsensusDefaultUCImageRepo
+	}
+
+	known := map[string]struct{}{
+		models.RegistryHost(c.ConsensusImageRepo): {},
+		models.RegistryHost(ucRepo):               {},
+	}
+	if c.ConsensusImageSource != nil {
+		for _, r := range c.ConsensusImageSource.Repositories {
+			known[models.RegistryHost(r.Repository)] = struct{}{}
+		}
+	}
+
+	for _, h := range c.ImagePullSecrets.Hosts() {
+		if _, ok := known[h]; ok {
+			continue
+		}
+		knownList := make([]string, 0, len(known))
+		for k := range known {
+			knownList = append(knownList, k)
+		}
+		sort.Strings(knownList)
+		return errx.Decorate(
+			errorx.IllegalArgument.New("--image-pull-secret host %q does not match any registry in the deployment", h),
+			reasons.InvalidArgument,
+			fmt.Sprintf("Known registry hosts: %s", strings.Join(knownList, ", ")),
+			"Check the HOST in --image-pull-secret HOST=NAME (registries come from the manifest)")
+	}
+	return nil
 }
 
 // BuildWorkflow constructs the install workflow from resolved inputs.
@@ -136,6 +203,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// guard that the operator is present and the right version.
 		steps.PrecheckConsensusSecrets(ins),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
+		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
 	)
@@ -237,6 +305,8 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 		addHash(models.ConfigKeyThrottles, ins.ConfigThrottles)
 		addHash(models.ConfigKeyBlockNodes, ins.ConfigBlockNodes)
 
+		managedSpec := buildConsensusNodeManagedSpec(ins)
+
 		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
 			Namespace:     ins.Namespace,
 			OrbitName:     ins.OrbitName,
@@ -251,12 +321,67 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 			GrpcTlsSecret: ins.GrpcTlsSecret,
 			SigningSecret: ins.SigningSecret,
 			ConfigHashes:  configHashes,
+			ManagedSpec:   managedSpec,
 			LastSync:      now,
+		}
+
+		// The Orbit is shared; record its baseline once. EnsureOrbit has already
+		// verified the live Orbit agrees with this install, so never overwrite it.
+		if full.ConsensusOrbits == nil {
+			full.ConsensusOrbits = make(map[string]state.ConsensusOrbitState)
+		}
+		if _, ok := full.ConsensusOrbits[ins.OrbitName]; !ok {
+			full.ConsensusOrbits[ins.OrbitName] = steps.DesiredOrbitState(ins)
 		}
 
 		logx.As().Info().Str("stateKey", stateKey).Msg("Persisted consensus node state")
 		return nil
 	}
+}
+
+// buildConsensusNodeManagedSpec captures the deliberate install-time shape of the
+// capsule as it is actually applied — resolving the same defaults the capsule
+// step uses (ConsensusDefault* for sizing/JVM/UC image, and the per-volume
+// EffectiveSpec for volume backing) so the persisted baseline matches the live
+// CR rather than the raw (often empty) user inputs. This is the shape drift
+// detection and a disaster-recovery / migration re-apply resolve the node from.
+func buildConsensusNodeManagedSpec(ins models.ConsensusNodeInputs) *state.ConsensusNodeManagedSpec {
+	volumes := models.ConsensusVolumeConfig{Volumes: map[string]models.ConsensusVolumeSpec{}}
+	for _, name := range models.ConsensusVolumeNames() {
+		spec, err := ins.Volumes.EffectiveSpec(name)
+		if err != nil {
+			// resolveVolumeConfig already validated every volume before the
+			// workflow ran, so this cannot fail here; skip defensively.
+			continue
+		}
+		volumes.Volumes[name] = spec
+	}
+
+	return &state.ConsensusNodeManagedSpec{
+		ContainerName:    valueOrDefaultStr(ins.ContainerName, models.ConsensusDefaultContainerName),
+		CPULimit:         valueOrDefaultStr(ins.CPULimit, models.ConsensusDefaultCPULimit),
+		CPURequest:       valueOrDefaultStr(ins.CPURequest, models.ConsensusDefaultCPURequest),
+		MemoryLimit:      valueOrDefaultStr(ins.MemoryLimit, models.ConsensusDefaultMemoryLimit),
+		MemoryRequest:    valueOrDefaultStr(ins.MemoryRequest, models.ConsensusDefaultMemoryRequest),
+		JavaHeapMin:      valueOrDefaultStr(ins.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
+		JavaHeapMax:      valueOrDefaultStr(ins.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
+		JavaOpts:         valueOrDefaultStr(ins.JavaOpts, models.ConsensusDefaultJavaOpts),
+		UCImageRepo:      valueOrDefaultStr(ins.UCImageRepo, models.ConsensusDefaultUCImageRepo),
+		UCImageTag:       valueOrDefaultStr(ins.UCImageTag, models.ConsensusDefaultUCImageTag),
+		ImagePullSecrets: ins.ImagePullSecrets,
+		Volumes:          volumes,
+		HostPathUID:      ins.HostPathUID,
+		HostPathGID:      ins.HostPathGID,
+	}
+}
+
+// valueOrDefaultStr returns v when non-empty (after trimming), else def. Mirrors
+// the capsule step's valueOrDefault so the persisted shape matches what is applied.
+func valueOrDefaultStr(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
 }
 
 // NewInstallHandler creates a new InstallHandler.

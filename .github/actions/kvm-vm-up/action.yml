@@ -3,7 +3,7 @@ name: "KVM VM Up"
 description: >
   Boot a throwaway QEMU/KVM VM on a self-hosted runner, wait for SSH, install
   Go + Task and the proxy CA inside it, and sync the checked-out workspace into
-  it. Shared by the UAT and integration test workflows.
+  it. Shared by the UAT and integration test workflows. Call it once per job.
 
 inputs:
   vm-os:
@@ -25,7 +25,7 @@ inputs:
   go-version:
     description: "Go version installed inside the VM"
     required: false
-    default: "1.26.5"
+    default: "1.27.2"
   vm-ready-timeout-minutes:
     description: "Timeout waiting for VM SSH to accept connections"
     required: false
@@ -62,6 +62,14 @@ inputs:
     description: "How many host ports to try before giving up"
     required: false
     default: "25"
+  min-free-gb:
+    description: "Fail before booting if less than this much disk (GB) is free on the runner after the stale-VM sweep"
+    required: false
+    default: "15"
+  stale-vm-age-minutes:
+    description: "A VM left by another runner on this host is only swept once older than this (must exceed the longest job)"
+    required: false
+    default: "240"
 
 outputs:
   vm-dir:
@@ -83,6 +91,166 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Sweep stale VMs from earlier jobs
+      shell: bash
+      env:
+        MIN_FREE_GB: ${{ inputs.min-free-gb }}
+        STALE_AGE_MINUTES: ${{ inputs.stale-vm-age-minutes }}
+      run: |
+        set -euo pipefail
+
+        # Create VM working directory exports KVM_VM_DIR for the rest of the job. If it
+        # is already set, this job booted a VM earlier, and sweeping now would stop it.
+        if [ -n "${KVM_VM_DIR:-}" ]; then
+          echo "::error::kvm-vm-up was already called in this job (KVM_VM_DIR=${KVM_VM_DIR}). Call it once per job: its stale-VM sweep would stop the VM that is already running."
+          exit 1
+        fi
+
+        TEMP_ROOT="${RUNNER_TEMP:-}"
+        case "${TEMP_ROOT}" in
+          /?*) ;;
+          *)
+            echo "Refusing to sweep: RUNNER_TEMP '${TEMP_ROOT}' is not an absolute path."
+            exit 1
+            ;;
+        esac
+
+        for value in "${MIN_FREE_GB}" "${STALE_AGE_MINUTES}"; do
+          if ! printf '%s' "${value}" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid number '${value}': must be a whole number."
+            exit 1
+          fi
+        done
+
+        # A runner runs one job at a time and this step runs before this job boots its
+        # VM, so every VM under this runner's own temp dir belongs to an earlier job
+        # that never reached Cleanup VM (runner crash or lost connection).
+        #
+        # Several runners share this host, and a crashed runner's leftovers are only
+        # swept when that same runner takes another job, which may be never. VMs under
+        # a sibling runner's temp dir are therefore swept too, but only once they are
+        # older than STALE_AGE_MINUTES (longer than any job can run), so a sibling that
+        # is starting a job right now is never touched.
+        # Where this host keeps its runner directories. Sibling runners are only ever
+        # swept under it; any other layout turns the sibling sweep off.
+        HOST_ROOT="/home/github-runner"
+        PREFIX="${TEMP_ROOT}/weaver-vm-"
+        SIBLING_ROOT=""
+        case "${TEMP_ROOT}" in
+          "${HOST_ROOT}"/*/_work/_temp)
+            # Only <host root>/<one runner dir>/_work/_temp qualifies. A "*" in a case
+            # pattern also matches "/", so check the runner dir is a single component.
+            RUNNER_DIR="${TEMP_ROOT#"${HOST_ROOT}"/}"
+            RUNNER_DIR="${RUNNER_DIR%/_work/_temp}"
+            case "${RUNNER_DIR}" in
+              "" | */*) ;;
+              *) SIBLING_ROOT="${HOST_ROOT}/" ;;
+            esac
+            ;;
+        esac
+
+        etime_minutes() {
+          local t="$1" days=0 IFS=:
+          case "${t}" in
+            *-*) days="${t%%-*}"; t="${t#*-}" ;;
+          esac
+          # shellcheck disable=SC2086
+          set -- ${t}
+          case $# in
+            3) echo $((10#${days} * 1440 + 10#$1 * 60 + 10#$2)) ;;
+            2) echo $((10#${days} * 1440 + 10#$1)) ;;
+            *) echo 0 ;;
+          esac
+        }
+
+        STALE_PIDS=""
+        while read -r pid etime cmd rest; do
+          case "$(basename -- "${cmd}")" in
+            qemu-system-*) ;;
+            *) continue ;;
+          esac
+          case " ${rest} " in
+            *"file=${PREFIX}"*)
+              STALE_PIDS="${STALE_PIDS} ${pid}"
+              ;;
+            *"file=${SIBLING_ROOT}actions-runner"*"/_work/_temp/weaver-vm-"*)
+              if [ -n "${SIBLING_ROOT}" ] && [ "$(etime_minutes "${etime}")" -ge "${STALE_AGE_MINUTES}" ]; then
+                STALE_PIDS="${STALE_PIDS} ${pid}"
+              fi
+              ;;
+          esac
+        done < <(ps -eo pid=,etime=,args=)
+
+        if [ -n "${STALE_PIDS}" ]; then
+          echo "Stopping stale VM process(es):${STALE_PIDS}"
+          # shellcheck disable=SC2086
+          kill ${STALE_PIDS} 2>/dev/null || true
+          ALIVE="${STALE_PIDS}"
+          for _ in 1 2 3 4 5; do
+            STILL=""
+            for pid in ${ALIVE}; do
+              if kill -0 "${pid}" 2>/dev/null; then
+                STILL="${STILL} ${pid}"
+              fi
+            done
+            ALIVE="${STILL}"
+            [ -n "${ALIVE}" ] || break
+            sleep 2
+          done
+          if [ -n "${ALIVE}" ]; then
+            # shellcheck disable=SC2086
+            kill -9 ${ALIVE} 2>/dev/null || true
+          fi
+        fi
+
+        # A VM still running here (not stopped above, or it survived kill -9) would keep
+        # its deleted disk open and the space would not be freed. Leave it for the next sweep.
+        dir_in_use() {
+          local procs
+          procs="$(ps -eo args=)"
+          case "${procs}" in
+            *"file=$1/"*) return 0 ;;
+          esac
+          if command -v fuser >/dev/null 2>&1 && fuser -s "$1/vm-disk.qcow2" 2>/dev/null; then
+            return 0
+          fi
+          return 1
+        }
+
+        SWEPT=0
+        remove_vm_dir() {
+          if dir_in_use "$1"; then
+            echo "::warning::Skipping $1: a process still uses it. It will be swept once the process exits."
+            return 0
+          fi
+          echo "Removing stale VM directory: $1 ($(du -sh "$1" 2>/dev/null | cut -f1))"
+          rm -rf -- "$1"
+          SWEPT=$((SWEPT + 1))
+        }
+
+        for dir in "${PREFIX}"*; do
+          if [ -d "${dir}" ] && [ ! -L "${dir}" ]; then
+            remove_vm_dir "${dir}"
+          fi
+        done
+
+        if [ -n "${SIBLING_ROOT}" ]; then
+          for dir in "${SIBLING_ROOT}"actions-runner*/_work/_temp/weaver-vm-*; do
+            if [ -d "${dir}" ] && [ ! -L "${dir}" ] \
+              && [ -n "$(find "${dir}" -maxdepth 0 -mmin "+${STALE_AGE_MINUTES}" 2>/dev/null)" ]; then
+              remove_vm_dir "${dir}"
+            fi
+          done
+        fi
+        echo "Swept ${SWEPT} stale VM director$([ "${SWEPT}" -eq 1 ] && echo y || echo ies)."
+
+        FREE_GB="$(df -Pk "${TEMP_ROOT}" | awk 'NR==2 {print int($4 / 1024 / 1024)}')"
+        echo "Free disk under ${TEMP_ROOT}: ${FREE_GB} GB (minimum ${MIN_FREE_GB} GB)."
+        if [ "${FREE_GB}" -lt "${MIN_FREE_GB}" ]; then
+          echo "::error::Only ${FREE_GB} GB free under ${TEMP_ROOT}, need ${MIN_FREE_GB} GB. Runner host is out of disk; this is an infrastructure failure, not a test failure."
+          exit 1
+        fi
+
     - name: Create VM working directory
       id: vm-dir
       shell: bash

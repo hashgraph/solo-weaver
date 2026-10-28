@@ -263,7 +263,7 @@ func (um *UpgradeMonitor) RequiredProbe() daemonkit.Probe {
 			Reason:     "UpgradeRootOwnershipCheckFailed",
 			Resolution: fmt.Sprintf("Fix ownership and permissions: sudo chown hedera:hedera %s && sudo chmod 755 %s", upgradeRoot, upgradeRoot),
 		},
-		// 2. Current dir ownership: cluster install must have run chmod g+rwx.
+		// 2. Current dir ownership: daemon service install makes it group-writable (g+rwx).
 		&daemonkit.TaggedProbe{
 			Inner:      &daemonkit.DiskOwnershipProbe{Path: upgradeDir, User: "hedera", Group: "hedera", Permission: 0o775},
 			Reason:     "UpgradeDirOwnershipCheckFailed",
@@ -273,7 +273,7 @@ func (um *UpgradeMonitor) RequiredProbe() daemonkit.Probe {
 		&daemonkit.TaggedProbe{
 			Inner:      &daemonkit.DiskWriteTestProbe{Dir: upgradeDir},
 			Reason:     "UpgradeDirWriteTestFailed",
-			Resolution: fmt.Sprintf("Add weaver to hedera group and restart: sudo usermod -aG hedera weaver && sudo systemctl restart solo-provisioner-daemon"),
+			Resolution: fmt.Sprintf("Ensure weaver is in the hedera group and %s is group-writable, then restart: sudo usermod -aG hedera weaver && sudo chmod g+rwx %s && sudo systemctl restart solo-provisioner-daemon", upgradeDir, upgradeDir),
 		},
 	)
 }

@@ -177,6 +177,10 @@ func RunWorkflowBuilder(ctx context.Context, b automa.Builder) error {
 	})
 }
 
+// takeStateWarnings returns the state package's warnings for this run. A var so
+// tests can stub it.
+var takeStateWarnings = state.TakeWarnings
+
 // finalizeWorkflowReport saves the YAML report, renders the run summary, and
 // returns the deepest failure error in the report tree — a sub-workflow's error
 // gets rewrapped by automa, dropping errorx properties like ErrPropertyResolution
@@ -185,6 +189,10 @@ func finalizeWorkflowReport(report *automa.Report) error {
 	if report == nil {
 		return nil
 	}
+
+	// Before the report is saved, so the file, the summary table and the JSON
+	// summary all carry them.
+	addReportWarnings(report, takeStateWarnings())
 
 	logCfg := ensureLogConfig()
 	now := time.Now()
@@ -231,6 +239,25 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		return err
 	}
 	return report.Error
+}
+
+// addReportWarnings appends warnings to the report's own warning, which the
+// summary table and the JSON summary both show.
+func addReportWarnings(report *automa.Report, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	lines := make([]string, 0, len(warnings)+1)
+	if existing := report.Metadata[models.ReportMetaWarning]; existing != "" {
+		lines = append(lines, existing)
+	}
+	lines = append(lines, warnings...)
+
+	if report.Metadata == nil {
+		report.Metadata = map[string]string{}
+	}
+	report.Metadata[models.ReportMetaWarning] = strings.Join(lines, "\n")
 }
 
 // printJSONSummary writes one compact JSON object summarising the workflow run

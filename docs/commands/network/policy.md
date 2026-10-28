@@ -49,10 +49,32 @@ it.
   to draw that port as its source port.
 - Combining `--deny --ports --from-entity world` locks the port down from every source.
 
+### The `bn-publisher` guard — only members may use the publish port
+
+`block node install` creates `bn-publisher` with a guard that `create` has no flag for.
+Members of `@bn-publisher` are classified as usual. A connection to the publish port from any
+other source is dropped:
+
+```
+ip daddr <pod-cidr> ip saddr != @bn-publisher tcp dport @bn-publisher_ports ct direction original drop
+```
+
+- The drop sits in the deny tier, ahead of every accept. A `--from-entity world` policy that
+  lists the same port can't admit a non-member first.
+- **An empty set closes the port to every source.** Nobody is admitted until the set has
+  members.
+- Like a port-scoped `--deny`, it is confined to the pod CIDR and drops the request leg only.
+- `show` reports it as `deny-non-members: true`.
+
+> **A `--force` re-create of `bn-publisher` removes the guard.** `create` has no flag to
+> express it, so the replaced definition leaves the publish port open to every source.
+> `block node upgrade` or `block node reconfigure` puts it back.
+
 ## Examples
 
 ```bash
 # Publisher: highest-priority ingress class on the publisher listener port
+# (block node install also adds the guard described above, which create cannot)
 sudo solo-provisioner network policy create --name bn-publisher \
   --ports 40840 --stamp publisher
 
@@ -91,8 +113,9 @@ sudo solo-provisioner network policy create --name bn-health \
 | `--pod-cidr` | Pod CIDR to scope classification to | auto-detected |
 | `--force` | Replace an existing policy's config and membership (global flag, `-y`) | `false` |
 
-**Rule position in the chain** is determined by action type and match specificity — deny →
-reply-restore → specific stamp → fallthrough stamp — never by creation order.
+**Rule position in the chain** is determined by action type and match specificity — deny
+(including the `bn-publisher` guard) → reply-restore → specific stamp → fallthrough stamp —
+never by creation order.
 
 **Pod CIDR auto-detection** applies only to policies that reference `POD_CIDR`: every
 `--stamp` policy, and a `--deny` that carries `--ports`. A membership-only `--deny` drops on
@@ -122,7 +145,7 @@ them and writes none of them, so they keep exactly the members they had.
 
 | Empty call | Sets left alone |
 |---|---|
-| `/statusz/inbound` | `bn-publisher`, `bn-partner-out`, `bn-restricted`, and all four managed `_ports` sets |
+| `/statusz/inbound` | `bn-publisher`, `bn-partner-out`, `bn-restricted`, and all three managed `_ports` sets |
 | `/statusz/outbound` | `bn-backfill` |
 
 A response with nothing in it is indistinguishable from a broken handler, an internal error
@@ -153,20 +176,22 @@ journalctl -u solo-provisioner-daemon -g TrafficShaperMembershipCleared
 ```
 
 Worth knowing before you read too much into a set that *was* cleared: **this plane fails open,
-not closed.**
+except on the publish port.**
 
 The forward chain's policy is `accept`. A packet that no rule matches carries no
 `meta priority` and lands in the HTB default class — it is not dropped. Only the deny tier
-drops, and a deny rule whose set is empty matches nothing.
+drops. A deny rule whose set is empty matches nothing, but the `bn-publisher` guard with an
+empty set matches *everyone*.
 
 | Policy | Set cleared means |
 |---|---|
-| `bn-publisher`, `bn-partner-out` (`--stamp`) | The rule stops matching. Traffic falls through to the default class |
+| `bn-publisher` (`--stamp`, guarded) | **The publish port is closed to every source.** No publisher can stream blocks until the block node reports one again |
+| `bn-partner-out` (`--stamp`) | The rule stops matching. Traffic falls through to the default class |
 | `bn-subscriber-in`, `bn-public-out` (managed `_ports`) | Same — the port clause matches nothing |
 | `bn-restricted` (`--deny`) | **Nothing is dropped.** The quarantine list is empty |
 
-Traffic keeps flowing. What you lose is prioritization: everything competes in one class
-instead of publisher traffic holding its reserved share.
+Apart from the publish port, traffic keeps flowing. What you lose is prioritization: everything
+competes in one class.
 
 Three things do **not** change, which is why this can never lock a node out:
 
@@ -242,6 +267,7 @@ policy: bn-publisher
   action:  stamp
   class:   publisher
   ports:   40840
+  deny-non-members: true (sources outside the live set are dropped on these ports)
   created: 2026-01-01T00:00:00Z
   live set @bn-publisher:
     10.1.0.1/32

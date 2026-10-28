@@ -543,8 +543,8 @@ func TestReconciler_Apply_PopulatedPayloadStillClearsAMissingCategory(t *testing
 	}
 	lister := quarantined()
 	// A live listener port too: conn() carries no local.port, so the reported
-	// inbound call desires bn-publisher_ports empty and clears it.
-	lister.elements[policy.PortsSetName("bn-publisher")] = []string{"40984"}
+	// inbound call desires bn-partner-out_ports empty and clears it.
+	lister.elements[policy.PortsSetName("bn-partner-out")] = []string{"40980"}
 	applier := &fakeApplier{applied: true}
 	r := &Reconciler{fetcher: f, lister: lister, applier: applier}
 
@@ -554,10 +554,10 @@ func TestReconciler_Apply_PopulatedPayloadStillClearsAMissingCategory(t *testing
 	// bn-restricted is present-and-empty in the batch: that is what clears it.
 	require.Contains(t, applier.got, "bn-restricted")
 	assert.Empty(t, applier.got["bn-restricted"])
-	require.Contains(t, applier.gotPorts, "bn-publisher")
-	assert.Empty(t, applier.gotPorts["bn-publisher"])
+	require.Contains(t, applier.gotPorts, "bn-partner-out")
+	assert.Empty(t, applier.gotPorts["bn-partner-out"])
 	// A ports set is reported by its nft set name, not its policy name.
-	assert.Equal(t, []string{"bn-publisher_ports", "bn-restricted"}, res.Cleared)
+	assert.Equal(t, []string{"bn-partner-out_ports", "bn-restricted"}, res.Cleared)
 }
 
 // A populated payload that names every owned category, matching live, changes nothing.
@@ -664,7 +664,7 @@ func TestReconciler_Apply_PropagatesApplyError(t *testing.T) {
 
 func TestDesiredPorts_DerivesPerFacilityFromInboundLocalPort(t *testing.T) {
 	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
-		inconn("publisher", "40984"),
+		inconn("publisher", "40984"), // pinned from the chart values → ignored
 		inconn("partner", "40980"),
 		inconn("public", "40980"),     // subscriber
 		inconn("public", "40981"),     // block-access
@@ -674,10 +674,9 @@ func TestDesiredPorts_DerivesPerFacilityFromInboundLocalPort(t *testing.T) {
 
 	got := desiredPorts(inbound)
 
-	// publisher and partner map to a single set each; the public union
+	// partner maps to a single set; the public union
 	// (including server-status 40982) feeds both public-facing sets.
 	assert.Equal(t, map[string][]string{
-		"bn-publisher":     {"40984"},
 		"bn-partner-out":   {"40980"},
 		"bn-subscriber-in": {"40980", "40981", "40982"},
 		"bn-public-out":    {"40980", "40981", "40982"},
@@ -686,16 +685,16 @@ func TestDesiredPorts_DerivesPerFacilityFromInboundLocalPort(t *testing.T) {
 
 func TestDesiredPorts_SeedsAllManagedPresentAndSkipsWildcardEmpty(t *testing.T) {
 	inbound := NetworkData{ActiveEndpoints: []NetworkConnection{
-		inconn("publisher", "*"), // wildcard local port → skipped
-		inconn("partner", ""),    // empty local port → skipped
+		inconn("public", "*"), // wildcard local port → skipped
+		inconn("partner", ""), // empty local port → skipped
 	}}
 
 	got := desiredPorts(inbound)
 
 	// Every managed-ports policy is present but empty (present-vs-absent is load
 	// bearing: present-empty clears the set, matching the membership contract).
-	require.Len(t, got, 4)
-	for _, name := range []string{"bn-publisher", "bn-partner-out", "bn-subscriber-in", "bn-public-out"} {
+	require.Len(t, got, 3)
+	for _, name := range []string{"bn-partner-out", "bn-subscriber-in", "bn-public-out"} {
 		require.Contains(t, got, name)
 		assert.Empty(t, got[name], name)
 	}
@@ -774,16 +773,16 @@ func TestReconciler_Check_DigestChangesOnPortsOnly(t *testing.T) {
 }
 
 func TestReconciler_Apply_MembershipAndPortsAppliedInOneAtomicCall(t *testing.T) {
-	// A publisher inbound endpoint carries both a remote (membership) and a
+	// A partner inbound endpoint carries both a remote (membership) and a
 	// local.port (listener port), so both dimensions change this tick — and must
 	// be handed to the applier in a SINGLE ApplySets call, so an operator cannot
 	// grab the lock between a membership write and a ports write and leave one
 	// dimension stale.
 	f := &fakeFetcher{inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
 		{
-			Local:    Endpoint{Address: "192.0.2.10", Port: "40984"},
+			Local:    Endpoint{Address: "192.0.2.10", Port: "40980"},
 			Remote:   Endpoint{Address: "198.51.100.1", Port: "*"},
-			Category: "publisher",
+			Category: "partner",
 		},
 	}}}
 	lister := newFakeLister()
@@ -794,9 +793,9 @@ func TestReconciler_Apply_MembershipAndPortsAppliedInOneAtomicCall(t *testing.T)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, applier.calls, "both dimensions go through one atomic ApplySets call")
-	require.Equal(t, map[string][]string{"bn-publisher": {"198.51.100.1/32"}}, applier.got)
-	require.Equal(t, map[string][]string{"bn-publisher": {"40984"}}, applier.gotPorts)
-	assert.Equal(t, []string{"bn-publisher", "bn-publisher_ports"}, res.Applied)
+	require.Equal(t, map[string][]string{"bn-partner-out": {"198.51.100.1/32"}}, applier.got)
+	require.Equal(t, map[string][]string{"bn-partner-out": {"40980"}}, applier.gotPorts)
+	assert.Equal(t, []string{"bn-partner-out", "bn-partner-out_ports"}, res.Applied)
 	assert.Empty(t, res.Skipped)
-	assert.Equal(t, exclude(ownedSetNames(), "bn-publisher", "bn-publisher_ports"), res.Unchanged)
+	assert.Equal(t, exclude(ownedSetNames(), "bn-partner-out", "bn-partner-out_ports"), res.Unchanged)
 }
