@@ -33,11 +33,13 @@ func TestParseLaneTrees_EmptyOutputIsAnError(t *testing.T) {
 	require.Error(t, err, "empty output must not read as 'no lane trees'")
 }
 
-func TestParseLaneTrees_UnknownDefaultLeavesItBlank(t *testing.T) {
-	trees, err := parseLaneTrees([]byte(`[{"kind":"htb","handle":"1:","dev":"eth0","options":{"default":"0x99"}}]`))
+func TestParseLaneTrees_ForeignDefaultIsNotWeavers(t *testing.T) {
+	trees, err := parseLaneTrees([]byte(`[
+		{"kind":"htb","handle":"1:","dev":"eth1","root":true,"options":{"default":"0x99"}},
+		{"kind":"htb","handle":"1:","dev":"eth2","root":true,"options":{}}
+	]`))
 	require.NoError(t, err)
-	require.Len(t, trees, 1)
-	assert.Empty(t, trees[0].DefaultClass)
+	assert.Empty(t, trees, "an HTB root whose default is no weaver class belongs to another tool")
 }
 
 func TestParseFilters_DescribesEachFilterOnce(t *testing.T) {
