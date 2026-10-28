@@ -52,6 +52,7 @@ func fakeVerifier() *verifier {
 		},
 		reloadRules: func(context.Context, string) error { return errors.New("reload not expected") },
 		canPersist:  func() error { return nil },
+		saveRules:   func(string) (bool, error) { return false, nil },
 		laneTrees: func(context.Context) ([]shape.LaneTree, error) {
 			return []shape.LaneTree{
 				{Dev: "eth0", DefaultClass: "reserve-egress"},
@@ -260,6 +261,37 @@ func TestVerify_ReloadedButUnsavedIsNeverReportedOK(t *testing.T) {
 	assert.Contains(t, c.Rules.Detail, "no space left on device")
 	require.NotNil(t, c.Counters)
 	assert.Equal(t, "8", c.Counters.RulesEpoch)
+}
+
+// TestVerify_FullRunSavesAStaleBootCopy: a save that failed after a reload is
+// retried once the live rules read ok, so a reboot cannot bring back the old format.
+func TestVerify_FullRunSavesAStaleBootCopy(t *testing.T) {
+	v := fakeVerifier()
+	var saved []string
+	v.saveRules = func(doc string) (bool, error) { saved = append(saved, doc); return true, nil }
+
+	rc := v.verify(context.Background(), refreshScope).Rules
+
+	assert.Equal(t, []string{"doc"}, saved)
+	assert.Equal(t, CheckOK, rc.Status)
+	assert.Equal(t, "saved the live rules to the boot copy, which was out of date", rc.Detail)
+}
+
+func TestVerify_FailedSaveKeepsLiveRulesOK(t *testing.T) {
+	v := fakeVerifier()
+	v.saveRules = func(string) (bool, error) { return false, errors.New("no space left on device") }
+
+	rc := v.verify(context.Background(), refreshScope).Rules
+
+	assert.Equal(t, CheckOK, rc.Status, "the live rules are right; only the boot copy is behind")
+	assert.Contains(t, rc.Detail, "no space left on device")
+}
+
+func TestVerify_CheckNeverSaves(t *testing.T) {
+	v := fakeVerifier()
+	v.saveRules = func(string) (bool, error) { t.Fatal("--check must not write"); return false, nil }
+
+	assert.Equal(t, CheckOK, v.verify(context.Background(), liveScope).Rules.Status)
 }
 
 // TestVerify_UnsavableTableIsNotReloaded: with a read-only boot copy, tell the operator instead.

@@ -195,6 +195,22 @@ func TestReloadTable_FailedLoadLeavesTheArtifactAlone(t *testing.T) {
 	assert.Equal(t, "old\n", string(got))
 }
 
+func TestSaveIfStale_WritesOnlyAStaleArtifact(t *testing.T) {
+	m, nftPath, _ := newTestManager(t, newFakeRunner())
+	require.NoError(t, os.WriteFile(nftPath, []byte("format 1\n"), 0o644))
+
+	saved, err := m.SaveIfStale("format 2\n")
+	require.NoError(t, err)
+	assert.True(t, saved)
+	got, err := os.ReadFile(nftPath)
+	require.NoError(t, err)
+	assert.Equal(t, "format 2\n", string(got))
+
+	saved, err = m.SaveIfStale("format 2\n")
+	require.NoError(t, err)
+	assert.False(t, saved, "an artifact that already matches is not rewritten")
+}
+
 func TestInt64Of(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in   any

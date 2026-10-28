@@ -210,7 +210,9 @@ The daemon runs one a minute (the first two minutes after it starts), so the old
 within about three minutes of an upgrade; the reload resets the counters, so lanes are judged
 from the minute after that. Each reload logs at INFO with reason `NetworkRulesReloaded`: the
 worker writes it to the CLI log, and the daemon, from the `reloaded_from` field of the report,
-to its own log.
+to its own log. If the `.nft` write fails after the kernel load, the next full run sees `ok`
+live rules and rewrites the `.nft` (`policy.Manager.SaveIfStale`), so a reboot cannot restore
+the older format.
 
 This lives in the reassert worker, not in a startup migration: the daemon's execs skip the
 global pre-run hook where migrations run (`common.RunPersistentPreRun`), and nothing on disk

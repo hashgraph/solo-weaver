@@ -129,6 +129,7 @@ type verifier struct {
 	liveRules     func(ctx context.Context) ([]byte, error)
 	scratchRules  func(ctx context.Context, doc string) ([]byte, error)
 	reloadRules   func(ctx context.Context, doc string) error
+	saveRules     func(doc string) (bool, error)
 	canPersist    func() error
 	laneTrees     func(ctx context.Context) ([]shape.LaneTree, error)
 	treeFilters   func(ctx context.Context, dev string) ([]string, error)
@@ -149,6 +150,7 @@ func kernelVerifierFor(mgr *policy.Manager) *verifier {
 			return policy.ListInScratchNetns(ctx, bin, doc)
 		},
 		reloadRules: mgr.ReloadTable,
+		saveRules:   mgr.SaveIfStale,
 		canPersist:  mgr.CanPersist,
 		laneTrees:   shape.LaneTrees,
 		treeFilters: shape.TreeFilters,
@@ -205,6 +207,10 @@ func (v *verifier) checkRules(ctx context.Context, scope verifyScope, rc *RulesC
 	}
 
 	*rc = compareRules(expected, live)
+	if scope.refreshOlderFormat && rc.Status == CheckOK {
+		v.saveIfStale(doc, rc)
+		return live
+	}
 	// A newer format belongs to a newer binary, so only older ones are reloaded.
 	if !scope.refreshOlderFormat || rc.Status != CheckOlderFormat || live.FormatVersion >= policy.FormatVersion {
 		return live
@@ -242,6 +248,18 @@ func (v *verifier) refreshRules(ctx context.Context, doc string, expected *polic
 		rc.Detail = "reloaded the live rules from render format " + strconv.Itoa(from) + " to " + strconv.Itoa(policy.FormatVersion)
 	}
 	return live
+}
+
+// saveIfStale brings the boot copy in line with live rules that are right. The
+// live rules stay ok if this fails; the next full run tries again.
+func (v *verifier) saveIfStale(doc string, rc *RulesCheck) {
+	saved, err := v.saveRules(doc)
+	switch {
+	case err != nil:
+		rc.Detail = "the boot copy of the rules is out of date and saving it failed: " + err.Error()
+	case saved:
+		rc.Detail = "saved the live rules to the boot copy, which was out of date"
+	}
 }
 
 // readLive reads and parses the live table.
