@@ -5,7 +5,6 @@ package steps
 import (
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 
 	"github.com/automa-saga/errx"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/hashgraph/solo-weaver/pkg/semver"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -106,6 +106,6 @@ func catalogChartVersions(name string) []string {
 	for v := range meta.Versions {
 		versions = append(versions, string(v))
 	}
-	sort.Strings(versions)
+	semver.SortStrings(versions)
 	return versions
 }

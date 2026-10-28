@@ -447,3 +447,9 @@ func TestCheckSemverRequirements(t *testing.T) {
 
 	}
 }
+
+func TestSortStrings(t *testing.T) {
+	versions := []string{"1.13.1", "not-a-version", "1.4.0", "v1.9.0", "1.13.1-rc.1", "0.20.2", "1.x"}
+	SortStrings(versions)
+	assert.Equal(t, []string{"0.20.2", "1.4.0", "v1.9.0", "1.13.1-rc.1", "1.13.1", "1.x", "not-a-version"}, versions)
+}

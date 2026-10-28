@@ -148,3 +148,7 @@ func TestResolveDeployedChart_AlloyRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalogChartVersions_SemverOrder(t *testing.T) {
+	assert.Equal(t, []string{"1.4.0", "1.13.1"}, catalogChartVersions("alloy"))
+}
