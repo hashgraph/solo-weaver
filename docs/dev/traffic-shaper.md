@@ -189,7 +189,8 @@ for an older render format (see **Upgrade path** below):
   ignoring handles and counter values. nft prints both sides, so its reformatting
   (`0x10010` → `1:10`) never reads as drift.
 - **Stray tc filters.** `shape.LaneTrees` finds every device with weaver's `root 1: htb` in one
-  `tc -j qdisc show`, and skips one whose HTB `default` is not a weaver class (another tool's tree); `shape.TreeFilters` reads `parent 1:` and `1:1` on each. HTB consults
+  `tc -j qdisc show`, and skips one that carries no weaver `fq_codel` leaf
+  (`parent 1:<minor> handle <handle>:`), because that is another tool's tree; `shape.TreeFilters` reads `parent 1:` and `1:1` on each. HTB consults
   filters only for packets without a valid `skb->priority`, so a stray filter can only move or
   drop *unstamped* traffic.
 - **Counters.** The worker reports raw rule and lane byte counters plus reset IDs (the table

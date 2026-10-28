@@ -24,7 +24,7 @@ var FilterParents = []string{"1:", "1:1"}
 // LaneTree is one device carrying weaver's `root handle 1: htb` qdisc.
 type LaneTree struct {
 	Dev string
-	// DefaultClass is the class unstamped traffic lands in.
+	// DefaultClass is the class unstamped traffic lands in, "" if unknown.
 	DefaultClass string
 }
 
@@ -73,9 +73,19 @@ func (q tcQdiscJSON) isWeaverRoot() bool {
 	return q.Root == nil || *q.Root
 }
 
+// isWeaverLeaf reports whether this entry is the fq_codel weaver hangs under
+// one of its classes, e.g. `parent 1:30 handle 130:`.
+func (q tcQdiscJSON) isWeaverLeaf() bool {
+	if q.Kind != "fq_codel" {
+		return false
+	}
+	name, ok := ClassNameForID(q.Parent)
+	return ok && strings.TrimSuffix(q.Handle, ":") == classInfoMap[name].Handle
+}
+
 // parseLaneTrees returns the devices in `tc -j qdisc show` output that carry
-// weaver's lane tree, sorted by name. Handle 1: alone is common, so the HTB
-// default must also be a weaver class.
+// weaver's lane tree, sorted by name. Handle 1: alone is common, so the device
+// must also carry a weaver leaf qdisc.
 func parseLaneTrees(out []byte) ([]LaneTree, error) {
 	if len(bytes.TrimSpace(out)) == 0 {
 		return nil, errorx.ExternalError.New("tc -j qdisc show produced no output")
@@ -84,20 +94,22 @@ func parseLaneTrees(out []byte) ([]LaneTree, error) {
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, errorx.ExternalError.Wrap(err, "failed to parse tc qdisc JSON")
 	}
+	hasLeaf := map[string]bool{}
+	for _, q := range raw {
+		if q.isWeaverLeaf() {
+			hasLeaf[q.Dev] = true
+		}
+	}
 	var trees []LaneTree
 	for _, q := range raw {
-		if q.Dev == "" || !q.isWeaverRoot() {
+		if q.Dev == "" || !q.isWeaverRoot() || !hasLeaf[q.Dev] {
 			continue
 		}
-		minor, ok := htbDefaultMinor(q.Options.Default)
-		if !ok {
-			continue
+		t := LaneTree{Dev: q.Dev}
+		if minor, ok := htbDefaultMinor(q.Options.Default); ok {
+			t.DefaultClass, _ = ClassNameForID("1:" + minor)
 		}
-		class, ok := ClassNameForID("1:" + minor)
-		if !ok {
-			continue
-		}
-		trees = append(trees, LaneTree{Dev: q.Dev, DefaultClass: class})
+		trees = append(trees, t)
 	}
 	slices.SortFunc(trees, func(a, b LaneTree) int { return strings.Compare(a.Dev, b.Dev) })
 	return trees, nil

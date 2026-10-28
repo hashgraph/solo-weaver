@@ -294,6 +294,22 @@ func TestJudge_ATickWithoutCountersKeepsTheLastSample(t *testing.T) {
 	assert.Equal(t, laneWorking, laneStatus(t, j, "partner").Status, "compared with the sample before the gap")
 }
 
+// TestJudge_AnUnreadableLaneTreeKeepsTheLastSample: the same holds when one tree's
+// counters fail, not the whole sample.
+func TestJudge_AnUnreadableLaneTreeKeepsTheLastSample(t *testing.T) {
+	b := baseline()
+	busy := b.grow(map[string]uint64{"partner": 5 * mib}, map[string]uint64{"partner": 5 * mib}, 5*mib, 5*mib)
+	unread := b.build()
+	unread.Devices[0].Error = "tc -s -j class show dev eth0 failed"
+	j := newJudge()
+
+	j.observe(okChecks(b.build()), t0)
+	j.observe(okChecks(unread), t0.Add(time.Minute))
+	j.observe(okChecks(busy.build()), t0.Add(2*time.Minute))
+
+	assert.Equal(t, laneWorking, laneStatus(t, j, "partner").Status, "compared with the sample before the read error")
+}
+
 // TestJudge_OlderFormatNeverJudgesLanes is the upgrade guard: a table without
 // counters would otherwise read as "every busy lane is suspicious".
 func TestJudge_OlderFormatNeverJudgesLanes(t *testing.T) {

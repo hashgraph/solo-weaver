@@ -388,7 +388,10 @@ func (j *judge) judgeLanes(cur *privexec.NetworkCounterSample) (lanes []LaneStat
 		return nil, nil, false
 	}
 	prev := j.prev
-	j.prev = cur
+	// A sample with an unreadable lane tree is no base either, so one tc failure costs one tick.
+	if !slices.ContainsFunc(cur.Devices, func(d privexec.NetworkDeviceCounters) bool { return d.Error != "" }) {
+		j.prev = cur
+	}
 	if !cur.ForwardCounted {
 		return []LaneState{{Category: "*", Status: laneNotVerified,
 			Detail: "the live rules carry no counters yet (older render format)"}}, nil, false

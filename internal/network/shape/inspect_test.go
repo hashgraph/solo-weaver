@@ -14,6 +14,7 @@ func TestParseLaneTrees_KeepsOnlyWeaverRoots(t *testing.T) {
 		{"kind":"htb","handle":"1:","dev":"lxc1234","root":true,"options":{"r2q":10,"default":"0x30"}},
 		{"kind":"fq_codel","handle":"130:","dev":"lxc1234","parent":"1:30"},
 		{"kind":"htb","handle":"1:","dev":"eth0","root":true,"options":{"default":96}},
+		{"kind":"fq_codel","handle":"160:","dev":"eth0","parent":"1:60"},
 		{"kind":"htb","handle":"8001:","dev":"eth1","root":true},
 		{"kind":"htb","handle":"1:","dev":"eth2","parent":"8001:1"},
 		{"kind":"clsact","handle":"ffff:","dev":"eth0","parent":"ffff:fff1"},
@@ -33,13 +34,26 @@ func TestParseLaneTrees_EmptyOutputIsAnError(t *testing.T) {
 	require.Error(t, err, "empty output must not read as 'no lane trees'")
 }
 
-func TestParseLaneTrees_ForeignDefaultIsNotWeavers(t *testing.T) {
+func TestParseLaneTrees_UnknownDefaultIsEmpty(t *testing.T) {
 	trees, err := parseLaneTrees([]byte(`[
 		{"kind":"htb","handle":"1:","dev":"eth1","root":true,"options":{"default":"0x99"}},
-		{"kind":"htb","handle":"1:","dev":"eth2","root":true,"options":{}}
+		{"kind":"fq_codel","handle":"140:","dev":"eth1","parent":"1:40"}
 	]`))
 	require.NoError(t, err)
-	assert.Empty(t, trees, "an HTB root whose default is no weaver class belongs to another tool")
+	assert.Equal(t, []LaneTree{{Dev: "eth1"}}, trees)
+}
+
+func TestParseLaneTrees_ForeignTreeIsNotWeavers(t *testing.T) {
+	trees, err := parseLaneTrees([]byte(`[
+		{"kind":"htb","handle":"1:","dev":"eth1","root":true,"options":{"default":"0x30"}},
+		{"kind":"fq_codel","handle":"8002:","dev":"eth1","parent":"1:30"},
+		{"kind":"htb","handle":"1:","dev":"eth2","root":true,"options":{"default":"0x10"}},
+		{"kind":"sfq","handle":"110:","dev":"eth2","parent":"1:10"},
+		{"kind":"htb","handle":"1:","dev":"eth3","root":true,"options":{"default":"0x30"}},
+		{"kind":"fq_codel","handle":"130:","dev":"eth4","parent":"1:30"}
+	]`))
+	require.NoError(t, err)
+	assert.Empty(t, trees, "a tree is weaver's only with a weaver leaf qdisc on the same device")
 }
 
 func TestParseFilters_DescribesEachFilterOnce(t *testing.T) {
