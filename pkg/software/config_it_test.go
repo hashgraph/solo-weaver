@@ -383,8 +383,8 @@ func Test_Config_ClusterSection_Integration(t *testing.T) {
 	}{
 		"alloy":                    {ChartTypeClassic, "1.4.0"},
 		"teleport-cluster-agent":   {ChartTypeClassic, "18.6.4"},
-		"metallb":                  {ChartTypeClassic, "0.15.2"},
-		"metrics-server":           {ChartTypeClassic, "3.13.0"},
+		"metallb":                  {ChartTypeClassic, "0.16.1"},
+		"metrics-server":           {ChartTypeClassic, "3.14.0"},
 		"external-secrets":         {ChartTypeClassic, "0.20.2"},
 		"node-exporter":            {ChartTypeOCI, "4.59.0"},
 		"prometheus-operator-crds": {ChartTypeOCI, "24.0.1"},
