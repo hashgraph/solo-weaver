@@ -170,7 +170,14 @@ func (j *judge) observe(c *privexec.NetworkChecks, now time.Time) []event {
 		checkFilters: c.Filters.Status != privexec.NetworkCheckUnknown,
 		checkLanes:   lanesJudged,
 	}
-	events := j.fold(findings, judged, now)
+	// A device whose filters could not be read proves nothing about its own problem.
+	unread := map[string]bool{}
+	for _, d := range c.Filters.Devices {
+		if d.Error != "" {
+			unread[d.Dev] = true
+		}
+	}
+	events := j.fold(findings, judged, unread, now)
 	events = append(events, j.trackIdle(lanes, lanesJudged, now)...)
 
 	j.state = &ChecksState{
@@ -189,8 +196,11 @@ func (j *judge) observe(c *privexec.NetworkChecks, now time.Time) []event {
 }
 
 // fold keeps checks that were not judged this run untouched, so a skipped check
-// neither confirms nor clears anything.
-func (j *judge) fold(findings []finding, judged map[string]bool, now time.Time) []event {
+// neither confirms nor clears anything. The same holds for a filter problem on an unread device.
+func (j *judge) fold(findings []finding, judged map[string]bool, unread map[string]bool, now time.Time) []event {
+	kept := func(k findingKey) bool {
+		return !judged[k.check] || (k.check == checkFilters && unread[k.iface])
+	}
 	var events []event
 	seen := map[findingKey]bool{}
 	for _, f := range findings {
@@ -217,14 +227,14 @@ func (j *judge) fold(findings []finding, judged map[string]bool, now time.Time) 
 	}
 
 	for k, a := range j.active {
-		if seen[k] || !judged[a.Check] {
+		if seen[k] || kept(k) {
 			continue
 		}
 		delete(j.active, k)
 		events = append(events, event{kind: eventCleared, problem: a.Problem})
 	}
 	for k := range j.pending {
-		if !seen[k] && judged[k.check] {
+		if !seen[k] && !kept(k) {
 			delete(j.pending, k)
 		}
 	}

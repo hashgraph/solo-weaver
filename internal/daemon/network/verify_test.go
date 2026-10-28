@@ -398,6 +398,30 @@ func TestJudge_StrayFilterNamesItsDevice(t *testing.T) {
 	assert.True(t, strings.HasPrefix(p.Hint, "tc filter show dev lxc1 parent 1:"))
 }
 
+// TestJudge_UnreadDeviceKeepsItsFilterProblem: a stray filter elsewhere makes the
+// check "failed", but that says nothing about the device that could not be read.
+func TestJudge_UnreadDeviceKeepsItsFilterProblem(t *testing.T) {
+	stray := []string{"parent 1: pref 1 protocol all kind u32"}
+	j := newJudge()
+	first := okChecks(nil)
+	first.Filters = privexec.NetworkFiltersCheck{Status: privexec.NetworkCheckFailed, Devices: []privexec.NetworkDeviceFilters{
+		{Dev: "lxc1", Role: privexec.NetworkRoleVeth, Filters: stray},
+	}}
+	unread := okChecks(nil)
+	unread.Filters = privexec.NetworkFiltersCheck{Status: privexec.NetworkCheckFailed, Devices: []privexec.NetworkDeviceFilters{
+		{Dev: "eth0", Role: privexec.NetworkRoleEgress, Filters: stray},
+		{Dev: "lxc1", Role: privexec.NetworkRoleVeth, Error: "tc died"},
+	}}
+
+	j.observe(first, t0)
+	ev := j.observe(unread, t0.Add(time.Minute))
+	assert.Empty(t, reasons(ev, eventCleared), "lxc1 was not read, so its problem must not clear")
+
+	ev = j.observe(first, t0.Add(2*time.Minute))
+	assert.Empty(t, reasons(ev, eventRaised), "the lxc1 problem was never cleared, so it is not raised again")
+	assert.Equal(t, []string{reasonStrayTcFilter}, reasons(ev, eventCleared), "only the eth0 problem clears")
+}
+
 func TestJudge_SkippedRunChangesNothing(t *testing.T) {
 	j := newJudge()
 	j.observe(okChecks(baseline().build()), t0)
