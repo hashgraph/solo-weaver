@@ -140,7 +140,7 @@ func installMetricsServerChart(ctx context.Context, hm helm.Manager, defaults *h
 	return spec, nil
 }
 
-func installMetricsServer(valueOptions *values.Options, newManager func() (helm.Manager, error), serverVersion serverVersionFunc) *automa.StepBuilder {
+func installMetricsServer(valueOptions *values.Options, newHelmManager func() (helm.Manager, error), serverVersion serverVersionFunc) *automa.StepBuilder {
 	if valueOptions == nil {
 		valueOptions = defaultMetricsServerValues()
 	}
@@ -149,7 +149,7 @@ func installMetricsServer(valueOptions *values.Options, newManager func() (helm.
 	return automa.NewStepBuilder().WithId("enable-metrics-server").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
-			hm, err := newManager()
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -177,7 +177,7 @@ func installMetricsServer(valueOptions *values.Options, newManager func() (helm.
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newManager()
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

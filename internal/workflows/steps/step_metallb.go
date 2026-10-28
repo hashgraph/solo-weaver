@@ -104,14 +104,14 @@ func installMetalLBChart(ctx context.Context, hm helm.Manager, spec *helmChartSp
 	return true, nil
 }
 
-func installMetalLB(newManager func() (helm.Manager, error)) automa.Builder {
+func installMetalLB(newHelmManager func() (helm.Manager, error)) automa.Builder {
 	spec := chartSpec("metallb")
 	return automa.NewStepBuilder().WithId(InstallMetalLBStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
 			l.Info().Str("step_id", stp.Id()).Str("software", "metallb").Str("version", spec.Version).Msgf("metallb version: %s", spec.Version)
 
-			hm, err := newManager()
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -138,7 +138,7 @@ func installMetalLB(newManager func() (helm.Manager, error)) automa.Builder {
 				return automa.StepSkippedReport(stp.Id())
 			}
 
-			hm, err := newManager()
+			hm, err := newHelmManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
