@@ -3,7 +3,10 @@
 package alloy
 
 import (
+	"encoding/json"
 	"sort"
+
+	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -86,6 +89,44 @@ func HostNetworkHelmValues() []string {
 	return []string{
 		"controller.hostNetwork=true",
 		"controller.dnsPolicy=ClusterFirstWithHostNet",
+	}
+}
+
+// NodeExporterAppName is the chart's nameOverride. It equals the release name, so
+// the chart names the Service, DaemonSet and pods after it. The node-exporter.alloy
+// selector, the job label (the Service name) and the readiness check rely on that.
+const NodeExporterAppName = "node-exporter"
+
+// nodeExporterExtraArgs replaces the chart's extraArgs list, so it repeats the
+// chart's two filesystem excludes before adding our collectors.
+var nodeExporterExtraArgs = []string{
+	`--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)`,
+	`--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$`,
+	"--collector.systemd",
+	"--collector.processes",
+}
+
+// NodeExporterHelmValues returns the values for the prometheus-community
+// prometheus-node-exporter chart. Resources match the legacy chart's "small" preset.
+func NodeExporterHelmValues() *values.Options {
+	extraArgs, _ := json.Marshal(nodeExporterExtraArgs)
+
+	return &values.Options{
+		Values: []string{
+			"nameOverride=" + NodeExporterAppName,
+			"prometheus.monitor.enabled=true",
+			"prometheus.monitor.interval=15s",
+			"prometheus.monitor.scrapeTimeout=5s",
+			"prometheus.monitor.jobLabel=node",
+			"prometheus.monitor.attachMetadata.node=true",
+			"resources.requests.cpu=500m",
+			"resources.requests.memory=512Mi",
+			"resources.requests.ephemeral-storage=50Mi",
+			"resources.limits.cpu=750m",
+			"resources.limits.memory=768Mi",
+			"resources.limits.ephemeral-storage=2Gi",
+		},
+		JSONValues: []string{"extraArgs=" + string(extraArgs)},
 	}
 }
 
