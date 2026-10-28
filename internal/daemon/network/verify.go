@@ -17,6 +17,7 @@ import (
 const (
 	reasonRulesDrifted     = "NetworkRulesDrifted"
 	reasonRulesOlderFormat = "NetworkRulesOlderFormat"
+	reasonRulesReloaded    = "NetworkRulesReloaded"
 	reasonStrayTcFilter    = "NetworkStrayTcFilter"
 	reasonLaneBroken       = "NetworkLaneBroken"
 	reasonLaneSuspicious   = "NetworkLaneSuspicious"

@@ -192,11 +192,12 @@ type NetworkChecks struct {
 
 // NetworkRulesCheck mirrors reassert.RulesCheck.
 type NetworkRulesCheck struct {
-	Status     string   `json:"status"`
-	Detail     string   `json:"detail"`
-	LiveFormat int      `json:"live_format"`
-	Missing    []string `json:"missing"`
-	Unexpected []string `json:"unexpected"`
+	Status       string   `json:"status"`
+	Detail       string   `json:"detail"`
+	LiveFormat   int      `json:"live_format"`
+	ReloadedFrom int      `json:"reloaded_from"`
+	Missing      []string `json:"missing"`
+	Unexpected   []string `json:"unexpected"`
 }
 
 // NetworkFiltersCheck mirrors reassert.FiltersCheck.

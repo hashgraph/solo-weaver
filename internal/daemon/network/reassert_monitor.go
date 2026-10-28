@@ -256,7 +256,22 @@ func (m *ReassertMonitor) record(res privexec.NetworkReassertResult) {
 	m.mu.Unlock()
 
 	m.logReport(res, next, prev)
+	m.logReload(res.Checks)
 	m.logChecks(events)
+}
+
+// logReload records a format reload in the daemon log; the worker's own line
+// goes to the CLI log only.
+func (m *ReassertMonitor) logReload(c *privexec.NetworkChecks) {
+	if c == nil || c.Rules.ReloadedFrom == 0 {
+		return
+	}
+	logx.As().Info().
+		Str("reason", reasonRulesReloaded).
+		Str("monitor", m.Name()).
+		Int("from_format", c.Rules.ReloadedFrom).
+		Int("to_format", c.Rules.LiveFormat).
+		Msg("reloaded the workload-policy rules an older version wrote; peer lists were kept")
 }
 
 // logReport emits one line per artifact that needs attention: WARN for a

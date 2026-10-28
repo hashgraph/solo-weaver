@@ -377,7 +377,7 @@ func TestLogReassertOutcome_SkippedNeverReadsAsVerified(t *testing.T) {
 func canonicalChecks() *ra.Checks {
 	return &ra.Checks{
 		Rules: ra.RulesCheck{
-			Status: ra.CheckFailed, Detail: "differ", LiveFormat: 2,
+			Status: ra.CheckFailed, Detail: "differ", LiveFormat: 2, ReloadedFrom: 1,
 			Missing: []string{"rule a"}, Unexpected: []string{"rule b"},
 		},
 		Filters: ra.FiltersCheck{Status: ra.CheckFailed, Detail: "d", Devices: []ra.DeviceFilters{
