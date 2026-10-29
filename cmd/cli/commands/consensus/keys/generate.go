@@ -9,6 +9,7 @@ import (
 
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -20,12 +21,12 @@ import (
 var (
 	readGrpcFlags func() (corekeys.GrpcOptions, error)
 
-	flagKeysDir       string
-	flagIdentity      string
-	flagMachineID     string
-	flagGossip        bool
-	flagTLS           bool
-	flagGenerateForce bool
+	flagKeysDir           string
+	flagIdentity          string
+	flagMachineID         string
+	flagGossip            bool
+	flagTLS               bool
+	flagGenerateOverwrite bool
 )
 
 var generateCmd = &cobra.Command{
@@ -52,7 +53,7 @@ func init() {
 	generateCmd.Flags().BoolVar(&flagGossip, "gossip", false, "Generate the gossip signing key (default: generate all types when no selector is given)")
 	generateCmd.Flags().BoolVar(&flagTLS, "tls", false, "Generate the gRPC TLS key (default: generate all types when no selector is given)")
 	readGrpcFlags = addGrpcFlags(generateCmd)
-	generateCmd.Flags().BoolVar(&flagGenerateForce, "force", false, "Regenerate key material even if it already exists in --keys-dir (overwrites the existing keys)")
+	generateCmd.Flags().BoolVar(&flagGenerateOverwrite, "overwrite", false, "Replace existing key files in --keys-dir with new keys. This gives the node a new network identity and a new gRPC certificate hash")
 }
 
 func runGenerate(cmd *cobra.Command, _ []string) error {
@@ -69,9 +70,9 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	}
 
 	requested := cnkeys.Selectors{Gossip: flagGossip, Grpc: flagTLS}
-	toGen, need := planGeneration(flagKeysDir, requested, flagGenerateForce)
+	toGen, need := planGeneration(cmd, flagKeysDir, requested, flagGenerateOverwrite)
 	if !need {
-		cmd.Printf("All selected key material already exists in %s; nothing to generate (pass --force to regenerate).\n", flagKeysDir)
+		cmd.Printf("All selected key material already exists in %s; nothing to generate (pass --overwrite to replace it).\n", flagKeysDir)
 		return nil
 	}
 
@@ -148,16 +149,28 @@ func addGrpcFlags(cmd *cobra.Command) func() (corekeys.GrpcOptions, error) {
 
 // planGeneration decides which requested key types to (re)generate into keysDir.
 // Generation is idempotent: an existing type is skipped (with a warning) unless
-// force is set. The bool is false when nothing needs generating.
-func planGeneration(keysDir string, requested cnkeys.Selectors, force bool) (cnkeys.Selectors, bool) {
+// overwrite is set. The bool is false when nothing needs generating.
+func planGeneration(cmd *cobra.Command, keysDir string, requested cnkeys.Selectors, overwrite bool) (cnkeys.Selectors, bool) {
 	requested = cnkeys.NormalizeSelectors(requested)
 	requested.Admin = false // the admin key is never generated
-	if force {
+	if overwrite {
 		return requested, requested.Any()
 	}
 	toGen := requested.Minus(cnkeys.ExistingSelectors(keysDir))
-	warnSkipped(keysDir, requested.Minus(toGen))
+	kept := requested.Minus(toGen)
+	warnSkipped(keysDir, kept)
+	if kept.Any() {
+		hintRootForce(cmd)
+	}
 	return toGen, toGen.Any()
+}
+
+// hintRootForce tells an operator who passed the root --force (skip prompts)
+// that it does not replace existing keys; only --overwrite does.
+func hintRootForce(cmd *cobra.Command) {
+	if force, err := common.FlagForce().Value(cmd, nil); err == nil && force {
+		cmd.PrintErrln("--force does not replace existing key material; pass --overwrite to replace it (this gives the node a new network identity)")
+	}
 }
 
 // warnSkipped logs a warning for each already-present key type that is being kept.
@@ -168,7 +181,7 @@ func warnSkipped(keysDir string, skipped cnkeys.Selectors) {
 	}{{skipped.Gossip, "gossip"}, {skipped.Grpc, "grpc"}} {
 		if k.on {
 			logx.As().Warn().Str("keysDir", keysDir).Str("keyType", k.name).
-				Msg("Keeping existing key material (pass --force to regenerate)")
+				Msg("Keeping existing key material (pass --overwrite to replace it)")
 		}
 	}
 }
