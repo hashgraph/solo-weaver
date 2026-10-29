@@ -296,11 +296,15 @@ sudo solo-provisioner consensus keys inspect --experimental --file ./keys/node0/
 | Flag | Description | Default |
 |---|---|---|
 | `--keys-dir` | Node key folder to inspect | — |
-| `--file` | Inspect a single certificate (PEM) or admin public key (hex) file | — |
+| `--file` | Inspect a single certificate (PEM) or admin public key (hex, named *.pub) file | — |
 | `--gossip` / `--tls` / `--admin` | Select which key types to show | all when none given |
 
 `--keys-dir` and `--file` are mutually exclusive. Inspect works on disk only, so
 it never reads secrets from the cluster.
+
+With `--file`, a hex admin public key file must be named `*.pub` (for example
+`admin.pub`). A raw hex key with another name can be a private key, so inspect
+reports an error and does not print the key.
 
 ### `consensus keys init`
 
