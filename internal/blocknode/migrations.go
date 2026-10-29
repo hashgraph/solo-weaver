@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// migrations.go provides the component-level orchestration for block node migrations.
+// migrations.go provides the component-level orchestration for block node storage
+// migrations.
 //
 // This file contains:
-//   - BuildMigrationWorkflow(): Builds an automa workflow for applicable migrations during upgrades
+//   - BuildStorageMigrationWorkflow(): builds an automa workflow of the storage-prep
+//     steps that must run before a breaking-boundary chart upgrade.
 //
-// The workflow uses a two-phase approach:
-//   - Phase 1: Each applicable StorageMigration creates its storage dir + PV/PVC.
-//   - Phase 2: A single "upgrade" step deletes the StatefulSet (orphan cascade)
-//     and performs one Helm upgrade to the final target version.
-//
-// This avoids intermediate chart upgrades, version-swapping, and repeated
-// StatefulSet deletions when multiple storage migrations apply at once.
+// Each applicable StorageMigration creates its storage dir + PV/PVC for an optional
+// storage that a newer chart version requires (verification @0.26.2, plugins
+// @0.28.1, application-state @0.37.0). Under the operator model (#1319) the chart
+// move itself is a HelmCapsule patch driven by the upgrade step
+// (steps.UpgradeBlockNode), so this workflow is storage-prep only — it no longer
+// performs the Helm upgrade. The volumes must exist before the operator renders the
+// chart against them (weaver owns PVs via the existingClaim model).
 //
 // All block node migrations are registered centrally in cmd/cli/commands/root.go RegisterMigrations().
 //
@@ -26,24 +28,18 @@
 package blocknode
 
 import (
-	"context"
-
 	"github.com/automa-saga/automa"
-	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/joomcode/errorx"
 )
 
-// BuildMigrationWorkflow returns an automa workflow for executing applicable migrations.
-// Returns nil if no migrations are needed (installed version is empty or no applicable migrations).
-//
-// The workflow structure is:
-//
-//	[migration-start] → [migration-<id>] → ... → [migration-upgrade-chart]
-//
-// Each migration step creates its PV/PVC. The final upgrade step performs a single
-// StatefulSet delete + Helm upgrade to the target version with all new storages included.
-func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*automa.WorkflowBuilder, error) {
+// BuildStorageMigrationWorkflow returns an automa workflow of the storage-prep steps
+// (PV/PVC + directory creation) required before a breaking-boundary chart upgrade.
+// Returns nil when nothing applies (installed version empty or no applicable
+// migration). The caller runs this before patching the HelmCapsule to the target
+// version, so the new optional-storage volumes exist when the operator renders the
+// chart against them.
+func BuildStorageMigrationWorkflow(manager *Manager, profile, valuesFile string) (*automa.WorkflowBuilder, error) {
 	installedVersion, err := manager.GetInstalledVersion()
 	if err != nil {
 		return nil, errorx.IllegalState.Wrap(err, "failed to get installed version")
@@ -80,103 +76,7 @@ func BuildMigrationWorkflow(manager *Manager, profile, valuesFile string) (*auto
 	mctx.Data.Set(ctxKeyProfile, profile)
 	mctx.Data.Set(ctxKeyValuesFile, valuesFile)
 
-	// Build the workflow: migration steps (PV/PVC creation) + final upgrade step
-	wf := migration.MigrationsToWorkflow(migrations, mctx)
-
-	// Append the single upgrade step that brings the chart to the target version
-	// after all PV/PVCs have been created.
-	targetVersion := manager.blockNodeInputs.ChartVersion
-	upgradeStep := buildMigrationUpgradeStep(manager, mctx, installedVersion, targetVersion, profile, valuesFile, migrations)
-	wf.Steps(upgradeStep)
-
-	return wf, nil
-}
-
-// buildMigrationUpgradeStep creates the final workflow step that performs a single
-// StatefulSet delete + Helm upgrade after all storage migrations have created their PV/PVCs.
-//
-// On rollback, it downgrades to the installed version and cleans up all PV/PVCs
-// created by the migration steps.
-func buildMigrationUpgradeStep(
-	manager *Manager,
-	mctx *migration.Context,
-	installedVersion, targetVersion, profile, valuesFile string,
-	migrations []migration.Migration,
-) automa.Builder {
-	return automa.NewStepBuilder().
-		WithId("migration-upgrade-chart").
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			l := logx.As()
-			l.Info().
-				Str("target", targetVersion).
-				Int("migrationsApplied", len(migrations)).
-				Msg("All storage PV/PVCs created, upgrading chart to target version")
-
-			// Compute values file for the final target version (all storages now exist)
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "failed to compute values file for target version")))
-			}
-
-			// Delete StatefulSet with orphan cascade — Kubernetes forbids
-			// in-place updates to volumeClaimTemplates.
-			if err := manager.DeleteStatefulSetForUpgrade(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			// Single Helm upgrade to the final target version
-			if err := manager.UpgradeChart(ctx, valuesFilePath, false); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(
-					errorx.IllegalState.Wrap(err, "failed to upgrade chart to target version")))
-			}
-
-			l.Info().Str("version", targetVersion).Msg("Chart upgraded successfully after migrations")
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			l := logx.As()
-			l.Warn().
-				Str("target", installedVersion).
-				Msg("Rolling back migration upgrade, downgrading chart")
-
-			// Temporarily set version to installed version for ComputeValuesFile + UpgradeChart
-			originalVersion := manager.blockNodeInputs.ChartVersion
-			manager.blockNodeInputs.ChartVersion = installedVersion
-			defer func() { manager.blockNodeInputs.ChartVersion = originalVersion }()
-
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
-			if err != nil {
-				l.Error().Err(err).Msg("Rollback failed: could not compute values file")
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			// Delete StatefulSet before downgrade (volumeClaimTemplates may differ)
-			if err := manager.DeleteStatefulSetForUpgrade(ctx); err != nil {
-				l.Warn().Err(err).Msg("Failed to delete StatefulSet during rollback, continuing")
-			}
-
-			if err := manager.UpgradeChart(ctx, valuesFilePath, false); err != nil {
-				l.Error().Err(err).Msg("Rollback failed: could not downgrade chart")
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			// Clean up all PV/PVCs created by migrations (best-effort)
-			for _, m := range migrations {
-				sm, ok := m.(*StorageMigration)
-				if !ok {
-					continue
-				}
-				l.Info().Str("storage", sm.storage.Name).Msg("Cleaning up PV/PVC after rollback")
-				if delErr := manager.kubeClient.DeletePVC(ctx, manager.blockNodeInputs.Namespace, sm.storage.PVCName); delErr != nil {
-					l.Warn().Err(delErr).Str("pvc", sm.storage.PVCName).Msg("Could not delete PVC")
-				}
-				if delErr := manager.kubeClient.DeletePV(ctx, sm.storage.PVName); delErr != nil {
-					l.Warn().Err(delErr).Str("pv", sm.storage.PVName).Msg("Could not delete PV")
-				}
-			}
-
-			l.Info().Str("version", installedVersion).Msg("Migration rollback completed")
-			return automa.StepSuccessReport(stp.Id())
-		})
+	// Storage-prep steps only (PV/PVC creation); the chart move is the operator-driven
+	// HelmCapsule patch in steps.UpgradeBlockNode.
+	return migration.MigrationsToWorkflow(migrations, mctx), nil
 }

@@ -25,6 +25,7 @@ type fakeCapsuleClient struct {
 	nested      map[string]map[string]interface{}
 	applied     []string
 	appliedObjs []runtime.Object
+	deleted     []string
 	listResult  *unstructured.UnstructuredList
 }
 
@@ -47,6 +48,13 @@ func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) er
 	f.applied = append(f.applied, name)
 	f.appliedObjs = append(f.appliedObjs, obj)
 	return nil
+}
+
+func (f *fakeCapsuleClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
+	_, ok := f.existing[name]
+	delete(f.existing, name)
+	f.deleted = append(f.deleted, name)
+	return ok, nil
 }
 
 func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
@@ -648,22 +656,33 @@ func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
 		Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00", ChainId: "295", ProvisionerDaemonEnabled: true,
 	}
 
+	// daemonInputs is `in` with the daemon flag off, used to test a real daemon
+	// conflict (a live true the install wants false — a live false is fillable).
+	daemonOff := in
+	daemonOff.ProvisionerDaemonEnabled = false
+
 	tests := []struct {
 		name      string
 		live      map[string]interface{}
 		inputs    models.ConsensusNodeInputs
-		wantField string
+		wantField string // non-empty = expect a conflict failure naming this field
+		wantFill  bool   // true = expect a fill-in (success that re-applies the Orbit)
 	}{
-		{"matches", orbitSpec(true, "0x00", "295", nil), in, ""},
-		{"daemon mode differs", orbitSpec(false, "0x00", "295", nil), in, "provisionerDaemonEnabled"},
-		{"ledgerId differs", orbitSpec(true, "0x01", "295", nil), in, "ledgerId"},
-		{"chainId differs", orbitSpec(true, "0x00", "296", nil), in, "chainId"},
-		{"orbit has a realm the install does not request", orbitSpec(true, "0x00", "295",
-			map[string]interface{}{"deploymentModel": "MultipleKubernetesClusters"}), in, "deploymentModel"},
-		{"requireDigestOnDeploy set on the Orbit", orbitSpec(true, "0x00", "295",
-			map[string]interface{}{"requireDigestOnDeploy": true}), in, "requireDigestOnDeploy"},
-		{"empty chainId equals zero", orbitSpec(false, "0x00", "0", nil),
-			models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00"}, ""},
+		{name: "matches", live: orbitSpec(true, "0x00", "295", nil), inputs: in},
+		// A live daemon=true the install wants off is a conflict; a live daemon=false
+		// is indistinguishable from unset and is filled in, not a conflict.
+		{name: "daemon mode conflicts (live true, want false)", live: orbitSpec(true, "0x00", "295", nil), inputs: daemonOff, wantField: "provisionerDaemonEnabled"},
+		{name: "ledgerId differs", live: orbitSpec(true, "0x01", "295", nil), inputs: in, wantField: "ledgerId"},
+		{name: "chainId differs", live: orbitSpec(true, "0x00", "296", nil), inputs: in, wantField: "chainId"},
+		{name: "orbit has a deploymentModel the install does not request", live: orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"deploymentModel": "MultipleKubernetesClusters"}), inputs: in, wantField: "deploymentModel"},
+		{name: "requireDigestOnDeploy set on the Orbit", live: orbitSpec(true, "0x00", "295",
+			map[string]interface{}{"requireDigestOnDeploy": true}), inputs: in, wantField: "requireDigestOnDeploy"},
+		{name: "empty chainId equals zero", live: orbitSpec(false, "0x00", "0", nil),
+			inputs: models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", LedgerId: "0x00"}},
+		// A minimal Orbit (empty genesis, e.g. created by a block node install) is
+		// adopted: no conflict, and the install fills in its consensus settings.
+		{name: "minimal Orbit is filled in", live: orbitSpec(false, "", "", nil), inputs: in, wantFill: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -674,13 +693,18 @@ func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
 			step, err := EnsureOrbit(tc.inputs, fake.provider()).Build()
 			require.NoError(t, err)
 			rpt := step.Execute(context.Background())
-			if tc.wantField != "" {
+			switch {
+			case tc.wantField != "":
 				assert.Equal(t, automa.StatusFailed, rpt.Status)
 				assert.Contains(t, rpt.Error.Error(), tc.wantField)
-			} else {
+				assert.Empty(t, fake.applied, "a conflicting Orbit must not be re-applied")
+			case tc.wantFill:
 				assert.Equal(t, automa.StatusSuccess, rpt.Status)
+				assert.NotEmpty(t, fake.applied, "a consensus-uninitialized Orbit must be filled in")
+			default:
+				assert.Equal(t, automa.StatusSuccess, rpt.Status)
+				assert.Empty(t, fake.applied, "a matching Orbit must not be re-applied")
 			}
-			assert.Empty(t, fake.applied, "an existing Orbit must never be re-applied")
 		})
 	}
 }
