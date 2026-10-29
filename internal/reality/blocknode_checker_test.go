@@ -214,7 +214,6 @@ func TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord(t *testing.T) {
 				persisted := state.NewBlockNodeState()
 				persisted.ReleaseInfo.Status = tc.status
 				persisted.TrafficShapingEnabled = enabled
-				persisted.TrafficShapingDisabled = !enabled
 				persisted.Shaping = &state.ShapingState{EgressInterface: "eth0", LinkRate: "1gbit"}
 
 				full := state.State{}
@@ -234,9 +233,8 @@ func TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord(t *testing.T) {
 				if got.ReleaseInfo.Status == release.StatusDeployed {
 					t.Fatalf("expected the release to be reported as not deployed, got %q", got.ReleaseInfo.Status)
 				}
-				if got.TrafficShapingEnabled != enabled || got.TrafficShapingDisabled == enabled {
-					t.Errorf("enabled=%v: decision not kept, got enabled=%v disabled=%v",
-						enabled, got.TrafficShapingEnabled, got.TrafficShapingDisabled)
+				if got.TrafficShapingEnabled != enabled {
+					t.Errorf("enabled=%v: decision not kept, got %v", enabled, got.TrafficShapingEnabled)
 				}
 				if got.Shaping == nil || got.Shaping.EgressInterface != "eth0" {
 					t.Errorf("enabled=%v: Shaping not kept, got %+v", enabled, got.Shaping)

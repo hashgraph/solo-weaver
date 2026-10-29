@@ -89,25 +89,6 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 	), ids)
 }
 
-// TestUpgrade_NoShapingRecord_SkipsShaping covers a state with no recorded
-// decision (an old or hand-edited state file, or a record lost in a refresh):
-// upgrade must not create the policy plane, tc shaping or the daemon.
-func TestUpgrade_NoShapingRecord_SkipsShaping(t *testing.T) {
-	h := newMinimalUpgradeHandler()
-
-	st := deployedStateForUpgrade(false)
-	st.BlockNodeState.TrafficShapingDisabled = false
-
-	wb, err := h.BuildWorkflow(st, upgradeInputs())
-	require.NoError(t, err)
-
-	ids := workflowStepIDs(t, wb)
-	assert.Equal(t, withMediaCheck(
-		steps.NetworkFirewallCreateStepId,
-		steps.UpgradeBlockNodeStepId,
-	), ids)
-}
-
 // TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both
 // upgrade branches. The scale-down has to follow the chart upgrade, which
 // re-asserts the chart's replica default.

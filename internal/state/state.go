@@ -206,12 +206,10 @@ type BlockNodeState struct {
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
 	// TrafficShapingEnabled records the install/reconfigure decision, which cannot
 	// be recovered from the Helm release or the live cluster. A missing key reads
-	// as off, so a lost record never turns shaping on.
-	TrafficShapingEnabled bool `yaml:"trafficShapingEnabled,omitempty" json:"trafficShapingEnabled,omitempty"`
-	// TrafficShapingDisabled is written as !TrafficShapingEnabled; no decision
-	// reads it. Older CLIs read only this key and treat a missing one as "enabled", so it
-	// keeps a downgrade from turning shaping back on.
-	TrafficShapingDisabled bool `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
+	// as off, so a lost record never turns shaping on. No omitempty: the key is
+	// always written, which is what stops migration_traffic_shaping_enabled_v1
+	// from re-applying to a state file this CLI wrote.
+	TrafficShapingEnabled bool `yaml:"trafficShapingEnabled" json:"trafficShapingEnabled"`
 	// Shaping records the last-resolved traffic-shaping content (egress NIC, link
 	// rate, per-class overrides) that cannot be recovered from the Helm release or
 	// the live cluster. It is written on install/reconfigure when traffic shaping is

@@ -1,37 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// migration_traffic_shaping_enabled_v1.go records an explicit
-// trafficShapingEnabled: true on block nodes that already run traffic shaping.
+// migration_traffic_shaping_enabled_v1.go replaces the traffic-shaping opt-out
+// trafficShapingDisabled with an explicit trafficShapingEnabled.
 //
-// The decision used to be stored only as the opt-out trafficShapingDisabled
-// (omitted when false), so a node with shaping on carried no key at all. Now
-// a missing trafficShapingEnabled reads as off, and without this migration
-// those nodes would lose shaping on the next reconfigure.
+// The old key was omitted when false, so a node with shaping on carried no key
+// at all, and a missing key read as "enabled". The new key is always written,
+// and a missing one reads as off.
 //
-// Old shape (shaping on):
+// Old shapes:
 //
-//	state:
-//	  blockNodeState:
-//	    shaping:
-//	      egressInterface: eth0
+//	blockNodeState:                      blockNodeState:
+//	  shaping:                             trafficShapingDisabled: true
+//	    egressInterface: eth0              shaping: {}
 //
-// New shape:
+// New shapes:
 //
-//	state:
-//	  blockNodeState:
-//	    trafficShapingEnabled: true
-//	    shaping:
-//	      egressInterface: eth0
+//	blockNodeState:                      blockNodeState:
+//	  trafficShapingEnabled: true          trafficShapingEnabled: false
+//	  shaping:                             shaping: {}
+//	    egressInterface: eth0
 //
-// The shaping record is written only when shaping is enabled, so it marks the
-// nodes to migrate. A node with trafficShapingDisabled: true keeps its record
-// for a later re-enable and is left alone.
+// With no opt-out, the shaping record decides: it is written only when shaping
+// is enabled. A disabled node keeps its record for a later re-enable, so the
+// opt-out is checked first.
 package state
 
 import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -44,8 +42,8 @@ const (
 	trafficShapingDisabledKey = "trafficShapingDisabled"
 )
 
-// TrafficShapingEnabledV1Migration writes trafficShapingEnabled: true for
-// block nodes whose state shows shaping on under the old opt-out encoding.
+// TrafficShapingEnabledV1Migration rewrites blockNodeState.trafficShapingDisabled
+// as an explicit trafficShapingEnabled.
 type TrafficShapingEnabledV1Migration struct {
 	// stateFileOverride, when non-empty, is used as the state file path instead
 	// of the production path derived from models.Paths().StateDir. Intended for
@@ -60,7 +58,7 @@ func NewTrafficShapingEnabledV1Migration() *TrafficShapingEnabledV1Migration {
 
 func (m *TrafficShapingEnabledV1Migration) ID() string { return "traffic-shaping-enabled-v1" }
 func (m *TrafficShapingEnabledV1Migration) Description() string {
-	return "Record trafficShapingEnabled: true for block nodes that run traffic shaping without an explicit opt-out"
+	return "Replace blockNodeState.trafficShapingDisabled with an explicit trafficShapingEnabled"
 }
 
 func (m *TrafficShapingEnabledV1Migration) stateFilePath() string {
@@ -70,8 +68,8 @@ func (m *TrafficShapingEnabledV1Migration) stateFilePath() string {
 	return filepath.Join(models.Paths().StateDir, StateFileName)
 }
 
-// Applies returns true when the on-disk state shows shaping on under the old
-// encoding and has no trafficShapingEnabled key yet.
+// Applies returns true when blockNodeState lacks trafficShapingEnabled or still
+// carries trafficShapingDisabled.
 func (m *TrafficShapingEnabledV1Migration) Applies(_ *migration.Context) (bool, error) {
 	b, err := os.ReadFile(m.stateFilePath())
 	if os.IsNotExist(err) {
@@ -83,8 +81,8 @@ func (m *TrafficShapingEnabledV1Migration) Applies(_ *migration.Context) (bool, 
 	return needsTrafficShapingEnabled(b), nil
 }
 
-// Execute adds trafficShapingEnabled: true to blockNodeState and writes the
-// result back atomically.
+// Execute writes trafficShapingEnabled, removes trafficShapingDisabled, and
+// writes the result back atomically.
 func (m *TrafficShapingEnabledV1Migration) Execute(_ context.Context, _ *migration.Context) error {
 	stateFile := m.stateFilePath()
 
@@ -93,9 +91,9 @@ func (m *TrafficShapingEnabledV1Migration) Execute(_ context.Context, _ *migrati
 		return errorx.ExternalError.Wrap(err, "failed to read state file for trafficShapingEnabled migration")
 	}
 
-	out, err := addTrafficShapingEnabled(b)
+	out, err := migrateToTrafficShapingEnabled(b)
 	if err != nil {
-		return errorx.IllegalFormat.Wrap(err, "failed to add trafficShapingEnabled to state YAML")
+		return errorx.IllegalFormat.Wrap(err, "failed to rewrite traffic-shaping decision in state YAML")
 	}
 
 	if err := atomicWriteFile(stateFile, out); err != nil {
@@ -104,8 +102,8 @@ func (m *TrafficShapingEnabledV1Migration) Execute(_ context.Context, _ *migrati
 	return nil
 }
 
-// Rollback removes trafficShapingEnabled. Older CLIs never read it, so the
-// file is back to the shape they wrote.
+// Rollback restores the opt-out encoding: trafficShapingDisabled: true when
+// shaping is off, no key when it is on.
 func (m *TrafficShapingEnabledV1Migration) Rollback(_ context.Context, _ *migration.Context) error {
 	stateFile := m.stateFilePath()
 
@@ -114,9 +112,9 @@ func (m *TrafficShapingEnabledV1Migration) Rollback(_ context.Context, _ *migrat
 		return errorx.ExternalError.Wrap(err, "failed to read state file for trafficShapingEnabled rollback")
 	}
 
-	out, err := removeTrafficShapingEnabled(b)
+	out, err := migrateToTrafficShapingDisabled(b)
 	if err != nil {
-		return errorx.IllegalFormat.Wrap(err, "failed to remove trafficShapingEnabled from state YAML")
+		return errorx.IllegalFormat.Wrap(err, "failed to restore trafficShapingDisabled in state YAML")
 	}
 
 	if err := atomicWriteFile(stateFile, out); err != nil {
@@ -132,12 +130,20 @@ func blockNodeStateNode(doc *yaml.Node) *yaml.Node {
 	return mappingValue(stateNode, "blockNodeState")
 }
 
-// shapingOnUnderOptOut reports whether bn has a shaping record, no opt-out,
-// and no trafficShapingEnabled key.
-func shapingOnUnderOptOut(bn *yaml.Node) bool {
-	if bn == nil || mappingValue(bn, trafficShapingEnabledKey) != nil {
+func needsTrafficShapingEnabled(b []byte) bool {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return false
 	}
+	bn := blockNodeStateNode(&doc)
+	if bn == nil || bn.Kind != yaml.MappingNode {
+		return false
+	}
+	return mappingValue(bn, trafficShapingEnabledKey) == nil || mappingValue(bn, trafficShapingDisabledKey) != nil
+}
+
+// legacyTrafficShapingEnabled derives the decision from the opt-out encoding.
+func legacyTrafficShapingEnabled(bn *yaml.Node) bool {
 	if mappingScalar(bn, trafficShapingDisabledKey) == "true" {
 		return false
 	}
@@ -145,34 +151,7 @@ func shapingOnUnderOptOut(bn *yaml.Node) bool {
 	return shaping != nil && shaping.Tag != "!!null"
 }
 
-func needsTrafficShapingEnabled(b []byte) bool {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return false
-	}
-	return shapingOnUnderOptOut(blockNodeStateNode(&doc))
-}
-
-// addTrafficShapingEnabled returns b with trafficShapingEnabled: true added to
-// blockNodeState when shapingOnUnderOptOut holds, and unchanged otherwise.
-func addTrafficShapingEnabled(b []byte) ([]byte, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return nil, err
-	}
-
-	bn := blockNodeStateNode(&doc)
-	if shapingOnUnderOptOut(bn) {
-		bn.Content = append(bn.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: trafficShapingEnabledKey},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"},
-		)
-	}
-
-	return yaml.Marshal(&doc)
-}
-
-func removeTrafficShapingEnabled(b []byte) ([]byte, error) {
+func migrateToTrafficShapingEnabled(b []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return nil, err
@@ -180,13 +159,46 @@ func removeTrafficShapingEnabled(b []byte) ([]byte, error) {
 
 	bn := blockNodeStateNode(&doc)
 	if bn != nil && bn.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(bn.Content); i += 2 {
-			if bn.Content[i].Value == trafficShapingEnabledKey {
-				bn.Content = append(bn.Content[:i], bn.Content[i+2:]...)
-				break
-			}
+		if mappingValue(bn, trafficShapingEnabledKey) == nil {
+			appendMappingBool(bn, trafficShapingEnabledKey, legacyTrafficShapingEnabled(bn))
+		}
+		deleteMappingKey(bn, trafficShapingDisabledKey)
+	}
+
+	return yaml.Marshal(&doc)
+}
+
+func migrateToTrafficShapingDisabled(b []byte) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+
+	bn := blockNodeStateNode(&doc)
+	if bn != nil && bn.Kind == yaml.MappingNode {
+		enabled := mappingScalar(bn, trafficShapingEnabledKey) == "true"
+		deleteMappingKey(bn, trafficShapingEnabledKey)
+		deleteMappingKey(bn, trafficShapingDisabledKey)
+		if !enabled {
+			appendMappingBool(bn, trafficShapingDisabledKey, true)
 		}
 	}
 
 	return yaml.Marshal(&doc)
+}
+
+func appendMappingBool(node *yaml.Node, key string, val bool) {
+	node.Content = append(node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(val)},
+	)
+}
+
+func deleteMappingKey(node *yaml.Node, key string) {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			node.Content = append(node.Content[:i], node.Content[i+2:]...)
+			return
+		}
+	}
 }

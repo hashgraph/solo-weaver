@@ -58,14 +58,23 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		return bn, err
 	}
 
-	if bn.ReleaseInfo.Status == release.StatusDeployed && re == nil {
-		logx.As().Debug().Msg("BlockNode Helm release was previously deployed but is now missing; treating as deleted or unknown")
-		return keepTrafficShapingRecord(state.NewBlockNodeState(), bn), nil
-	}
+	// The traffic-shaping decision and content are weaver-only records that
+	// cannot be recovered from the Helm release or the cluster. Every rebuild
+	// below carries them over, including when the release is not found: any
+	// command that flushes state in that window would otherwise save them as lost.
+	trafficShapingEnabled := bn.TrafficShapingEnabled
+	shaping := bn.Shaping
 
 	if re == nil {
-		logx.As().Debug().Msg("No BlockNode Helm release found; returning default BlockNodeState")
-		return keepTrafficShapingRecord(state.NewBlockNodeState(), bn), nil
+		if bn.ReleaseInfo.Status == release.StatusDeployed {
+			logx.As().Debug().Msg("BlockNode Helm release was previously deployed but is now missing; treating as deleted or unknown")
+		} else {
+			logx.As().Debug().Msg("No BlockNode Helm release found; returning default BlockNodeState")
+		}
+		missing := state.NewBlockNodeState()
+		missing.TrafficShapingEnabled = trafficShapingEnabled
+		missing.Shaping = shaping
+		return missing, nil
 	}
 
 	logx.As().Debug().Msg("Found BlockNode Helm release; building BlockNodeState")
@@ -77,7 +86,6 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// release has none. Two callers do exactly that: the upgrade handler's
 	// chart-switch warning and the reconfigure handler's chart-change guard.
 	chartRef := bn.ReleaseInfo.ChartRef
-	persisted := bn
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -91,10 +99,11 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			DeletedAt:     re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage:  models.BlockNodeStorage{},
-		LastSync: now,
+		Storage:               models.BlockNodeStorage{},
+		TrafficShapingEnabled: trafficShapingEnabled,
+		Shaping:               shaping,
+		LastSync:              now,
 	}
-	bn = keepTrafficShapingRecord(bn, persisted)
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
 
@@ -294,16 +303,4 @@ func helmValueToString(v interface{}) string {
 	default:
 		return ""
 	}
-}
-
-// keepTrafficShapingRecord copies the traffic-shaping decision and content from
-// persisted onto bn. Neither can be recovered from the Helm release or the
-// cluster, so a refresh that rebuilds BlockNodeState must carry them over,
-// including when the release is not found: dropping them there gets saved by
-// any command that flushes state in that window.
-func keepTrafficShapingRecord(bn, persisted state.BlockNodeState) state.BlockNodeState {
-	bn.TrafficShapingEnabled = persisted.TrafficShapingEnabled
-	bn.TrafficShapingDisabled = persisted.TrafficShapingDisabled
-	bn.Shaping = persisted.Shaping
-	return bn
 }

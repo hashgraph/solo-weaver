@@ -13,8 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// shapingOnLegacyYAML is a state.yaml for a node with shaping on, written
-// before trafficShapingEnabled existed: no opt-out key, a shaping record.
+// shapingOnLegacyYAML is a state.yaml for a node with shaping on under the
+// opt-out encoding: no decision key, a shaping record.
 const shapingOnLegacyYAML = `
 hash: abc123
 state:
@@ -27,11 +27,13 @@ state:
             linkRate: 1gbit
 `
 
-func blockNodeStateOf(t *testing.T, b []byte) BlockNodeState {
+// rawBlockNodeState decodes blockNodeState as a plain map so tests can tell a
+// missing key from a false one.
+func rawBlockNodeState(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var doc struct {
 		State struct {
-			BlockNodeState BlockNodeState `yaml:"blockNodeState"`
+			BlockNodeState map[string]any `yaml:"blockNodeState"`
 		} `yaml:"state"`
 	}
 	require.NoError(t, yaml.Unmarshal(b, &doc))
@@ -45,7 +47,7 @@ func TestTrafficShapingEnabledV1Migration_Metadata(t *testing.T) {
 	assert.Contains(t, m.stateFilePath(), StateFileName)
 }
 
-func TestAddTrafficShapingEnabled(t *testing.T) {
+func TestMigrateToTrafficShapingEnabled(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		in          string
@@ -59,41 +61,55 @@ func TestAddTrafficShapingEnabled(t *testing.T) {
 			wantEnabled: true,
 		},
 		{
-			name: "opt-out with a kept shaping record stays off",
+			name: "opt-out with a kept shaping record is disabled",
 			in: `
 state:
     blockNodeState:
         trafficShapingDisabled: true
-        shaping:
-            egressInterface: eth0
+        shaping: {}
 `,
+			wantApplies: true,
 		},
 		{
-			name: "opt-out without shaping stays off",
+			name: "opt-out without shaping is disabled",
 			in: `
 state:
     blockNodeState:
         trafficShapingDisabled: true
 `,
+			wantApplies: true,
 		},
 		{
-			name: "no record at all stays off",
+			name: "no record is disabled",
 			in: `
 state:
     blockNodeState:
         name: block-node
 `,
+			wantApplies: true,
 		},
 		{
-			name: "null shaping stays off",
+			name: "null shaping is disabled",
 			in: `
 state:
     blockNodeState:
         shaping: null
 `,
+			wantApplies: true,
 		},
 		{
-			name: "already migrated is left alone",
+			name: "new key wins over a leftover opt-out",
+			in: `
+state:
+    blockNodeState:
+        trafficShapingEnabled: true
+        trafficShapingDisabled: true
+`,
+			wantApplies: true,
+			wantEnabled: true,
+		},
+		{
+			name: "already migrated, enabled",
 			in: `
 state:
     blockNodeState:
@@ -104,33 +120,77 @@ state:
 			wantEnabled: true,
 		},
 		{
-			name: "no blockNodeState",
+			name: "already migrated, disabled with a kept shaping record",
 			in: `
 state:
-    version: v2
+    blockNodeState:
+        trafficShapingEnabled: false
+        shaping: {}
 `,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.wantApplies, needsTrafficShapingEnabled([]byte(tc.in)))
 
-			out, err := addTrafficShapingEnabled([]byte(tc.in))
+			out, err := migrateToTrafficShapingEnabled([]byte(tc.in))
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantEnabled, blockNodeStateOf(t, out).TrafficShapingEnabled)
+
+			bn := rawBlockNodeState(t, out)
+			assert.Equal(t, tc.wantEnabled, bn[trafficShapingEnabledKey])
+			assert.NotContains(t, bn, trafficShapingDisabledKey)
 			assert.False(t, needsTrafficShapingEnabled(out), "must not apply twice")
 		})
 	}
 }
 
-func TestAddTrafficShapingEnabled_KeepsOtherFields(t *testing.T) {
-	out, err := addTrafficShapingEnabled([]byte(shapingOnLegacyYAML))
+func TestMigrateToTrafficShapingEnabled_NoBlockNodeState(t *testing.T) {
+	in := []byte("state:\n    version: v2\n")
+	assert.False(t, needsTrafficShapingEnabled(in))
+
+	out, err := migrateToTrafficShapingEnabled(in)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), trafficShapingEnabledKey)
+}
+
+func TestMigrateToTrafficShapingEnabled_KeepsOtherFields(t *testing.T) {
+	out, err := migrateToTrafficShapingEnabled([]byte(shapingOnLegacyYAML))
 	require.NoError(t, err)
 
-	bn := blockNodeStateOf(t, out)
+	var doc struct {
+		State struct {
+			BlockNodeState BlockNodeState `yaml:"blockNodeState"`
+		} `yaml:"state"`
+	}
+	require.NoError(t, yaml.Unmarshal(out, &doc))
+	bn := doc.State.BlockNodeState
 	assert.Equal(t, "block-node", bn.ReleaseInfo.Name)
 	require.NotNil(t, bn.Shaping)
 	assert.Equal(t, "eth0", bn.Shaping.EgressInterface)
 	assert.Equal(t, "1gbit", bn.Shaping.LinkRate)
+}
+
+func TestMigrateToTrafficShapingDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		in           string
+		wantDisabled bool
+	}{
+		{name: "enabled drops both keys", in: "state:\n    blockNodeState:\n        trafficShapingEnabled: true\n"},
+		{name: "disabled writes the opt-out", in: "state:\n    blockNodeState:\n        trafficShapingEnabled: false\n", wantDisabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := migrateToTrafficShapingDisabled([]byte(tc.in))
+			require.NoError(t, err)
+
+			bn := rawBlockNodeState(t, out)
+			assert.NotContains(t, bn, trafficShapingEnabledKey)
+			if tc.wantDisabled {
+				assert.Equal(t, true, bn[trafficShapingDisabledKey])
+			} else {
+				assert.NotContains(t, bn, trafficShapingDisabledKey)
+			}
+		})
+	}
 }
 
 func TestTrafficShapingEnabledV1_Applies_NoFile(t *testing.T) {
@@ -152,7 +212,7 @@ func TestTrafficShapingEnabledV1_ExecuteThenRollback(t *testing.T) {
 	require.NoError(t, m.Execute(context.Background(), nil))
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.True(t, blockNodeStateOf(t, b).TrafficShapingEnabled)
+	assert.Equal(t, true, rawBlockNodeState(t, b)[trafficShapingEnabledKey])
 
 	applies, err = m.Applies(nil)
 	require.NoError(t, err)
@@ -161,9 +221,18 @@ func TestTrafficShapingEnabledV1_ExecuteThenRollback(t *testing.T) {
 	require.NoError(t, m.Rollback(context.Background(), nil))
 	b, err = os.ReadFile(path)
 	require.NoError(t, err)
-	assert.NotContains(t, string(b), trafficShapingEnabledKey)
+	assert.NotContains(t, rawBlockNodeState(t, b), trafficShapingEnabledKey)
 
 	applies, err = m.Applies(nil)
 	require.NoError(t, err)
 	assert.True(t, applies, "must apply again after Rollback")
+}
+
+// TestBlockNodeState_WritesTrafficShapingEnabledWhenFalse pins the missing
+// omitempty: if false were omitted, a disabled node with a kept shaping record
+// would look like a legacy enabled node and the migration would turn it on.
+func TestBlockNodeState_WritesTrafficShapingEnabledWhenFalse(t *testing.T) {
+	out, err := yaml.Marshal(BlockNodeState{Shaping: &ShapingState{}})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "trafficShapingEnabled: false")
 }
