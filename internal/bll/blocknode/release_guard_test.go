@@ -34,6 +34,8 @@ func TestRequireInstalled(t *testing.T) {
 		{status: release.StatusFailed, force: true},
 		{status: "", wantErr: allVerbs(verbs, "not installed")},
 		{status: "", force: true},
+		{status: release.StatusUnknown, wantErr: allVerbs(verbs, "not installed")},
+		{status: release.StatusUnknown, force: true},
 		{status: release.StatusUninstalled, wantErr: allVerbs(verbs, "not installed")},
 		{status: release.StatusUninstalled, force: true},
 		{status: release.StatusPendingUpgrade, wantErr: allVerbs(verbs, `"pending-upgrade"`)},

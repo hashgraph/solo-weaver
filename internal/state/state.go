@@ -410,9 +410,14 @@ func (r HelmReleaseInfo) Installed() bool {
 	return r.Status == release.StatusDeployed || r.Status == release.StatusFailed
 }
 
-// Absent reports whether no release exists.
+// Absent reports whether no release exists. NewBlockNodeState marks a missing
+// release as StatusUnknown.
 func (r HelmReleaseInfo) Absent() bool {
-	return r.Status == "" || r.Status == release.StatusUninstalled
+	switch r.Status {
+	case "", release.StatusUnknown, release.StatusUninstalled:
+		return true
+	}
+	return false
 }
 
 // ClusterState represents the persisted state of a Kubernetes cluster.

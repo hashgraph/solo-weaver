@@ -129,15 +129,24 @@ func TestInstallHandler_RefusesExistingNonDeployedRelease(t *testing.T) {
 	}
 }
 
-// TestInstallHandler_UninstalledReleaseInstalls verifies a release Helm kept
-// after uninstall does not block a fresh install.
-func TestInstallHandler_UninstalledReleaseInstalls(t *testing.T) {
-	h := newMinimalInstallHandler()
-	currentState := state.State{StateRecord: state.StateRecord{
-		ClusterState:   state.ClusterState{Created: true},
-		BlockNodeState: state.BlockNodeState{ReleaseInfo: releaseInfo(release.StatusUninstalled)},
-	}}
+// TestInstallHandler_NoReleaseInstalls verifies install proceeds when Helm
+// holds no release, including the default state a fresh machine starts with.
+func TestInstallHandler_NoReleaseInstalls(t *testing.T) {
+	tests := map[string]state.BlockNodeState{
+		"default state": state.NewBlockNodeState(),
+		"empty status":  {},
+		"uninstalled":   {ReleaseInfo: releaseInfo(release.StatusUninstalled)},
+	}
+	for name, bn := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newMinimalInstallHandler()
+			currentState := state.State{StateRecord: state.StateRecord{
+				ClusterState:   state.ClusterState{Created: true},
+				BlockNodeState: bn,
+			}}
 
-	_, err := h.BuildWorkflow(currentState, installInputs("/mnt/storage", false))
-	require.NoError(t, err)
+			_, err := h.BuildWorkflow(currentState, installInputs("/mnt/storage", false))
+			require.NoError(t, err)
+		})
+	}
 }

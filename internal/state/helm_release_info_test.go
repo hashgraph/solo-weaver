@@ -26,7 +26,7 @@ func TestHelmReleaseInfo_InstalledAbsent(t *testing.T) {
 		{status: release.StatusPendingRollback},
 		{status: release.StatusUninstalling},
 		{status: release.StatusSuperseded},
-		{status: release.StatusUnknown},
+		{status: release.StatusUnknown, absent: true},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.status), func(t *testing.T) {
