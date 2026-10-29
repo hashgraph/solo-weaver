@@ -427,14 +427,14 @@ func TestRender_WorkedExamples(t *testing.T) {
 	require.NoError(t, err)
 
 	// publisher stamp.
-	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept")
+	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports counter meta priority set 0x10010 accept comment \"weaver:class=publisher\"")
 	// from-entity world fallthrough (no @set clause).
-	require.Contains(t, doc, "ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports meta priority set 0x10030 accept")
+	require.Contains(t, doc, "ip daddr 10.4.0.0/24 tcp dport @bn-subscriber-in_ports counter meta priority set 0x10030 accept comment \"weaver:class=reserve-ingress\"")
 	// deny (both directions).
 	require.Contains(t, doc, "ip saddr @bn-restricted drop")
 	require.Contains(t, doc, "ip daddr @bn-restricted drop")
 	// reply-stamp compound-key forward rule + ct mark write.
-	require.Contains(t, doc, "ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill ct mark set 0x20 meta priority set 0x10060 accept")
+	require.Contains(t, doc, "ip saddr 10.4.0.0/24 ip daddr . tcp dport @bn-backfill counter ct mark set 0x20 meta priority set 0x10060 accept comment \"weaver:class=reserve-egress\"")
 	// compound set schema, no `flags interval`.
 	require.Contains(t, doc, "set bn-backfill { type ipv4_addr . inet_service; }")
 }
