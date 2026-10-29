@@ -5,6 +5,7 @@ package keys
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
@@ -31,6 +32,19 @@ func TestInspectCmd_File(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "[hedera.crt | gRPC TLS certificate]")
 	assert.Contains(t, out, "Subject:")
+}
+
+func TestInspectCmd_FileHexWithoutPubNameIsNotPrinted(t *testing.T) {
+	secret := strings.Repeat("cd", 32)
+	path := filepath.Join(t.TempDir(), "admin.key")
+	require.NoError(t, os.WriteFile(path, []byte(secret+"\n"), 0o600))
+
+	out, err := runUnderNode(t, inspectCmd, "--file", path)
+	require.Error(t, err)
+	assert.Contains(t, out, "*.pub")
+	assert.NotContains(t, out, secret)
+	assert.NotContains(t, out, "| admin public key]")
+	assert.NotContains(t, err.Error(), secret)
 }
 
 func TestInspectCmd_RequiresSource(t *testing.T) {
