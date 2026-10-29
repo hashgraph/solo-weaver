@@ -205,6 +205,12 @@ fingerprint label; a secret that was renamed or edited is refused. When a node h
 more than one generation of a key type, pass `--fingerprint` or `--secret-suffix` to
 choose one; otherwise the command lists the candidates and stops.
 
+Export writes only the expected files for each key type: `s-private.pem` (0600)
+and `s-public.pem` for gossip, `hedera.key` (0600) and `hedera.crt` for gRPC TLS,
+and `admin.pub` for admin. Any other entry is logged and skipped; it stays only in
+the cluster secret, not in the backup. A secret that lacks one of its expected
+entries is refused.
+
 Export is idempotent: identical files are left untouched, and a file that holds
 different content is refused unless `--force` is passed.
 

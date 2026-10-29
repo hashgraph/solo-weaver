@@ -35,11 +35,18 @@ const (
 	adminSecretSuffix  = "-admin-pubkey"
 )
 
-// privateFiles are the inner-key names that hold private material and must be
-// written with 0600 permissions on export.
-var privateFiles = map[string]bool{
-	FileGossipPrivate: true,
-	FileGrpcKey:       true,
+// secretFile is one entry of a key secret that export writes to the folder.
+type secretFile struct {
+	name string
+	perm os.FileMode
+}
+
+// exportFiles are the only entries export writes for each key type; any other
+// entry in the secret is ignored.
+var exportFiles = map[KeyType][]secretFile{
+	KeyTypeGossip: {{FileGossipPrivate, privatePerm}, {FileGossipCert, publicPerm}},
+	KeyTypeGrpc:   {{FileGrpcKey, privatePerm}, {FileGrpcCert, publicPerm}},
+	KeyTypeAdmin:  {{FileAdminPublic, publicPerm}},
 }
 
 // ImportOptions parameterizes creating the per-node secrets from a folder.
@@ -239,24 +246,6 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 		if err != nil {
 			return nil, err
 		}
-		wrote := false
-		for key, value := range secret.Data {
-			perm := publicPerm
-			if privateFiles[key] {
-				perm = privatePerm
-			}
-			if t.typ == KeyTypeAdmin && key == FileAdminPublic {
-				// The secret holds raw key bytes; the folder file is hex text.
-				if value, err = AdminPublicToFile(value); err != nil {
-					return nil, err
-				}
-			}
-			changed, err := writeFileGuarded(opts.OutDir, key, value, perm, opts.Force)
-			if err != nil {
-				return nil, err
-			}
-			wrote = wrote || changed
-		}
 		log := logx.As().With().
 			Str("namespace", opts.Namespace).
 			Int64("nodeId", opts.NodeId).
@@ -264,6 +253,34 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 			Str("dir", opts.OutDir).
 			Bool("force", opts.Force).
 			Logger()
+		files := exportFiles[t.typ]
+		expected := make(map[string]bool, len(files))
+		for _, f := range files {
+			expected[f.name] = true
+			if _, ok := secret.Data[f.name]; !ok {
+				return nil, errorx.IllegalState.New("secret %q has no %q entry; re-import the key material", secret.Name, f.name)
+			}
+		}
+		for key := range secret.Data {
+			if !expected[key] {
+				log.Warn().Str("entry", key).Msg("Ignoring unexpected secret entry; it is not exported")
+			}
+		}
+		wrote := false
+		for _, f := range files {
+			value := secret.Data[f.name]
+			if t.typ == KeyTypeAdmin {
+				// The secret holds raw key bytes; the folder file is hex text.
+				if value, err = AdminPublicToFile(value); err != nil {
+					return nil, err
+				}
+			}
+			changed, err := writeFileGuarded(opts.OutDir, f.name, value, f.perm, opts.Force)
+			if err != nil {
+				return nil, err
+			}
+			wrote = wrote || changed
+		}
 		if wrote {
 			log.Info().Msg("Exported secret to folder")
 			result.Exported = append(result.Exported, secret.Name)
