@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"fmt"
+
 	"github.com/automa-saga/logx"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
@@ -13,6 +15,55 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+// requireInstalled is the precondition shared by upgrade, reconfigure, reset and
+// uninstall. A failed release passes because Helm upgrades from it.
+//
+// --force bypasses the absent check. It bypasses a stuck release (pending-* or
+// uninstalling) only for uninstall: Helm refuses every other operation on it, and
+// uninstall is the only recovery from pending-install.
+func requireInstalled(info state.HelmReleaseInfo, verb string, force bool) error {
+	switch {
+	case info.Installed():
+		if info.Status == release.StatusFailed {
+			logx.As().Warn().Str("release", info.Name).Str("namespace", info.Namespace).
+				Msgf("The last block node operation failed (Helm status %q); continuing with %s", info.Status, verb)
+		}
+		return nil
+	case info.Absent():
+		if force {
+			return nil
+		}
+		return errorx.IllegalState.New("block node is not installed; cannot %s", verb).
+			WithProperty(models.ErrPropertyResolution,
+				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
+	case force && verb == "uninstall":
+		return nil
+	default:
+		return stuckReleaseError(info, verb)
+	}
+}
+
+// stuckReleaseError reports a release whose last Helm operation never finished.
+func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
+	rel, ns := info.Name, info.Namespace
+	var hint string
+	switch info.Status {
+	case release.StatusPendingUpgrade, release.StatusPendingRollback:
+		hint = fmt.Sprintf("if no other solo-provisioner or helm command is running, find the last deployed revision "+
+			"with 'helm history %s -n %s', roll back to it with 'helm rollback %s <revision> -n %s', then re-run",
+			rel, ns, rel, ns)
+	case release.StatusPendingInstall:
+		hint = "if no other solo-provisioner or helm command is running, remove the partial install with " +
+			"'solo-provisioner block node uninstall --force', then install again"
+	default:
+		hint = fmt.Sprintf("inspect the release with 'helm history %s -n %s'; "+
+			"'solo-provisioner block node uninstall --force' removes it", rel, ns)
+	}
+	return errorx.IllegalState.New("block node Helm release %s in namespace %s is in state %q; cannot %s",
+		rel, ns, info.Status, verb).
+		WithProperty(models.ErrPropertyResolution, hint)
+}
 
 // patchBlockNodeState persists fields that cannot be recovered from the Helm
 // release or PersistentVolumes into the runtime state before flushing to disk.
@@ -433,11 +484,11 @@ type storagePlan struct {
 // the existing PVs/PVCs cannot be mutated in place and wiping the requested
 // paths would leave the deployed data orphaned on disk.
 //
-// A block node that is not deployed has nothing on disk to reason about and is
+// A block node that is not installed has nothing on disk to reason about and is
 // only reachable with --force, so the comparison is skipped and the requested
-// paths are used as-is.
+// paths are used as-is. A failed release is installed: its PVs are still bound.
 func planStorage(currentState state.State, ins models.BlockNodeInputs) (storagePlan, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+	if !currentState.BlockNodeState.ReleaseInfo.Installed() {
 		return storagePlan{purgeIns: ins, recreate: ins.PurgeStorage}, nil
 	}
 

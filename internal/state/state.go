@@ -404,6 +404,17 @@ type HelmReleaseInfo struct {
 	DeletedAt htime.Time `yaml:"deletedAt,omitempty" json:"deletedAt,omitempty"`
 }
 
+// Installed reports whether the release exists in a state Helm can upgrade from.
+// A failed revision counts: Helm upgrades from it.
+func (r HelmReleaseInfo) Installed() bool {
+	return r.Status == release.StatusDeployed || r.Status == release.StatusFailed
+}
+
+// Absent reports whether no release exists.
+func (r HelmReleaseInfo) Absent() bool {
+	return r.Status == "" || r.Status == release.StatusUninstalled
+}
+
 // ClusterState represents the persisted state of a Kubernetes cluster.
 type ClusterState struct {
 	models.ClusterInfo

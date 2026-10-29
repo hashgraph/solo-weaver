@@ -517,33 +517,58 @@ func TestReconfigure_MatchingChartVersionProceeds(t *testing.T) {
 	require.NotNil(t, wb)
 }
 
-// deployedBlockNodeStateWithStatus models a release Helm still knows about but
-// that is not deployed — a failed or half-applied upgrade. The reality checker
-// fills ReleaseInfo for these too, so the guards have to look at Status.
-func deployedBlockNodeStateWithStatus(basePath, version string, status release.Status) state.State {
+// blockNodeStateWithStatus is a release Helm still knows about whose latest
+// revision has the given status, e.g. a failed or interrupted upgrade.
+func blockNodeStateWithStatus(basePath, version string, status release.Status) state.State {
 	st := deployedBlockNodeStateAtVersion(basePath, version)
 	st.BlockNodeState.ReleaseInfo.Status = status
 	return st
 }
 
-// TestReconfigure_FailedReleaseSkipsChartGuards covers the interaction between
-// the guards and the state tier. setStateSources drops the state and reality
-// tiers for any status other than deployed, so the effective chart version falls
-// back to the compiled-in default while ReleaseInfo still reports the version
-// Helm has on record. Comparing the two would abort `reconfigure --force` — the
-// remedy the not-installed precondition in this same function points at.
-func TestReconfigure_FailedReleaseSkipsChartGuards(t *testing.T) {
+// TestReconfigure_FailedReleaseRetries covers the retry path after a failed
+// upgrade: the release is installed, so no --force is needed, and the effective
+// version is the release's own because setStateSources keeps the state tier.
+func TestReconfigure_FailedReleaseRetries(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	inputs := reconfigureInputs("/mnt/fast-storage", false)
-	inputs.Custom.ChartVersion = "0.44.3" // deps.BLOCK_NODE_VERSION, not the release's
-	inputs.Common.Force = true
+	inputs.Custom.ChartVersion = "0.40.0"
 
 	wb, err := h.BuildWorkflow(
-		deployedBlockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
+		blockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
 
-	require.NoError(t, err, "a failed release must stay reconfigurable with --force")
+	require.NoError(t, err)
 	require.NotNil(t, wb)
+}
+
+// TestReconfigure_FailedReleaseKeepsChartGuards verifies the version guard still
+// runs on a failed release: a config file asking for another version is refused.
+func TestReconfigure_FailedReleaseKeepsChartGuards(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/fast-storage", false)
+	inputs.Custom.ChartVersion = "0.44.3"
+
+	_, err := h.BuildWorkflow(
+		blockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chart version cannot be changed by a reconfigure")
+}
+
+// TestReconfigure_FailedReleaseKeepsStorageGuard verifies planStorage still
+// compares paths on a failed release.
+func TestReconfigure_FailedReleaseKeepsStorageGuard(t *testing.T) {
+	h := newMinimalReconfigureHandler()
+
+	inputs := reconfigureInputs("/mnt/other-storage", false)
+	inputs.Custom.ChartVersion = "0.40.0"
+
+	_, err := h.BuildWorkflow(
+		blockNodeStateWithStatus("/mnt/fast-storage", "0.40.0", release.StatusFailed), inputs)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "storage paths have changed")
 }
 
 // deployedBlockNodeStateWithLiveSize records a bound live PV at the given size,

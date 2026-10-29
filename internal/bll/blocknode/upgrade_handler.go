@@ -42,17 +42,15 @@ func (h *UpgradeHandler) PrepareEffectiveInputs(
 
 // BuildWorkflow validates upgrade preconditions and returns the workflow.
 // Preconditions:
-//   - Block node must already be deployed.
+//   - Block node must already be installed (deployed, or failed by the last operation).
 //   - Chart repository cannot be changed during an upgrade.
 //   - Version cannot be downgraded.
 func (h *UpgradeHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
-		return nil, errorx.IllegalState.New(
-			"block node is not installed; cannot upgrade").
-			WithProperty(models.ErrPropertyResolution, "use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
+	if err := requireInstalled(currentState.BlockNodeState.ReleaseInfo, "upgrade", inputs.Common.Force); err != nil {
+		return nil, err
 	}
 
 	if currentState.BlockNodeState.ReleaseInfo.ChartRef != "" &&
@@ -80,7 +78,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 			WithProperty(models.ErrPropertyResolution,
 				"version downgrade is not supported; use 'solo-provisioner block node reconfigure' to re-apply configuration at the current version")
 	}
-	if desiredVer.Equal(currentVer) && !inputs.Common.Force {
+	// Re-running at the version of a failed revision is a retry, not a no-op.
+	retry := currentState.BlockNodeState.ReleaseInfo.Status == release.StatusFailed
+	if desiredVer.Equal(currentVer) && !inputs.Common.Force && !retry {
 		return nil, errorx.IllegalArgument.New(
 			"block node is already at chart version %q; use --force to re-apply", currentVer)
 	}

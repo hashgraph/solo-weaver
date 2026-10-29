@@ -49,11 +49,24 @@ func (h *InstallHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status == release.StatusDeployed && !inputs.Common.Force {
+	// Only a deployed release honours --force. Helm refuses to install over any
+	// other existing release, so stop before the cluster steps run.
+	switch info := currentState.BlockNodeState.ReleaseInfo; {
+	case info.Status == release.StatusDeployed:
+		if !inputs.Common.Force {
+			return nil, errorx.IllegalState.New(
+				"block node is already installed; cannot install again").
+				WithProperty(models.ErrPropertyResolution,
+					"use 'solo-provisioner block node reset' or 'solo-provisioner block node upgrade', or pass --force to continue")
+		}
+	case info.Status == release.StatusFailed:
 		return nil, errorx.IllegalState.New(
-			"block node is already installed; cannot install again").
+			"block node is already installed, but its last operation failed; cannot install again").
 			WithProperty(models.ErrPropertyResolution,
-				"use 'solo-provisioner block node reset' or 'solo-provisioner block node upgrade', or pass --force to continue")
+				"re-run 'solo-provisioner block node upgrade' or 'solo-provisioner block node reconfigure' to retry, "+
+					"or 'solo-provisioner block node uninstall' first to start over")
+	case !info.Absent():
+		return nil, stuckReleaseError(info, "install")
 	}
 
 	// Fail fast if storage paths can't be resolved — don't set up a cluster for nothing.

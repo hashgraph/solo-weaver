@@ -5,6 +5,7 @@
 package blocknode
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/bll"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 // newMinimalInstallHandler returns a handler with only the fields used by
@@ -93,4 +95,49 @@ func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testin
 		"block-node-network-setup",
 		steps.SetupBlockNodeStepId,
 	}, ids, "traffic shaping disabled: no daemon-config step")
+}
+
+// TestInstallHandler_RefusesExistingNonDeployedRelease verifies install stops
+// before any cluster step when Helm still holds a release it cannot install over.
+func TestInstallHandler_RefusesExistingNonDeployedRelease(t *testing.T) {
+	tests := []struct {
+		status release.Status
+		want   string
+		hint   string
+	}{
+		{status: release.StatusFailed, want: "last operation failed", hint: "block node upgrade"},
+		{status: release.StatusPendingInstall, want: `"pending-install"`, hint: "uninstall --force"},
+		{status: release.StatusPendingUpgrade, want: `"pending-upgrade"`, hint: "helm rollback"},
+	}
+	for _, tc := range tests {
+		for _, force := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/force=%t", tc.status, force), func(t *testing.T) {
+				h := newMinimalInstallHandler()
+				currentState := state.State{StateRecord: state.StateRecord{
+					ClusterState:   state.ClusterState{Created: true},
+					BlockNodeState: state.BlockNodeState{ReleaseInfo: releaseInfo(tc.status)},
+				}}
+				inputs := installInputs("/mnt/storage", false)
+				inputs.Common.Force = force
+
+				_, err := h.BuildWorkflow(currentState, inputs)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+				assertResolutionMentions(t, err, tc.hint)
+			})
+		}
+	}
+}
+
+// TestInstallHandler_UninstalledReleaseInstalls verifies a release Helm kept
+// after uninstall does not block a fresh install.
+func TestInstallHandler_UninstalledReleaseInstalls(t *testing.T) {
+	h := newMinimalInstallHandler()
+	currentState := state.State{StateRecord: state.StateRecord{
+		ClusterState:   state.ClusterState{Created: true},
+		BlockNodeState: state.BlockNodeState{ReleaseInfo: releaseInfo(release.StatusUninstalled)},
+	}}
+
+	_, err := h.BuildWorkflow(currentState, installInputs("/mnt/storage", false))
+	require.NoError(t, err)
 }

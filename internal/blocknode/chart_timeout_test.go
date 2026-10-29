@@ -76,7 +76,7 @@ func TestUpgradeChart_TimeoutPropagation(t *testing.T) {
 			inputs := models.BlockNodeInputs{Release: "bn", Namespace: "ns", Timeout: tc.timeout}
 			m, hm := managerWithHelmMock(t, inputs)
 
-			hm.EXPECT().IsInstalled("bn", "ns").Return(true, nil)
+			hm.EXPECT().GetRelease("bn", "ns").Return(&release.Release{Info: &release.Info{Status: release.StatusDeployed}}, nil)
 			hm.EXPECT().
 				UpgradeChart(gomock.Any(), "bn", gomock.Any(), gomock.Any(), "ns", gomock.Any()).
 				DoAndReturn(func(_ context.Context, _, _, _, _ string, o helm.UpgradeChartOptions) (*release.Release, error) {
@@ -112,4 +112,52 @@ func TestIsHelmTimeoutError(t *testing.T) {
 			assert.Equal(t, tc.want, IsHelmTimeoutError(tc.err))
 		})
 	}
+}
+
+func TestCheckUpgradable(t *testing.T) {
+	tests := []struct {
+		status  release.Status
+		wantErr bool
+	}{
+		{status: release.StatusDeployed},
+		{status: release.StatusFailed},
+		{status: release.StatusPendingUpgrade, wantErr: true},
+		{status: release.StatusPendingInstall, wantErr: true},
+		{status: release.StatusPendingRollback, wantErr: true},
+		{status: release.StatusUninstalling, wantErr: true},
+		{status: release.StatusUninstalled, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.status.String(), func(t *testing.T) {
+			m, hm := managerWithHelmMock(t, models.BlockNodeInputs{Release: "bn", Namespace: "ns"})
+			hm.EXPECT().GetRelease("bn", "ns").Return(&release.Release{Info: &release.Info{Status: tc.status}}, nil)
+
+			err := m.CheckUpgradable()
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.status.String())
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestCheckUpgradable_NotFound(t *testing.T) {
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{Release: "bn", Namespace: "ns"})
+	hm.EXPECT().GetRelease("bn", "ns").Return(nil, helm.ErrNotFound.New("missing"))
+
+	err := m.CheckUpgradable()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not installed")
+}
+
+// TestUpgradeChart_RefusesPendingWithoutCallingHelm pins that a stuck release
+// never reaches Helm's upgrade.
+func TestUpgradeChart_RefusesPendingWithoutCallingHelm(t *testing.T) {
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{Release: "bn", Namespace: "ns"})
+	hm.EXPECT().GetRelease("bn", "ns").Return(&release.Release{Info: &release.Info{Status: release.StatusPendingUpgrade}}, nil)
+
+	err := m.UpgradeChart(context.Background(), "values.yaml", false)
+	require.Error(t, err)
 }
