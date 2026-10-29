@@ -63,21 +63,6 @@ func TestResetBlockNode_LeaveScaledDown(t *testing.T) {
 	})
 }
 
-// TestScaleDownBlockNodeAfterUpgrade_DistinctStepId guards the reason the
-// after-upgrade scale-down does not reuse ScaleDownBlockNodeStepId: a
-// reconfigure/upgrade that ends at 0 replicas puts both scale-downs in one
-// workflow, and two steps sharing an id collide.
-func TestScaleDownBlockNodeAfterUpgrade_DistinctStepId(t *testing.T) {
-	stp, err := ScaleDownBlockNodeAfterUpgrade(models.BlockNodeInputs{
-		Namespace: "block-node-ns",
-		Release:   "block-node",
-	}).Build()
-	require.NoError(t, err)
-
-	assert.Equal(t, ScaleDownAfterUpgradeStepId, stp.Id())
-	assert.NotEqual(t, ScaleDownBlockNodeStepId, ScaleDownAfterUpgradeStepId)
-}
-
 // TestResetBlockNode_PurgeStorage pins where the PV/PVC recreation lands in the
 // reset workflow: after the deployed directories are cleared and before the pod
 // comes back, so the StatefulSet only ever sees volumes bound to the requested

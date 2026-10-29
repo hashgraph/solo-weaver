@@ -4,90 +4,16 @@ package blocknode
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/cli/values"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
-
-// HelmOwnedServiceDeleteTimeout caps how long DeleteHelmOwnedServices waits for
-// the API server to finalize deletion of the matched Services before failing
-// the upgrade. Background propagation usually completes in <1s; the budget is
-// generous enough to absorb a slow apiserver without masking a real stuck
-// finalizer.
-const HelmOwnedServiceDeleteTimeout = 30 * time.Second
 
 // Namespace returns the block-node Kubernetes namespace these operations target.
 func (m *Manager) Namespace() string {
 	return m.blockNodeInputs.Namespace
-}
-
-// ResolveHelmTimeout picks the operator-supplied install/upgrade timeout
-// (from --timeout) when set, falling back to helm.DefaultTimeout (5m) for any
-// caller that leaves BlockNodeInputs.Timeout unset (zero) or negative.
-func (m *Manager) ResolveHelmTimeout() time.Duration {
-	if m.blockNodeInputs.Timeout > 0 {
-		return m.blockNodeInputs.Timeout
-	}
-	return helm.DefaultTimeout
-}
-
-// IsHelmTimeoutError reports whether err is a block-node Helm install/upgrade
-// that ran out its --timeout budget (the resources did not become ready in
-// time), as opposed to a genuine resource failure. With --atomic set, Helm
-// rolls the release back and surfaces the wait deadline as a context-deadline
-// or wait-timeout cause, so callers can only distinguish it from the error
-// chain. Used to attach a "raise --timeout" resolution hint at the step layer.
-func IsHelmTimeoutError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "context deadline exceeded") ||
-		strings.Contains(msg, "timed out waiting")
-}
-
-// InstallChart installs the block node helm chart
-func (m *Manager) InstallChart(ctx context.Context, valuesFile string) (bool, error) {
-	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
-	}
-	if isInstalled {
-		m.logger.Info().Msg("Block Node is already installed, skipping installation")
-		return false, nil
-	}
-	_, err = m.helmManager.InstallChart(
-		ctx,
-		m.blockNodeInputs.Release,
-		m.blockNodeInputs.Chart,
-		m.blockNodeInputs.ChartVersion,
-		m.blockNodeInputs.Namespace,
-		helm.InstallChartOptions{
-			ValueOpts: &values.Options{
-				ValueFiles: []string{valuesFile},
-			},
-			CreateNamespace: false,
-			Atomic:          true,
-			Wait:            true,
-			Timeout:         m.ResolveHelmTimeout(),
-		},
-	)
-	if err != nil {
-		return false, errorx.IllegalState.Wrap(err, "failed to install block node chart")
-	}
-	return true, nil
 }
 
 // UninstallChart uninstalls the block node helm chart
@@ -95,145 +21,11 @@ func (m *Manager) UninstallChart(ctx context.Context) error {
 	return m.helmManager.UninstallChart(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 }
 
-// UpgradeChart upgrades the block node helm chart.
-// When reuseValues is true and no custom values file is provided, the existing
-// release values are reused unchanged (following Helm CLI convention).
-func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
-	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
-	}
-	if !isInstalled {
-		return errorx.IllegalState.New("block node is not installed, cannot upgrade. Use 'install' command instead")
-	}
-	var valueFiles []string
-	if valuesFile != "" {
-		valueFiles = []string{valuesFile}
-	} else if !reuseValues {
-		return errorx.IllegalArgument.New("no values file provided and --no-reuse-values is set")
-	}
-	_, err = m.helmManager.UpgradeChart(
-		ctx,
-		m.blockNodeInputs.Release,
-		m.blockNodeInputs.Chart,
-		m.blockNodeInputs.ChartVersion,
-		m.blockNodeInputs.Namespace,
-		helm.UpgradeChartOptions{
-			ValueOpts: &values.Options{
-				ValueFiles: valueFiles,
-			},
-			ReuseValues: reuseValues,
-			Atomic:      true,
-			Wait:        true,
-			Timeout:     m.ResolveHelmTimeout(),
-		},
-	)
-	if err != nil {
-		m.logger.Error().
-			Err(err).
-			Str("chart", m.blockNodeInputs.Chart).
-			Str("version", m.blockNodeInputs.ChartVersion).
-			Str("namespace", m.blockNodeInputs.Namespace).
-			Msg("Helm upgrade failed")
-		return errorx.IllegalState.Wrap(err, "failed to upgrade block node chart")
-	}
-	return nil
-}
-
-// DeleteHelmOwnedServices deletes every Service in the block-node namespace that
-// belongs to the current Helm release (labels `app.kubernetes.io/managed-by=Helm`
-// and `app.kubernetes.io/instance=<release>`) and waits for the API server to
-// confirm their removal.
-//
-// Run this immediately before `helm upgrade`. Helm's reconciliation phase will
-// recreate the Services as part of the upgrade, which forces Cilium's eBPF
-// service reconciler through a CREATE event rather than the `spec.type`
-// transition UPDATE event it silently drops (see issue #619 / #644). Helm's
-// 3-way merge handles the missing-from-cluster-but-in-last-release case
-// transparently.
-//
-// A no-match is a successful no-op: a prior failed upgrade may have already
-// removed the Services, and the headless / LB Services may genuinely not exist
-// on certain chart variants. The caller (the saga step) is responsible for the
-// post-upgrade reachability probe that turns any remaining failure mode into a
-// loud workflow error.
-func (m *Manager) DeleteHelmOwnedServices(ctx context.Context) error {
-	selector := fmt.Sprintf(
-		"app.kubernetes.io/managed-by=Helm,app.kubernetes.io/instance=%s",
-		m.blockNodeInputs.Release,
-	)
-	opts := kube.WaitOptions{LabelSelector: selector}
-
-	services, err := m.kubeClient.List(ctx, kube.KindService, m.blockNodeInputs.Namespace, opts)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err,
-			"failed to list helm-owned Services in namespace %s with selector %q",
-			m.blockNodeInputs.Namespace, selector)
-	}
-	if len(services.Items) == 0 {
-		m.logger.Info().
-			Str("namespace", m.blockNodeInputs.Namespace).
-			Str("selector", selector).
-			Msg("No helm-owned Services to delete before upgrade")
-		return nil
-	}
-
-	gvr, err := kube.ToGroupVersionResource(kube.KindService)
-	if err != nil {
-		return err
-	}
-	policy := metav1.DeletePropagationBackground
-
-	names := make([]string, 0, len(services.Items))
-	for i := range services.Items {
-		names = append(names, services.Items[i].GetName())
-	}
-	m.logger.Info().
-		Strs("services", names).
-		Str("namespace", m.blockNodeInputs.Namespace).
-		Msg("Deleting helm-owned Services before upgrade so Cilium reconciles a fresh CREATE")
-
-	for _, name := range names {
-		err := m.kubeClient.Dyn.Resource(gvr).Namespace(m.blockNodeInputs.Namespace).
-			Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
-		if err != nil && !kerrors.IsNotFound(err) {
-			return errorx.IllegalState.Wrap(err,
-				"failed to delete Service %s/%s",
-				m.blockNodeInputs.Namespace, name)
-		}
-		m.logger.Debug().
-			Str("service", name).
-			Str("namespace", m.blockNodeInputs.Namespace).
-			Msg("Service delete submitted")
-	}
-
-	if err := m.kubeClient.WaitForResourcesDeletion(ctx, kube.KindService, m.blockNodeInputs.Namespace, HelmOwnedServiceDeleteTimeout, opts); err != nil {
-		return errorx.IllegalState.Wrap(err,
-			"helm-owned Services in namespace %s were not fully deleted within %s",
-			m.blockNodeInputs.Namespace, HelmOwnedServiceDeleteTimeout)
-	}
-	return nil
-}
-
-// DeleteStatefulSetForUpgrade deletes the block node StatefulSet using orphan cascading
-// and waits for it to be fully removed from the API server. This is required before any
-// Helm upgrade that changes volumeClaimTemplates, since Kubernetes forbids in-place updates.
-// Returns nil if the StatefulSet does not exist.
-func (m *Manager) DeleteStatefulSetForUpgrade(ctx context.Context) error {
-	stsName := m.blockNodeInputs.Release + ResourceNameSuffix
-	m.logger.Info().
-		Str("statefulset", stsName).
-		Msg("Deleting StatefulSet (orphan cascade) to allow volumeClaimTemplates update")
-	if err := m.kubeClient.DeleteStatefulSet(ctx, m.blockNodeInputs.Namespace, stsName); err != nil {
-		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Failed to delete StatefulSet before upgrade")
-		return errorx.ExternalError.Wrap(err, "failed to delete StatefulSet before upgrade")
-	}
-	m.logger.Info().Str("statefulset", stsName).Msg("Waiting for StatefulSet deletion to complete")
-	waitTimeout := 60 * time.Second
-	if err := m.kubeClient.WaitForResource(ctx, kube.KindStatefulSet, m.blockNodeInputs.Namespace, stsName, kube.IsDeleted, waitTimeout); err != nil {
-		m.logger.Warn().Err(err).Str("statefulset", stsName).Msg("Timeout waiting for StatefulSet deletion, proceeding with upgrade attempt")
-	}
-	return nil
+// IsInstalled reports whether a Helm release for this block node currently
+// exists. It lets the uninstall step treat a missing legacy release as a no-op
+// (idempotent uninstall) rather than erroring on a "release: not found".
+func (m *Manager) IsInstalled() (bool, error) {
+	return m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
 }
 
 // ScaleStatefulSet scales the block node statefulset to the specified number of replicas
@@ -290,92 +82,6 @@ func (m *Manager) GetInstalledVersion() (string, error) {
 		return rel.Chart.Metadata.Version, nil
 	}
 	return "", nil
-}
-
-// PodDiagnostics returns a slice of human-readable lines describing the current
-// state of block-node pods and their recent Warning events. Intended to be
-// appended to a Helm timeout error so operators see live cluster state rather
-// than static kubectl hints. All internal errors are suppressed — the caller
-// always receives a slice (possibly nil on total failure).
-func (m *Manager) PodDiagnostics(ctx context.Context) []string {
-	pods, err := m.kubeClient.List(ctx, kube.KindPod, m.blockNodeInputs.Namespace, kube.WaitOptions{
-		LabelSelector: PodLabelSelector,
-	})
-	if err != nil {
-		m.logger.Warn().Err(err).Msg("pod diagnostics: failed to list pods")
-		return nil
-	}
-
-	var lines []string
-
-	if len(pods.Items) == 0 {
-		lines = append(lines, fmt.Sprintf("  no block-node pods found in namespace %s", m.blockNodeInputs.Namespace))
-		return lines
-	}
-
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		phase, _, _ := unstructured.NestedString(pod.Object, "status", "phase")
-		lines = append(lines, fmt.Sprintf("  pod/%s  phase=%s", pod.GetName(), phase))
-
-		for _, statusKey := range []string{"initContainerStatuses", "containerStatuses"} {
-			statuses, _, _ := unstructured.NestedSlice(pod.Object, "status", statusKey)
-			for _, s := range statuses {
-				sm, ok := s.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				name, _, _ := unstructured.NestedString(sm, "name")
-				ready, _, _ := unstructured.NestedBool(sm, "ready")
-				reason, _, _ := unstructured.NestedString(sm, "state", "waiting", "reason")
-				message, _, _ := unstructured.NestedString(sm, "state", "waiting", "message")
-
-				line := fmt.Sprintf("    container/%s  ready=%v", name, ready)
-				if reason != "" {
-					line += "  waiting=" + reason
-				}
-				lines = append(lines, line)
-				if message != "" {
-					if len(message) > 200 {
-						message = message[:200] + "..."
-					}
-					lines = append(lines, "      "+message)
-				}
-			}
-		}
-	}
-
-	events, err := m.kubeClient.List(ctx, kube.KindEvent, m.blockNodeInputs.Namespace, kube.WaitOptions{
-		FieldSelector: "involvedObject.kind=Pod",
-	})
-	if err != nil {
-		m.logger.Warn().Err(err).Msg("pod diagnostics: failed to list pod events")
-		return lines
-	}
-
-	var warnLines []string
-	for _, ev := range events.Items {
-		evType, _, _ := unstructured.NestedString(ev.Object, "type")
-		if evType != "Warning" {
-			continue
-		}
-		reason, _, _ := unstructured.NestedString(ev.Object, "reason")
-		message, _, _ := unstructured.NestedString(ev.Object, "message")
-		objName, _, _ := unstructured.NestedString(ev.Object, "involvedObject", "name")
-		if len(message) > 200 {
-			message = message[:200] + "..."
-		}
-		warnLines = append(warnLines, fmt.Sprintf("    Warning  %-15s  %s: %s", reason, objName, message))
-	}
-	if len(warnLines) > 8 {
-		warnLines = warnLines[len(warnLines)-8:]
-	}
-	if len(warnLines) > 0 {
-		lines = append(lines, "  recent warning events:")
-		lines = append(lines, warnLines...)
-	}
-
-	return lines
 }
 
 // GetReleaseValues returns the user-supplied values from the currently installed release.

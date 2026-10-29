@@ -113,16 +113,28 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		return nil, err
 	}
 
-	var (
-		stepList   []automa.Builder
-		workflowId string
-	)
+	// Operator-driven day-2 guard (#1319): refuse to reconfigure a legacy,
+	// weaver-helm-managed block node — the operator cannot act on a legacy release.
+	// Runs first, before any network or storage work.
+	stepList := []automa.Builder{
+		steps.PrecheckBlockNodeLegacy(ins, steps.DefaultCapsuleKubeProvider, steps.BlockNodeHelmInstalledFn(ins)),
+	}
+	stepList = append(stepList, networkSteps...)
+
+	// UpgradeBlockNode patches the HelmCapsule with the freshly-rendered values at
+	// the deployed chart version; the operator reconciles the release whenever the
+	// values hash changes, which rolls the pod to pick up config changes. So there
+	// is no separate rollout-restart step (the operator owns the rollout), and
+	// --no-scale-up is handled declaratively via replicaCount: 0 in the values
+	// (ComputeValues). --no-restart cannot be honored under the operator model: any
+	// values change triggers a reconcile; the flag is accepted but has no effect.
+	var workflowId string
 	switch {
 	case plan.recreate:
 		// Wipe the deployed directories, then recreate PVs/PVCs and the directories
 		// at the requested paths before applying the chart.
 		workflowId = "block-node-reconfigure-purge-storage"
-		stepList = append(networkSteps,
+		stepList = append(stepList,
 			steps.PurgeBlockNodeStorage(plan.purgeIns),
 			steps.RecreateBlockNodeStorage(ins),
 			steps.UpgradeBlockNode(ins),
@@ -130,32 +142,13 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	case ins.ResetStorage:
 		// --with-reset wipes data only; PVs/PVCs are preserved.
 		workflowId = "block-node-reconfigure-with-reset"
-		stepList = append(networkSteps,
+		stepList = append(stepList,
 			steps.PurgeBlockNodeStorage(plan.purgeIns),
 			steps.UpgradeBlockNode(ins),
 		)
 	default:
-		stepList = append(networkSteps, steps.UpgradeBlockNode(ins))
-		switch {
-		case ins.NoRestart:
-			// Opt-out: apply new values via helm but skip the rollout-restart.
-			workflowId = "block-node-reconfigure-no-restart"
-		case ins.LeaveScaledDown:
-			// A rollout-restart would recreate the pod only for the trailing
-			// scale-down to remove it again.
-			workflowId = "block-node-reconfigure-scaled-down"
-		default:
-			// Default: apply new values then trigger a rolling restart so ConfigMap-only
-			// changes are picked up by the running pod.
-			workflowId = "block-node-reconfigure"
-			stepList = append(stepList, steps.RolloutRestartBlockNode(ins))
-		}
-	}
-
-	// --no-scale-up must be the last word: the branches it can reach all end in
-	// a helm upgrade, which re-asserts the chart's replica default.
-	if ins.LeaveScaledDown {
-		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))
+		workflowId = "block-node-reconfigure"
+		stepList = append(stepList, steps.UpgradeBlockNode(ins))
 	}
 
 	return automa.NewWorkflowBuilder().WithId(workflowId).Steps(stepList...), nil

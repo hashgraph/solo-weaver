@@ -46,6 +46,7 @@ type CapsuleKubeClient interface {
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
 	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
+	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 }
 
@@ -159,23 +160,39 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 						reasons.PreconditionNotMet,
 						"Verify cluster connectivity and that your kubeconfig has RBAC to read the cluster-scoped solo-operator Orbit CR")))
 				}
-				if diffs := DesiredOrbitState(inputs).Diff(state.ConsensusOrbitStateFromSpec(spec)); len(diffs) > 0 {
-					parts := make([]string, 0, len(diffs))
-					for _, d := range diffs {
+				live := state.ConsensusOrbitStateFromSpec(spec)
+				desired := DesiredOrbitState(inputs)
+
+				// Per-field reconciliation (#1319): a field the live Orbit already holds
+				// with a non-empty value that differs is a real conflict between two
+				// installs sharing the Orbit; empty live fields are "not yet set" and get
+				// filled in. This lets a block node install create a minimal Orbit and a
+				// later consensus install adopt it (updating ledgerId/chainId/etc.), while
+				// still refusing two installs that disagree on a value one already set.
+				if conflicts := desired.Conflicts(live); len(conflicts) > 0 {
+					parts := make([]string, 0, len(conflicts))
+					for _, d := range conflicts {
 						parts = append(parts, fmt.Sprintf("%s: Orbit has %q, install requests %q", d.Field, d.Live, d.Want))
 					}
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.New("Orbit %q already exists and differs from this install (%s); every node on an Orbit must use the same Orbit settings",
+						errorx.IllegalState.New("Orbit %q already exists and conflicts with this install (%s); every node on an Orbit must use the same Orbit settings",
 							inputs.OrbitName, strings.Join(parts, "; ")),
 						reasons.PreconditionNotMet,
 						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
 						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
 						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
 				}
-				l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already exists, skipping creation")
-				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
-					AlreadyInstalled: "true",
-				}))
+
+				if len(desired.Diff(live)) == 0 {
+					l.Info().Str("orbit", inputs.OrbitName).Msg("Orbit already matches this install, skipping creation")
+					return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
+						AlreadyInstalled: "true",
+					}))
+				}
+
+				// No conflicts, but the live Orbit is missing fields this install sets —
+				// fall through to apply (SSA) and fill them in.
+				l.Info().Str("orbit", inputs.OrbitName).Msg("Filling in empty Orbit fields for this install")
 			}
 
 			orbit := &operatorv1alpha1.Orbit{

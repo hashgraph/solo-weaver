@@ -94,6 +94,23 @@ func (h *InstallHandler) BuildWorkflow(
 			// kube cluster install); nftables is already installed/enabled by prior
 			// cluster provisioning, so it's safe to apply here.
 			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, ports),
+			// Operator prerequisites (#1319): the block node is deployed through
+			// solo-operator, so its CRDs (Orbit, HelmCapsule) must exist and the
+			// operator must be running. Checked before the capsule prechecks so a
+			// missing/old operator fails with "run kube operator install" rather than a
+			// raw REST-mapping error. solo-operator is installed separately
+			// (kube operator install), not by this workflow.
+			steps.PrecheckOperatorCRDs(steps.BlockNodeCRDs...),
+			steps.PrecheckOperatorRunning(),
+			steps.PrecheckOperatorVersion(),
+			// Operator-driven install guards (#1319), composed from the two
+			// model-specific prechecks. PrecheckBlockNode fails if the HelmCapsule
+			// already exists (unless --force); PrecheckBlockNodeLegacy fails if a
+			// legacy weaver-helm-managed release exists (directing the operator to
+			// uninstall first). The cluster exists by this point in both branches, so
+			// the CR can be queried.
+			steps.PrecheckBlockNode(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
+			steps.PrecheckBlockNodeLegacy(ins, steps.DefaultCapsuleKubeProvider, steps.BlockNodeHelmInstalledFn(ins)),
 			steps.SetupBlockNode(ins),
 		}
 		stepList = append(stepList, daemonConfigStep...)
@@ -118,6 +135,23 @@ func (h *InstallHandler) BuildWorkflow(
 			// systemSetupWorkflow, so applying the host firewall here (rather than
 			// in that generic, node-type-agnostic workflow) is safe.
 			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, ports),
+			// Operator prerequisites (#1319): the block node is deployed through
+			// solo-operator, so its CRDs (Orbit, HelmCapsule) must exist and the
+			// operator must be running. Checked before the capsule prechecks so a
+			// missing/old operator fails with "run kube operator install" rather than a
+			// raw REST-mapping error. solo-operator is installed separately
+			// (kube operator install), not by this workflow.
+			steps.PrecheckOperatorCRDs(steps.BlockNodeCRDs...),
+			steps.PrecheckOperatorRunning(),
+			steps.PrecheckOperatorVersion(),
+			// Operator-driven install guards (#1319), composed from the two
+			// model-specific prechecks. PrecheckBlockNode fails if the HelmCapsule
+			// already exists (unless --force); PrecheckBlockNodeLegacy fails if a
+			// legacy weaver-helm-managed release exists (directing the operator to
+			// uninstall first). The cluster exists by this point in both branches, so
+			// the CR can be queried.
+			steps.PrecheckBlockNode(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
+			steps.PrecheckBlockNodeLegacy(ins, steps.DefaultCapsuleKubeProvider, steps.BlockNodeHelmInstalledFn(ins)),
 			steps.SetupBlockNode(ins),
 		}
 		stepList = append(stepList, daemonConfigStep...)

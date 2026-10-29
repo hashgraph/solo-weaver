@@ -77,3 +77,43 @@ func TestConsensusOrbitState_YAMLRoundTrip(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(b, &out))
 	assert.Equal(t, in, out)
 }
+
+// TestConsensusOrbitState_Conflicts covers the fill-in semantics: an empty/zero
+// live field is adoptable (not a conflict), only a live value that is set and
+// differs from the desired one conflicts.
+func TestConsensusOrbitState_Conflicts(t *testing.T) {
+	desired := ConsensusOrbitState{ProvisionerDaemonEnabled: true, LedgerId: "0x00", ChainId: "295"}
+
+	t.Run("minimal live orbit has no conflicts (all fillable)", func(t *testing.T) {
+		assert.Empty(t, desired.Conflicts(ConsensusOrbitState{}))
+	})
+
+	t.Run("empty live fields are fillable even when desired sets them", func(t *testing.T) {
+		live := ConsensusOrbitState{} // empty ledger/chain, daemon false
+		assert.Empty(t, desired.Conflicts(live))
+		// Diff still reports them so EnsureOrbit knows to apply (fill in).
+		assert.NotEmpty(t, desired.Diff(live))
+	})
+
+	t.Run("live ledgerId set and different is a conflict", func(t *testing.T) {
+		live := ConsensusOrbitState{LedgerId: "0x01"}
+		c := desired.Conflicts(live)
+		require.Len(t, c, 1)
+		assert.Equal(t, "ledgerId", c[0].Field)
+	})
+
+	t.Run("live daemon true the desired wants false is a conflict", func(t *testing.T) {
+		d := ConsensusOrbitState{LedgerId: "0x00", ChainId: "295"} // daemon false
+		c := d.Conflicts(ConsensusOrbitState{ProvisionerDaemonEnabled: true, LedgerId: "0x00", ChainId: "295"})
+		require.Len(t, c, 1)
+		assert.Equal(t, "provisionerDaemonEnabled", c[0].Field)
+	})
+
+	t.Run("live daemon false is fillable (not a conflict) even when desired true", func(t *testing.T) {
+		assert.Empty(t, desired.Conflicts(ConsensusOrbitState{LedgerId: "0x00", ChainId: "295"}))
+	})
+
+	t.Run("matching live orbit has no conflicts", func(t *testing.T) {
+		assert.Empty(t, desired.Conflicts(desired))
+	})
+}

@@ -49,6 +49,14 @@ var ConsensusNodeCRDs = []string{
 	"networkupgradeexecutes",
 }
 
+// BlockNodeCRDs lists the solo-operator CRDs required for the operator-driven
+// block node lifecycle (#1319): the cluster-scoped Orbit the HelmCapsule
+// references, and the HelmCapsule itself (component: block-node).
+var BlockNodeCRDs = []string{
+	"orbits",
+	"helmcapsules",
+}
+
 // PrecheckOperatorCRDs verifies that the Kubernetes cluster is reachable and
 // that the given solo-operator CRDs are installed. Each component workflow
 // passes in the CRD names it needs (e.g. "orbits", "consensuscapsules").

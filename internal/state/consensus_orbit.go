@@ -144,6 +144,62 @@ func (o ConsensusOrbitState) Diff(live ConsensusOrbitState) []OrbitFieldDiff {
 	return diffs
 }
 
+// Conflicts reports only the tracked fields where the live Orbit already holds a
+// non-empty value that differs from o. Empty/zero live fields are NOT conflicts:
+// they are treated as "not yet set" and are meant to be filled in by this install.
+// This lets a block node install create a minimal Orbit and a later consensus
+// install adopt it — filling in ledgerId/chainId/etc. — while still refusing two
+// installs that disagree on a value one of them already set (#1319).
+//
+// Note the bool fields: a false live value is indistinguishable from "unset", so it
+// is always treated as fillable; only a live true that o wants false is a conflict.
+func (o ConsensusOrbitState) Conflicts(live ConsensusOrbitState) []OrbitFieldDiff {
+	var diffs []OrbitFieldDiff
+	addStr := func(field, want, have string) {
+		if have != "" && have != want {
+			diffs = append(diffs, OrbitFieldDiff{Field: field, Want: want, Live: have})
+		}
+	}
+	addBool := func(field string, want, have bool) {
+		if have && want != have {
+			diffs = append(diffs, OrbitFieldDiff{Field: field, Want: strconv.FormatBool(want), Live: strconv.FormatBool(have)})
+		}
+	}
+	addInt := func(field string, want, have int) {
+		if have != 0 && want != have {
+			diffs = append(diffs, OrbitFieldDiff{Field: field, Want: strconv.Itoa(want), Live: strconv.Itoa(have)})
+		}
+	}
+	addBool("provisionerDaemonEnabled", o.ProvisionerDaemonEnabled, live.ProvisionerDaemonEnabled)
+	addStr("ledgerId", o.LedgerId, live.LedgerId)
+	// chainId normalizes "" to "0", so compare the raw live value for emptiness.
+	if live.ChainId != "" && normalizeChainId(o.ChainId) != normalizeChainId(live.ChainId) {
+		diffs = append(diffs, OrbitFieldDiff{Field: "chainId", Want: normalizeChainId(o.ChainId), Live: normalizeChainId(live.ChainId)})
+	}
+	addInt("realmId", o.RealmId, live.RealmId)
+	addInt("shardId", o.ShardId, live.ShardId)
+	addStr("provisioningModel", o.ProvisioningModel, live.ProvisioningModel)
+	addBool("requireDigestOnDeploy", o.RequireDigestOnDeploy, live.RequireDigestOnDeploy)
+	addStr("deploymentModel", o.DeploymentModel, live.DeploymentModel)
+
+	// External addresses: only a shared node id whose live digest differs from the
+	// desired one is a conflict. A live-only or desired-only entry is additive (a
+	// fill-in / another node's registration), not a conflict.
+	want := externalByNode(o.ExternalAddresses)
+	have := externalByNode(live.ExternalAddresses)
+	ids := make([]int64, 0, len(have))
+	for id := range have {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		if w, ok := want[id]; ok && w != have[id] {
+			diffs = append(diffs, OrbitFieldDiff{Field: fmt.Sprintf("externalAddresses[%d]", id), Want: "recorded content", Live: "changed content"})
+		}
+	}
+	return diffs
+}
+
 func normalizeChainId(v string) string {
 	if v == "" {
 		return "0"

@@ -4,15 +4,15 @@ package steps
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -22,32 +22,48 @@ const (
 	CreateBlockNodePVsStepId         = "create-block-node-pvs"
 	DeleteBlockNodePVsStepId         = "delete-block-node-pvs"
 	RecreateBlockNodeStorageStepId   = "recreate-block-node-storage"
-	InstallBlockNodeStepId           = "install-block-node"
 	UninstallBlockNodeStepId         = "uninstall-block-node"
 	UpgradeBlockNodeStepId           = "upgrade-block-node"
+	EnsureStorageMigrationsStepId    = "ensure-block-node-storage-migrations"
 	WaitForBlockNodeStepId           = "wait-for-block-node"
 	ResetBlockNodeStepId             = "reset-block-node"
 	PurgeBlockNodeStorageStepId      = "purge-block-node-storage"
 	ScaleDownBlockNodeStepId         = "scale-down-block-node"
-	ScaleDownAfterUpgradeStepId      = "scale-down-block-node-after-upgrade"
 	ClearBlockNodeStorageStepId      = "clear-block-node-storage"
 	ScaleUpBlockNodeStepId           = "scale-up-block-node"
 	WaitForBlockNodeTerminatedStepId = "wait-for-block-node-terminated"
-	RolloutRestartBlockNodeStepId    = "rollout-restart-block-node"
 	VerifyBlockNodeReachableStepId   = "verify-block-node-reachable"
 )
 
-// SetupBlockNode sets up the block node on the cluster
+// SetupBlockNode sets up the block node on the cluster.
+//
+// Weaver still owns the host-level prerequisites — the hedera owner, storage
+// directories, namespace, and PVs — but the block-node workload is now deployed
+// through solo-operator (#1319): weaver ensures the Orbit the HelmCapsule needs,
+// applies a HelmCapsule (component: block-node) carrying the rendered chart
+// values, and waits for the operator to reconcile it to Ready, instead of driving
+// the Helm SDK directly. The install guard (PrecheckBlockNodeNotInstalled) lives
+// in the install handler's preflight, mirroring the consensus-node install.
 func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
+	valuesFn := func() ([]byte, error) {
+		manager, err := blockNodeManagerProvider()
+		if err != nil {
+			return nil, err
+		}
+		return manager.ComputeValues(inputs.Profile, inputs.ValuesFile)
+	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
 		EnsureHederaOwnerStep(),
 		setupBlockNodeStorage(blockNodeManagerProvider),
 		createBlockNodeNamespace(blockNodeManagerProvider),
 		createBlockNodePVs(blockNodeManagerProvider),
-		installBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
-		waitForBlockNode(blockNodeManagerProvider),
+		EnsureBlockNodeOrbit(inputs, DefaultCapsuleKubeProvider),
+		// Install applies the fully-rendered values (no reuse — there is nothing to
+		// reuse on a fresh node; a --force re-apply is intentionally a clean render).
+		CreateBlockNodeCapsule(inputs, valuesFn, false, DefaultCapsuleKubeProvider),
+		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
 		verifyBlockNodeReachable(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -191,30 +207,93 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 		})
 }
 
+// BlockNodeHelmInstalledFn returns a checker reporting whether a legacy,
+// weaver-helm-managed block node release exists for these inputs. The install
+// precheck (PrecheckBlockNodeNotInstalled) uses it to detect a pre-#1319 release
+// that must be uninstalled before an operator-driven install. The manager and its
+// cluster clients are built lazily, so the check runs only when the closure is
+// invoked at step-execution time.
+func BlockNodeHelmInstalledFn(inputs models.BlockNodeInputs) func() (bool, error) {
+	managerProvider := newBlockNodeManagerProvider(inputs)
+	return func() (bool, error) {
+		manager, err := managerProvider()
+		if err != nil {
+			return false, err
+		}
+		return manager.IsInstalled()
+	}
+}
+
 func UninstallBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 	return automa.NewWorkflowBuilder().WithId(UninstallBlockNodeStepId).Steps(
-		uninstallBlockNode(inputs.Profile, inputs.ValuesFile, blockNodeManagerProvider),
+		uninstallBlockNode(inputs, blockNodeManagerProvider, DefaultCapsuleKubeProvider),
 	)
 }
 
-// uninstallBlockNode uninstalls the block node helm chart
-func uninstallBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
+// uninstallBlockNode removes the block node workload, supporting both deployment
+// models (#1319):
+//
+//   - Operator-managed (new installs): a HelmCapsule CR owns the release. Delete
+//     the CR and let solo-operator uninstall the underlying Helm release via its
+//     finalizer. Deleting the CR — not running helm uninstall ourselves — is what
+//     keeps weaver from fighting the operator's reconcile.
+//   - Legacy weaver-helm-managed (pre-#1319 installs on existing clusters): no CR
+//     exists. Fall back to a direct Helm uninstall.
+//
+// Both paths are disk-safe — neither touches PVs/PVCs or on-disk data; storage
+// teardown stays a separate, explicit step gated on --with-reset / --purge-storage.
+// Both are idempotent: a missing CR falls through to the Helm path, and a missing
+// Helm release is a no-op.
+func uninstallBlockNode(
+	inputs models.BlockNodeInputs,
+	getManager func() (*blocknode.Manager, error),
+	capsuleProvider CapsuleKubeProvider,
+) *automa.StepBuilder {
+	return automa.NewStepBuilder().WithId(UninstallBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
+			kc, err := capsuleProvider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			name := blockNodeCapsuleName(inputs)
+
+			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
+			if exists {
+				// Operator-managed: delete the CR; the operator uninstalls the release.
+				if _, err := kc.DeleteResource(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
+				logx.As().Info().Str("name", name).Msg("Deleted HelmCapsule; operator will uninstall the Helm release")
+				return automa.StepSuccessReport(stp.Id())
+			}
+
+			// Legacy path: no operator CR, so uninstall any weaver-helm-managed release.
 			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			err = manager.UninstallChart(ctx)
+			installed, err := manager.IsInstalled()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
+			if !installed {
+				logx.As().Info().Str("release", inputs.Release).Msg("No HelmCapsule and no Helm release found; nothing to uninstall")
+				return automa.StepSuccessReport(stp.Id())
+			}
 
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+			if err := manager.UninstallChart(ctx); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			logx.As().Info().Str("release", inputs.Release).Msg("Uninstalled legacy Helm-managed block node release")
+			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Uninstalling Block Node")
@@ -225,96 +304,6 @@ func uninstallBlockNode(profile string, valuesFile string, getManager func() (*b
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block Node uninstalled successfully")
-		})
-}
-
-// blockNodeChartError enriches a failed Helm install/upgrade with an
-// operator-actionable resolution. When the failure is a --timeout budget
-// overrun (Helm rolled the release back under --atomic before the resources
-// became ready), it fetches live pod state and recent Warning events from the
-// cluster and includes them in the error so the operator sees the actual failure
-// reason (e.g. ImagePullBackOff) without having to run kubectl manually.
-// action is "install" or "upgrade".
-func blockNodeChartError(ctx context.Context, err error, manager *blocknode.Manager, action string) error {
-	namespace := manager.Namespace()
-	if blocknode.IsHelmTimeoutError(err) {
-		hints := []string{
-			fmt.Sprintf("The block node did not become ready within the --timeout budget (%s) and was rolled back (--atomic).", manager.ResolveHelmTimeout()),
-			"Re-run with a longer --timeout, e.g.:",
-			fmt.Sprintf("  solo-provisioner block node %s --timeout 15m ...", action),
-			"A cold first boot can be slow when the chart's resolve-plugins init container resolves plugins from Maven.",
-		}
-		if diag := manager.PodDiagnostics(ctx); len(diag) > 0 {
-			hints = append(hints, "Pod state at timeout:")
-			hints = append(hints, diag...)
-		}
-		return errorx.Decorate(err, "block node %s exceeded the --timeout budget", action).
-			WithProperty(models.ErrPropertyResolution, hints)
-	}
-	return errorx.Decorate(err, "block node %s failed", action).
-		WithProperty(models.ErrPropertyResolution, []string{
-			"Inspect the block node pod for the underlying cause:",
-			fmt.Sprintf("  kubectl -n %s get pods", namespace),
-			fmt.Sprintf("  kubectl -n %s describe pod -l app.kubernetes.io/name=block-node-server", namespace),
-			fmt.Sprintf("  kubectl -n %s logs -l app.kubernetes.io/name=block-node-server --all-containers", namespace),
-		})
-}
-
-// installBlockNode installs the block node helm chart
-func installBlockNode(profile string, valuesFile string, getManager func() (*blocknode.Manager, error)) *automa.StepBuilder {
-	return automa.NewStepBuilder().WithId(InstallBlockNodeStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
-
-			manager, err := getManager()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			installed, err := manager.InstallChart(ctx, valuesFilePath)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(ctx, err, manager, "install")))
-			}
-
-			if !installed {
-				meta[AlreadyInstalled] = "true"
-			} else {
-				meta[InstalledByThisStep] = "true"
-				stp.State().Local().Set(InstalledByThisStep, true)
-			}
-
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
-		}).
-		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			if v, _ := stp.State().Local().Bool(InstalledByThisStep); v == false {
-				return automa.StepSkippedReport(stp.Id())
-			}
-
-			manager, err := getManager()
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			if err := manager.UninstallChart(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Installing Block Node")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to install Block Node")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node installed successfully")
 		})
 }
 
@@ -348,25 +337,49 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 		})
 }
 
-// UpgradeBlockNode upgrades the block node on the cluster.
+// UpgradeBlockNode applies the block node's desired state through solo-operator
+// (#1319): it patches the HelmCapsule with the requested chart version and
+// freshly-rendered values (server-side apply) and waits for the operator to
+// reconcile the release to Ready. One flow serves both `block node upgrade` (new
+// chart version) and `block node reconfigure` (same version, changed values) — the
+// operator upgrades the release whenever the chart spec or values hash changes.
 //
-// The upgradeBlockNode step deletes the helm-owned Services immediately
-// before calling helm so that helm recreates them as fresh CREATE events.
-// Cilium's eBPF service reconciler drops the `spec.type` transition UPDATE
-// event (the root cause of #619) but handles CREATE cleanly, so the
-// topology flip heals itself without any kube-system-wide Cilium DaemonSet
-// restart. The delete is placed AFTER preflight (migration discovery,
-// values-file rendering) so a preflight failure leaves the Services intact
-// — the failure window between delete and helm shrinks to a function call.
-// The post-upgrade reachability probe converts any remaining failure mode
-// (Cilium, MetalLB, chart, firewall) into a loud workflow error. See #644.
+// It replaces the former direct `helm upgrade`: there is no Cilium #619
+// Service-delete workaround (the operator owns the Services) and no imperative
+// post-upgrade scale-down — `--no-scale-up` is expressed declaratively as
+// replicaCount: 0 in the rendered values (see Manager.ComputeValues).
+//
+// NOTE: the legacy breaking-chart-change storage migration (BuildMigrationWorkflow)
+// is not yet re-homed onto this path; storage migrations that must run before a
+// breaking chart upgrade are tracked as follow-up work.
 func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
+	valuesFn := func() ([]byte, error) {
+		manager, err := blockNodeManagerProvider()
+		if err != nil {
+			return nil, err
+		}
+		return manager.ComputeValues(inputs.Profile, inputs.ValuesFile)
+	}
+
+	// Service-shape guard (#619): record the deployed Service shape before the patch,
+	// and after the operator reconciles, restart Cilium if the shape changed so the
+	// dropped spec.type transition does not blackhole the LoadBalancer.
+	recordShape, healCilium := BlockNodeServiceShapeGuard(inputs, DefaultCapsuleKubeProvider)
 
 	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
 		EnsureHederaOwnerStep(),
-		upgradeBlockNode(inputs, blockNodeManagerProvider),
-		waitForBlockNode(blockNodeManagerProvider),
+		// Breaking-boundary storage prep: create the PV/PVCs for any optional storage
+		// a newer chart version requires, before the capsule patch renders the chart
+		// against them. No-op when the upgrade crosses no such boundary.
+		EnsureBlockNodeStorageMigrations(inputs),
+		recordShape,
+		// Upgrade/reconfigure honor --reuse-values (default true): preserve deployed
+		// operator-set values under the merge; --no-reuse-values applies only the
+		// fresh render.
+		CreateBlockNodeCapsule(inputs, valuesFn, inputs.ReuseValues, DefaultCapsuleKubeProvider),
+		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
+		healCilium,
 		verifyBlockNodeReachable(blockNodeManagerProvider),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -381,83 +394,50 @@ func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 		})
 }
 
-// upgradeBlockNode upgrades the block node helm chart.
-//
-// Order matters: preflight (BuildMigrationWorkflow, ComputeValuesFile,
-// migrationWorkflow.Build) runs before DeleteHelmOwnedServices so that any
-// preflight failure leaves the Services intact and the cluster reachable.
-// The Services are deleted only at the commit point — immediately before the
-// helm operation that would have recreated them anyway — so the failure
-// window between delete and helm is a function call. Helm's atomic mode
-// covers anything that fails from UpgradeChart onward.
-func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(UpgradeBlockNodeStepId).
+// EnsureBlockNodeStorageMigrations creates the PV/PVCs for any optional storage a
+// newer chart version requires before an operator upgrade patches the HelmCapsule
+// (#1319). Weaver owns the PVs (existingClaim model), so a volume a breaking chart
+// boundary introduces must exist before the operator renders the chart against it.
+// It builds and runs the storage-prep workflow at execute time (the applicable set
+// depends on the deployed vs target version) and is a no-op when the upgrade crosses
+// no such boundary. It does NOT move the chart — that is the capsule patch that
+// follows.
+func EnsureBlockNodeStorageMigrations(inputs models.BlockNodeInputs) automa.Builder {
+	managerProvider := newBlockNodeManagerProvider(inputs)
+	return automa.NewStepBuilder().WithId(EnsureStorageMigrationsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
-
-			manager, err := getManager()
+			manager, err := managerProvider()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// Preflight: any failure here is safe — Services intact, no outage.
-			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, inputs.Profile, inputs.ValuesFile)
+			wf, err := blocknode.BuildStorageMigrationWorkflow(manager, inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
-			if migrationWorkflow != nil {
-				logx.As().Info().Msg("Breaking chart change detected, performing automatic migration")
-
-				workflow, err := migrationWorkflow.Build()
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-
-				// Commit point: delete Services immediately before the helm
-				// operation that the migration workflow will perform.
-				if err := manager.DeleteHelmOwnedServices(ctx); err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-				}
-
-				report := workflow.Execute(ctx)
-				if report.Error != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
-				}
-
-				meta["migrated"] = "true"
-				meta["upgraded"] = "true"
-				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+			if wf == nil {
+				// No breaking-boundary storage migration applies.
+				return automa.StepSuccessReport(stp.Id())
 			}
 
-			// Normal upgrade path: preflight values computation first.
-			valuesFilePath, err := manager.ComputeValuesFile(inputs.Profile, inputs.ValuesFile)
+			workflow, err := wf.Build()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
-			// Commit point: delete Services immediately before helm upgrade.
-			if err := manager.DeleteHelmOwnedServices(ctx); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			if report := workflow.Execute(ctx); report.Error != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(report.Error))
 			}
-
-			err = manager.UpgradeChart(ctx, valuesFilePath, inputs.ReuseValues)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(blockNodeChartError(ctx, err, manager, "upgrade")))
-			}
-
-			meta["upgraded"] = "true"
-			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
+			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Upgrading Block Node chart")
+			notify.As().StepStart(ctx, stp, "Preparing storage for chart changes")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to upgrade Block Node chart")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to prepare storage for chart changes")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node chart upgraded successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Storage prepared for chart changes")
 		})
 }
 
@@ -478,9 +458,9 @@ func newBlockNodeManagerProvider(inputs models.BlockNodeInputs) func() (*blockno
 }
 
 // purgeBlockNodeStorageSteps returns the steps to scale down, wait for termination, and clear storage
-func purgeBlockNodeStorageSteps(managerProvider func() (*blocknode.Manager, error)) []automa.Builder {
+func purgeBlockNodeStorageSteps(inputs models.BlockNodeInputs, managerProvider func() (*blocknode.Manager, error), capsuleProvider CapsuleKubeProvider) []automa.Builder {
 	return []automa.Builder{
-		scaleDownBlockNode(managerProvider, ScaleDownBlockNodeStepId),
+		scaleDownBlockNode(inputs, managerProvider, capsuleProvider, ScaleDownBlockNodeStepId),
 		waitForBlockNodeTerminated(managerProvider),
 		clearBlockNodeStorage(managerProvider),
 	}
@@ -501,13 +481,13 @@ func ResetBlockNode(deployedStorage models.BlockNodeStorage, inputs models.Block
 
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
-	stepList := purgeBlockNodeStorageSteps(newBlockNodeManagerProvider(deployedIns))
+	stepList := purgeBlockNodeStorageSteps(deployedIns, newBlockNodeManagerProvider(deployedIns), DefaultCapsuleKubeProvider)
 	if inputs.PurgeStorage {
 		stepList = append(stepList, RecreateBlockNodeStorage(inputs))
 	}
 	if !inputs.LeaveScaledDown {
 		stepList = append(stepList,
-			scaleUpBlockNode(managerProvider),
+			scaleUpBlockNode(inputs, managerProvider, DefaultCapsuleKubeProvider),
 			waitForBlockNode(managerProvider),
 		)
 	}
@@ -545,7 +525,7 @@ func PurgeBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilde
 	managerProvider := newBlockNodeManagerProvider(inputs)
 
 	return automa.NewWorkflowBuilder().WithId(PurgeBlockNodeStorageStepId).Steps(
-		purgeBlockNodeStorageSteps(managerProvider)...,
+		purgeBlockNodeStorageSteps(inputs, managerProvider, DefaultCapsuleKubeProvider)...,
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Purging Block Node storage")
@@ -559,68 +539,107 @@ func PurgeBlockNodeStorage(inputs models.BlockNodeInputs) *automa.WorkflowBuilde
 		})
 }
 
-// ScaleDownBlockNodeAfterUpgrade returns the step that leaves the block node
-// StatefulSet at 0 replicas once a reconfigure/upgrade has finished, honouring
-// --no-scale-up. It must run after UpgradeBlockNode: `helm upgrade` re-asserts
-// the chart's replica default, so a scale-down placed any earlier is undone.
-//
-// Like DeleteBlockNodePersistentVolumes this is a thin public facade over the
-// package-private helper, which already carries its own notify hooks. It takes a
-// distinct step id because the purge prefix contributes a scale-down to the same
-// workflow and two steps sharing an id collide.
-func ScaleDownBlockNodeAfterUpgrade(inputs models.BlockNodeInputs) automa.Builder {
-	return scaleDownBlockNode(newBlockNodeManagerProvider(inputs), ScaleDownAfterUpgradeStepId)
+// setBlockNodeReplicas scales the block node, choosing the mechanism by deployment
+// model (#1319). When a HelmCapsule CR owns the block node it re-applies the
+// capsule with the appropriate replicaCount (0 when scaledDown, chart default
+// otherwise) so the change survives the operator's reconcile; a legacy,
+// weaver-helm-managed release is scaled directly via the StatefulSet.
+func setBlockNodeReplicas(ctx context.Context, inputs models.BlockNodeInputs, manager *blocknode.Manager, kc CapsuleKubeClient, scaledDown bool) error {
+	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+	name := blockNodeCapsuleName(inputs)
+
+	exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		// Legacy release: no operator to fight, scale the StatefulSet directly.
+		replicas := int32(1)
+		if scaledDown {
+			replicas = 0
+		}
+		return manager.ScaleStatefulSet(ctx, replicas)
+	}
+
+	// Operator-managed: scale declaratively by toggling replicaCount on the deployed
+	// values and re-applying. This is a read-modify-write of the live spec.values —
+	// it preserves every other deployed value (operator customizations included) and
+	// does NOT re-render config, so a reset/scale never doubles as a reconfigure.
+	deployed, _, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, "spec", "values")
+	if err != nil {
+		return err
+	}
+	if deployed == nil {
+		deployed = map[string]interface{}{}
+	}
+	if scaledDown {
+		deployed["replicaCount"] = 0
+	} else {
+		deployed["replicaCount"] = 1
+	}
+	valuesYAML, err := yaml.Marshal(deployed)
+	if err != nil {
+		return err
+	}
+	capsule, err := buildBlockNodeHelmCapsule(inputs, valuesYAML)
+	if err != nil {
+		return err
+	}
+	return kc.ApplyTyped(ctx, capsule)
 }
 
-// scaleDownBlockNode scales down the block node StatefulSet to 0 replicas.
-// stepId is a parameter because a reconfigure/upgrade that ends at 0 replicas
-// contributes two scale-downs to one workflow — one in the purge prefix, one
-// after the Helm upgrade.
-func scaleDownBlockNode(getManager func() (*blocknode.Manager, error), stepId string) automa.Builder {
+// scaleDownBlockNode scales the block node to 0 replicas, dual-model: a HelmCapsule
+// re-apply with replicaCount: 0 for operator-managed nodes, or a direct StatefulSet
+// scale for a legacy release (see setBlockNodeReplicas). stepId is a parameter so a
+// workflow that scales down in more than one place does not collide on the id.
+func scaleDownBlockNode(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error), capsuleProvider CapsuleKubeProvider, stepId string) automa.Builder {
 	return automa.NewStepBuilder().WithId(stepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
-
+			kc, err := capsuleProvider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.ScaleStatefulSet(ctx, 0); err != nil {
+			if err := setBlockNodeReplicas(ctx, inputs, manager, kc, true); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			meta[ConfiguredByThisStep] = "true"
+			meta := map[string]string{ConfiguredByThisStep: "true"}
 			stp.State().Local().Set(ConfiguredByThisStep, true)
-
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// On rollback, scale back up
+			// On rollback, scale back up.
 			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
-
+			kc, err := capsuleProvider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
-			if err := manager.ScaleStatefulSet(ctx, 1); err != nil {
+			if err := setBlockNodeReplicas(ctx, inputs, manager, kc, false); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Scaling down Block Node StatefulSet")
+			notify.As().StepStart(ctx, stp, "Scaling down Block Node")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale down Block Node StatefulSet")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale down Block Node")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node StatefulSet scaled down successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node scaled down successfully")
 		})
 }
 
@@ -685,87 +704,53 @@ func clearBlockNodeStorage(getManager func() (*blocknode.Manager, error)) automa
 }
 
 // scaleUpBlockNode scales up the block node StatefulSet to 1 replica
-func scaleUpBlockNode(getManager func() (*blocknode.Manager, error)) automa.Builder {
+func scaleUpBlockNode(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error), capsuleProvider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(ScaleUpBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			meta := map[string]string{}
-
+			kc, err := capsuleProvider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			if err := manager.ScaleStatefulSet(ctx, 1); err != nil {
+			if err := setBlockNodeReplicas(ctx, inputs, manager, kc, false); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			meta[ConfiguredByThisStep] = "true"
+			meta := map[string]string{ConfiguredByThisStep: "true"}
 			stp.State().Local().Set(ConfiguredByThisStep, true)
-
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// On rollback, scale back down (though this is an unusual case)
+			// On rollback, scale back down (though this is an unusual case).
 			if v, _ := stp.State().Local().Bool(ConfiguredByThisStep); v == false {
 				return automa.StepSkippedReport(stp.Id())
 			}
-
+			kc, err := capsuleProvider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
 			manager, err := getManager()
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
-			if err := manager.ScaleStatefulSet(ctx, 0); err != nil {
+			if err := setBlockNodeReplicas(ctx, inputs, manager, kc, true); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
 			return automa.StepSuccessReport(stp.Id())
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Scaling up Block Node StatefulSet")
+			notify.As().StepStart(ctx, stp, "Scaling up Block Node")
 			return ctx, nil
 		}).
 		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale up Block Node StatefulSet")
+			notify.As().StepFailure(ctx, stp, rpt, "Failed to scale up Block Node")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node StatefulSet scaled up successfully")
-		})
-}
-
-// restartBlockNodeSteps returns the four-step sequence that scales the block node
-// StatefulSet down, waits for termination, scales it back up, and waits for readiness.
-// It is the building block for RolloutRestartBlockNode and conceptually mirrors
-// purgeBlockNodeStorageSteps for the data-clearing path.
-func restartBlockNodeSteps(managerProvider func() (*blocknode.Manager, error)) []automa.Builder {
-	return []automa.Builder{
-		scaleDownBlockNode(managerProvider, ScaleDownBlockNodeStepId),
-		waitForBlockNodeTerminated(managerProvider),
-		scaleUpBlockNode(managerProvider),
-		waitForBlockNode(managerProvider),
-	}
-}
-
-// RolloutRestartBlockNode restarts the block node pod by scaling the StatefulSet
-// down to 0, waiting for termination, scaling back up to 1, and waiting for readiness.
-// This reuses the existing ScaleStatefulSet infrastructure and guarantees the pod
-// picks up any configuration changes (including ConfigMap-only updates) that Helm
-// did not propagate via a pod-spec diff.
-func RolloutRestartBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
-	managerProvider := newBlockNodeManagerProvider(inputs)
-
-	return automa.NewWorkflowBuilder().WithId(RolloutRestartBlockNodeStepId).Steps(
-		restartBlockNodeSteps(managerProvider)...,
-	).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Restarting Block Node pod")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Failed to restart Block Node pod")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block Node pod restarted successfully")
+			notify.As().StepCompletion(ctx, stp, rpt, "Block Node scaled up successfully")
 		})
 }
 

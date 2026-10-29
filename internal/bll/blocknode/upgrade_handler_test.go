@@ -89,10 +89,11 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 	), ids)
 }
 
-// TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both
-// upgrade branches. The scale-down has to follow the chart upgrade, which
-// re-asserts the chart's replica default.
-func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
+// TestUpgrade_LeaveScaledDown_NoTrailingScaleDownStep pins --no-scale-up on both
+// upgrade branches under the operator model: there is no trailing scale-down step
+// — scaling down is declarative (replicaCount: 0 in the applied values), so each
+// branch ends in the HelmCapsule patch (#1319).
+func TestUpgrade_LeaveScaledDown_NoTrailingScaleDownStep(t *testing.T) {
 	h := newMinimalUpgradeHandler()
 
 	for _, tc := range []struct {
@@ -106,7 +107,6 @@ func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 			want: []string{
 				steps.NetworkFirewallCreateStepId,
 				steps.UpgradeBlockNodeStepId,
-				steps.ScaleDownAfterUpgradeStepId,
 			},
 		},
 		{
@@ -116,7 +116,6 @@ func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 				steps.NetworkFirewallCreateStepId,
 				steps.PurgeBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
-				steps.ScaleDownAfterUpgradeStepId,
 			},
 		},
 	} {

@@ -101,10 +101,11 @@ var enableNetworkPrefix = []string{
 	steps.RestartDaemonServiceStepId,
 }
 
-// withMediaCheck prepends the warn-only storage media check, which heads every
-// reconfigure and upgrade workflow ahead of the network-plane steps.
+// withMediaCheck prepends the operator-model legacy guard and the warn-only
+// storage media check, which together head every reconfigure and upgrade workflow
+// ahead of the network-plane steps (#1319).
 func withMediaCheck(ids ...string) []string {
-	return append([]string{steps.CheckStorageMediaStepId}, ids...)
+	return append([]string{steps.PrecheckBlockNodeLegacyStepId, steps.CheckStorageMediaStepId}, ids...)
 }
 
 // workflowStepIDs builds the given WorkflowBuilder and returns the IDs of the
@@ -196,9 +197,10 @@ func TestBuildWorkflow_PurgeStorage_IncludesRecreateStep(t *testing.T) {
 	}
 }
 
-// TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart verifies the default
-// non-reset path: UpgradeBlockNode + RolloutRestartBlockNode.
-func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
+// TestBuildWorkflow_NoReset_SamePathsUpgradeOnly verifies the default non-reset
+// path: a single UpgradeBlockNode (HelmCapsule patch). There is no separate
+// rollout-restart — the operator rolls the pod when the values hash changes (#1319).
+func TestBuildWorkflow_NoReset_SamePathsUpgradeOnly(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	currentState := deployedBlockNodeState("/mnt/storage")
@@ -212,7 +214,6 @@ func TestBuildWorkflow_NoReset_SamePathsUpgradeAndRestart(t *testing.T) {
 	ids := workflowStepIDs(t, wb)
 	assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 		steps.UpgradeBlockNodeStepId,
-		steps.RolloutRestartBlockNodeStepId,
 	), ids)
 }
 
@@ -236,7 +237,6 @@ func TestBuildWorkflow_TrafficShapingDisabled_TearsDown(t *testing.T) {
 		steps.BlockNodeDaemonConfigStepId,
 		steps.RestartDaemonServiceStepId,
 		steps.UpgradeBlockNodeStepId,
-		steps.RolloutRestartBlockNodeStepId,
 	), ids)
 }
 
@@ -255,9 +255,10 @@ func TestBuildWorkflow_FirewallDisabled_DeletesTable(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	require.GreaterOrEqual(t, len(ids), 2)
-	assert.Equal(t, steps.CheckStorageMediaStepId, ids[0])
-	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[1],
+	require.GreaterOrEqual(t, len(ids), 3)
+	assert.Equal(t, steps.PrecheckBlockNodeLegacyStepId, ids[0])
+	assert.Equal(t, steps.CheckStorageMediaStepId, ids[1])
+	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[2],
 		"host firewall disabled should emit the delete step first in the network plane")
 }
 
@@ -292,11 +293,13 @@ func TestBuildWorkflow_NotInstalled_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "block node is not installed")
 }
 
-// TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown pins --no-scale-up
-// across every reconfigure branch. The scale-down must be last: each branch ends
-// in a helm upgrade, which re-asserts the chart's replica default and would undo
-// a scale-down placed any earlier.
-func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
+// TestBuildWorkflow_LeaveScaledDown_NoTrailingScaleDownStep verifies that under the
+// operator model --no-scale-up adds NO trailing scale-down step across every
+// reconfigure branch: scaling down is declarative (replicaCount: 0 in the applied
+// values), so each branch ends in the HelmCapsule patch (UpgradeBlockNode) with no
+// extra imperative scale-down the operator would revert (#1319). The branch
+// workflow ids are unchanged except that --no-scale-up no longer renames them.
+func TestBuildWorkflow_LeaveScaledDown_NoTrailingScaleDownStep(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	for _, tc := range []struct {
@@ -313,7 +316,6 @@ func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 				steps.PurgeBlockNodeStorageStepId,
 				steps.RecreateBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
-				steps.ScaleDownAfterUpgradeStepId,
 			},
 		},
 		{
@@ -323,18 +325,14 @@ func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 			tail: []string{
 				steps.PurgeBlockNodeStorageStepId,
 				steps.UpgradeBlockNodeStepId,
-				steps.ScaleDownAfterUpgradeStepId,
 			},
 		},
 		{
-			// A rollout-restart would recreate the pod only for the scale-down to
-			// remove it again, so the default branch drops it.
-			name:       "no_reset_drops_rollout_restart",
+			name:       "no_reset",
 			inputs:     reconfigureInputs("/mnt/storage", false),
-			workflowId: "block-node-reconfigure-scaled-down",
+			workflowId: "block-node-reconfigure",
 			tail: []string{
 				steps.UpgradeBlockNodeStepId,
-				steps.ScaleDownAfterUpgradeStepId,
 			},
 		},
 	} {
@@ -353,10 +351,11 @@ func TestBuildWorkflow_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 	}
 }
 
-// TestBuildWorkflow_NoRestartWithLeaveScaledDown keeps the --no-restart workflow
-// id when both flags are passed; the two agree on skipping the restart, so the
-// explicit opt-out is the one worth naming.
-func TestBuildWorkflow_NoRestartWithLeaveScaledDown(t *testing.T) {
+// TestBuildWorkflow_NoRestart_HasNoEffect verifies that --no-restart no longer
+// changes the workflow under the operator model: any values change triggers the
+// operator to reconcile (and roll) the release, so the flag is accepted but the
+// workflow is the plain reconfigure with a single HelmCapsule patch (#1319).
+func TestBuildWorkflow_NoRestart_HasNoEffect(t *testing.T) {
 	h := newMinimalReconfigureHandler()
 
 	inputs := reconfigureInputs("/mnt/storage", false)
@@ -366,10 +365,9 @@ func TestBuildWorkflow_NoRestartWithLeaveScaledDown(t *testing.T) {
 	wb, err := h.BuildWorkflow(deployedBlockNodeState("/mnt/storage"), inputs)
 
 	require.NoError(t, err)
-	assert.Equal(t, "block-node-reconfigure-no-restart", wb.Id())
+	assert.Equal(t, "block-node-reconfigure", wb.Id())
 	assert.Equal(t, append(withMediaCheck(enableNetworkPrefix...),
 		steps.UpgradeBlockNodeStepId,
-		steps.ScaleDownAfterUpgradeStepId,
 	), workflowStepIDs(t, wb))
 }
 

@@ -3,6 +3,8 @@
 package blocknode
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	oslib "os"
 	"path"
@@ -10,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -17,6 +20,19 @@ import (
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chartutil"
 )
+
+// ConfigHashAnnotation is the pod annotation solo-weaver injects into the chart's
+// podAnnotations to make the block-node-server StatefulSet roll when its config
+// changes. The upstream chart has no checksum/config annotation of its own, so a
+// ConfigMap-only change would otherwise not restart the pod on helm upgrade. The
+// value is a sha256 of the effective rendered values, so identical config is a
+// no-op (idempotent) and any config change rolls the pod — the declarative,
+// operator-safe replacement for the former imperative rollout-restart (#1319).
+//
+// The key uses the operator's annotation namespace (operator.solo.hiero.org/…),
+// matching every other label/annotation in the solo-operator ecosystem, and is
+// derived from kube.SoloOperatorGroup so it stays in lockstep with the API group.
+const ConfigHashAnnotation = kube.SoloOperatorGroup + "/config-hash"
 
 // ComputeValuesFile generates the values file for helm installation based on profile and version.
 // It writes the result to a temp file and returns the path.
@@ -33,48 +49,9 @@ import (
 //
 // NOTE: Defense-in-depth path validation is applied even though the CLI layer also validates.
 func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
-	valuesContent, err := m.renderDefaultValues(profile)
+	valuesContent, err := m.ComputeValues(profile, valuesFile)
 	if err != nil {
 		return "", err
-	}
-
-	if valuesFile != "" {
-		operatorContent, err := m.readCustomValues(valuesFile)
-		if err != nil {
-			return "", err
-		}
-		// Return mergeValues' typed error directly so an IllegalFormat from a malformed
-		// operator YAML stays IllegalFormat — wrapping it as InternalError would
-		// misattribute the failure to weaver instead of the operator's --values file.
-		valuesContent, err = mergeValues(valuesContent, operatorContent)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	// Force weaver-managed PVC references regardless of what the operator file said.
-	valuesContent, err = m.injectPersistenceOverrides(valuesContent)
-	if err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to inject persistence overrides into values file")
-	}
-
-	// Merge effective retention thresholds into blockNode.config when non-empty.
-	valuesContent, err = m.injectRetentionConfig(valuesContent)
-	if err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to inject retention config into values file")
-	}
-
-	// Inject resolved plugin list into plugins.names when set.
-	valuesContent, err = m.injectPluginsConfig(valuesContent)
-	if err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to inject plugins config into values file")
-	}
-
-	// Inject MetalLB service annotation into Helm values when LoadBalancerEnabled is set so that
-	// the annotation is managed natively by Helm across install and upgrade.
-	valuesContent, err = m.injectServiceAnnotations(valuesContent)
-	if err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to inject service annotations into values file")
 	}
 
 	// Write temporary copy to weaver's temp directory.
@@ -84,6 +61,187 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 	}
 
 	return valuesFilePath, nil
+}
+
+// ComputeValues renders the fully-merged, override-injected Helm values for the
+// block node as a YAML document, without writing it anywhere. It is the single
+// source of truth for the effective chart values: the Helm-SDK path writes the
+// bytes to a temp file (ComputeValuesFile), while the operator-driven path
+// marshals them into a HelmCapsule's spec.values (see
+// internal/workflows/steps.CreateBlockNodeCapsule).
+//
+// Order matches `helm install -f`: render the profile base, deep-merge any
+// operator --values on top (operator keys win), then unconditionally inject the
+// weaver-managed persistence, retention, plugin, and service-annotation overrides.
+func (m *Manager) ComputeValues(profile string, valuesFile string) ([]byte, error) {
+	valuesContent, err := m.renderDefaultValues(profile)
+	if err != nil {
+		return nil, err
+	}
+
+	if valuesFile != "" {
+		operatorContent, err := m.readCustomValues(valuesFile)
+		if err != nil {
+			return nil, err
+		}
+		// Return mergeValues' typed error directly so an IllegalFormat from a malformed
+		// operator YAML stays IllegalFormat — wrapping it as InternalError would
+		// misattribute the failure to weaver instead of the operator's --values file.
+		valuesContent, err = mergeValues(valuesContent, operatorContent)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Force weaver-managed PVC references regardless of what the operator file said.
+	valuesContent, err = m.injectPersistenceOverrides(valuesContent)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject persistence overrides into values file")
+	}
+
+	// Merge effective retention thresholds into blockNode.config when non-empty.
+	valuesContent, err = m.injectRetentionConfig(valuesContent)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject retention config into values file")
+	}
+
+	// Inject resolved plugin list into plugins.names when set.
+	valuesContent, err = m.injectPluginsConfig(valuesContent)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject plugins config into values file")
+	}
+
+	// Inject MetalLB service annotation into Helm values when LoadBalancerEnabled is set so that
+	// the annotation is managed natively by Helm across install and upgrade.
+	valuesContent, err = m.injectServiceAnnotations(valuesContent)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject service annotations into values file")
+	}
+
+	// Pin replicaCount: 0 when the operation must leave the block node scaled down
+	// (--no-scale-up). Under the operator model this is the only way to keep the pod
+	// down — the operator continuously reconciles the StatefulSet to the CR's values,
+	// so an out-of-band `kubectl scale` would be reverted. When not scaling down we
+	// omit the key entirely so the chart's `replicaCount | default 1` applies.
+	valuesContent, err = m.injectReplicaCount(valuesContent)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject replicaCount into values file")
+	}
+
+	// Inject a config-hash pod annotation so a config change rolls the pod under the
+	// operator (the chart has no checksum/config annotation). Computed last, over the
+	// fully-rendered values. --no-restart is honored at apply time by preserving the
+	// deployed hash (see steps.CreateBlockNodeCapsule), not here.
+	hash := configHash(valuesContent)
+	valuesContent, err = SetConfigHash(valuesContent, hash)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to inject config hash into values file")
+	}
+
+	return valuesContent, nil
+}
+
+// configHash returns the sha256 hex digest of the rendered values, used as the
+// pod config-hash annotation value.
+func configHash(valuesContent []byte) string {
+	sum := sha256.Sum256(valuesContent)
+	return hex.EncodeToString(sum[:])
+}
+
+// SetConfigHash sets (or, when hash is empty, removes) the ConfigHashAnnotation
+// under the values' podAnnotations map. Removing it when empty keeps the pod
+// template identical to a never-hashed deployment, which is what --no-restart needs
+// when there is no deployed hash to preserve.
+func SetConfigHash(valuesContent []byte, hash string) ([]byte, error) {
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for config-hash annotation")
+	}
+	if vals == nil {
+		vals = make(map[string]interface{})
+	}
+
+	ann, _ := vals["podAnnotations"].(map[string]interface{})
+	if ann == nil {
+		ann = make(map[string]interface{})
+	}
+	if hash == "" {
+		delete(ann, ConfigHashAnnotation)
+	} else {
+		ann[ConfigHashAnnotation] = hash
+	}
+
+	if len(ann) == 0 {
+		delete(vals, "podAnnotations")
+	} else {
+		vals["podAnnotations"] = ann
+	}
+
+	out, err := yaml.Marshal(vals)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to re-marshal values after config-hash annotation")
+	}
+	return out, nil
+}
+
+// MergeDeployedValues deep-merges freshly-rendered values on top of the values
+// currently deployed on the HelmCapsule — the operator-model equivalent of helm's
+// --reuse-values. Weaver-managed keys (present in fresh) win, while any operator-set
+// keys that fresh does not render are preserved from the deployed release. deployed
+// may be empty (first apply / no CR), in which case fresh is returned unchanged.
+//
+// Because the merge cannot unset a key by omission, weaver's render sets every key
+// it manages explicitly (e.g. replicaCount — see injectReplicaCount), so fresh can
+// override a deployed value rather than leaving the deployed one in place.
+func MergeDeployedValues(deployed, fresh []byte) ([]byte, error) {
+	if len(deployed) == 0 {
+		return fresh, nil
+	}
+
+	deployedMap := map[string]interface{}{}
+	if err := yaml.Unmarshal(deployed, &deployedMap); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse deployed HelmCapsule values")
+	}
+	freshMap := map[string]interface{}{}
+	if err := yaml.Unmarshal(fresh, &freshMap); err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to parse freshly rendered values")
+	}
+
+	// CoalesceTables(dst, src): dst wins, src fills gaps → fresh wins, deployed extras kept.
+	merged := chartutil.CoalesceTables(freshMap, deployedMap)
+	out, err := yaml.Marshal(merged)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal merged values")
+	}
+	return out, nil
+}
+
+// injectReplicaCount sets the chart's top-level replicaCount explicitly — 0 when the
+// inputs ask to leave the block node scaled down (--no-scale-up), otherwise 1 (the
+// chart default). It is always set, never omitted, so that --reuse-values merging
+// (MergeDeployedValues) can override a deployed replicaCount rather than keeping it:
+// a merge cannot unset a key by omission. The block-node-server chart renders
+// `replicas: {{ .Values.replicaCount | default 1 }}`, so this is the declarative
+// equivalent of the legacy imperative StatefulSet scaling.
+func (m *Manager) injectReplicaCount(valuesContent []byte) ([]byte, error) {
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(valuesContent, &vals); err != nil {
+		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse values YAML for replicaCount injection")
+	}
+	if vals == nil {
+		vals = make(map[string]interface{})
+	}
+	if m.blockNodeInputs.LeaveScaledDown {
+		vals["replicaCount"] = 0
+	} else {
+		vals["replicaCount"] = 1
+	}
+
+	out, err := yaml.Marshal(vals)
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to re-marshal values after replicaCount injection")
+	}
+	return out, nil
 }
 
 // renderDefaultValues selects and renders the built-in Helm values template for the given profile.

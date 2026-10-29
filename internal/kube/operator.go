@@ -29,6 +29,7 @@ const (
 	KindNetworkGenesis   ResourceKind = "NetworkGenesis"
 	KindHAProxyCapsule   ResourceKind = "HAProxyCapsule"
 	KindEnvoyProxy       ResourceKind = "EnvoyProxy"
+	KindHelmCapsule      ResourceKind = "HelmCapsule"
 )
 
 func init() {
@@ -46,6 +47,9 @@ func init() {
 	})
 	RegisterKind(KindEnvoyProxy, schema.GroupVersionResource{
 		Group: SoloOperatorGroup, Version: SoloOperatorVersion, Resource: "envoyproxies",
+	})
+	RegisterKind(KindHelmCapsule, schema.GroupVersionResource{
+		Group: SoloOperatorGroup, Version: SoloOperatorVersion, Resource: "helmcapsules",
 	})
 }
 
