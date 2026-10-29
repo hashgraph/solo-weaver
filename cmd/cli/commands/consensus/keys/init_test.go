@@ -91,6 +91,51 @@ func TestInitCmd_Idempotent(t *testing.T) {
 	assert.Equal(t, string(first), string(again))
 }
 
+// The root --force/-y (skip prompts) must not replace existing keys or secrets.
+func TestInitCmd_RootForceKeepsKeys(t *testing.T) {
+	for _, flag := range []string{"--force", "-y"} {
+		t.Run(flag, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "keys")
+			fake := &fakeSecretClient{store: map[string]map[string][]byte{}}
+			stubSecretClient(t, fake)
+
+			_, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", dir, "--machine-id", "m")
+			require.NoError(t, err)
+			first, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
+			require.NoError(t, err)
+			secrets := fake.secretNames()
+
+			out, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", dir, "--machine-id", "m", flag)
+			require.NoError(t, err)
+			again, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
+			require.NoError(t, err)
+			assert.Equal(t, string(first), string(again), "root --force must keep the existing keys")
+			assert.Equal(t, secrets, fake.secretNames(), "root --force must not create or replace secrets")
+			assert.Contains(t, out, "pass --overwrite to replace it")
+		})
+	}
+}
+
+func TestInitCmd_OverwriteRegenerates(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+	fake := &fakeSecretClient{store: map[string]map[string][]byte{}}
+	stubSecretClient(t, fake)
+
+	_, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", dir, "--machine-id", "m")
+	require.NoError(t, err)
+	first, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
+	require.NoError(t, err)
+	before := fake.secretNames()
+
+	_, err = runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", dir, "--machine-id", "m", "--overwrite")
+	require.NoError(t, err)
+	again, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
+	require.NoError(t, err)
+	assert.NotEqual(t, string(first), string(again), "--overwrite must regenerate the keys")
+	// New material has a new fingerprint, so it gets new secret names.
+	assert.Len(t, fake.secretNames(), len(before)*2)
+}
+
 func TestInitCmd_EquivalentToGenerateThenImport(t *testing.T) {
 	// init with a selector subset generates + imports only that type.
 	dir := filepath.Join(t.TempDir(), "keys")

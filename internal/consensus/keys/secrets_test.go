@@ -295,7 +295,7 @@ func TestImport_NewMaterialStagesBesideTheOld(t *testing.T) {
 }
 
 // A secret whose content was edited under its original name is refused on import
-// unless forced.
+// unless overwrite is set.
 func TestImport_EditedSecretIsRefused(t *testing.T) {
 	dir := writeGeneratedFolder(t)
 	client := newFakeSecretClient()
@@ -308,7 +308,7 @@ func TestImport_EditedSecretIsRefused(t *testing.T) {
 	_, err = Import(context.Background(), client, opts)
 	require.Error(t, err)
 
-	opts.Force = true
+	opts.Overwrite = true
 	_, err = Import(context.Background(), client, opts)
 	require.NoError(t, err)
 }
@@ -359,13 +359,13 @@ func TestExport_Idempotent(t *testing.T) {
 	assert.Empty(t, second.Exported)
 	assert.Len(t, second.Skipped, 3)
 
-	// A file with different content is refused without force...
+	// A file with different content is refused without overwrite...
 	require.NoError(t, os.WriteFile(filepath.Join(out, FileAdminPublic), []byte("deadbeef\n"), 0o644))
 	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}})
 	require.Error(t, err)
 
-	// ...and overwritten with force.
-	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}, Force: true})
+	// ...and replaced when overwrite is set.
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}, Overwrite: true})
 	require.NoError(t, err)
 }
 

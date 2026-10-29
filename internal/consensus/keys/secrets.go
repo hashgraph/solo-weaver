@@ -57,10 +57,10 @@ type ImportOptions struct {
 	Selectors Selectors
 	// Suffix replaces the certificate date in the secret names (e.g. "v0.75.6").
 	Suffix string
-	// Force overwrites an existing secret of the same name whose content differs.
+	// Overwrite replaces an existing secret of the same name whose content differs.
 	// A name carries the key's fingerprint, so that only happens if a secret was
 	// edited by hand; re-importing identical material is idempotent regardless.
-	Force bool
+	Overwrite bool
 	// Labels are extra labels to put on every secret created (for example a
 	// reference to an external system). They may not reuse weaver's own label keys.
 	Labels map[string]string
@@ -81,7 +81,7 @@ type ImportResult struct {
 //
 // Import is idempotent: re-applying identical material is a no-op. A secret that
 // already exists under the same name with DIFFERENT content is refused unless
-// Force is set.
+// Overwrite is set.
 func Import(ctx context.Context, client SecretClient, opts ImportOptions) (*ImportResult, error) {
 	if err := ValidateSuffix(opts.Suffix); err != nil {
 		return nil, err
@@ -109,7 +109,7 @@ func Import(ctx context.Context, client SecretClient, opts ImportOptions) (*Impo
 			Int64("nodeId", opts.NodeId).
 			Str("secret", name).
 			Str("keysDir", opts.FromDir).
-			Bool("force", opts.Force).
+			Bool("overwrite", opts.Overwrite).
 			Logger()
 		labels := gen.Labels(opts.NodeId)
 		for k, v := range opts.Labels {
@@ -139,10 +139,10 @@ func Import(ctx context.Context, client SecretClient, opts ImportOptions) (*Impo
 			}
 			result.Relabeled = append(result.Relabeled, name)
 			return nil
-		case exists && !opts.Force:
-			return errorx.IllegalState.New("secret %q already exists with different content; it does not match the key material being imported. Pass --force to overwrite", name)
+		case exists && !opts.Overwrite:
+			return errorx.IllegalState.New("secret %q already exists with different content; it does not match the key material being imported. Pass --overwrite to replace it", name)
 		case exists:
-			log.Warn().Msg("Overwriting existing secret with different content (--force)")
+			log.Warn().Msg("Overwriting existing secret with different content (--overwrite)")
 		default:
 			log.Info().Msg("Creating secret")
 		}
@@ -206,10 +206,10 @@ type ExportOptions struct {
 	Selectors Selectors
 	// Resolve narrows which generation to export when a node has more than one.
 	Resolve ResolveOptions
-	// Force overwrites an existing file whose content differs. Without it, export
+	// Overwrite replaces an existing file whose content differs. Without it, export
 	// is idempotent (identical files are left as-is) and refuses to clobber a file
 	// that holds different content.
-	Force bool
+	Overwrite bool
 }
 
 // ExportResult reports which secrets were written vs left unchanged.
@@ -251,7 +251,7 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 			Int64("nodeId", opts.NodeId).
 			Str("secret", secret.Name).
 			Str("dir", opts.OutDir).
-			Bool("force", opts.Force).
+			Bool("overwrite", opts.Overwrite).
 			Logger()
 		files := exportFiles[t.typ]
 		expected := make(map[string]bool, len(files))
@@ -275,7 +275,7 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 					return nil, err
 				}
 			}
-			changed, err := writeFileGuarded(opts.OutDir, f.name, value, f.perm, opts.Force)
+			changed, err := writeFileGuarded(opts.OutDir, f.name, value, f.perm, opts.Overwrite)
 			if err != nil {
 				return nil, err
 			}
@@ -295,17 +295,17 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 
 // writeFileGuarded writes payload to dir/name and reports whether it changed the
 // file. An identical existing file is left untouched (changed=false, idempotent);
-// a differing file is refused unless force is set, and its overwrite is logged.
-func writeFileGuarded(dir, name string, payload []byte, perm os.FileMode, force bool) (bool, error) {
+// a differing file is refused unless overwrite is set, and its overwrite is logged.
+func writeFileGuarded(dir, name string, payload []byte, perm os.FileMode, overwrite bool) (bool, error) {
 	path := filepath.Join(dir, name)
 	if existing, err := os.ReadFile(path); err == nil {
 		if bytes.Equal(existing, payload) {
 			return false, nil
 		}
-		if !force {
-			return false, errorx.IllegalState.New("%q already exists with different content; pass --force to overwrite", path)
+		if !overwrite {
+			return false, errorx.IllegalState.New("%q already exists with different content; pass --overwrite to replace it", path)
 		}
-		logx.As().Warn().Str("path", path).Msg("Overwriting existing file with different content (--force)")
+		logx.As().Warn().Str("path", path).Msg("Overwriting existing file with different content (--overwrite)")
 	}
 	if err := writeFile(dir, name, payload, perm); err != nil {
 		return false, err

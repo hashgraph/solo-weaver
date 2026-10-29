@@ -21,7 +21,7 @@ var (
 	flagInitKeysDir   string
 	flagInitIdentity  string
 	flagInitMachineID string
-	flagInitForce     bool
+	flagInitOverwrite bool
 
 	initSelectors func() cnkeys.Selectors
 
@@ -47,7 +47,7 @@ func init() {
 	initCmd.Flags().StringVar(&flagInitIdentity, "identity", "", "Optional human-readable label recorded in the gossip certificate OU/SAN")
 	initCmd.Flags().StringVar(&flagInitMachineID, "machine-id", "", "Override the gossip certificate CN; defaults to the host machine UUID (/etc/machine-id)")
 	readInitGrpcFlags = addGrpcFlags(initCmd)
-	initCmd.Flags().BoolVar(&flagInitForce, "force", false, "Overwrite the gossip signing secret if it already exists (changes the node's network identity)")
+	initCmd.Flags().BoolVar(&flagInitOverwrite, "overwrite", false, "Replace existing key files in --keys-dir with new keys, and any same-named secret whose content differs. This gives the node a new network identity and a new gRPC certificate hash")
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {
@@ -75,8 +75,8 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	selectors := initSelectors()
 
 	// 1. Generate into --keys-dir (same path as `keys generate`). Idempotent:
-	// existing key types are kept unless --force, so re-running init is safe.
-	toGen, need := planGeneration(flagInitKeysDir, selectors, flagInitForce)
+	// existing key types are kept unless --overwrite, so re-running init is safe.
+	toGen, need := planGeneration(cmd, flagInitKeysDir, selectors, flagInitOverwrite)
 	if need {
 		set, err := cnkeys.Generate(cnkeys.GenerateOptions{
 			Selectors: toGen,
@@ -106,7 +106,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		NodeId:    nodeID,
 		FromDir:   flagInitKeysDir,
 		Selectors: selectors,
-		Force:     flagInitForce,
+		Overwrite: flagInitOverwrite,
 	})
 	if err != nil {
 		return errx.Decorate(err, reasons.Internal,
