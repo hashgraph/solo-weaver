@@ -96,6 +96,16 @@ func (f *fakeSecretClient) hasSecretWithPrefix(ns, prefix string) bool {
 	return false
 }
 
+// secretNames returns the sorted ns/name keys of every stored secret.
+func (f *fakeSecretClient) secretNames() []string {
+	names := make([]string, 0, len(f.store))
+	for k := range f.store {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // stubSecretClient swaps newSecretClient for the duration of a test.
 func stubSecretClient(t *testing.T, fake *fakeSecretClient) {
 	t.Helper()
@@ -105,13 +115,14 @@ func stubSecretClient(t *testing.T, fake *fakeSecretClient) {
 }
 
 // runUnderNode wires cmd under a parent that provides the inherited --namespace
-// and --node-id persistent flags (defined on `consensus node` in production),
-// resets flag state, and executes with args.
+// and --node-id persistent flags (defined on `consensus node` in production) and
+// the root --force/-y flag, resets flag state, and executes with args.
 func runUnderNode(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
 	t.Helper()
 	parent := &cobra.Command{Use: "node"}
 	parent.PersistentFlags().String("namespace", "default", "")
 	parent.PersistentFlags().Int64("node-id", 0, "")
+	parent.PersistentFlags().BoolP("force", "y", false, "")
 	parent.AddCommand(cmd)
 
 	resetFlags(parent)

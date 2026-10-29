@@ -70,6 +70,10 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	custom.LedgerId = h.runtime.LedgerId().Get().Val()
 	custom.ChainId = h.runtime.ChainId().Get().Val()
 
+	// Apply namespace=orbit convention. The key lookup below needs it to find the
+	// node's live ConsensusCapsule.
+	custom.OrbitName = custom.Namespace
+
 	// Find the key secrets the operator did not name, by their labels.
 	ctx, cancel := lookupContext()
 	defer cancel()
@@ -104,9 +108,6 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 			"Provide --ledger-id (e.g. 0x00 for mainnet)",
 			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
-
-	// Apply namespace=orbit convention
-	custom.OrbitName = custom.Namespace
 
 	l.Info().
 		Str("imageRepo", custom.ConsensusImageRepo).
@@ -148,7 +149,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// The solo-operator is installed separately by `kube operator install`, not
 		// here — consensus install is a pure consumer. These prechecks are the hard
 		// guard that the operator is present and the right version.
-		steps.PrecheckConsensusSecrets(ins),
+		steps.PrecheckConsensusSecrets(ins, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),

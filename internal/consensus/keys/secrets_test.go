@@ -295,7 +295,7 @@ func TestImport_NewMaterialStagesBesideTheOld(t *testing.T) {
 }
 
 // A secret whose content was edited under its original name is refused on import
-// unless forced.
+// unless overwrite is set.
 func TestImport_EditedSecretIsRefused(t *testing.T) {
 	dir := writeGeneratedFolder(t)
 	client := newFakeSecretClient()
@@ -308,7 +308,7 @@ func TestImport_EditedSecretIsRefused(t *testing.T) {
 	_, err = Import(context.Background(), client, opts)
 	require.Error(t, err)
 
-	opts.Force = true
+	opts.Overwrite = true
 	_, err = Import(context.Background(), client, opts)
 	require.NoError(t, err)
 }
@@ -359,14 +359,50 @@ func TestExport_Idempotent(t *testing.T) {
 	assert.Empty(t, second.Exported)
 	assert.Len(t, second.Skipped, 3)
 
-	// A file with different content is refused without force...
+	// A file with different content is refused without overwrite...
 	require.NoError(t, os.WriteFile(filepath.Join(out, FileAdminPublic), []byte("deadbeef\n"), 0o644))
 	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}})
 	require.Error(t, err)
 
-	// ...and overwritten with force.
-	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}, Force: true})
+	// ...and replaced when overwrite is set.
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Admin: true}, Overwrite: true})
 	require.NoError(t, err)
+}
+
+// Export writes only the expected files for each key type, never other entries.
+func TestExport_WritesOnlyExpectedFiles(t *testing.T) {
+	dir := writeGeneratedFolder(t)
+	client := newFakeSecretClient()
+	res, err := Import(context.Background(), client, ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir, Selectors: Selectors{Gossip: true}})
+	require.NoError(t, err)
+	client.store["ns/"+res.Applied[0]]["extra.txt"] = []byte("unexpected")
+	client.store["ns/"+res.Applied[0]]["../escape"] = []byte("unexpected")
+
+	out := filepath.Join(t.TempDir(), "export")
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Gossip: true}})
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(out)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.ElementsMatch(t, []string{FileGossipPrivate, FileGossipCert}, names)
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(out), "escape"))
+}
+
+func TestExport_MissingExpectedEntry(t *testing.T) {
+	dir := writeGeneratedFolder(t)
+	client := newFakeSecretClient()
+	res, err := Import(context.Background(), client, ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir, Selectors: Selectors{Grpc: true}})
+	require.NoError(t, err)
+	delete(client.store["ns/"+res.Applied[0]], FileGrpcKey)
+
+	out := filepath.Join(t.TempDir(), "export")
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Grpc: true}})
+	require.Error(t, err)
+	assert.NoFileExists(t, filepath.Join(out, FileGrpcCert))
 }
 
 func TestExport_MissingSecret(t *testing.T) {

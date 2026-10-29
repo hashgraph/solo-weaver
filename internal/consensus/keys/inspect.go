@@ -91,7 +91,11 @@ func InspectDir(dir string, selectors Selectors) (*InspectReport, error) {
 	return inspect(m, sel, fmt.Sprintf("folder %s", dir), time.Now()), nil
 }
 
-// InspectFile describes a single certificate (PEM) or admin public key (hex) file.
+// adminPublicSuffix is the file suffix InspectFile requires for a hex admin public key.
+const adminPublicSuffix = ".pub"
+
+// InspectFile describes a single certificate (PEM) or admin public key (hex,
+// named *.pub) file.
 func InspectFile(path string) (*InspectReport, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -106,6 +110,11 @@ func InspectFile(path string) (*InspectReport, error) {
 		} else {
 			ki.Certificate = describeCert(cert, time.Now())
 		}
+	} else if !strings.HasSuffix(ki.File, adminPublicSuffix) {
+		// A raw 32-byte hex value can be a private key; only the name tells them apart.
+		ki.Kind = "hex key (not inspected)"
+		ki.Error = fmt.Sprintf("not a PEM certificate; a hex admin public key file must be named *%s "+
+			"(a hex key without that name can be a private key and is not printed)", adminPublicSuffix)
 	} else if info, perr := describeAdminPub(raw); perr != nil {
 		ki.Error = "not a PEM certificate or a hex admin public key"
 	} else {

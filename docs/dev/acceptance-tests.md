@@ -407,13 +407,14 @@ in place first:
 - The consensus-namespace secrets must exist *before* `consensus node install`.
 
 These four steps are identical whether you deploy one node or many — only the
-install/genesis steps in F1/F2 below differ.
+keys/install/genesis steps in F1/F2 below differ.
 
 ```bash
 # Pick a namespace (also the Orbit name). Use a distinct one per network in a
 # shared cluster: hiero-network-1, hiero-network-2, ...
 export NS=hiero-network-2
 export PKG=./test/data/build-v0.74.2   # extracted HIP-1494 deployment package
+export KEYS=/opt/solo/cn-keys          # node key material; survives a VM reboot (not /tmp)
 
 # 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
 task uat:registry:login:ghcr
@@ -421,10 +422,11 @@ task uat:registry:login:ghcr
 # 2. Install the cluster only (no operator). --node-type sizes the host with --profile.
 sudo solo-provisioner kube cluster install --profile local --node-type consensus
 
-# 3. Create ALL secrets in one shot: the ghcr pull secret in both the operator and
-#    consensus namespaces, plus the consensus gossip/gRPC secrets for node0..node4.
-#    (Same registry, one credential; NODE= unset means all nodes.)
-task uat:secrets NS="${NS}"
+# 3. Create the ghcr pull secret in both the operator and consensus namespaces.
+#    SAMPLE_KEYS=false skips the sample gossip/gRPC secrets: they have no
+#    solo.hiero.org labels, so `consensus node install` cannot find them.
+#    F1/F2 create the node keys with `consensus keys init` instead.
+task uat:secrets NS="${NS}" SAMPLE_KEYS=false
 
 # 4. Install the solo-operator (pulls private images via --image-pull-secret, default private-registry-creds).
 sudo solo-provisioner kube operator install
@@ -437,19 +439,23 @@ sudo solo-provisioner kube operator install
 
 ### F1. Single consensus node
 
-Install one node, then generate genesis. With defaults it is `node-id 0` /
-`account-id 0.0.3`; its secrets (`node0-gossip-keys`, `node0-grpc-tls-keys`) were
-created by step 3.
+Create the node keys, install one node, then generate genesis. With defaults it is
+`node-id 0` / `account-id 0.0.3`.
 
 ```bash
-# 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+# 5. Generate node0's gossip/gRPC keys and create their labelled secrets.
+sudo solo-provisioner consensus keys init --experimental \
+  --namespace "${NS}" --node-id 0 --keys-dir "${KEYS}/node0"
+
+# 6. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+#    No --signing-secret/--grpc-tls-secret: install finds the labelled secrets.
 sudo solo-provisioner consensus node install \
   --experimental \
   --namespace "${NS}" \
   --profile local \
   --deployment-package-dir "${PKG}"
 
-# 6. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
+# 7. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
 sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
@@ -459,10 +465,17 @@ There is no node-count flag: **run `consensus node install` once per node into t
 same namespace**, each with a distinct `--node-id` and `--account-id`, then run
 `consensus network genesis` **once**. In discovery mode the operator builds the
 roster from *all* ConsensusCapsules in the namespace. Account IDs follow the Hedera
-convention `0.0.(3 + node-id)`. Step 3 already created secrets for `node0..node4`.
+convention `0.0.(3 + node-id)`. Each node needs its own keys, so run
+`consensus keys init` once per node first.
 
 ```bash
-# 5. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
+# 5. Generate each node's keys into its own folder and create their labelled secrets.
+for i in 0 1 2 3; do
+  sudo solo-provisioner consensus keys init --experimental \
+    --namespace "${NS}" --node-id "${i}" --keys-dir "${KEYS}/node${i}"
+done
+
+# 6. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
 for i in 0 1 2 3; do
   sudo solo-provisioner consensus node install \
     --experimental \
@@ -473,12 +486,17 @@ for i in 0 1 2 3; do
     --deployment-package-dir "${PKG}"
 done
 
-# 6. One genesis for the whole network — operator discovers all 4 capsules.
+# 7. One genesis for the whole network — operator discovers all 4 capsules.
 sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
 Expected (both F1 and F2):
 - Cluster install completes without touching the operator/registry.
+- `keys init` creates two labelled secrets per node (gossip and gRPC TLS):
+  ```bash
+  kubectl -n "${NS}" get secret -l solo.hiero.org/node=node0 --show-labels
+  ```
+- `consensus node install` passes with no `--signing-secret`/`--grpc-tls-secret`.
 - `kube operator install` reaches *Installing Solo Operator* and succeeds; the
   operator pod pulls its private image (`kubectl -n solo-operator get pods`).
 - Consensus pods pull the private images with no ServiceAccount patching:
@@ -503,9 +521,14 @@ Expected (both F1 and F2):
   `--deployment-package-dir` to `consensus network genesis` — that applies the
   package's single-node `genesis-network.json` verbatim and bypasses roster
   discovery. Leave it off so the operator builds the roster from the capsules.
-- **Max nodes = 5** (`node0..node4`) with the sample secrets from `task uat:secrets`.
-  In discovery mode the gossip keys come from those K8s secrets (not the package's
-  `data/keys/*.pem`), so more nodes need additional gossip/gRPC secrets.
+- In discovery mode the gossip keys come from the K8s secrets that `keys init`
+  creates (not the package's `data/keys/*.pem`). There is no fixed node limit: run
+  `keys init` for each node id.
+- Do not use the sample secrets from `task uat:secrets SAMPLE_KEYS=true` with
+  these steps. They have no `solo.hiero.org` labels, so
+  install fails with "no gossip key secret found".
+- `keys init` creates no admin key secret unless `admin.pub` is in `--keys-dir`.
+  The admin key is optional for these steps.
 - Identity flags (`--ledger-id`, `--chain-id`, `--image-repo`/`--image-tag`) are
   extracted from the deployment package, so they stay identical across nodes and do
   not need to be repeated per node.

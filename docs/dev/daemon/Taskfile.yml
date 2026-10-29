@@ -249,7 +249,8 @@ tasks:
     desc: "Inside VM: create the private-registry pull secret (operator + orbit ns); node keys come from `keys` (reuses uat:secrets)"
     cmds:
       # SAMPLE_KEYS=false: skip the fixed sample node secrets; `keys` creates real ones.
-      # Pass SAMPLE_KEYS=true to use the sample secrets instead.
+      # Do not pass SAMPLE_KEYS=true here: the sample secrets have no solo.hiero.org
+      # labels, and the `consensus` task installs without secret flags, so it fails.
       - task: uat:secrets
         vars:
           NS: "{{.NS}}"

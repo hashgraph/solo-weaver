@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +127,33 @@ func TestInspectFile(t *testing.T) {
 
 	_, err = InspectFile(filepath.Join(dir, "nope"))
 	require.Error(t, err)
+}
+
+func TestInspectFile_HexWithoutPubNameIsNotPrinted(t *testing.T) {
+	dir := t.TempDir()
+	// A raw 32-byte hex value has the same shape as an Ed25519 public key.
+	secret := strings.Repeat("ab", 32)
+	for _, name := range []string{"admin.key", "priv.hex", "admin"} {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(secret+"\n"), 0o600))
+
+		r, err := InspectFile(path)
+		require.NoError(t, err)
+		require.Len(t, r.Keys, 1)
+		assert.Nil(t, r.Keys[0].AdminPublic, name)
+		assert.Contains(t, r.Keys[0].Error, "*.pub", name)
+		assert.NotEqual(t, "admin public key", r.Keys[0].Kind, name)
+
+		out, err := json.Marshal(r)
+		require.NoError(t, err)
+		assert.NotContains(t, string(out), secret, name)
+	}
+
+	// The same bytes under a .pub name are inspected as an admin public key.
+	path := filepath.Join(dir, "node1-admin.pub")
+	require.NoError(t, os.WriteFile(path, []byte(secret+"\n"), 0o644))
+	r, err := InspectFile(path)
+	require.NoError(t, err)
+	require.NotNil(t, r.Keys[0].AdminPublic)
+	assert.Equal(t, "admin public key", r.Keys[0].Kind)
 }
