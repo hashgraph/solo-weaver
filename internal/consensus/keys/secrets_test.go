@@ -369,6 +369,42 @@ func TestExport_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// Export writes only the expected files for each key type, never other entries.
+func TestExport_WritesOnlyExpectedFiles(t *testing.T) {
+	dir := writeGeneratedFolder(t)
+	client := newFakeSecretClient()
+	res, err := Import(context.Background(), client, ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir, Selectors: Selectors{Gossip: true}})
+	require.NoError(t, err)
+	client.store["ns/"+res.Applied[0]]["extra.txt"] = []byte("unexpected")
+	client.store["ns/"+res.Applied[0]]["../escape"] = []byte("unexpected")
+
+	out := filepath.Join(t.TempDir(), "export")
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Gossip: true}})
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(out)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.ElementsMatch(t, []string{FileGossipPrivate, FileGossipCert}, names)
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(out), "escape"))
+}
+
+func TestExport_MissingExpectedEntry(t *testing.T) {
+	dir := writeGeneratedFolder(t)
+	client := newFakeSecretClient()
+	res, err := Import(context.Background(), client, ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir, Selectors: Selectors{Grpc: true}})
+	require.NoError(t, err)
+	delete(client.store["ns/"+res.Applied[0]], FileGrpcKey)
+
+	out := filepath.Join(t.TempDir(), "export")
+	_, err = Export(context.Background(), client, ExportOptions{Namespace: "ns", NodeId: 0, OutDir: out, Selectors: Selectors{Grpc: true}})
+	require.Error(t, err)
+	assert.NoFileExists(t, filepath.Join(out, FileGrpcCert))
+}
+
 func TestExport_MissingSecret(t *testing.T) {
 	client := newFakeSecretClient()
 	_, err := Export(context.Background(), client, ExportOptions{
