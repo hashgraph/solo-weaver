@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	flagExportKeysDir string
-	flagExportForce   bool
+	flagExportKeysDir   string
+	flagExportOverwrite bool
 
 	exportSelectors func() cnkeys.Selectors
 	exportResolve   func(cnkeys.Selectors) (cnkeys.ResolveOptions, error)
@@ -36,7 +36,7 @@ func init() {
 	exportSelectors = addSelectorFlags(exportCmd)
 	exportResolve = addResolveFlags(exportCmd)
 	exportCmd.Flags().StringVar(&flagExportKeysDir, "keys-dir", "", "Node key folder to export into (required)")
-	exportCmd.Flags().BoolVar(&flagExportForce, "force", false, "Overwrite existing files whose content differs (identical files are left as-is)")
+	exportCmd.Flags().BoolVar(&flagExportOverwrite, "overwrite", false, "Replace existing files whose content differs (identical files are left as-is)")
 }
 
 func runExport(cmd *cobra.Command, _ []string) error {
@@ -75,7 +75,7 @@ func runExport(cmd *cobra.Command, _ []string) error {
 		OutDir:    flagExportKeysDir,
 		Selectors: exportSelectors(),
 		Resolve:   resolve,
-		Force:     flagExportForce,
+		Overwrite: flagExportOverwrite,
 	})
 	if err != nil {
 		return errx.Decorate(err, reasons.Internal,

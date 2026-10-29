@@ -83,7 +83,7 @@ To also create the Kubernetes secrets in one step (known node-id), use
 | `--grpc-dns` | Extra fully qualified DNS SAN for the gRPC TLS certificate, added to `localhost` (repeatable) | — |
 | `--grpc-ip` | Extra IP SAN for the gRPC TLS certificate, added to `127.0.0.1` and `::1` (repeatable) | — |
 | `--grpc-validity-days` | gRPC TLS certificate lifetime in days (1-36500) | 100 years |
-| `--force` | Regenerate even if key material already exists in `--keys-dir` (overwrites it) | `false` |
+| `--overwrite` | Replace existing key files in `--keys-dir` with new keys. This gives the node a new network identity and a new gRPC certificate hash | `false` |
 
 The gRPC TLS certificate always keeps the `localhost`, `127.0.0.1`, and `::1`
 SANs; `--grpc-dns` and `--grpc-ip` only add to them. `--grpc-dns` takes a fully
@@ -93,15 +93,19 @@ this self-signed certificate (free text, up to 64 characters each). Shell-quote 
 spaces, e.g. `--grpc-org "Example Org"`. The
 gossip certificate lifetime is fixed at 100 years because it is the node's network
 identity. If the gRPC key already exists in `--keys-dir`, the `--grpc-*` flags have
-no effect unless you pass `--force`.
+no effect unless you pass `--overwrite`.
 
 `generate` is node-id-free — it takes no `--node-id`. The node-id enters later,
 at `import`/`init`.
 
 Generation is **idempotent**: re-running with the same `--keys-dir` keeps any key
 type that already exists (it logs a warning and only fills in missing types), so
-it never silently overwrites a node's gossip identity. Pass `--force` to
-regenerate.
+it never silently overwrites a node's gossip identity. Pass `--overwrite` to
+regenerate. The root `--force`/`-y` flag (skip prompts) does not replace keys.
+
+> **Caution:** Do not use `--overwrite` on a node that is already in a network.
+> It replaces the node's gossip identity and its gRPC certificate hash, so the
+> node no longer matches the roster until you register the new keys.
 
 #### Output layout
 
@@ -155,7 +159,7 @@ exists; pass `--admin` to make it required. The admin secret holds the public ke
 as **raw bytes**, which is what the solo-operator reads; `admin.pub` itself is hex
 text, so `import` decodes it and `export` writes it back as hex. The gossip signing secret
 Re-importing identical material is idempotent. A secret of the same name whose
-content was edited by hand is refused unless `--force` is passed.
+content was edited by hand is refused unless `--overwrite` is passed.
 
 ```bash
 # Create the secrets for node 0 from a generated folder (add admin.pub first
@@ -174,7 +178,7 @@ sudo solo-provisioner consensus keys import --experimental \
 | `--source` | Key material source: `folder` (vault-backed import is tracked separately) | `folder` |
 | `--secret-suffix` | Replace the certificate date in the secret names (for example `v0.75.6`); lowercase letters, digits, `-` and `.` | certificate date |
 | `--label` | Extra label for every secret, as `key=value` (repeatable), for example `example.com/external-ref=ticket-42` or `app.kubernetes.io/version=v0.75.6`. Kubernetes label syntax applies, and weaver's own labels cannot be used | — |
-| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand); re-importing identical material is idempotent without it | `false` |
+| `--overwrite` | Replace a same-named secret whose content differs (for example one edited by hand); re-importing identical material is idempotent without it | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which secrets to create | gossip and gRPC, plus admin when `admin.pub` exists |
 
 `--namespace` (the orbit name) and `--node-id` are inherited from `consensus
@@ -197,7 +201,7 @@ sudo solo-provisioner consensus keys export --experimental \
 | `--keys-dir` | Node key folder to export into (required) | — |
 | `--fingerprint` | Pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
 | `--secret-suffix` | Pick the secrets imported with this suffix or date | — |
-| `--force` | Overwrite existing files whose content differs (identical files are left as-is) | `false` |
+| `--overwrite` | Replace existing files whose content differs (identical files are left as-is) | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which secrets to export | all when none given |
 
 Export reads the secret's data and checks it against the secret's name and
@@ -212,7 +216,7 @@ the cluster secret, not in the backup. A secret that lacks one of its expected
 entries is refused.
 
 Export is idempotent: identical files are left untouched, and a file that holds
-different content is refused unless `--force` is passed.
+different content is refused unless `--overwrite` is passed.
 
 `--namespace` and `--node-id` are inherited from `consensus node`; `--node-id` is
 **required** here.
@@ -323,7 +327,7 @@ sudo solo-provisioner consensus keys init --experimental \
 | `--grpc-dns` | Extra fully qualified DNS SAN for the gRPC TLS certificate, added to `localhost` (repeatable) | — |
 | `--grpc-ip` | Extra IP SAN for the gRPC TLS certificate, added to `127.0.0.1` and `::1` (repeatable) | — |
 | `--grpc-validity-days` | gRPC TLS certificate lifetime in days (1-36500) | 100 years |
-| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand) | `false` |
+| `--overwrite` | Replace existing key files in `--keys-dir` with new keys, and any same-named secret whose content differs. This gives the node a new network identity and a new gRPC certificate hash | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which key types to create | gossip and gRPC, plus admin when `admin.pub` exists |
 
 `--namespace` and `--node-id` are inherited from `consensus keys`; `--node-id` is
@@ -331,6 +335,17 @@ sudo solo-provisioner consensus keys init --experimental \
 wallet and save its public key (hex) as `admin.pub` in `--keys-dir` before running
 `init`. Without that file, no admin secret is created and `init` says so; import it
 later with `keys import --admin`.
+
+Re-running `init` keeps the key files that already exist in `--keys-dir`. The
+root `--force`/`-y` flag (skip prompts) does not change this.
+
+> **Caution:** Do not use `--overwrite` on a node that is already in a network.
+> It generates new keys, so the node gets a new gossip identity and a new gRPC
+> certificate hash. The new keys get new secrets (the secret name carries the
+> key fingerprint); the old secrets stay in the cluster. When a node has more
+> than one generation of a key, `consensus node install` keeps the secrets of the
+> running node; for a new install, pick one with `--signing-secret` and
+> `--grpc-tls-secret`.
 
 ### Try it: end-to-end walkthrough
 
