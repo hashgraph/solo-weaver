@@ -233,7 +233,7 @@ func TestReadPromptDefaults_ParsesShaping(t *testing.T) {
 state:
   blockNodeState:
     name: my-release
-    trafficShapingDisabled: false
+    trafficShapingEnabled: true
     shaping:
       egressInterface: eth0
       linkRate: 500mbit
@@ -244,6 +244,9 @@ state:
 	}
 
 	bn := doc.State.BlockNodeState
+	if !bn.TrafficShapingEnabled {
+		t.Error("expected TrafficShapingEnabled to be parsed as true")
+	}
 	if bn.Shaping == nil {
 		t.Fatal("expected Shaping to be parsed, got nil")
 	}
@@ -267,6 +270,9 @@ state:
 	}
 	if doc.State.BlockNodeState.Shaping != nil {
 		t.Errorf("expected nil Shaping when absent, got %+v", doc.State.BlockNodeState.Shaping)
+	}
+	if doc.State.BlockNodeState.TrafficShapingEnabled {
+		t.Error("a missing trafficShapingEnabled key must read as off")
 	}
 }
 

@@ -62,7 +62,25 @@ func TestPatch_PersistsFirewallAndShapingWhenEnabled(t *testing.T) {
 	assert.Equal(t, "eth0", st.BlockNodeState.Shaping.EgressInterface)
 	assert.Equal(t, "1gbit", st.BlockNodeState.Shaping.LinkRate)
 
+	assert.True(t, st.BlockNodeState.TrafficShapingEnabled)
 	assert.False(t, st.BlockNodeState.TrafficShapingDisabled)
+}
+
+// TestPatch_TrafficShapingDisableWritesOptOut checks that turning shaping off
+// also writes trafficShapingDisabled, which is the only key an older CLI reads.
+func TestPatch_TrafficShapingDisableWritesOptOut(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+
+	st := deployedState()
+	st.BlockNodeState.TrafficShapingEnabled = true
+
+	patch := patchBlockNodeStateWithTrafficShaping()
+	require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{TrafficShapingEnabled: false},
+	}))
+
+	assert.False(t, st.BlockNodeState.TrafficShapingEnabled)
+	assert.True(t, st.BlockNodeState.TrafficShapingDisabled)
 }
 
 // TestPatch_DisablePreservesAllowlist covers AC2: disabling the firewall flips the

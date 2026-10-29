@@ -76,15 +76,15 @@ type PromptDefaultsDoc struct {
 			} `yaml:"firewall"`
 		} `yaml:"machineState"`
 		BlockNodeState struct {
-			Name                   string `yaml:"name"`
-			Namespace              string `yaml:"namespace"`
-			ChartVersion           string `yaml:"version"`
-			HistoricRetention      string `yaml:"historicRetention"`
-			RecentRetention        string `yaml:"recentRetention"`
-			PluginPreset           string `yaml:"pluginPreset"`
-			PluginList             string `yaml:"pluginList"`
-			TrafficShapingDisabled bool   `yaml:"trafficShapingDisabled"`
-			Shaping                *struct {
+			Name                  string `yaml:"name"`
+			Namespace             string `yaml:"namespace"`
+			ChartVersion          string `yaml:"version"`
+			HistoricRetention     string `yaml:"historicRetention"`
+			RecentRetention       string `yaml:"recentRetention"`
+			PluginPreset          string `yaml:"pluginPreset"`
+			PluginList            string `yaml:"pluginList"`
+			TrafficShapingEnabled bool   `yaml:"trafficShapingEnabled"`
+			Shaping               *struct {
 				EgressInterface string `yaml:"egressInterface"`
 				LinkRate        string `yaml:"linkRate"`
 			} `yaml:"shaping"`
@@ -180,14 +180,14 @@ func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
 // inside BlockNodeState, so its keys (name, namespace, version) live
 // directly under blockNodeState in the YAML.
 type BlockNodeSummary struct {
-	ReleaseName            string
-	Namespace              string
-	ChartVersion           string
-	HistoricRetention      string
-	RecentRetention        string
-	PluginPreset           string
-	PluginList             string
-	TrafficShapingDisabled bool
+	ReleaseName           string
+	Namespace             string
+	ChartVersion          string
+	HistoricRetention     string
+	RecentRetention       string
+	PluginPreset          string
+	PluginList            string
+	TrafficShapingEnabled bool
 	// EgressInterface and LinkRate are the last-persisted traffic-shaping content
 	// from blockNodeState.shaping, empty when shaping was never configured. They
 	// seed the reconfigure egress prompts so a default-accept keeps the operator's
@@ -247,16 +247,16 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		Profile:  doc.State.MachineState.Profile,
 		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
-			ReleaseName:            bn.Name,
-			Namespace:              bn.Namespace,
-			ChartVersion:           bn.ChartVersion,
-			HistoricRetention:      bn.HistoricRetention,
-			RecentRetention:        bn.RecentRetention,
-			PluginPreset:           bn.PluginPreset,
-			PluginList:             bn.PluginList,
-			TrafficShapingDisabled: bn.TrafficShapingDisabled,
-			EgressInterface:        egressInterface,
-			LinkRate:               linkRate,
+			ReleaseName:           bn.Name,
+			Namespace:             bn.Namespace,
+			ChartVersion:          bn.ChartVersion,
+			HistoricRetention:     bn.HistoricRetention,
+			RecentRetention:       bn.RecentRetention,
+			PluginPreset:          bn.PluginPreset,
+			PluginList:            bn.PluginList,
+			TrafficShapingEnabled: bn.TrafficShapingEnabled,
+			EgressInterface:       egressInterface,
+			LinkRate:              linkRate,
 			Storage: models.BlockNodeStorage{
 				BasePath:             bn.Storage.BasePath,
 				ArchivePath:          bn.Storage.ArchivePath,

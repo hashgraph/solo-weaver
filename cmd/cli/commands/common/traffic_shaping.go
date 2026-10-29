@@ -37,7 +37,7 @@ func RegisterTrafficShapingFlags(cmd *cobra.Command) {
 // seedEnabled is the default the choice falls back to when neither the flag nor
 // an interactive prompt decides it: `install` passes false (opt-in — a fresh
 // install without the flag stays unshaped), while `reconfigure` passes the block
-// node's persisted traffic-shaping decision (BlockNodeState.TrafficShapingDisabled)
+// node's persisted traffic-shaping decision (BlockNodeState.TrafficShapingEnabled)
 // so a no-flag / default-accept reconfigure keeps the existing decision rather than
 // silently tearing an established plane down.
 //

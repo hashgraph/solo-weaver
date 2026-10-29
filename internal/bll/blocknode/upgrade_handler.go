@@ -105,7 +105,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// decision recorded on BlockNodeState — upgrade never prompts and never resolves
 	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
 	// enabled, is handled post-workflow in the CLI layer.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, !currentState.BlockNodeState.TrafficShapingDisabled, false, ports)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, currentState.BlockNodeState.TrafficShapingEnabled, false, ports)
 
 	// Warn (never block) when a storage path is not on local block storage.
 	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)

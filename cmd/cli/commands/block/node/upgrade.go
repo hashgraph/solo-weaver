@@ -83,17 +83,14 @@ var (
 			// normal case for an already-shaped block node.
 			//
 			// If the persisted decision can't be read, skip activation rather than
-			// guessing: TrafficShapingDisabled's zero value reads as "enabled" (negative
-			// polarity), so proceeding on a read error would wrongly activate the daemon
-			// (with an empty namespace) for a node that may have traffic shaping disabled.
-			// The workflow already re-asserted daemon.yaml from the authoritative
-			// state-manager view, and a running daemon is unaffected.
+			// guessing. The workflow already re-asserted daemon.yaml from the
+			// authoritative state-manager view, and a running daemon is unaffected.
 			stateDefaults, sErr := state.ReadPromptDefaultsFromDisk()
 			switch {
 			case sErr != nil:
 				logx.As().Warn().Err(sErr).Msg(
 					"skipping traffic-shaper daemon activation on upgrade: could not read the persisted traffic-shaping decision")
-			case !stateDefaults.BlockNode.TrafficShapingDisabled:
+			case stateDefaults.BlockNode.TrafficShapingEnabled:
 				// A locally-built host picks up its installed daemon binary here rather
 				// than attempting a download for a version that has no release.
 				daemonSource, dErr := resolveDaemonBinarySource(cmd)

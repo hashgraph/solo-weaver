@@ -55,9 +55,9 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 }
 
 // patchBlockNodeStateWithTrafficShaping extends patchBlockNodeState with the
-// TrafficShapingDisabled field, persisting the caller's resolved
-// TrafficShapingEnabled decision. It is used by the two commands that resolve a
-// real traffic-shaping target: `block node install` and `block node reconfigure`.
+// caller's resolved TrafficShapingEnabled decision. It is used by the two
+// commands that resolve a real traffic-shaping target: `block node install` and
+// `block node reconfigure`.
 //
 // It must NOT be used by upgrade/reset/uninstall — those do not resolve
 // TrafficShapingEnabled, so their effectiveInputs.Custom value is the unset zero
@@ -68,21 +68,22 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 	base := patchBlockNodeState()
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+		st.BlockNodeState.TrafficShapingEnabled = effectiveInputs.Custom.TrafficShapingEnabled
 		st.BlockNodeState.TrafficShapingDisabled = !effectiveInputs.Custom.TrafficShapingEnabled
-		logx.As().Debug().Bool("trafficShapingDisabled", st.BlockNodeState.TrafficShapingDisabled).
+		logx.As().Debug().Bool("trafficShapingEnabled", st.BlockNodeState.TrafficShapingEnabled).
 			Msg("Persisted block node traffic-shaping decision into runtime state")
 
 		// Persist the host-firewall decision + content (host-scoped) so a later
 		// reconfigure/upgrade can re-assert the inet weaver-host-firewall table without the operator
 		// re-supplying the allowlist. Written even when the block node is not (yet)
-		// deployed, mirroring TrafficShapingDisabled — the firewall is host-scoped and
+		// deployed, mirroring TrafficShapingEnabled — the firewall is host-scoped and
 		// its application is independent of the Helm release status.
 		patchMachineFirewallFromConfig(st)
 
 		// Persist the traffic-shaping content only when it was enabled and a real
 		// target was resolved, so upgrade/reconfigure re-assert the same NIC/rate/
 		// overrides instead of auto-detecting. When disabled we leave any prior
-		// Shaping record intact (the decision on TrafficShapingDisabled governs re-assert).
+		// Shaping record intact (the decision on TrafficShapingEnabled governs re-assert).
 		if effectiveInputs.Custom.TrafficShapingEnabled {
 			patchBlockNodeShaping(st, effectiveInputs.Custom)
 		}
