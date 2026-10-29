@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 )
 
@@ -60,15 +61,12 @@ func (ks *NodeKeySet) WriteToDir(dir string) error {
 	return nil
 }
 
-// writeFile writes payload to dir/name and enforces perm even if the file
-// pre-existed with looser bits (os.WriteFile only applies perm on creation).
+// writeFile atomically writes payload to dir/name with perm (temp file + rename),
+// so a pre-existing file never holds the new payload under its old mode.
 func writeFile(dir, name string, payload []byte, perm os.FileMode) error {
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, payload, perm); err != nil {
-		return errorx.ExternalError.Wrap(err, "write %q", path)
-	}
-	if err := os.Chmod(path, perm); err != nil {
-		return errorx.ExternalError.Wrap(err, "set permissions on %q", path)
+	if err := fsx.AtomicWriteFile(path, payload, perm); err != nil {
+		return errorx.Decorate(err, "write %q", path)
 	}
 	return nil
 }
