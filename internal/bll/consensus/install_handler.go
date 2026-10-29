@@ -215,7 +215,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// The solo-operator is installed separately by `kube operator install`, not
 		// here — consensus install is a pure consumer. These prechecks are the hard
 		// guard that the operator is present and the right version.
-		steps.PrecheckConsensusSecrets(ins),
+		steps.PrecheckConsensusSecrets(ins, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
