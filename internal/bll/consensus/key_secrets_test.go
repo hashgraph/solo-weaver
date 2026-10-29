@@ -21,20 +21,30 @@ import (
 )
 
 // fakeKeyClient is an in-memory keyCluster. capsule maps a capsule spec field
-// (e.g. "signingPrivateKey") to the secret name the live capsule references.
+// (e.g. "signingPrivateKey") to the secret name the live capsule references;
+// only a read of the capsule named capsuleName sees it.
 type fakeKeyClient struct {
-	data    map[string]map[string][]byte
-	labels  map[string]map[string]string
-	capsule map[string]string
+	data        map[string]map[string][]byte
+	labels      map[string]map[string]string
+	capsule     map[string]string
+	capsuleName string
 }
 
-func (f *fakeKeyClient) GetResourceNestedString(_ context.Context, _, _, _, _ string, fields ...string) (string, error) {
+func (f *fakeKeyClient) GetResourceNestedString(_ context.Context, _, _, _, name string, fields ...string) (string, error) {
+	if name != f.capsuleName {
+		return "", nil
+	}
 	// fields: spec, secrets, secretResources, <field>, secretName
 	return f.capsule[fields[3]], nil
 }
 
 func newFakeKeyClient() *fakeKeyClient {
-	return &fakeKeyClient{data: map[string]map[string][]byte{}, labels: map[string]map[string]string{}, capsule: map[string]string{}}
+	return &fakeKeyClient{
+		data:        map[string]map[string][]byte{},
+		labels:      map[string]map[string]string{},
+		capsule:     map[string]string{},
+		capsuleName: models.ConsensusCapsuleName("ns", 0),
+	}
 }
 
 func (f *fakeKeyClient) ApplySecret(_ context.Context, ns, name string, data map[string][]byte, labels, _ map[string]string) error {
@@ -117,7 +127,7 @@ func TestResolveKeySecrets_FillsUnnamedSecrets(t *testing.T) {
 
 func TestResolveKeySecrets_KeepsNamedSecrets(t *testing.T) {
 	custom := &models.ConsensusNodeInputs{
-		Namespace: "ns", NodeId: 0,
+		Namespace: "ns", OrbitName: "ns", NodeId: 0,
 		SigningSecret: "mine-gossip", GrpcTlsSecret: "mine-grpc", AdminKeySecret: "mine-admin",
 	}
 	require.NoError(t, resolveKeySecrets(context.Background(), newFakeKeyClient(), custom))
@@ -198,4 +208,29 @@ func TestResolveKeySecrets_CapsuleWithoutAdminFallsBackToLabels(t *testing.T) {
 	require.NoError(t, resolveKeySecrets(context.Background(), client, custom))
 	assert.Equal(t, "node0-gossip-keys-live", custom.SigningSecret)
 	assert.Regexp(t, `^node0-admin-pubkey-[0-9a-f]{8}$`, custom.AdminKeySecret)
+}
+
+// The live capsule is found by orbit name; a lookup without it must fail
+// instead of reading the wrong capsule and silently using the labels.
+func TestResolveKeySecrets_RequiresOrbitName(t *testing.T) {
+	client := newFakeKeyClient()
+	genAndImport(t, client, 0, cnkeys.Selectors{})
+
+	custom := &models.ConsensusNodeInputs{Namespace: "ns", NodeId: 0}
+	err := resolveKeySecrets(context.Background(), client, custom)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "orbit name")
+	assert.Empty(t, custom.SigningSecret)
+}
+
+// The live capsule of another orbit must not be used.
+func TestResolveKeySecrets_IgnoresCapsuleOfOtherOrbit(t *testing.T) {
+	client := newFakeKeyClient()
+	genAndImport(t, client, 0, cnkeys.Selectors{})
+	client.capsule = map[string]string{"signingPrivateKey": "node0-gossip-keys-live"}
+	client.capsuleName = models.ConsensusCapsuleName("other", 0)
+
+	custom := &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0}
+	require.NoError(t, resolveKeySecrets(context.Background(), client, custom))
+	assert.Regexp(t, `^node0-gossip-keys-\d{8}-[0-9a-f]{8}$`, custom.SigningSecret)
 }

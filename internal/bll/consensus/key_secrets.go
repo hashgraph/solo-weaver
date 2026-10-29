@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 )
 
 // keyCluster is the cluster access resolveKeySecrets needs: labelled Secrets,
@@ -59,6 +60,11 @@ const keySecretLookupTimeout = 30 * time.Second
 // The admin public key secret is optional: when none exists, or several exist and
 // none is named, it is left empty and the capsule carries no admin key reference.
 func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.ConsensusNodeInputs) error {
+	// Without the orbit name the live-capsule lookup reads the wrong capsule and
+	// silently falls back to the labels.
+	if custom.OrbitName == "" {
+		return errx.Decorate(errorx.IllegalState.New("orbit name is not set before the key secret lookup"), reasons.Internal)
+	}
 	liveSigning, liveGrpc, liveAdmin := liveSecretNames(ctx, client, custom)
 	pick := func(t cnkeys.KeyType, current *string, live string, optional bool) error {
 		if *current != "" {
