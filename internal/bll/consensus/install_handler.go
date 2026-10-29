@@ -93,6 +93,10 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		}
 	}
 
+	// Apply namespace=orbit convention. The key lookup below needs it to find the
+	// node's live ConsensusCapsule.
+	custom.OrbitName = custom.Namespace
+
 	// Find the key secrets the operator did not name, by their labels.
 	ctx, cancel := lookupContext()
 	defer cancel()
@@ -133,9 +137,6 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	if err := validateConsensusPullSecretHosts(custom); err != nil {
 		return nil, err
 	}
-
-	// Apply namespace=orbit convention
-	custom.OrbitName = custom.Namespace
 
 	l.Info().
 		Str("imageRepo", custom.ConsensusImageRepo).
