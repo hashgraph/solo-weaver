@@ -162,6 +162,23 @@ func (u *UserInputs[T]) Validate() error {
 	return nil
 }
 
+// ActionValidator is implemented by custom inputs whose required fields depend on the action.
+type ActionValidator interface {
+	ValidateFor(action ActionType) error
+}
+
+// ValidateFor validates the inputs for one action. Custom inputs without ActionValidator use Validate.
+func (u *UserInputs[T]) ValidateFor(action ActionType) error {
+	validator, ok := any(&u.Custom).(ActionValidator)
+	if !ok {
+		return u.Validate()
+	}
+	if err := u.Common.Validate(); err != nil {
+		return err
+	}
+	return validator.ValidateFor(action)
+}
+
 // Validate validates all common inputs fields to ensure they are safe and secure.
 func (c *CommonInputs) Validate() error {
 	if c.NodeType != "" {

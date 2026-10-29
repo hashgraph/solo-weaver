@@ -89,7 +89,7 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 	}
 
 	result := make(map[string]state.ConsensusNodeState, len(persisted))
-	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+	apiVersion := kube.SoloOperatorAPIVersion
 
 	for scope, ns := range persisted {
 		capsuleName := models.ConsensusCapsuleName(ns.OrbitName, ns.NodeId)

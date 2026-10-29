@@ -21,6 +21,9 @@ import (
 const (
 	SoloOperatorGroup   = "operator.solo.hiero.org"
 	SoloOperatorVersion = "v1alpha1"
+
+	// SoloOperatorAPIVersion is the apiVersion of the solo-operator CRs.
+	SoloOperatorAPIVersion = SoloOperatorGroup + "/" + SoloOperatorVersion
 )
 
 const (

@@ -26,6 +26,10 @@ const (
 	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
 	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
 
+	// Default node identity for --account-id and --weight.
+	ConsensusDefaultAccountId = "0.0.3"
+	ConsensusDefaultWeight    = 500
+
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
 	ConsensusDefaultJavaHeapMax   = "2g"
@@ -338,6 +342,40 @@ var consensusConfigCRSuffix = map[string]string{
 	ConfigKeyBlockNodes:          "block-nodes",
 }
 
+// consensusConfigCRKinds maps each config key to the solo-operator CR kind that carries it, in a fixed order.
+var consensusConfigCRKinds = []struct{ key, kind string }{
+	{ConfigKeyLog4j2, "Log4j2Config"},
+	{ConfigKeySettings, "NodeSettings"},
+	{ConfigKeyAppProperties, "ApplicationProperties"},
+	{ConfigKeyAppOverride, "ApplicationOverrideProperties"},
+	{ConfigKeyApiPermission, "ApiPermissionProperties"},
+	{ConfigKeyBootstrap, "BootstrapProperties"},
+	{ConfigKeyNodeProperties, "NodePropertiesConfig"},
+	{ConfigKeyFeeSchedules, "FeeSchedules"},
+	{ConfigKeySimpleFeesSchedules, "SimpleFeesSchedules"},
+	{ConfigKeyThrottles, "ThrottlesConfig"},
+	{ConfigKeyBlockNodes, "BlockNodesConfig"},
+}
+
+// ConsensusConfigKeys returns every config key, in a fixed order.
+func ConsensusConfigKeys() []string {
+	keys := make([]string, 0, len(consensusConfigCRKinds))
+	for _, c := range consensusConfigCRKinds {
+		keys = append(keys, c.key)
+	}
+	return keys
+}
+
+// ConsensusConfigCRKind returns the solo-operator CR kind for a config key, or "" for an unknown key.
+func ConsensusConfigCRKind(configKey string) string {
+	for _, c := range consensusConfigCRKinds {
+		if c.key == configKey {
+			return c.kind
+		}
+	}
+	return ""
+}
+
 // ConsensusConfigCRName returns the config CR / managed ConfigMap / capsule ref
 // name for a config key on a node, e.g.
 // ConsensusConfigCRName("node0", ConfigKeyAppProperties) == "node0-application-properties".
@@ -374,10 +412,21 @@ func ConsensusCapsuleName(orbitName string, nodeId int64) string {
 	return fmt.Sprintf("%s-consensus-%d", orbitName, nodeId)
 }
 
-// Validate checks that required fields are present.
+// Validate checks the fields that every action requires.
 func (c *ConsensusNodeInputs) Validate() error {
 	if c.Namespace == "" {
 		return errorx.IllegalArgument.New("--namespace is required")
+	}
+	return nil
+}
+
+// ValidateFor also checks the fields that the action requires. Only install sets the node identity.
+func (c *ConsensusNodeInputs) ValidateFor(action ActionType) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if action != ActionInstall {
+		return nil
 	}
 	if c.AccountId == "" {
 		return errorx.IllegalArgument.New("--account-id is required")
