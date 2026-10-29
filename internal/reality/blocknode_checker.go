@@ -58,32 +58,27 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		return bn, err
 	}
 
-	if bn.ReleaseInfo.Status == release.StatusDeployed && re == nil {
-		logx.As().Debug().Msg("BlockNode Helm release was previously deployed but is now missing; treating as deleted or unknown")
-		return state.NewBlockNodeState(), nil
-	}
+	// The traffic-shaping decision and content are weaver-only records that
+	// cannot be recovered from the Helm release or the cluster. Every rebuild
+	// below carries them over, including when the release is not found: any
+	// command that flushes state in that window would otherwise save them as lost.
+	trafficShapingEnabled := bn.TrafficShapingEnabled
+	shaping := bn.Shaping
 
 	if re == nil {
-		logx.As().Debug().Msg("No BlockNode Helm release found; returning default BlockNodeState")
-		return state.NewBlockNodeState(), nil
+		if bn.ReleaseInfo.Status == release.StatusDeployed {
+			logx.As().Debug().Msg("BlockNode Helm release was previously deployed but is now missing; treating as deleted or unknown")
+		} else {
+			logx.As().Debug().Msg("No BlockNode Helm release found; returning default BlockNodeState")
+		}
+		missing := state.NewBlockNodeState()
+		missing.TrafficShapingEnabled = trafficShapingEnabled
+		missing.Shaping = shaping
+		return missing, nil
 	}
 
 	logx.As().Debug().Msg("Found BlockNode Helm release; building BlockNodeState")
-	// TrafficShapingDisabled is a weaver-only install decision that cannot be
-	// recovered from the Helm release or the live cluster (see its doc on
-	// state.BlockNodeState). Capture the persisted value before rebuilding the
-	// struct so a reality refresh does not silently reset it to the enabled
-	// default — which would make reconfigure/upgrade re-provision tc shaping (and
-	// attempt to install the daemon) for a block node deliberately installed
-	// without it.
-	trafficShapingDisabled := bn.TrafficShapingDisabled
-	// Shaping (egress NIC, link rate, per-class overrides) is a weaver-only record
-	// that, like TrafficShapingDisabled, cannot be recovered from the Helm release or
-	// the live cluster. Capture it before rebuilding so a reality refresh does not
-	// drop it — otherwise upgrade/reconfigure would auto-detect the NIC/rate instead
-	// of re-asserting the operator's original shaping.
-	shaping := bn.Shaping
-	// ChartRef is a third record in the same class: Helm does not keep the chart
+	// ChartRef is also a weaver-only record: Helm does not keep the chart
 	// reference in release metadata, so rebuilding from the release loses it.
 	// patchBlockNodeState re-injects it when state is flushed, but that is after
 	// the workflow has run — anything that reads ReleaseInfo.ChartRef off a
@@ -104,10 +99,10 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			DeletedAt:     re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage:                models.BlockNodeStorage{},
-		TrafficShapingDisabled: trafficShapingDisabled,
-		Shaping:                shaping,
-		LastSync:               now,
+		Storage:               models.BlockNodeStorage{},
+		TrafficShapingEnabled: trafficShapingEnabled,
+		Shaping:               shaping,
+		LastSync:              now,
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)

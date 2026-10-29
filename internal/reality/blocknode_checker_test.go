@@ -147,13 +147,12 @@ func (f fakeKubeClient) List(_ context.Context, _ kube.ResourceKind, _ string, _
 	return &unstructured.UnstructuredList{}, nil
 }
 
-// TestRefreshState_PreservesTrafficShapingDisabled verifies that the weaver-only
-// install decision (which cannot be recovered from the Helm release or cluster)
-// survives a reality refresh that rebuilds BlockNodeState from a found release.
-// Without preservation, the rebuild resets it to the enabled default (false),
-// which wrongly makes reconfigure/upgrade re-provision tc shaping and attempt a
-// daemon install for a block node deliberately installed without it.
-func TestRefreshState_PreservesTrafficShapingDisabled(t *testing.T) {
+// TestRefreshState_PreservesTrafficShapingDecision verifies that the weaver-only
+// traffic-shaping decision, which cannot be recovered from the Helm release or
+// cluster, survives a reality refresh that rebuilds BlockNodeState from a found
+// release. Without it, upgrade would stop re-asserting shaping on a node that
+// enabled it.
+func TestRefreshState_PreservesTrafficShapingDecision(t *testing.T) {
 	const manifest = `apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -174,7 +173,7 @@ metadata:
 
 	persisted := state.NewBlockNodeState()
 	persisted.ReleaseInfo.Status = release.StatusDeployed
-	persisted.TrafficShapingDisabled = true
+	persisted.TrafficShapingEnabled = true
 
 	full := state.State{}
 	full.BlockNodeState = persisted
@@ -193,14 +192,61 @@ metadata:
 	if got.ReleaseInfo.Name != "block-node" {
 		t.Fatalf("expected release to be found and rebuilt, got name %q", got.ReleaseInfo.Name)
 	}
-	if !got.TrafficShapingDisabled {
-		t.Error("TrafficShapingDisabled must be preserved as true across a reality refresh, got false")
+	if !got.TrafficShapingEnabled {
+		t.Error("TrafficShapingEnabled must be preserved as true across a reality refresh, got false")
+	}
+}
+
+// TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord covers the refresh
+// that cannot find the block node release. Any command that flushes state in
+// that window saves what the checker returns, so the decision and Shaping must
+// survive it.
+func TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status release.Status
+	}{
+		{name: "previously_deployed", status: release.StatusDeployed},
+		{name: "never_deployed", status: release.StatusUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, enabled := range []bool{true, false} {
+				persisted := state.NewBlockNodeState()
+				persisted.ReleaseInfo.Status = tc.status
+				persisted.TrafficShapingEnabled = enabled
+				persisted.Shaping = &state.ShapingState{EgressInterface: "eth0", LinkRate: "1gbit"}
+
+				full := state.State{}
+				full.BlockNodeState = persisted
+
+				checker := &blockNodeChecker{
+					sm:      fakeStateManager{st: full},
+					newHelm: func() (HelmManager, error) { return fakeHelmManager{}, nil },
+					newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+					probe:   func() ClusterReachability { return Reachable },
+				}
+
+				got, err := checker.RefreshState(context.Background())
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if got.ReleaseInfo.Status == release.StatusDeployed {
+					t.Fatalf("expected the release to be reported as not deployed, got %q", got.ReleaseInfo.Status)
+				}
+				if got.TrafficShapingEnabled != enabled {
+					t.Errorf("enabled=%v: decision not kept, got %v", enabled, got.TrafficShapingEnabled)
+				}
+				if got.Shaping == nil || got.Shaping.EgressInterface != "eth0" {
+					t.Errorf("enabled=%v: Shaping not kept, got %+v", enabled, got.Shaping)
+				}
+			}
+		})
 	}
 }
 
 // TestRefreshState_PreservesShaping verifies that the persisted traffic-shaping
 // content (egress NIC, link rate, per-class overrides) — which, like
-// TrafficShapingDisabled, cannot be recovered from the Helm release or the live
+// TrafficShapingEnabled, cannot be recovered from the Helm release or the live
 // cluster — survives a reality refresh that rebuilds BlockNodeState from a found
 // release. Without preservation, upgrade/reconfigure would auto-detect the NIC and
 // drop the operator's original rate/overrides instead of re-asserting them.

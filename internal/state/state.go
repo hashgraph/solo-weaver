@@ -204,14 +204,12 @@ type BlockNodeState struct {
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
-	// TrafficShapingDisabled records an install-time opt-out
-	// (--traffic-shaping-enabled=false) that cannot be recovered from the Helm
-	// release or the live cluster. Negative polarity so the zero value means
-	// "enabled", matching HostConfig.Disabled's convention. Only `block node
-	// install` ever writes this (see patchBlockNodeStateAfterInstall); reconfigure
-	// and upgrade read it to durably skip re-provisioning tc shaping for a block
-	// node that was deliberately installed without it.
-	TrafficShapingDisabled bool `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
+	// TrafficShapingEnabled records the install/reconfigure decision, which cannot
+	// be recovered from the Helm release or the live cluster. A missing key reads
+	// as off, so a lost record never turns shaping on. No omitempty: the key is
+	// always written, which is what stops migration_traffic_shaping_enabled_v1
+	// from re-applying to a state file this CLI wrote.
+	TrafficShapingEnabled bool `yaml:"trafficShapingEnabled" json:"trafficShapingEnabled"`
 	// Shaping records the last-resolved traffic-shaping content (egress NIC, link
 	// rate, per-class overrides) that cannot be recovered from the Helm release or
 	// the live cluster. It is written on install/reconfigure when traffic shaping is
@@ -224,7 +222,7 @@ type BlockNodeState struct {
 
 // ShapingState is the persisted record of the traffic-shaping content bundle.
 // The enable/disable decision lives separately on
-// BlockNodeState.TrafficShapingDisabled; this holds only the values needed to
+// BlockNodeState.TrafficShapingEnabled; this holds only the values needed to
 // reproduce the shaping when it is enabled.
 type ShapingState struct {
 	EgressInterface string                          `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`

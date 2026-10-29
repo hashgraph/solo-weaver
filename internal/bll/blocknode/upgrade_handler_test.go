@@ -20,8 +20,8 @@ func newMinimalUpgradeHandler() *UpgradeHandler {
 }
 
 // deployedStateForUpgrade returns a deployed block-node state at chart version
-// 0.30.0 with the given traffic-shaping-disabled decision recorded.
-func deployedStateForUpgrade(trafficShapingDisabled bool) state.State {
+// 0.30.0 with the given traffic-shaping decision recorded.
+func deployedStateForUpgrade(trafficShapingEnabled bool) state.State {
 	return state.State{
 		StateRecord: state.StateRecord{
 			BlockNodeState: state.BlockNodeState{
@@ -30,8 +30,8 @@ func deployedStateForUpgrade(trafficShapingDisabled bool) state.State {
 					ChartRef:     "oci://example.com/block-node",
 					ChartVersion: "0.30.0",
 				},
-				Storage:                models.BlockNodeStorage{BasePath: "/mnt/storage"},
-				TrafficShapingDisabled: trafficShapingDisabled,
+				Storage:               models.BlockNodeStorage{BasePath: "/mnt/storage"},
+				TrafficShapingEnabled: trafficShapingEnabled,
 			},
 		},
 	}
@@ -56,7 +56,7 @@ func upgradeInputs() models.UserInputs[models.BlockNodeInputs] {
 func TestUpgrade_TrafficShapingEnabled_ReAssertsPlane(t *testing.T) {
 	h := newMinimalUpgradeHandler()
 
-	wb, err := h.BuildWorkflow(deployedStateForUpgrade(false), upgradeInputs())
+	wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), upgradeInputs())
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
@@ -79,7 +79,7 @@ func TestUpgrade_TrafficShapingEnabled_ReAssertsPlane(t *testing.T) {
 func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 	h := newMinimalUpgradeHandler()
 
-	wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), upgradeInputs())
+	wb, err := h.BuildWorkflow(deployedStateForUpgrade(false), upgradeInputs())
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
@@ -127,7 +127,7 @@ func TestUpgrade_LeaveScaledDown_TrailingScaleDown(t *testing.T) {
 
 			// Traffic shaping disabled keeps the network prefix to the single
 			// self-gating firewall step, so the assertion stays about the tail.
-			wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+			wb, err := h.BuildWorkflow(deployedStateForUpgrade(false), inputs)
 			require.NoError(t, err)
 
 			assert.Equal(t, withMediaCheck(tc.want...), workflowStepIDs(t, wb))
@@ -147,7 +147,7 @@ func TestUpgrade_PurgeStorage_RecreatesBeforeChartUpgrade(t *testing.T) {
 	inputs.Custom.ResetStorage = true
 	inputs.Custom.PurgeStorage = true
 
-	wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+	wb, err := h.BuildWorkflow(deployedStateForUpgrade(false), inputs)
 	require.NoError(t, err)
 
 	assert.Equal(t, "block-node-upgrade-purge-storage", wb.Id())
@@ -178,7 +178,7 @@ func TestUpgrade_PathChangeWithoutPurgeIsRejected(t *testing.T) {
 			inputs.Custom.Storage = models.BlockNodeStorage{BasePath: "/mnt/new"}
 			inputs.Custom.ResetStorage = tc.resetStorage
 
-			_, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+			_, err := h.BuildWorkflow(deployedStateForUpgrade(false), inputs)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "storage paths have changed")
@@ -222,7 +222,7 @@ func TestUpgrade_UnchangedPathsKeepExistingWorkflowIds(t *testing.T) {
 			inputs := upgradeInputs()
 			inputs.Custom.ResetStorage = tc.resetStorage
 
-			wb, err := h.BuildWorkflow(deployedStateForUpgrade(true), inputs)
+			wb, err := h.BuildWorkflow(deployedStateForUpgrade(false), inputs)
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.workflowId, wb.Id())
