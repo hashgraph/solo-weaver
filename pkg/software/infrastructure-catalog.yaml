@@ -672,7 +672,7 @@ cluster:
   # `task bump:solo-operator VERSION=x`. The version key must equal
   # deps.SOLO_OPERATOR_VERSION or the catalog fails to load.
   versions:
-    0.10.0:
+    0.11.0:
       algorithm: 'sha256'
       # Private chart — regenerate with `task registry:login:ghcr && task chart-checksums`.
-      checksum: 'da26976fcf9b3e32e086f53f733a08a54a6d89075cf431465de85b4d50396d9a'
+      checksum: 'e4abbee4b0290a3ebb96be12f7d05893101b8fb06485b97650519f980c0d15ba'

@@ -10,7 +10,7 @@ dotenv: [".env"]
 vars:
   OS: [linux]
   ARCH: [amd64, arm64]
-  GO_VERSION: 1.27.2
+  GO_VERSION: 1.27.3
   # Build metadata stamped into github.com/automa-saga/version at link time via -X.
   # Override VERSION on the command line or in CI (e.g. `task build:cli VERSION=0.20.0`);
   # COMMIT and DATE are derived automatically.
@@ -183,7 +183,7 @@ tasks:
       - "go run ./scripts/chart-checksums"
 
   bump:solo-operator:
-    desc: "Bump solo-operator to VERSION in ONE command: the Go API module (go.mod + vendor, the CRD types), the SOLO_OPERATOR_VERSION constant (single source of truth for the chart + operator image + UC sidecar), and the catalog checksum — then it re-compiles and verifies the invariants. Host-only; needs 'helm' on PATH and GITHUB_USER/GITHUB_ACCESS_TOKEN in the root .env (used for BOTH the private Go module and the private ghcr chart). A breaking CRD change in the new version surfaces here as a compile error — fix the code and re-run. After it succeeds, run 'task vm:sync' to push vendor/ into the VM. Accepts 0.6.1 or v0.6.1."
+    desc: "Bump solo-operator to VERSION in ONE command: the Go API module (go.mod + vendor, the CRD types), the SOLO_OPERATOR_VERSION constant (single source of truth for the chart + operator image + UC sidecar), and the catalog checksum — then it re-compiles and verifies the invariants. Host-only; needs 'helm' on PATH (the module and the ghcr chart are public; GITHUB_USER/GITHUB_ACCESS_TOKEN from the root .env are optional and used only when both are set). A breaking CRD change in the new version surfaces here as a compile error — fix the code and re-run. After it succeeds, run 'task vm:sync' to push vendor/ into the VM. Accepts 0.6.1 or v0.6.1."
     cmds:
       - |
         set -e
@@ -192,23 +192,28 @@ tasks:
         # omitted arg resolves to 0.0.0 rather than empty — reject both so a forgotten
         # VERSION can't silently bump the operator to 0.0.0.
         case "$VERSION" in ""|"0.0.0") echo "✗ Pass VERSION, e.g. 'task bump:solo-operator VERSION=0.6.1'" >&2; exit 1 ;; esac
-        : "${GITHUB_USER:?Set GITHUB_USER in a root .env file (see .env.example)}"
-        : "${GITHUB_ACCESS_TOKEN:?Set GITHUB_ACCESS_TOKEN (repo read + read:packages) in a root .env file (see .env.example)}"
 
         BARE="${VERSION#v}"   # artifacts (constant, catalog key) use the bare version
         MODVER="v$BARE"       # Go module versions are v-prefixed
         DEPS=pkg/deps/deps.go
         CATALOG=pkg/software/infrastructure-catalog.yaml
 
-        # 1. Go API module (CRD types) + re-vendor. First, so a bad version / auth fails
-        #    before anything else is touched. The PAT is injected into git via env-config
-        #    for these commands only (never written to ~/.gitconfig), and GONOSUMCHECK/
-        #    GONOSUMDB skip the public sum DB (which 404s for a private repo).
-        export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
-        export GIT_CONFIG_VALUE_0="https://github.com/"
-        export GOPRIVATE="github.com/hashgraph/*"
-        export GONOSUMCHECK=1 GONOSUMDB="github.com/hashgraph/*" GOFLAGS=-mod=mod
+        # Optional credentials: only when both are set (root .env) is the PAT injected
+        # into git via env-config for the go commands (never written to ~/.gitconfig)
+        # and Helm logged into ghcr. Without them everything is fetched anonymously.
+        AUTHED=""
+        if [ -n "${GITHUB_USER:-}" ] && [ -n "${GITHUB_ACCESS_TOKEN:-}" ]; then
+          AUTHED=1
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="url.https://${GITHUB_USER}:${GITHUB_ACCESS_TOKEN}@github.com/.insteadOf"
+          export GIT_CONFIG_VALUE_0="https://github.com/"
+          export GOPRIVATE="github.com/hashgraph/*"
+          export GONOSUMCHECK=1 GONOSUMDB="github.com/hashgraph/*"
+        fi
+        export GOFLAGS=-mod=mod
+
+        # 1. Go API module (CRD types) + re-vendor. First, so a bad version fails
+        #    before anything else is touched.
         echo "→ go get github.com/hashgraph/solo-operator@$MODVER"
         go get "github.com/hashgraph/solo-operator@$MODVER"
         go mod tidy
@@ -230,8 +235,9 @@ tasks:
           { print }
         ' "$CATALOG" > "$CATALOG.tmp" && mv "$CATALOG.tmp" "$CATALOG"
 
-        # 4. Auth for the private chart, then 5. recompute + write the checksum.
-        task registry:login:ghcr
+        # 4. Log Helm into ghcr when credentials are available (the chart is public,
+        #    so this is optional), then 5. recompute + write the checksum.
+        if [ -n "$AUTHED" ]; then task registry:login:ghcr; fi
         go run ./scripts/chart-checksums -write
 
         # 6. Compatibility gate: compile the packages that use the CRD types against the
@@ -379,8 +385,8 @@ tasks:
       - "source /etc/profile.d/go.sh"
       - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
       # Set the Go toolchain to auto-upgrade to the latest version due to https://github.com/golang/go/issues/75031
-      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
-      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
+      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.3+auto"
+      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.3+auto"
     generates:
       - "/usr/local/go/**"
 

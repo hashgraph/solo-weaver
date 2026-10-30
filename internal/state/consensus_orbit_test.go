@@ -14,18 +14,20 @@ import (
 
 func TestConsensusOrbitStateFromSpec(t *testing.T) {
 	spec := map[string]interface{}{
-		"provisionerDaemonEnabled": true,
-		"requireDigestOnDeploy":    true,
-		"deploymentModel":          "SingleKubernetesCluster",
+		"requireDigestOnDeploy": true,
+		"deploymentModel":       "SingleKubernetesCluster",
+		"network": map[string]interface{}{
+			"ledgerId": "0x00", "chainId": "295",
+			"realmId": int64(1), "shardId": float64(2),
+		},
 		"consensus": map[string]interface{}{
-			"provisioningModel": "InitContainerJava",
-			"genesis": map[string]interface{}{"addressBook": map[string]interface{}{
-				"ledgerId": "0x00", "chainId": "295",
-				"realmId": int64(1), "shardId": float64(2),
+			"provisionerDaemonEnabled": true,
+			"provisioningModel":        "InitContainerJava",
+			"addressBook": map[string]interface{}{
 				"externalAddresses": []interface{}{
 					map[string]interface{}{"nodeId": int64(9), "nickName": "ext"},
 				},
-			}},
+			},
 		},
 	}
 	got := ConsensusOrbitStateFromSpec(spec)

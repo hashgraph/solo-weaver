@@ -629,16 +629,15 @@ func TestSplitConsensusImage(t *testing.T) {
 
 func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
 	orbitSpec := func(daemon bool, ledger, chain string, extra map[string]interface{}) map[string]interface{} {
-		ab := map[string]interface{}{"ledgerId": ledger}
+		network := map[string]interface{}{"ledgerId": ledger}
 		if chain != "" {
-			ab["chainId"] = chain
+			network["chainId"] = chain
 		}
-		spec := map[string]interface{}{
-			"consensus": map[string]interface{}{"genesis": map[string]interface{}{"addressBook": ab}},
-		}
+		consensus := map[string]interface{}{}
 		if daemon {
-			spec["provisionerDaemonEnabled"] = true
+			consensus["provisionerDaemonEnabled"] = true
 		}
+		spec := map[string]interface{}{"network": network, "consensus": consensus}
 		for k, v := range extra {
 			spec[k] = v
 		}
