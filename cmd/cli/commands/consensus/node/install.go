@@ -207,7 +207,7 @@ var installCmd = &cobra.Command{
 func init() {
 	installCmd.Flags().StringVar(&flagAccountId, "account-id", "", "Node account ID (e.g. 0.0.3); defaults to 0.0.(3 + node-id)")
 	installCmd.Flags().IntVar(&flagWeight, "weight", models.ConsensusDefaultWeight, "Consensus weight for this node")
-	installCmd.Flags().StringVar(&flagLedgerId, "ledger-id", "", "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev) — extracted from deployment package if not set")
+	installCmd.Flags().StringVar(&flagLedgerId, "ledger-id", "", "Ledger ID of the network: 0x00 (mainnet), 0x01 (local/dev), or the 64-character genesis address-book hash on TSS networks — extracted from deployment package if not set")
 	installCmd.Flags().StringVar(&flagChainId, "chain-id", "", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev) — extracted from deployment package if not set")
 	installCmd.Flags().StringVar(&flagImageRepo, "image-repo", "", "Consensus node container image repository — extracted from deployment package if not set")
 	installCmd.Flags().StringVar(&flagImageTag, "image-tag", "", "Consensus node container image tag — extracted from deployment package if not set")

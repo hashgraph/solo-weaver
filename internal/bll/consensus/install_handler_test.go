@@ -3,6 +3,7 @@
 package consensus
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -48,4 +49,31 @@ func TestValidateConsensusPullSecretHosts_UnknownHostRejected(t *testing.T) {
 	err := validateConsensusPullSecretHosts(c)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "typo.example.com")
+}
+
+func TestValidateConsensusNetworkIdentity(t *testing.T) {
+	tests := []struct {
+		name, ledger, chain, wantErr string
+	}{
+		{"hex ledger, decimal chain", "0x00", "295", ""},
+		{"free-form long ledger", "ab" + strings.Repeat("cd", 31), "", ""},
+		{"empty chain is allowed", "0x01", "", ""},
+		{"empty ledger", "", "295", "ledger-id could not be resolved"},
+		{"ledger with space", "0x 00", "295", "whitespace"},
+		{"ledger with newline", "0x00\n", "295", "whitespace"},
+		{"non-numeric chain", "0x00", "abc", "decimal"},
+		{"negative chain", "0x00", "-1", "decimal"},
+		{"hex chain", "0x00", "0x127", "decimal"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConsensusNetworkIdentity(&models.ConsensusNodeInputs{LedgerId: tt.ledger, ChainId: tt.chain})
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }

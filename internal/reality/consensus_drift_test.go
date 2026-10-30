@@ -131,10 +131,8 @@ func TestReadLiveOrbit(t *testing.T) {
 	t.Run("reads the tracked fields; an omitted daemon key is false", func(t *testing.T) {
 		kc := orbitSpecKubeClient{found: true, spec: map[string]interface{}{
 			"requireDigestOnDeploy": true,
-			"consensus": map[string]interface{}{
-				"genesis": map[string]interface{}{"addressBook": map[string]interface{}{
-					"ledgerId": "0x01", "chainId": "296", "realmId": int64(1),
-				}},
+			"network": map[string]interface{}{
+				"ledgerId": "0x01", "chainId": "296", "realmId": int64(1),
 			},
 		}}
 		var live liveConsensusShape
