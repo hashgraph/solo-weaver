@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,11 +29,16 @@ type fakeKeyClient struct {
 	labels      map[string]map[string]string
 	capsule     map[string]string
 	capsuleName string
+	// errField makes the read of this capsule field fail.
+	errField string
 }
 
 func (f *fakeKeyClient) GetResourceNestedString(_ context.Context, _, _, _, name string, fields ...string) (string, error) {
 	if name != f.capsuleName {
 		return "", nil
+	}
+	if fields[3] == f.errField {
+		return "", errors.New("forbidden")
 	}
 	// fields: spec, secrets, secretResources, <field>, secretName
 	return f.capsule[fields[3]], nil
@@ -221,6 +227,23 @@ func TestResolveKeySecrets_RequiresOrbitName(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "orbit name")
 	assert.Empty(t, custom.SigningSecret)
+}
+
+// A capsule read error uses no live names at all, so the live and the labelled
+// secrets are never mixed.
+func TestResolveKeySecrets_CapsuleReadErrorUsesLabels(t *testing.T) {
+	client := newFakeKeyClient()
+	genAndImport(t, client, 0, cnkeys.Selectors{})
+	client.capsule = map[string]string{
+		"signingPrivateKey": "node0-gossip-keys-live",
+		"grpcTlsPrivateKey": "node0-grpc-tls-keys-live",
+	}
+	client.errField = "grpcTlsPrivateKey"
+
+	custom := &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0}
+	require.NoError(t, resolveKeySecrets(context.Background(), client, custom))
+	assert.Regexp(t, `^node0-gossip-keys-\d{8}-[0-9a-f]{8}$`, custom.SigningSecret)
+	assert.Regexp(t, `^node0-grpc-tls-keys-\d{8}-[0-9a-f]{8}$`, custom.GrpcTlsSecret)
 }
 
 // The live capsule of another orbit must not be used.

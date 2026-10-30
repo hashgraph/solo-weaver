@@ -4,6 +4,7 @@ package models
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
@@ -220,6 +221,18 @@ func ConsensusDefaultAccountId(nodeId int64) string {
 	return fmt.Sprintf("0.0.%d", 3+nodeId)
 }
 
+// consensusAccountIdPattern matches a Hedera account id: shard.realm.num.
+var consensusAccountIdPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidateConsensusAccountId rejects an account id that is not shard.realm.num
+// (e.g. 0.0.3), such as a bare node number.
+func ValidateConsensusAccountId(s string) error {
+	if !consensusAccountIdPattern.MatchString(s) {
+		return errorx.IllegalArgument.New("invalid account ID %q: expected shard.realm.num, e.g. 0.0.3", s)
+	}
+	return nil
+}
+
 // ConsensusNodeStateKey returns the orbit-qualified key for solo-weaver's local
 // state and reality maps (e.g. "hiero-network-1/node0"). Because the same
 // nodeId can be deployed into multiple orbits in one cluster, the local state
@@ -242,6 +255,9 @@ func (c *ConsensusNodeInputs) Validate() error {
 	}
 	if c.AccountId == "" {
 		return errorx.IllegalArgument.New("--account-id is required")
+	}
+	if err := ValidateConsensusAccountId(c.AccountId); err != nil {
+		return err
 	}
 	if c.Weight <= 0 {
 		return errorx.IllegalArgument.New("--weight must be positive")

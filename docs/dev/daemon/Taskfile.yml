@@ -83,8 +83,8 @@ vars:
   # The consensus node account id (0.0.3) — the v0.74.0 genesis has node0 account 0.0.3, which is the default payer for beacon's config.yaml.
   ACCOUNT_ID: '{{.ACCOUNT_ID | default "0.0.3"}}'  # node0 account in the v0.74.0 genesis
 
-  # Where `keys init` writes node<N>'s key material.
-  KEYS_DIR: '{{.KEYS_DIR | default (printf "/tmp/cn-keys/node%s" .NODE_ID)}}'
+  # Where `keys init` writes node<N>'s key material (not /tmp: a VM reboot clears it).
+  KEYS_DIR: '{{.KEYS_DIR | default (printf "/opt/solo/cn-keys/node%s" .NODE_ID)}}'
 
   # Daemon upgrade staging dir — daemon reads the extracted package here; the CN pod
   # extracts special file 0.0.150 into the same path (shared on a single host).

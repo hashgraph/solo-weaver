@@ -171,7 +171,7 @@ Each task wraps a real command; the notable ones:
 | `rebuild` | `uat:rebuild` — `task build:cli` (builds daemon too, stamps its digest) + self-install |
 | `cluster` | `uat:registry:login:ghcr` + `kube cluster install --non-interactive` + create orbit ns + `hedera` user/group + upgrade staging dir (owned `hedera:hedera`, mode `0775`, `weaver` in the `hedera` group) |
 | `secrets` | `uat:secrets NS=<orbit> NODE=node<id> SAMPLE_KEYS=false` — pull secret in operator + orbit ns (node keys come from `keys`) |
-| `keys` | `consensus keys init --experimental --namespace <orbit> --node-id <id> --keys-dir $KEYS_DIR` (default `/tmp/cn-keys/node<id>`), then `keys verify --from-cluster`; creates the labelled `node<id>-gossip-keys-…` / `-grpc-tls-keys-…` / `-admin-pubkey-…` secrets |
+| `keys` | `consensus keys init --experimental --namespace <orbit> --node-id <id> --keys-dir $KEYS_DIR` (default `/opt/solo/cn-keys/node<id>`), then `keys verify --from-cluster`; creates the labelled `node<id>-gossip-keys-…` / `-grpc-tls-keys-…` / `-admin-pubkey-…` secrets |
 | `operator` | `kube operator install --non-interactive`; checks the `networkupgradeexecutes` CRD is registered |
 | `consensus` | `consensus node install --experimental --provisioner-daemon --deployment-package-dir <pkg> …` (creates the Orbit in mainnet/daemon-delegated mode), then `consensus network genesis --experimental` |
 | `daemon:install` | precondition: the local daemon build exists under `/mnt/solo-weaver/bin`; then `daemon service install --components consensus-node --cn-node-id <id> --cn-orbit <ns> --daemon-bin <built>` (`--cn-namespace` is a hidden alias for `--cn-orbit`) + `kubectl auth can-i` checks |
