@@ -383,7 +383,7 @@ func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 
 // upgradeBlockNode upgrades the block node helm chart.
 //
-// Order matters: preflight (BuildMigrationWorkflow, ComputeValuesFile,
+// Order matters: preflight (CheckUpgradable, BuildMigrationWorkflow, ComputeValuesFile,
 // migrationWorkflow.Build) runs before DeleteHelmOwnedServices so that any
 // preflight failure leaves the Services intact and the cluster reachable.
 // The Services are deleted only at the commit point — immediately before the
@@ -401,6 +401,13 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 			}
 
 			// Preflight: any failure here is safe — Services intact, no outage.
+			if err := manager.CheckUpgradable(); err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.Decorate(err, "block node cannot be upgraded").
+					WithProperty(models.ErrPropertyResolution, []string{
+						fmt.Sprintf("Inspect the release: helm history %s -n %s", inputs.Release, inputs.Namespace),
+					})))
+			}
+
 			migrationWorkflow, err := blocknode.BuildMigrationWorkflow(manager, inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))

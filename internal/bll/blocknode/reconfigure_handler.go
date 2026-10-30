@@ -13,7 +13,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 )
 
 // ReconfigureHandler handles the ActionReconfigure intent for a block node.
@@ -38,17 +37,14 @@ func (h *ReconfigureHandler) PrepareEffectiveInputs(
 
 // BuildWorkflow validates reconfigure preconditions and returns the workflow.
 // Preconditions:
-//   - Block node must already be deployed (or --force).
+//   - Block node must already be installed (or --force).
 //   - The chart ref and chart version must match the deployed release.
 func (h *ReconfigureHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
-		return nil, errorx.IllegalState.New(
-			"block node is not installed; cannot reconfigure").
-			WithProperty(models.ErrPropertyResolution,
-				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
+	if err := requireInstalled(currentState.BlockNodeState.ReleaseInfo, "reconfigure", inputs.Common.Force); err != nil {
+		return nil, err
 	}
 
 	// Reconfigure re-applies values at the deployed chart and version, and performs
@@ -60,12 +56,10 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// unguarded upgrade or chart switch. --force does not bypass either check: the
 	// remedy is a different command, not a flag.
 	//
-	// Both guards apply only to a release that is actually deployed. The reality
-	// checker fills ReleaseInfo for a failed or superseded release too, but
-	// setStateSources drops the state tier for those, so the effective values fall
-	// back to the compiled-in defaults — which would trip these guards on the bare
-	// `reconfigure --force` that the precondition above points at as the remedy.
-	if deployed := currentState.BlockNodeState.ReleaseInfo; deployed.Status == release.StatusDeployed {
+	// Both guards apply only to an installed release. For any other status
+	// setStateSources drops the state tier, so the effective values fall back to the
+	// compiled-in defaults and would trip these guards on a bare `reconfigure --force`.
+	if deployed := currentState.BlockNodeState.ReleaseInfo; deployed.Installed() {
 		if deployed.ChartVersion != "" && inputs.Custom.ChartVersion != deployed.ChartVersion {
 			return nil, errorx.IllegalArgument.New(
 				"block node chart version cannot be changed by a reconfigure: deployed %q, requested %q",

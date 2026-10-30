@@ -328,6 +328,59 @@ func TestBlockNodeRuntimeResolver_WithState_NotDeployed_ClearsStateSources(t *te
 	assert.Equal(t, "config-ns", ns.Get().Val())
 }
 
+// TestBlockNodeRuntimeResolver_WithState_ByReleaseStatus pins which release
+// statuses keep the state tier. A failed release keeps it so a retry resolves the
+// installed values; a stuck or uninstalled one clears it.
+func TestBlockNodeRuntimeResolver_WithState_ByReleaseStatus(t *testing.T) {
+	tests := []struct {
+		status    release.Status
+		wantState bool
+	}{
+		{status: release.StatusDeployed, wantState: true},
+		{status: release.StatusFailed, wantState: true},
+		{status: release.StatusPendingUpgrade},
+		{status: release.StatusPendingInstall},
+		{status: release.StatusUninstalling},
+		{status: release.StatusUninstalled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.status.String(), func(t *testing.T) {
+			st := deployedState()
+			st.ReleaseInfo.Status = tc.status
+			r := newTestResolver(fullConfig(), state.NewBlockNodeState())
+			r.WithDefaults(testDefaultsConfig())
+
+			r.WithState(st)
+
+			ns, err := r.Namespace()
+			require.NoError(t, err)
+			if tc.wantState {
+				assert.Equal(t, "block-node-ns", ns.Get().Val())
+				assert.Equal(t, StrategyState, ns.Strategy())
+				return
+			}
+			assert.Equal(t, "config-ns", ns.Get().Val())
+		})
+	}
+}
+
+// TestBlockNodeRuntimeResolver_ChartVersion_Upgrade_Failed_Resolves covers the
+// retry after a failed upgrade: the resolver must not report "not deployed".
+func TestBlockNodeRuntimeResolver_ChartVersion_Upgrade_Failed_Resolves(t *testing.T) {
+	st := deployedState()
+	st.ReleaseInfo.Status = release.StatusFailed
+	r := newTestResolver(fullConfig(), st)
+	r.WithDefaults(testDefaultsConfig())
+	r.WithIntent(models.Intent{Action: models.ActionUpgrade, Target: models.TargetBlockNode})
+	r.WithUserInputs(models.BlockNodeInputs{
+		ChartVersion: "0.30.0", Namespace: "ns", Release: "rel", Chart: "oci://c",
+	})
+
+	cv, err := r.ChartVersion()
+	require.NoError(t, err)
+	assert.Equal(t, "0.30.0", cv.Get().Val())
+}
+
 // ── Full precedence cascade ───────────────────────────────────────────────────
 
 // TestBlockNodeRuntimeResolver_PrecedenceCascade verifies that each layer correctly

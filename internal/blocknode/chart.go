@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/cli/values"
+	"helm.sh/helm/v3/pkg/release"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -99,12 +100,8 @@ func (m *Manager) UninstallChart(ctx context.Context) error {
 // When reuseValues is true and no custom values file is provided, the existing
 // release values are reused unchanged (following Helm CLI convention).
 func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValues bool) error {
-	isInstalled, err := m.helmManager.IsInstalled(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
-	}
-	if !isInstalled {
-		return errorx.IllegalState.New("block node is not installed, cannot upgrade. Use 'install' command instead")
+	if err := m.CheckUpgradable(); err != nil {
+		return err
 	}
 	var valueFiles []string
 	if valuesFile != "" {
@@ -112,7 +109,7 @@ func (m *Manager) UpgradeChart(ctx context.Context, valuesFile string, reuseValu
 	} else if !reuseValues {
 		return errorx.IllegalArgument.New("no values file provided and --no-reuse-values is set")
 	}
-	_, err = m.helmManager.UpgradeChart(
+	_, err := m.helmManager.UpgradeChart(
 		ctx,
 		m.blockNodeInputs.Release,
 		m.blockNodeInputs.Chart,
@@ -269,6 +266,30 @@ func (m *Manager) WaitForPodReady(ctx context.Context) error {
 		return errorx.IllegalState.Wrap(err, "pod did not become ready in time")
 	}
 	return nil
+}
+
+// CheckUpgradable returns an error unless the release's latest revision is
+// deployed or failed — the two states Helm upgrades from. Callers that delete
+// resources before upgrading must call it first: pkg/helm's IsInstalled accepts
+// deployed only.
+func (m *Manager) CheckUpgradable() error {
+	rel, err := m.helmManager.GetRelease(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrNotFound) {
+			return errorx.IllegalState.New("block node is not installed, cannot upgrade. Use 'install' command instead")
+		}
+		return errorx.IllegalState.Wrap(err, "failed to check if block node is installed")
+	}
+	if rel == nil || rel.Info == nil {
+		return errorx.IllegalState.New("block node Helm release %s has no status, cannot upgrade", m.blockNodeInputs.Release)
+	}
+	switch rel.Info.Status {
+	case release.StatusDeployed, release.StatusFailed:
+		return nil
+	default:
+		return errorx.IllegalState.New("block node Helm release %s in namespace %s is in state %q, cannot upgrade",
+			m.blockNodeInputs.Release, m.blockNodeInputs.Namespace, rel.Info.Status)
+	}
 }
 
 // GetTargetVersion returns the configured target version for block node.

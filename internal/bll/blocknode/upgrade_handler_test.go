@@ -230,3 +230,58 @@ func TestUpgrade_UnchangedPathsKeepExistingWorkflowIds(t *testing.T) {
 		})
 	}
 }
+
+func stateForUpgradeWithStatus(status release.Status) state.State {
+	st := deployedStateForUpgrade(false)
+	st.BlockNodeState.ReleaseInfo.Status = status
+	return st
+}
+
+// TestUpgrade_FailedRelease_RetriesWithoutForce covers the retry after a failed
+// upgrade, to a newer version and to the failed revision's own version.
+func TestUpgrade_FailedRelease_RetriesWithoutForce(t *testing.T) {
+	for _, version := range []string{"0.31.0", "0.30.0"} {
+		t.Run(version, func(t *testing.T) {
+			inputs := upgradeInputs()
+			inputs.Custom.ChartVersion = version
+
+			wb, err := newMinimalUpgradeHandler().BuildWorkflow(stateForUpgradeWithStatus(release.StatusFailed), inputs)
+			require.NoError(t, err)
+			assert.Contains(t, workflowStepIDs(t, wb), steps.UpgradeBlockNodeStepId)
+		})
+	}
+}
+
+// TestUpgrade_DeployedRelease_SameVersionStillNeedsForce is the negative control
+// for the retry exemption above.
+func TestUpgrade_DeployedRelease_SameVersionStillNeedsForce(t *testing.T) {
+	inputs := upgradeInputs()
+	inputs.Custom.ChartVersion = "0.30.0"
+
+	_, err := newMinimalUpgradeHandler().BuildWorkflow(deployedStateForUpgrade(false), inputs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already at chart version")
+}
+
+// TestUpgrade_FailedRelease_KeepsStorageGuard verifies planStorage still compares
+// paths on a failed release instead of treating it as not deployed.
+func TestUpgrade_FailedRelease_KeepsStorageGuard(t *testing.T) {
+	inputs := upgradeInputs()
+	inputs.Custom.Storage = models.BlockNodeStorage{BasePath: "/mnt/other-storage"}
+
+	_, err := newMinimalUpgradeHandler().BuildWorkflow(stateForUpgradeWithStatus(release.StatusFailed), inputs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "storage paths have changed")
+}
+
+// TestUpgrade_PendingRelease_RefusedEvenWithForce verifies --force does not push
+// an upgrade into a release Helm holds locked.
+func TestUpgrade_PendingRelease_RefusedEvenWithForce(t *testing.T) {
+	inputs := upgradeInputs()
+	inputs.Common.Force = true
+
+	_, err := newMinimalUpgradeHandler().BuildWorkflow(stateForUpgradeWithStatus(release.StatusPendingUpgrade), inputs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"pending-upgrade"`)
+	assertResolutionMentions(t, err, "helm rollback")
+}

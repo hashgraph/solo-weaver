@@ -13,7 +13,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
 )
 
@@ -379,9 +378,11 @@ func (b *BlockNodeRuntimeResolver) WithEnv(cfg models.Config) Resolver[state.Blo
 
 // setStateSources pushes state values into the per-field resolvers under the
 // given strategy tier (StrategyState or StrategyReality).
+// A failed release keeps its tier: retrying from it must resolve the installed
+// namespace, version and storage, not the compiled-in defaults.
 // Must be called with b.mu held.
 func (b *BlockNodeRuntimeResolver) setStateSources(st state.BlockNodeState, strategy automa.EffectiveStrategy) {
-	if st.ReleaseInfo.Status != release.StatusDeployed {
+	if !st.ReleaseInfo.Installed() {
 		b.namespace.ClearSource(strategy)
 		b.releaseName.ClearSource(strategy)
 		b.chartName.ClearSource(strategy)
