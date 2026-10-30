@@ -9,6 +9,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -120,16 +121,41 @@ func TestUpgrade_ShapingCleanup_RemovesLiveShaping(t *testing.T) {
 	assert.False(t, h.shapingCleanupDone, "the mark must stay until the teardown steps succeed")
 }
 
-// TestUpgrade_ShapingCleanupDoneStep_SetsFlag: the step marks the cleanup done
-// only when it runs, which is after every teardown step succeeded.
-func TestUpgrade_ShapingCleanupDoneStep_SetsFlag(t *testing.T) {
-	h := newMinimalUpgradeHandler()
-	stp, err := h.shapingCleanupDoneStep().Build()
-	require.NoError(t, err)
+// TestUpgrade_ShapingCleanupDoneStep marks the cleanup done only when no tracked
+// step failed, including under --continue-on-error, which runs past a failure.
+func TestUpgrade_ShapingCleanupDoneStep(t *testing.T) {
+	stepWith := func(id string, fail bool) automa.Builder {
+		return automa.NewStepBuilder().WithId(id).
+			WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
+				if fail {
+					return automa.FailureReport(stp, automa.WithError(errors.New("boom")))
+				}
+				return automa.SuccessReport(stp)
+			})
+	}
+	for _, tc := range []struct {
+		name     string
+		mode     automa.TypeMode
+		failStep bool
+		want     bool
+	}{
+		{name: "all steps succeed", mode: automa.StopOnError, want: true},
+		{name: "failure stops the workflow", mode: automa.StopOnError, failStep: true},
+		{name: "failure with continue-on-error", mode: automa.ContinueOnError, failStep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newMinimalUpgradeHandler()
+			wf, err := automa.NewWorkflowBuilder().WithId("test").WithExecutionMode(tc.mode).Steps(
+				failureTracked{Builder: stepWith("teardown", tc.failStep), failed: &h.shapingTeardownFailed},
+				failureTracked{Builder: stepWith("after", false), failed: &h.shapingTeardownFailed},
+				h.shapingCleanupDoneStep(),
+			).Build()
+			require.NoError(t, err)
 
-	rpt := stp.Execute(context.Background())
-	require.NoError(t, rpt.Error)
-	assert.True(t, h.shapingCleanupDone)
+			wf.Execute(context.Background())
+			assert.Equal(t, tc.want, h.shapingCleanupDone)
+		})
+	}
 }
 
 // TestUpgrade_ShapingCleanup_NothingLive clears the mark without touching the

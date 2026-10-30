@@ -36,6 +36,8 @@ type UpgradeHandler struct {
 	// shapingCleanupDone is set once this run has nothing left to clean up for
 	// TrafficShapingCleanupPending, so the flush can clear the mark.
 	shapingCleanupDone bool
+	// shapingTeardownFailed is set when any step ahead of the done step fails.
+	shapingTeardownFailed bool
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
@@ -117,6 +119,9 @@ func (h *UpgradeHandler) BuildWorkflow(
 	removeShaping := h.planShapingCleanup(currentState.BlockNodeState)
 	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, currentState.BlockNodeState.TrafficShapingEnabled, false, removeShaping, ports)
 	if removeShaping {
+		for i, b := range networkSteps {
+			networkSteps[i] = failureTracked{Builder: b, failed: &h.shapingTeardownFailed}
+		}
 		networkSteps = append(networkSteps, h.shapingCleanupDoneStep())
 	}
 
@@ -173,6 +178,7 @@ func (h *UpgradeHandler) HandleIntent(
 // nothing to remove, and the mark is cleared without touching the host.
 func (h *UpgradeHandler) planShapingCleanup(bn state.BlockNodeState) bool {
 	h.shapingCleanupDone = false
+	h.shapingTeardownFailed = false
 	if !bn.TrafficShapingCleanupPending {
 		return false
 	}
@@ -200,14 +206,55 @@ func (h *UpgradeHandler) planShapingCleanup(bn state.BlockNodeState) bool {
 	return true
 }
 
-// shapingCleanupDoneStep runs after the shaping teardown steps, so it is reached
-// only when they all succeeded.
+// shapingCleanupDoneStep runs after the shaping teardown steps. Reaching it isn't
+// enough: --continue-on-error runs past a failed step, so it also checks that
+// none of them failed.
 func (h *UpgradeHandler) shapingCleanupDoneStep() automa.Builder {
 	return automa.NewStepBuilder().WithId(ShapingCleanupDoneStepId).
 		WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
-			h.shapingCleanupDone = true
+			h.shapingCleanupDone = !h.shapingTeardownFailed
 			return automa.SuccessReport(stp)
 		})
+}
+
+// failureTracked sets *failed when the step it builds fails.
+type failureTracked struct {
+	automa.Builder
+	failed *bool
+}
+
+func (b failureTracked) Build() (automa.Step, error) {
+	stp, err := b.Builder.Build()
+	if err != nil || stp == nil {
+		return stp, err
+	}
+	return failureTrackedStep{Step: stp, failed: b.failed}, nil
+}
+
+type failureTrackedStep struct {
+	automa.Step
+	failed *bool
+}
+
+func (s failureTrackedStep) Prepare(ctx context.Context) (context.Context, error) {
+	ctx, err := s.Step.Prepare(ctx)
+	if err != nil {
+		*s.failed = true
+	}
+	return ctx, err
+}
+
+func (s failureTrackedStep) Execute(ctx context.Context) *automa.Report {
+	rpt := s.Step.Execute(ctx)
+	if rpt == nil || rpt.IsFailed() {
+		*s.failed = true
+	}
+	return rpt
+}
+
+// WithState re-wraps, because the workflow runs the step this returns.
+func (s failureTrackedStep) WithState(st automa.NamespacedStateBag) automa.Step {
+	return failureTrackedStep{Step: s.Step.WithState(st), failed: s.failed}
 }
 
 func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],
