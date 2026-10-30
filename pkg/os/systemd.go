@@ -5,6 +5,7 @@ package os
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/joomcode/errorx"
@@ -98,6 +99,20 @@ func IsServiceEnabled(ctx context.Context, name string) (bool, error) {
 	return unitFiles[0].Type == "enabled", nil
 }
 
+// defaultSystemdJobTimeout bounds how long we wait for a systemd job to
+// report back when the caller's context carries no deadline of its own.
+const defaultSystemdJobTimeout = 2 * time.Minute
+
+// withJobTimeout bounds the wait for a systemd job result: if the caller
+// already set a deadline we honour it, otherwise we impose one so the
+// job-channel select cannot block forever.
+func withJobTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultSystemdJobTimeout)
+}
+
 // StartService starts the specified service if it is not already running.
 // If the service is already active, systemd returns immediately without
 // interrupting it (no-op on a running unit). This is equivalent to
@@ -109,6 +124,9 @@ func StartService(ctx context.Context, name string) error {
 		return ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
 	}
 	defer conn.Close()
+
+	ctx, cancel := withJobTimeout(ctx)
+	defer cancel()
 
 	serviceName := ensureServiceSuffix(name)
 	jobChan := make(chan string, 1)
@@ -143,6 +161,9 @@ func RestartService(ctx context.Context, name string) error {
 		return ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
 	}
 	defer conn.Close()
+
+	ctx, cancel := withJobTimeout(ctx)
+	defer cancel()
 
 	// Ensure the service name has the .service suffix
 	serviceName := ensureServiceSuffix(name)
@@ -182,6 +203,9 @@ func StopService(ctx context.Context, name string) error {
 		return ErrSystemdConnection.Wrap(err, "failed to connect to systemd")
 	}
 	defer conn.Close()
+
+	ctx, cancel := withJobTimeout(ctx)
+	defer cancel()
 
 	// Ensure the service name has the .service suffix
 	serviceName := ensureServiceSuffix(name)
