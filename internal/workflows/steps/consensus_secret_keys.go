@@ -40,6 +40,6 @@ func requireSecretEntries(ctx context.Context, r secretFieldReader, namespace, s
 		errorx.IllegalState.New("Secret %q (from %s) in namespace %s is missing entries: %s",
 			secret, flag, namespace, strings.Join(missing, ", ")),
 		reasons.PreconditionNotMet,
-		fmt.Sprintf("Inspect the entries: kubectl -n %s get secret %s -o jsonpath='{.data}'", namespace, secret),
+		fmt.Sprintf("List the entry names and sizes: kubectl -n %s describe secret %s", namespace, secret),
 		"Re-create the node keys with `consensus keys import`, or name a different Secret with "+flag)
 }

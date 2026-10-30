@@ -34,12 +34,24 @@ var newKeyCluster = func() (keyCluster, error) {
 func liveSecretNames(ctx context.Context, c keyCluster, custom *models.ConsensusNodeInputs) (signing, grpc, admin string) {
 	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 	capsule := models.ConsensusCapsuleName(custom.OrbitName, custom.NodeId)
+	var readErr error
 	get := func(field string) string {
-		v, _ := c.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), custom.Namespace, capsule,
+		if readErr != nil {
+			return ""
+		}
+		v, err := c.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), custom.Namespace, capsule,
 			"spec", "secrets", "secretResources", field, "secretName")
+		readErr = err
 		return v
 	}
-	return get("signingPrivateKey"), get("grpcTlsPrivateKey"), get("adminPublicKey")
+	signing, grpc, admin = get("signingPrivateKey"), get("grpcTlsPrivateKey"), get("adminPublicKey")
+	if readErr != nil {
+		// A missing capsule is not an error, so this is a real read failure.
+		logx.As().Warn().Err(readErr).Str("capsule", capsule).
+			Msg("Cannot read the live ConsensusCapsule; using the labelled key secrets")
+		return "", "", ""
+	}
+	return signing, grpc, admin
 }
 
 const keySecretLookupTimeout = 30 * time.Second
