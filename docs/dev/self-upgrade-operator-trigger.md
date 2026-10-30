@@ -38,8 +38,9 @@ a no-op.
 The new CLI carries its paired daemon's SHA (`pkg/software/daemon_digest.go`,
 `pinnedDaemonDigest`). So: the old CLI downloads and verifies the new CLI, hands off
 to it, and the **new** CLI fetches and verifies the matching daemon. This mirrors the
-#500 ownership split and removes version-matching guesswork. All downloads go through
-the #698 GPG + checksum promote-gate.
+#500 ownership split and removes version-matching guesswork. All binary downloads are verified by **SHA-256** — the link-time pinned digest for a
+co-released version, else the release's published `.sha256` — the keyless path the daemon
+download already uses (`daemon_digest.go`). No signature sits on the install path.
 
 ### Execution
 
@@ -78,11 +79,17 @@ version V is blocked when the running provisioner is below the requirement. A gl
 `minSupported` floor is the backstop.
 
 An old binary cannot know a newer component's needs, so the requirement comes from a
-**remote manifest** published with each release:
+**remote manifest** published with each release and fetched over TLS:
 
-- GPG-signed (releases already ship `.asc`), keyed by component version.
-- Carries a **monotonic** manifest version so a replayed old manifest is rejected.
-- The cached copy is authoritative once it says "mandatory".
+- Keyed by component version; fetched over **TLS** from the GitHub release — authenticity rests
+  on TLS to github.com, the same trust the published `.sha256` assets already rely on. **No
+  signing key on the path** (consistent with `daemon_digest.go`: "no signing key … on the
+  install path"). The pipeline still publishes `.asc` signatures for provenance, but nothing in
+  the binary verifies them.
+- Carries a **monotonic** manifest version so a replayed or stale manifest can't relax a
+  mandatory floor.
+- A `compat.yaml.sha256` gives download integrity; the cached copy is authoritative once it says
+  "mandatory".
 
 Failure behavior:
 
@@ -103,8 +110,8 @@ Compatibility has two directions, and only one can be embedded:
   (`pkg/software/config.go`, `//go:embed`): catalog *membership* is the support statement,
   and it answers offline for anything ≤ this release.
 - **Forward-unknowable** — "component version V, released *after* this binary, requires
-  provisioner ≥ P." An old binary cannot contain this; it comes from the **signed remote
-  manifest** (above), fetched by the throttled version-check and cached.
+  provisioner ≥ P." An old binary cannot contain this; it comes from the **remote manifest**
+  (above), fetched over TLS by the throttled version-check and cached.
 
 The gate decides locally when the target version is in the embedded catalog; it consults the
 manifest only for versions newer than the binary.
@@ -123,26 +130,26 @@ forward-looking, and forward facts can't live in a binary built before them:
 So the embedded catalog contributes exactly two things — **determinism** (what this provisioner
 installs) and a free **offline backstop** ("you asked me to act on a version not in my catalog
 → upgrade the provisioner"). Every floor that can *rise*, and every `requiresProvisioner`,
-lives in the signed remote manifest.
+lives in the remote manifest (TLS-fetched, no signing key).
 
 ### Ownership and maintenance (decided)
 
-The **provisioner team owns and signs** the manifest — but it is **generated, not authored**,
-so ownership is not a tribal-knowledge burden:
+The **provisioner team owns** the manifest — but it is **generated, not authored**, so
+ownership is not a tribal-knowledge burden:
 
 - **Catalog membership is the compatibility statement.** Adding version V to the catalog
   (`task bump:*`) asserts "this provisioner supports V." The inverse falls out for free:
   `requiresProvisioner(V)` = the **earliest provisioner release whose catalog contained V**.
   A binary cannot install a component it never integrated, so that *is* the floor.
 - **The release pipeline derives the manifest** from catalog history across release tags
-  (same philosophy as the #1263 checksum generator), then signs it (#698) and attaches it as
-  a cumulative, monotonic release asset.
+  (same philosophy as the #1263 checksum generator) and attaches it as a cumulative, monotonic
+  release asset (verified by TLS + hash + monotonic, no signing key).
 - **The only hand-maintained part is a small exceptions list** — raise-only overrides for
   when the derived floor is wrong (V shipped in a catalog but a later bug means it needs a
   newer provisioner). A handful of entries, not the whole matrix.
 - **Components may supply a `requiresProvisioner` hint** in their own release metadata;
   the pipeline reads it at integration and may only raise the floor. Distributed input,
-  centralized signed authority.
+  centralized authority.
 - **"Who runs what" is runtime telemetry, not manifest data.** The catalog is the registry
   of managed components; floors derive from it; which operator runs which version is state
   reported through the provisioner's own state layer. Keeping these apart is what makes the
@@ -184,7 +191,7 @@ so per-component files drop in later with no loader change.
 flowchart LR
   A[Component ships version V] --> B["task bump: V enters the catalog"]
   B --> C["Pipeline: derive floors from catalog history, merge exceptions + hints"]
-  C --> D["Sign (#698), publish cumulative compat.yaml release asset"]
+  C --> D["Publish cumulative compat.yaml release asset (TLS + hash, no signing key)"]
 ```
 
 ### Runtime gate (operator command)
@@ -193,7 +200,7 @@ flowchart LR
 flowchart TD
   A[Operator op targets version V] --> B{V known to the embedded catalog?}
   B -->|yes| C[Resolve requiresProvisioner from embedded catalog, offline]
-  B -->|no| D[Fetch latest signed manifest, verify GPG + monotonic]
+  B -->|no| D[Fetch latest manifest over TLS, check monotonic version]
   C --> E[Compare running provisioner vs requiresProvisioner V]
   D --> E
   E -->|running greater-or-equal required| F[Proceed]
@@ -204,7 +211,7 @@ flowchart TD
 ### Example compat.yaml
 
 ```yaml
-# compat.yaml — cumulative; published as a signed release asset (compat.yaml + compat.yaml.asc)
+# compat.yaml — cumulative; published as a release asset (compat.yaml + compat.yaml.sha256), fetched over TLS
 schemaVersion: 1
 manifestVersion: 42                 # monotonic; a cached manifest with a higher number is never downgraded
 generatedFrom: provisioner@2.4.0    # the release whose pipeline produced this manifest
@@ -248,9 +255,9 @@ solo-provisioner catalog compat [--write] [--dry-run] [--verify]
   release. It needs the catalog plus git tag history, so it is a source-tree tool, not
   something a field binary runs; hidden from the operator surface (see
   `docs/dev/hidden-flags.md`).
-- **Generates unsigned.** Signing (#698) stays in the release pipeline — keys are not on a dev
-  laptop. CI runs the same command, then signs and publishes the asset. One generator, two
-  contexts.
+- **The release pipeline publishes it** as a release asset beside the binaries; CI runs the
+  same command and attaches the result. No signing key on the path — verification is TLS + hash
+  + monotonic, matching the daemon-download model. One generator, two contexts.
 - **`--verify` is a CI lint:** fail if the committed manifest drifts from the catalog.
 - Inputs: catalog history + a source exceptions file (e.g. `pkg/software/compat-exceptions.yaml`)
   + component hints ingested at `task bump` time.
@@ -273,23 +280,32 @@ each reusing `pkg/software` / `pkg/manifests` rather than hand-edits or bash:
 
 ### Publishing the manifest
 
-Publish it the same way the binaries already ship — a GPG-signed GitHub Release asset — so it
-reuses the release pipeline, the signing key, and the fetch path that already exist:
+Publish it the same way the binaries already ship, and trust it the same way the code already
+trusts them — **hash + TLS, no signing key on the path**:
 
-- `compat.yaml` + `compat.yaml.asc` attached to every `vX.Y.Z` release by
-  `.github/workflows/flow-deploy-release-artifact.yaml`, beside the binary / `.sha256` / `.asc`.
+- `compat.yaml` + `compat.yaml.sha256` attached to every `vX.Y.Z` release by
+  `.github/workflows/flow-deploy-release-artifact.yaml`, beside the binary / `.sha256`. (A `.asc`
+  can be attached for provenance parity, but nothing in the binary verifies it — same as the
+  binaries today.)
 - Fetched from the stable latest URL —
   `https://github.com/hashgraph/solo-weaver/releases/latest/download/compat.yaml` — which always
   resolves to the newest release's asset, so one fixed URL yields the cumulative latest.
-- Verified against the **GPG public key already embedded for #698** (the one that verifies the
-  CLI). Same trust root — no new key, no new infrastructure.
+- **Trust model = what the install path already uses:** authenticity from **TLS** to github.com
+  (the same trust the fetched `.sha256` assets rely on today), integrity from the `.sha256`, and
+  anti-downgrade from the **monotonic `manifestVersion`**. No embedded key and no signature
+  verification — consistent with `daemon_digest.go` keeping "no signing key … on the install
+  path."
 - Must be **anonymously fetchable** — field hosts pull it unauthenticated, exactly like the
   binary. Wherever the public release artifacts live (GitHub Releases; public/anonymous HTTPS +
   S3 per the external-files design), the manifest sits beside them.
 
-Two companions: an **in-repo unsigned source copy** near the catalog (reviewable, the way
-checksums are committed; `catalog compat --verify` lints it current, and the pipeline signs it
-at release), and **`--compat-manifest <path>`** for air-gapped hosts to supply it out of band.
+Proportionality: the manifest is *less* sensitive than the binary it points at — a forged one
+can only falsely block (DoS) or falsely permit, and a false "you're fine" still can't make an
+old provisioner install anything outside its deterministic catalog.
+
+Two companions: an **in-repo source copy** near the catalog (reviewable, the way checksums are
+committed; `catalog compat --verify` lints it current and the pipeline publishes it at release),
+and **`--compat-manifest <path>`** for air-gapped hosts to supply it out of band.
 
 ## Mandatory dry-run and the plan
 
@@ -327,7 +343,7 @@ patterns. The plan classifies each consequence by blast radius:
 state. Resolution is a small solver:
 
 1. Read local state: provisioner version, cluster k8s version, deployed components.
-2. Fetch the release index plus per-release compat metadata (the signed manifest).
+2. Fetch the release index plus per-release compat metadata (the manifest, over TLS).
 3. Pick the highest version reachable in **one hop** without violating `upgradeFrom`,
    component compat, or the k8s requirement.
 4. If the latest needs two hops, recommend the next hop — one hop at a time, like
@@ -552,10 +568,10 @@ planner forces throwaway stubs.
 2. **Pre-command version-check nag** — throttled `lastCheckedAt` cache, advisory vs
    mandatory, `--skip-version-check` (ignored when mandatory), honor proxy, skip
    non-interactive / JSON.
-3. **Operator-operation compatibility gate + signed remote compat manifest** —
-   `requires.provisioner` / `upgradeFrom` / `requires.k8s`, GPG-signed, monotonic,
-   fail-closed for mandatory; local "state newer than binary" refusal. (May extend
-   #975 rather than stand alone.)
+3. **Operator-operation compatibility gate + remote compat manifest** —
+   `requires.provisioner` / `upgradeFrom` / `requires.k8s`, TLS-fetched + monotonic (`.sha256`
+   for integrity, no signing key), fail-closed for mandatory; local "state newer than binary"
+   refusal. (May extend #975 rather than stand alone.)
 4. **Version-resolution solver** — highest one-hop-reachable target from state +
    manifest. May fold into story 1 or 3.
 5. **Migration redesign: tier by blast radius** — local auto-run vs cluster-affecting
