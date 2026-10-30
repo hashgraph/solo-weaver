@@ -49,18 +49,19 @@ type OrbitFieldDiff struct {
 // spec map. The operator omits zero values, so an absent key is the zero value.
 func ConsensusOrbitStateFromSpec(spec map[string]interface{}) ConsensusOrbitState {
 	var o ConsensusOrbitState
-	o.ProvisionerDaemonEnabled, _ = spec["provisionerDaemonEnabled"].(bool)
 	o.RequireDigestOnDeploy, _ = spec["requireDigestOnDeploy"].(bool)
 	o.DeploymentModel, _ = spec["deploymentModel"].(string)
 
+	network, _ := spec["network"].(map[string]interface{})
+	o.LedgerId, _ = network["ledgerId"].(string)
+	o.ChainId, _ = network["chainId"].(string)
+	o.RealmId = specInt(network["realmId"])
+	o.ShardId = specInt(network["shardId"])
+
 	consensus, _ := spec["consensus"].(map[string]interface{})
+	o.ProvisionerDaemonEnabled, _ = consensus["provisionerDaemonEnabled"].(bool)
 	o.ProvisioningModel, _ = consensus["provisioningModel"].(string)
-	genesis, _ := consensus["genesis"].(map[string]interface{})
-	ab, _ := genesis["addressBook"].(map[string]interface{})
-	o.LedgerId, _ = ab["ledgerId"].(string)
-	o.ChainId, _ = ab["chainId"].(string)
-	o.RealmId = specInt(ab["realmId"])
-	o.ShardId = specInt(ab["shardId"])
+	ab, _ := consensus["addressBook"].(map[string]interface{})
 
 	if list, ok := ab["externalAddresses"].([]interface{}); ok {
 		for _, item := range list {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -105,13 +106,8 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 			"Provide both --image-repo and --image-tag",
 			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
 	}
-	if custom.LedgerId == "" {
-		return nil, errx.Decorate(
-			errorx.IllegalArgument.New(
-				"ledger-id could not be resolved — provide --ledger-id or --deployment-package-dir"),
-			reasons.InvalidArgument,
-			"Provide --ledger-id (e.g. 0x00 for mainnet)",
-			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
+	if err := validateConsensusNetworkIdentity(custom); err != nil {
+		return nil, err
 	}
 
 	// Registries come from the manifest, so a --image-pull-secret HOST=NAME with an
@@ -137,6 +133,38 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 // host is not a registry used by this deployment. The CLI supplies credentials,
 // never registries, so an unknown host means a typo. Known hosts are the
 // multi-registry source (or the single consensus image) plus the UC image.
+// validateConsensusNetworkIdentity checks the Orbit's network identity before it
+// is written. ledgerId is required and free-form (no hex, numeric or length rule,
+// since it may become a 64-char TSS key) but must not contain whitespace or
+// control characters. chainId is optional and, when set, a non-negative decimal.
+func validateConsensusNetworkIdentity(c *models.ConsensusNodeInputs) error {
+	if c.LedgerId == "" {
+		return errx.Decorate(
+			errorx.IllegalArgument.New(
+				"ledger-id could not be resolved — provide --ledger-id or --deployment-package-dir"),
+			reasons.InvalidArgument,
+			"Provide --ledger-id (e.g. 0x00 for mainnet)",
+			"Or pass --deployment-package-dir pointing at an extracted HIP-1494 deployment package")
+	}
+	if strings.IndexFunc(c.LedgerId, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return errx.Decorate(
+			errorx.IllegalArgument.New("ledger-id %q must not contain whitespace or control characters", c.LedgerId),
+			reasons.InvalidArgument,
+			"Provide --ledger-id without spaces (e.g. 0x00 for mainnet)")
+	}
+	if c.ChainId != "" {
+		for _, r := range c.ChainId {
+			if r < '0' || r > '9' {
+				return errx.Decorate(
+					errorx.IllegalArgument.New("chain-id %q must be a non-negative decimal number", c.ChainId),
+					reasons.InvalidArgument,
+					"Provide --chain-id as a decimal EVM chain ID (e.g. 295 for mainnet)")
+			}
+		}
+	}
+	return nil
+}
+
 func validateConsensusPullSecretHosts(c *models.ConsensusNodeInputs) error {
 	ucRepo := c.UCImageRepo
 	if ucRepo == "" {
