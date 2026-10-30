@@ -174,6 +174,7 @@ metadata:
 	persisted := state.NewBlockNodeState()
 	persisted.ReleaseInfo.Status = release.StatusDeployed
 	persisted.TrafficShapingEnabled = true
+	persisted.TrafficShapingCleanupPending = true
 
 	full := state.State{}
 	full.BlockNodeState = persisted
@@ -195,6 +196,9 @@ metadata:
 	if !got.TrafficShapingEnabled {
 		t.Error("TrafficShapingEnabled must be preserved as true across a reality refresh, got false")
 	}
+	if !got.TrafficShapingCleanupPending {
+		t.Error("TrafficShapingCleanupPending must be preserved across a reality refresh, got false")
+	}
 }
 
 // TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord covers the refresh
@@ -214,6 +218,7 @@ func TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord(t *testing.T) {
 				persisted := state.NewBlockNodeState()
 				persisted.ReleaseInfo.Status = tc.status
 				persisted.TrafficShapingEnabled = enabled
+				persisted.TrafficShapingCleanupPending = !enabled
 				persisted.Shaping = &state.ShapingState{EgressInterface: "eth0", LinkRate: "1gbit"}
 
 				full := state.State{}
@@ -235,6 +240,9 @@ func TestRefreshState_ReleaseNotFoundKeepsTrafficShapingRecord(t *testing.T) {
 				}
 				if got.TrafficShapingEnabled != enabled {
 					t.Errorf("enabled=%v: decision not kept, got %v", enabled, got.TrafficShapingEnabled)
+				}
+				if got.TrafficShapingCleanupPending != !enabled {
+					t.Errorf("enabled=%v: cleanup mark not kept, got %v", enabled, got.TrafficShapingCleanupPending)
 				}
 				if got.Shaping == nil || got.Shaping.EgressInterface != "eth0" {
 					t.Errorf("enabled=%v: Shaping not kept, got %+v", enabled, got.Shaping)

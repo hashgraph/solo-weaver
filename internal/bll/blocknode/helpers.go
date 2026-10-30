@@ -120,6 +120,7 @@ func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInpu
 	base := patchBlockNodeState()
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
 		st.BlockNodeState.TrafficShapingEnabled = effectiveInputs.Custom.TrafficShapingEnabled
+		st.BlockNodeState.TrafficShapingCleanupPending = false
 		logx.As().Debug().Bool("trafficShapingEnabled", st.BlockNodeState.TrafficShapingEnabled).
 			Msg("Persisted block node traffic-shaping decision into runtime state")
 

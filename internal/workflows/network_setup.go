@@ -56,6 +56,10 @@ type NetworkPlaneOptions struct {
 	// it (turning a feature off deletes it); install/upgrade leave it false and
 	// re-assert create-if-missing only, so a routine run never tears anything down.
 	AllowTeardown bool
+	// RemoveShaping tears down the traffic-shaping bundle without AllowTeardown's
+	// host-firewall teardown. Upgrade sets it to remove shaping that an older
+	// upgrade turned on with no recorded decision.
+	RemoveShaping bool
 	// WithDaemonReload appends the daemon-config write + service restart inline
 	// after the shaping steps so a live daemon reloads the changed daemon.yaml
 	// (it reads the file only at startup — no hot-reload). reconfigure/upgrade set
@@ -78,7 +82,8 @@ type NetworkPlaneOptions struct {
 //   - reconfigure: AllowTeardown=true, WithDaemonReload=true (operator-resolved
 //     target, allowed to tear a feature down).
 //   - upgrade: AllowTeardown=false, WithDaemonReload=true (persisted-state target,
-//     re-assert create-if-missing only).
+//     re-assert create-if-missing only). RemoveShaping=true when the state marks
+//     shaping for cleanup.
 //
 // Ordering: firewall first, then NetworkPolicyCreate before NftWeaverPersist so
 // the policy registry is populated when the weaver table is rendered (an empty
@@ -121,8 +126,8 @@ func NetworkPlaneSteps(opts NetworkPlaneOptions) []automa.Builder {
 				steps.RestartDaemonServiceStep(),
 			)
 		}
-	case opts.AllowTeardown:
-		// Disable (reconfigure only): remove every BN policy (the last delete tears
+	case opts.AllowTeardown || opts.RemoveShaping:
+		// Disable: remove every BN policy (the last delete tears
 		// the inet weaver-workload-policy table down, so no NftWeaverPersist is needed), drop the tc
 		// egress hierarchy, then turn the daemon's monitor off and restart the daemon.
 		// The restart matters because the daemon reads daemon.yaml only at startup:

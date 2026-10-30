@@ -63,6 +63,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// below carries them over, including when the release is not found: any
 	// command that flushes state in that window would otherwise save them as lost.
 	trafficShapingEnabled := bn.TrafficShapingEnabled
+	cleanupPending := bn.TrafficShapingCleanupPending
 	shaping := bn.Shaping
 
 	if re == nil {
@@ -73,6 +74,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 		}
 		missing := state.NewBlockNodeState()
 		missing.TrafficShapingEnabled = trafficShapingEnabled
+		missing.TrafficShapingCleanupPending = cleanupPending
 		missing.Shaping = shaping
 		return missing, nil
 	}
@@ -99,10 +101,11 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			DeletedAt:     re.Info.Deleted,
 			Status:        re.Info.Status,
 		},
-		Storage:               models.BlockNodeStorage{},
-		TrafficShapingEnabled: trafficShapingEnabled,
-		Shaping:               shaping,
-		LastSync:              now,
+		Storage:                      models.BlockNodeStorage{},
+		TrafficShapingEnabled:        trafficShapingEnabled,
+		TrafficShapingCleanupPending: cleanupPending,
+		Shaping:                      shaping,
+		LastSync:                     now,
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
