@@ -7,10 +7,22 @@
 package keys
 
 import (
+	"context"
+
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
+
+// newSecretClient is indirected through a var so command tests can stub cluster access.
+var newSecretClient = func(_ context.Context) (cnkeys.SecretClient, error) {
+	return kube.NewClient()
+}
 
 var keysCmd = &cobra.Command{
 	Use:   "keys",
@@ -19,7 +31,7 @@ var keysCmd = &cobra.Command{
 		"signing key (its network identity) and the gRPC TLS key — and turn it into the " +
 		"Kubernetes secrets the solo-operator consumes. The node admin key is created " +
 		"in an external wallet; only its public key is provided.\n\n" +
-		"Key types are selected with --gossip / --tls; when none is given, all apply.",
+		"Key types are selected with --gossip / --tls / --admin; when none is given, all apply.",
 	RunE: common.DefaultRunE,
 }
 
@@ -29,9 +41,81 @@ func init() {
 	keysCmd.PersistentFlags().Int64("node-id", 0, "Consensus node ID (0-based)")
 
 	keysCmd.AddCommand(generateCmd)
+	keysCmd.AddCommand(importCmd)
+	keysCmd.AddCommand(exportCmd)
 }
 
 // GetCmd returns the consensus keys command group.
 func GetCmd() *cobra.Command {
 	return keysCmd
+}
+
+// addSelectorFlags registers the --gossip/--tls/--admin selectors on cmd and
+// returns a reader. Fresh bools per command avoid shared-var default clobbering.
+func addSelectorFlags(cmd *cobra.Command) func() cnkeys.Selectors {
+	g := cmd.Flags().Bool("gossip", false, "Select the gossip signing key (default: all types when no selector is given)")
+	t := cmd.Flags().Bool("tls", false, "Select the gRPC TLS key (default: all types when no selector is given)")
+	a := cmd.Flags().Bool("admin", false, "Select the node admin public key (default: all types when no selector is given; the admin key is included only if admin.pub exists in --keys-dir)")
+	return func() cnkeys.Selectors {
+		return cnkeys.Selectors{Gossip: *g, Grpc: *t, Admin: *a}
+	}
+}
+
+// requireNodeID reads --node-id, requiring it to be explicitly set (0 is valid).
+func requireNodeID(cmd *cobra.Command) (int64, error) {
+	if !cmd.Flags().Changed("node-id") {
+		return 0, errx.Decorate(
+			errorx.IllegalArgument.New("--node-id is required"),
+			reasons.InvalidArgument,
+			"pass --node-id <N> (0-based); it selects the per-node secrets to write or read")
+	}
+	id, err := cmd.Flags().GetInt64("node-id")
+	if err != nil {
+		return 0, errx.Decorate(errorx.IllegalArgument.Wrap(err, "read --node-id"), reasons.Internal)
+	}
+	if id < 0 {
+		return 0, errx.Decorate(errorx.IllegalArgument.New("--node-id must be >= 0"), reasons.InvalidArgument)
+	}
+	return id, nil
+}
+
+func requireNamespace(cmd *cobra.Command) (string, error) {
+	ns, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return "", errx.Decorate(errorx.IllegalArgument.Wrap(err, "read --namespace"), reasons.Internal)
+	}
+	if err := common.ValidateNamespaceFlag(ns); err != nil {
+		return "", err
+	}
+	return ns, nil
+}
+
+// addResolveFlags registers --fingerprint and --secret-suffix on cmd and returns a
+// reader. They pick one generation of a node's key secrets when more than one
+// exists. A fingerprint belongs to one key type, so it needs exactly one of
+// --gossip/--tls/--admin.
+func addResolveFlags(cmd *cobra.Command) func(cnkeys.Selectors) (cnkeys.ResolveOptions, error) {
+	fp := cmd.Flags().String("fingerprint", "", "Pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of --gossip/--tls/--admin")
+	suffix := cmd.Flags().String("secret-suffix", "", "Pick the secrets imported with this suffix (or date), e.g. 20261101 or v0.75.6")
+	return func(sel cnkeys.Selectors) (cnkeys.ResolveOptions, error) {
+		opts := cnkeys.ResolveOptions{Fingerprint: *fp, Suffix: *suffix}
+		if err := cnkeys.ValidateSuffix(opts.Suffix); err != nil {
+			return opts, errx.Decorate(err, reasons.InvalidArgument)
+		}
+		if opts.Fingerprint != "" {
+			n := 0
+			for _, on := range []bool{sel.Gossip, sel.Grpc, sel.Admin} {
+				if on {
+					n++
+				}
+			}
+			if n != 1 {
+				return opts, errx.Decorate(
+					errorx.IllegalArgument.New("--fingerprint applies to one key type"),
+					reasons.InvalidArgument,
+					"add exactly one of --gossip, --tls or --admin; each key type has its own fingerprint")
+			}
+		}
+		return opts, nil
+	}
 }
