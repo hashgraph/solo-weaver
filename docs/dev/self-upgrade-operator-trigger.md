@@ -100,14 +100,30 @@ Compatibility has two directions, and only one can be embedded:
 
 - **Backward-knowable** — "this provisioner supports component versions X…Y." The binary
   knows what it shipped with. Already **embedded** in `infrastructure-catalog.yaml`
-  (`pkg/software/config.go`, `//go:embed`). Gives the floor (`minSupported`) and the
-  known-good matrix for anything ≤ this release, offline.
+  (`pkg/software/config.go`, `//go:embed`): catalog *membership* is the support statement,
+  and it answers offline for anything ≤ this release.
 - **Forward-unknowable** — "component version V, released *after* this binary, requires
   provisioner ≥ P." An old binary cannot contain this; it comes from the **signed remote
   manifest** (above), fetched by the throttled version-check and cached.
 
-The gate decides locally when the target version is known to the embedded catalog; it
-consults the manifest only for versions newer than the binary.
+The gate decides locally when the target version is in the embedded catalog; it consults the
+manifest only for versions newer than the binary.
+
+**Do not build a second embedded compat file.** Every decision that *blocks* an operation is
+forward-looking, and forward facts can't live in a binary built before them:
+
+- A `requiresProvisioner` matrix embedded in the binary is either redundant (for versions the
+  catalog already contains — which the binary supports *by definition*) or permanently stale
+  (for anything newer).
+- Even `minSupported` is forward-looking as a *blocking* floor: the floor **rises** over time
+  as newer releases drop support, and a binary can't know a floor raised after it shipped. An
+  embedded `minSupported` snapshot only guards against versions *older* than the binary itself,
+  which is rarely the real risk.
+
+So the embedded catalog contributes exactly two things — **determinism** (what this provisioner
+installs) and a free **offline backstop** ("you asked me to act on a version not in my catalog
+→ upgrade the provisioner"). Every floor that can *rise*, and every `requiresProvisioner`,
+lives in the signed remote manifest.
 
 ### Ownership and maintenance (decided)
 
@@ -131,6 +147,36 @@ so ownership is not a tribal-knowledge burden:
   of managed components; floors derive from it; which operator runs which version is state
   reported through the provisioner's own state layer. Keeping these apart is what makes the
   manifest maintainable.
+
+### Catalog membership generalizes to every component
+
+The split in #1262 gives k8s per-minor files under `pkg/software/catalog/` with the rule
+"file presence = supported version; delete the file to drop it." That rule generalizes to
+*every* component — which is what makes the derivation above uniform — but match the file
+granularity to the component; don't force everything into per-minor files:
+
+- **k8s** → per-minor **file** (`host-k8s-1.3N.yaml`): a minor is a structural bundle (cri-o +
+  kubelet + kubeadm + kubectl + Cilium rungs + coupled-chart minimums) and the spine the rest
+  is matrixed against.
+- **Charts** (cilium, metallb, eso, alloy…) → **entries in `cluster.yaml`**: entry presence =
+  support; remove the entry to drop.
+- **Workloads** (block-node, consensus-node) → **one file per component**
+  (`catalog/block-node.yaml`, `catalog/consensus-node.yaml`) listing supported version rungs,
+  each entry light: version + `requiresProvisioner` + a source reference (e.g. the
+  solo-operator / registry pointer). Not per-version files (no minor-level structure), and not
+  folded into the k8s-minor files (a different axis).
+
+Because support = catalog membership everywhere, the manifest derivation runs once across all
+components. Dropping a version also sets the **upper** bound of a support range: V is supported
+in `[first_tag_with_V, first_tag_without_V)`. That is exactly #975's "compatibility *range*,
+not version equality" — membership-across-tags yields both bounds
+(`requiresProvisioner: ">=2.1.0 <3.0.0"`). Dropping stays graceful: a cluster still on a
+delisted version hits `VerifyExecutables`' fail-open skip (warn, don't brick) plus the gate's
+"unknown version → upgrade" message.
+
+#1262 itself needs **no scope change** — it is a pure refactor, and its "adding a new minor is
+one new file, no diff to existing files" criterion already keeps the loader component-agnostic,
+so per-component files drop in later with no loader change.
 
 ### Maintenance flow (build / release time)
 
@@ -208,6 +254,42 @@ solo-provisioner catalog compat [--write] [--dry-run] [--verify]
 - **`--verify` is a CI lint:** fail if the committed manifest drifts from the catalog.
 - Inputs: catalog history + a source exceptions file (e.g. `pkg/software/compat-exceptions.yaml`)
   + component hints ingested at `task bump` time.
+
+### The `catalog` maintainer command group
+
+These generators and editors live together as hidden, source-tree subcommands under `catalog`,
+each reusing `pkg/software` / `pkg/manifests` rather than hand-edits or bash:
+
+- `catalog checksums` — host-binary + chart checksum generator (#1263 lineage; long-term the
+  converged chart + host entrypoint).
+- `catalog compat` — the compat-manifest generator above (#1376).
+- `catalog drop <component> <version>` (a.k.a. `deprecate`) — **guarded** removal of a supported
+  version, because deleting the file/entry by hand is error-prone. It removes the entry, then
+  re-validates the catalog (default still resolvable; the upgrade ladder stays contiguous — no
+  gap that breaks a one-hop upgrade; coupled-chart minimums still satisfied) and regenerates the
+  derived artifacts (`catalog compat`, `catalog checksums`). It refuses to drop a rung still
+  needed as an intermediate hop unless `--force`. Adding support is already `task bump:*`; this
+  is the missing symmetric operation.
+
+### Publishing the manifest
+
+Publish it the same way the binaries already ship — a GPG-signed GitHub Release asset — so it
+reuses the release pipeline, the signing key, and the fetch path that already exist:
+
+- `compat.yaml` + `compat.yaml.asc` attached to every `vX.Y.Z` release by
+  `.github/workflows/flow-deploy-release-artifact.yaml`, beside the binary / `.sha256` / `.asc`.
+- Fetched from the stable latest URL —
+  `https://github.com/hashgraph/solo-weaver/releases/latest/download/compat.yaml` — which always
+  resolves to the newest release's asset, so one fixed URL yields the cumulative latest.
+- Verified against the **GPG public key already embedded for #698** (the one that verifies the
+  CLI). Same trust root — no new key, no new infrastructure.
+- Must be **anonymously fetchable** — field hosts pull it unauthenticated, exactly like the
+  binary. Wherever the public release artifacts live (GitHub Releases; public/anonymous HTTPS +
+  S3 per the external-files design), the manifest sits beside them.
+
+Two companions: an **in-repo unsigned source copy** near the catalog (reviewable, the way
+checksums are committed; `catalog compat --verify` lints it current, and the pipeline signs it
+at release), and **`--compat-manifest <path>`** for air-gapped hosts to supply it out of band.
 
 ## Mandatory dry-run and the plan
 
