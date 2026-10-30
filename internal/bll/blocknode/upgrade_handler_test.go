@@ -5,6 +5,8 @@
 package blocknode
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -87,6 +89,75 @@ func TestUpgrade_TrafficShapingDisabled_NoTeardown(t *testing.T) {
 		steps.NetworkFirewallCreateStepId,
 		steps.UpgradeBlockNodeStepId,
 	), ids)
+}
+
+func markedForShapingCleanup(enabled bool) state.State {
+	st := deployedStateForUpgrade(enabled)
+	st.BlockNodeState.TrafficShapingCleanupPending = true
+	return st
+}
+
+// TestUpgrade_ShapingCleanup_RemovesLiveShaping covers a node where an older
+// upgrade turned shaping on with no recorded decision: the shaping bundle is
+// removed ahead of the chart upgrade, and the host firewall is left alone.
+func TestUpgrade_ShapingCleanup_RemovesLiveShaping(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+	h.bnPoliciesPresent = func() (bool, error) { return true, nil }
+
+	wb, err := h.BuildWorkflow(markedForShapingCleanup(false), upgradeInputs())
+	require.NoError(t, err)
+
+	ids := workflowStepIDs(t, wb)
+	assert.Equal(t, withMediaCheck(
+		steps.NetworkFirewallCreateStepId,
+		steps.NetworkPolicyDeleteAllStepId,
+		steps.TcEgressTeardownStepId,
+		steps.BlockNodeDaemonConfigStepId,
+		steps.RestartDaemonServiceStepId,
+		ShapingCleanupDoneStepId,
+		steps.UpgradeBlockNodeStepId,
+	), ids)
+	assert.False(t, h.shapingCleanupDone, "the mark must stay until the teardown steps succeed")
+}
+
+// TestUpgrade_ShapingCleanupDoneStep_SetsFlag: the step marks the cleanup done
+// only when it runs, which is after every teardown step succeeded.
+func TestUpgrade_ShapingCleanupDoneStep_SetsFlag(t *testing.T) {
+	h := newMinimalUpgradeHandler()
+	stp, err := h.shapingCleanupDoneStep().Build()
+	require.NoError(t, err)
+
+	rpt := stp.Execute(context.Background())
+	require.NoError(t, rpt.Error)
+	assert.True(t, h.shapingCleanupDone)
+}
+
+// TestUpgrade_ShapingCleanup_NothingLive clears the mark without touching the
+// host when no BN policies exist.
+func TestUpgrade_ShapingCleanup_NothingLive(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		present func() (bool, error)
+		enabled bool
+		want    bool
+	}{
+		{name: "no BN policies", present: func() (bool, error) { return false, nil }, want: true},
+		{name: "decision is enabled", present: func() (bool, error) { return true, nil }, enabled: true, want: true},
+		{name: "registry unreadable keeps the mark", present: func() (bool, error) { return false, errors.New("boom") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newMinimalUpgradeHandler()
+			h.bnPoliciesPresent = tc.present
+
+			wb, err := h.BuildWorkflow(markedForShapingCleanup(tc.enabled), upgradeInputs())
+			require.NoError(t, err)
+
+			ids := workflowStepIDs(t, wb)
+			assert.NotContains(t, ids, steps.NetworkPolicyDeleteAllStepId)
+			assert.NotContains(t, ids, ShapingCleanupDoneStepId)
+			assert.Equal(t, tc.want, h.shapingCleanupDone)
+		})
+	}
 }
 
 // TestUpgrade_LeaveScaledDown_TrailingScaleDown pins --no-scale-up on both

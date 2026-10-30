@@ -23,6 +23,12 @@
 // With no opt-out, the shaping record decides: it is written only when shaping
 // is enabled. A disabled node keeps its record for a later re-enable, so the
 // opt-out is checked first.
+//
+// With neither, the node never recorded a decision. Installs from before the
+// shaping record existed wrote no record when they opted in, so the action
+// history's last block node install decides. Otherwise the node is off, but an
+// older upgrade may have turned shaping on anyway, so it is marked with
+// trafficShapingCleanupPending for the next upgrade to remove.
 package state
 
 import (
@@ -30,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -38,8 +45,10 @@ import (
 )
 
 const (
-	trafficShapingEnabledKey  = "trafficShapingEnabled"
-	trafficShapingDisabledKey = "trafficShapingDisabled"
+	trafficShapingEnabledKey        = "trafficShapingEnabled"
+	trafficShapingDisabledKey       = "trafficShapingDisabled"
+	trafficShapingCleanupPendingKey = "trafficShapingCleanupPending"
+	actionHistoryFileName           = "action_history.yaml"
 )
 
 // TrafficShapingEnabledV1Migration rewrites blockNodeState.trafficShapingDisabled
@@ -91,7 +100,12 @@ func (m *TrafficShapingEnabledV1Migration) Execute(_ context.Context, _ *migrati
 		return errorx.ExternalError.Wrap(err, "failed to read state file for trafficShapingEnabled migration")
 	}
 
-	out, err := migrateToTrafficShapingEnabled(b)
+	history, err := os.ReadFile(filepath.Join(filepath.Dir(stateFile), actionHistoryFileName))
+	if err != nil && !os.IsNotExist(err) {
+		return errorx.ExternalError.Wrap(err, "failed to read action history for trafficShapingEnabled migration")
+	}
+
+	out, err := migrateToTrafficShapingEnabled(b, lastBlockNodeInstallOptedIn(history))
 	if err != nil {
 		return errorx.IllegalFormat.Wrap(err, "failed to rewrite traffic-shaping decision in state YAML")
 	}
@@ -143,15 +157,47 @@ func needsTrafficShapingEnabled(b []byte) bool {
 }
 
 // legacyTrafficShapingEnabled derives the decision from the opt-out encoding.
-func legacyTrafficShapingEnabled(bn *yaml.Node) bool {
+// decided is false when the state recorded neither an opt-out nor a shaping
+// record.
+func legacyTrafficShapingEnabled(bn *yaml.Node) (enabled, decided bool) {
 	if mappingScalar(bn, trafficShapingDisabledKey) == "true" {
-		return false
+		return false, true
 	}
 	shaping := mappingValue(bn, "shaping")
-	return shaping != nil && shaping.Tag != "!!null"
+	if shaping != nil && shaping.Tag != "!!null" {
+		return true, true
+	}
+	return false, false
 }
 
-func migrateToTrafficShapingEnabled(b []byte) ([]byte, error) {
+// lastBlockNodeInstallOptedIn reports whether the last block node install in
+// the action history passed trafficshapingenabled: true. Entries that fail to
+// parse are skipped: a full disk can cut one short.
+func lastBlockNodeInstallOptedIn(history []byte) bool {
+	optedIn := false
+	for _, doc := range strings.Split(string(history), "\n---\n") {
+		var entry struct {
+			Intent struct {
+				Action string `yaml:"action"`
+				Target string `yaml:"target"`
+			} `yaml:"intent"`
+			Inputs struct {
+				Custom struct {
+					TrafficShapingEnabled bool `yaml:"trafficshapingenabled"`
+				} `yaml:"custom"`
+			} `yaml:"inputs"`
+		}
+		if yaml.Unmarshal([]byte(doc), &entry) != nil {
+			continue
+		}
+		if entry.Intent.Action == "install" && entry.Intent.Target == "blocknode" {
+			optedIn = entry.Inputs.Custom.TrafficShapingEnabled
+		}
+	}
+	return optedIn
+}
+
+func migrateToTrafficShapingEnabled(b []byte, installOptedIn bool) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return nil, err
@@ -160,7 +206,16 @@ func migrateToTrafficShapingEnabled(b []byte) ([]byte, error) {
 	bn := blockNodeStateNode(&doc)
 	if bn != nil && bn.Kind == yaml.MappingNode {
 		if mappingValue(bn, trafficShapingEnabledKey) == nil {
-			appendMappingBool(bn, trafficShapingEnabledKey, legacyTrafficShapingEnabled(bn))
+			enabled, decided := legacyTrafficShapingEnabled(bn)
+			switch {
+			case decided:
+				appendMappingBool(bn, trafficShapingEnabledKey, enabled)
+			case installOptedIn:
+				appendMappingBool(bn, trafficShapingEnabledKey, true)
+			default:
+				appendMappingBool(bn, trafficShapingEnabledKey, false)
+				appendMappingBool(bn, trafficShapingCleanupPendingKey, true)
+			}
 		}
 		deleteMappingKey(bn, trafficShapingDisabledKey)
 	}
@@ -179,6 +234,7 @@ func migrateToTrafficShapingDisabled(b []byte) ([]byte, error) {
 		enabled := mappingScalar(bn, trafficShapingEnabledKey) == "true"
 		deleteMappingKey(bn, trafficShapingEnabledKey)
 		deleteMappingKey(bn, trafficShapingDisabledKey)
+		deleteMappingKey(bn, trafficShapingCleanupPendingKey)
 		if !enabled {
 			appendMappingBool(bn, trafficShapingDisabledKey, true)
 		}

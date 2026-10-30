@@ -16,6 +16,18 @@ import (
 // NetworkPolicyDeleteAllStepId is the step ID for NetworkPolicyDeleteAll.
 const NetworkPolicyDeleteAllStepId = "network-policy-delete-all"
 
+// BNPoliciesPresent reports whether any canonical BN policy is in the policy
+// registry.
+func BNPoliciesPresent() (bool, error) {
+	for _, c := range canonicalBNPolicies {
+		exists, err := policy.Exists(c.name)
+		if err != nil || exists {
+			return exists, err
+		}
+	}
+	return false, nil
+}
+
 // NetworkPolicyDeleteAll tears down the BN workload classification plane (the
 // `inet weaver-workload-policy` table) by deleting every canonical BN policy. It is the disable
 // counterpart to NetworkPolicyCreate, wired into `block node reconfigure` when

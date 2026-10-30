@@ -97,7 +97,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 	// fresh (in the CLI layer, seeded from the current on-host state), so the
 	// convergence assembler is driven by the operator's decision and is allowed to
 	// tear a feature down when it is turned off. See networkPlaneSteps.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, ports)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, ins.TrafficShapingEnabled, true, false, ports)
 
 	// Warn (never block) when a storage path is not on local block storage.
 	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
