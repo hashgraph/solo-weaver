@@ -10,7 +10,7 @@ dotenv: [".env"]
 vars:
   OS: [linux]
   ARCH: [amd64, arm64]
-  GO_VERSION: 1.27.2
+  GO_VERSION: 1.27.3
   # Build metadata stamped into github.com/automa-saga/version at link time via -X.
   # Override VERSION on the command line or in CI (e.g. `task build:cli VERSION=0.20.0`);
   # COMMIT and DATE are derived automatically.
@@ -385,8 +385,8 @@ tasks:
       - "source /etc/profile.d/go.sh"
       - "source /etc/profile.d/go.sh && go install github.com/go-delve/delve/cmd/dlv@latest"
       # Set the Go toolchain to auto-upgrade to the latest version due to https://github.com/golang/go/issues/75031
-      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
-      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.2+auto"
+      - "/usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.3+auto"
+      - "sudo /usr/local/go/bin/go env -w GOTOOLCHAIN=go1.27.3+auto"
     generates:
       - "/usr/local/go/**"
 
