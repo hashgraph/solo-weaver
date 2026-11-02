@@ -18,6 +18,9 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 )
 
+// ShapingCleanupDoneStepId is the step ID that records a finished shaping cleanup.
+const ShapingCleanupDoneStepId = "shaping-cleanup-done"
+
 // UpgradeHandler handles the ActionUpgrade intent for a block node.
 // Unlike InstallHandler, it does NOT apply RequiresExplicitOverride guards —
 // the whole point of an upgrade is to change version/chart fields.  Instead it
@@ -28,6 +31,13 @@ type UpgradeHandler struct {
 	runtime *rsl.BlockNodeRuntimeResolver
 	// readRelease is nil in unit tests, which then resolve ports from --values alone.
 	readRelease releaseValuesReader
+	// bnPoliciesPresent is nil in unit tests, which then see no live BN policies.
+	bnPoliciesPresent func() (bool, error)
+	// shapingCleanupDone is set once this run has nothing left to clean up for
+	// TrafficShapingCleanupPending, so the flush can clear the mark.
+	shapingCleanupDone bool
+	// shapingTeardownFailed is set when any step ahead of the done step fails.
+	shapingTeardownFailed bool
 }
 
 // PrepareEffectiveInputs resolves fields for an upgrade.
@@ -104,8 +114,16 @@ func (h *UpgradeHandler) BuildWorkflow(
 	// plane nor tears it down. The traffic-shaping target comes from the install-time
 	// decision recorded on BlockNodeState — upgrade never prompts and never resolves
 	// its own gate (only reconfigure does). Daemon activation, when traffic shaping is
-	// enabled, is handled post-workflow in the CLI layer.
-	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, currentState.BlockNodeState.TrafficShapingEnabled, false, ports)
+	// enabled, is handled post-workflow in the CLI layer. The one teardown is
+	// shaping marked for cleanup, which nobody chose.
+	removeShaping := h.planShapingCleanup(currentState.BlockNodeState)
+	networkSteps := networkPlaneSteps(ins, inputs.Common.Force, currentState.BlockNodeState.TrafficShapingEnabled, false, removeShaping, ports)
+	if removeShaping {
+		for i, b := range networkSteps {
+			networkSteps[i] = failureTracked{Builder: b, failed: &h.shapingTeardownFailed}
+		}
+		networkSteps = append(networkSteps, h.shapingCleanupDoneStep())
+	}
 
 	// Warn (never block) when a storage path is not on local block storage.
 	networkSteps = append([]automa.Builder{steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins)}, networkSteps...)
@@ -145,10 +163,106 @@ func (h *UpgradeHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, patchBlockNodeState())
+	base := patchBlockNodeState()
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h,
+		func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+			if h.shapingCleanupDone {
+				st.BlockNodeState.TrafficShapingCleanupPending = false
+			}
+			return base(st, effectiveInputs)
+		})
+}
+
+// planShapingCleanup reports whether this upgrade must remove traffic shaping
+// marked by TrafficShapingCleanupPending. With no BN policies live there is
+// nothing to remove, and the mark is cleared without touching the host.
+func (h *UpgradeHandler) planShapingCleanup(bn state.BlockNodeState) bool {
+	h.shapingCleanupDone = false
+	h.shapingTeardownFailed = false
+	if !bn.TrafficShapingCleanupPending {
+		return false
+	}
+	if bn.TrafficShapingEnabled {
+		h.shapingCleanupDone = true
+		return false
+	}
+
+	present := false
+	if h.bnPoliciesPresent != nil {
+		var err error
+		if present, err = h.bnPoliciesPresent(); err != nil {
+			logx.As().Warn().Err(err).Msg(
+				"could not check for traffic shaping left on by an earlier upgrade; will check again on the next upgrade")
+			return false
+		}
+	}
+	if !present {
+		h.shapingCleanupDone = true
+		return false
+	}
+
+	logx.As().Warn().Msg("Removing traffic shaping that an earlier upgrade turned on without a recorded decision. " +
+		"To turn it back on, run 'solo-provisioner block node reconfigure --traffic-shaping-enabled' after the upgrade.")
+	return true
+}
+
+// shapingCleanupDoneStep runs after the shaping teardown steps. Reaching it isn't
+// enough: --continue-on-error runs past a failed step, so it also checks that
+// none of them failed.
+func (h *UpgradeHandler) shapingCleanupDoneStep() automa.Builder {
+	return automa.NewStepBuilder().WithId(ShapingCleanupDoneStepId).
+		WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
+			h.shapingCleanupDone = !h.shapingTeardownFailed
+			return automa.SuccessReport(stp)
+		})
+}
+
+// failureTracked sets *failed when the step it builds fails.
+type failureTracked struct {
+	automa.Builder
+	failed *bool
+}
+
+func (b failureTracked) Build() (automa.Step, error) {
+	stp, err := b.Builder.Build()
+	if err != nil || stp == nil {
+		return stp, err
+	}
+	return failureTrackedStep{Step: stp, failed: b.failed}, nil
+}
+
+type failureTrackedStep struct {
+	automa.Step
+	failed *bool
+}
+
+func (s failureTrackedStep) Prepare(ctx context.Context) (context.Context, error) {
+	ctx, err := s.Step.Prepare(ctx)
+	if err != nil {
+		*s.failed = true
+	}
+	return ctx, err
+}
+
+func (s failureTrackedStep) Execute(ctx context.Context) *automa.Report {
+	rpt := s.Step.Execute(ctx)
+	if rpt == nil || rpt.IsFailed() {
+		*s.failed = true
+	}
+	return rpt
+}
+
+// WithState re-wraps, because the workflow runs the step this returns.
+func (s failureTrackedStep) WithState(st automa.NamespacedStateBag) automa.Step {
+	return failureTrackedStep{Step: s.Step.WithState(st), failed: s.failed}
 }
 
 func NewUpgradeHandler(base bll.BaseHandler[models.BlockNodeInputs],
 	runtimeState *rsl.BlockNodeRuntimeResolver) (*UpgradeHandler, error) {
-	return &UpgradeHandler{BaseHandler: base, runtime: runtimeState, readRelease: readDeployedReleaseValues}, nil
+	return &UpgradeHandler{
+		BaseHandler:       base,
+		runtime:           runtimeState,
+		readRelease:       readDeployedReleaseValues,
+		bnPoliciesPresent: steps.BNPoliciesPresent,
+	}, nil
 }
