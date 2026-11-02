@@ -540,6 +540,35 @@ func DisableSwap() error {
 	return nil
 }
 
+// SwapInUse reports whether DisableSwap would change anything on this host: an
+// active swap, an uncommented swap entry in /etc/fstab, or an active systemd
+// swap unit.
+func SwapInUse() (bool, error) {
+	active, err := parseProcSwaps()
+	if err != nil {
+		return false, err
+	}
+	if len(active) > 0 {
+		return true, nil
+	}
+
+	fstab, err := parseFstabSwaps()
+	if err != nil {
+		return false, err
+	}
+	if len(fstab) > 0 {
+		return true, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	units, err := getActiveSwapUnits(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(units) > 0, nil
+}
+
 // EnableSwap re-enables swap on the system.
 // It performs the following steps:
 // 1. Uncomments swap entries in /etc/fstab

@@ -177,6 +177,22 @@ func DeleteConfiguration() ([]string, error) {
 	return templates.RemoveTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
 }
 
+// DeleteFiles removes the given sysctl configuration files, as returned by
+// CopyConfiguration, and returns those it removed; a file already gone is not an error.
+func DeleteFiles(paths []string) ([]string, error) {
+	var removed []string
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, errorx.ExternalError.Wrap(err, "failed to remove sysctl config file %s", p)
+		}
+		removed = append(removed, p)
+	}
+	return removed, nil
+}
+
 // FindSysctlConfigFiles returns a sorted list of sysctl configuration files in /etc/sysctl.d
 func FindSysctlConfigFiles() ([]string, error) {
 	// Reload sysctl settings

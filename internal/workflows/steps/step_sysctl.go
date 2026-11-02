@@ -10,7 +10,11 @@ import (
 	"strings"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
+	"github.com/joomcode/errorx"
+
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 
 	"github.com/hashgraph/solo-weaver/internal/sysctl"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -22,9 +26,33 @@ const (
 	KeyBackupFile                      = "backup_file"
 	KeyReloadedFiles                   = "reloaded_files"
 	KeyCopiedFiles                     = "copied_files"
+	KeyCreatedFiles                    = "created_files"
 	KeyRemovedFiles                    = "removed_files"
 	KeyWarnings                        = "warnings"
 )
+
+// findSysctlConfigFiles, copySysctlConfiguration and deleteSysctlFiles are
+// package vars so tests can stub /etc/sysctl.d.
+var (
+	findSysctlConfigFiles   = sysctl.FindSysctlConfigFiles
+	copySysctlConfiguration = sysctl.CopyConfiguration
+	deleteSysctlFiles       = sysctl.DeleteFiles
+)
+
+// filesNotIn returns the entries of files that are absent from existing.
+func filesNotIn(files, existing []string) []string {
+	seen := make(map[string]struct{}, len(existing))
+	for _, f := range existing {
+		seen[f] = struct{}{}
+	}
+	var missing []string
+	for _, f := range files {
+		if _, ok := seen[f]; !ok {
+			missing = append(missing, f)
+		}
+	}
+	return missing
+}
 
 func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureSysctlForKubernetesStepId).
@@ -69,7 +97,19 @@ func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 func copySysctlConfigurationFiles() automa.Builder {
 	return automa.NewStepBuilder().WithId("copy-sysctl-files").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			copied, err := sysctl.CopyConfiguration()
+			existing, err := findSysctlConfigFiles()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to list sysctl configuration files"),
+					reasons.PreconditionNotMet,
+					"Check that /etc/sysctl.d exists and is readable: 'ls -l /etc/sysctl.d'")))
+			}
+
+			copied, err := copySysctlConfiguration()
+			// Only files that were not there before are in the rollback scope,
+			// including those a copy wrote before failing partway.
+			created := filesNotIn(copied, existing)
+			stp.State().Local().Set(SysctlFilesCreatedByThisStep, created)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
@@ -77,13 +117,28 @@ func copySysctlConfigurationFiles() automa.Builder {
 			}
 
 			meta := map[string]string{
-				KeyCopiedFiles: strings.Join(copied, ", "),
+				KeyCopiedFiles:  strings.Join(copied, ", "),
+				KeyCreatedFiles: strings.Join(created, ", "),
 			}
 
+			if len(created) == 0 {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("Sysctl configuration files are already present"), automa.WithMetadata(meta))
+			}
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			removed, err := sysctl.DeleteConfiguration()
+			// Execute stores the list as []string; the state bag has no typed getter for it.
+			var created []string
+			if v, ok := stp.State().Local().Get(SysctlFilesCreatedByThisStep); ok {
+				created, _ = v.([]string)
+			}
+			if len(created) == 0 {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("No sysctl configuration files were created by this step, skipping rollback"))
+			}
+
+			removed, err := deleteSysctlFiles(created)
 			if err != nil {
 				return automa.FailureReport(stp,
 					automa.WithError(
