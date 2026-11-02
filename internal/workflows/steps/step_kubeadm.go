@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/automa/automa_steps"
@@ -20,7 +21,18 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-const kubectlGetNodesCmd = "/usr/local/bin/kubectl get nodes"
+// runBashScript and configureKubeconfig are package vars so tests can stub
+// kubeadm and the admin kubeconfig copy.
+var (
+	runBashScript       = automa_steps.RunBashScript
+	configureKubeconfig = func() error {
+		kubeConfigManager, err := kube.NewKubeConfigManager()
+		if err != nil {
+			return errorx.InternalError.Wrap(err, "failed to create kubeconfig manager")
+		}
+		return kubeConfigManager.Configure()
+	}
+)
 
 func SetupKubeadm(mr software.MachineRuntime) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("setup-kubeadm").
@@ -189,22 +201,28 @@ func InitializeCluster() *automa.StepBuilder {
 			notify.As().StepCompletion(ctx, stp, rpt, "Kubernetes cluster initialized successfully")
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Verify the kubectl binary before executing it.
-			if err := verifyExecutables("kubectl"); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
-			}
-
-			// Check if cluster is already initialized
-			scripts := []string{kubectlGetNodesCmd}
-			output, err := automa_steps.RunBashScript(scripts, "")
-
-			if err == nil && output != "" {
-				// Cluster is already initialized, skip all initialization steps
+			// A cluster whose API server answers through the admin kubeconfig is
+			// already initialized; it is outside this step's rollback scope.
+			if err := probeAPIServer(adminKubeconfigPath); err == nil {
 				return automa.SkippedReport(stp,
 					automa.WithDetail("Kubernetes cluster is already initialized"))
 			}
 
-			// Cluster not initialized, proceed with full initialization
+			// A control plane that is on disk but not answering is not this run's
+			// either: never initialize over it, so there is nothing to reset later.
+			cp, err := detectControlPlane(kubernetesConfigDirs())
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err,
+					reasons.PreconditionNotMet,
+					"Check that /etc/kubernetes is readable, then re-run this command")))
+			}
+			if len(cp.evidence) > 0 {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("an existing Kubernetes control plane was found (%s), but its API server is not reachable; not initializing over it", strings.Join(cp.evidence, ", ")),
+					reasons.PreconditionNotMet,
+					"Check the control plane with 'sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz' and 'sudo systemctl status kubelet crio'",
+					"If the cluster is no longer needed, run 'solo-provisioner kube cluster uninstall' and remove what is left under /etc/kubernetes before installing")))
+			}
 
 			// Verify the kubeadm binary before executing it.
 			if err := verifyExecutables("kubeadm"); err != nil {
@@ -217,7 +235,7 @@ func InitializeCluster() *automa.StepBuilder {
 				fmt.Sprintf("sudo %s/kubeadm config images pull --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
-			_, err = automa_steps.RunBashScript(pullImageCmd, "")
+			_, err = runBashScript(pullImageCmd, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to pull kubeadm images")))
 			}
@@ -228,36 +246,40 @@ func InitializeCluster() *automa.StepBuilder {
 				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml --v=3", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
-			_, err = automa_steps.RunBashScript(initCmd, "")
+			// A fresh host: whatever kubeadm init writes from here is this run's to
+			// undo, since a failed init does not clean up after itself.
+			stp.State().Local().Set(InitializedByThisStep, true)
+			_, err = runBashScript(initCmd, "")
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to initialize cluster with kubeadm")))
 			}
 
 			// Step 3: Configure kubeconfig
-			kubeConfigManager, err := kube.NewKubeConfigManager()
-			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.InternalError.Wrap(err, "failed to create kubeconfig manager")))
-			}
-			err = kubeConfigManager.Configure()
-			if err != nil {
+			if err := configureKubeconfig(); err != nil {
 				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to configure kubeconfig")))
 			}
 
 			return automa.SuccessReport(stp, automa.WithDetail("Cluster initialized successfully"))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if initialized, _ := stp.State().Local().Bool(InitializedByThisStep); !initialized {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("Kubernetes cluster was not initialized by this step, skipping rollback"))
+			}
+
 			// Verify the kubeadm binary before executing it on rollback.
 			if err := verifyExecutables("kubeadm"); err != nil {
 				return automa.FailureReport(stp, automa.WithError(err))
 			}
 
-			scripts := []string{
-				fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir),
-			}
+			resetCmd := fmt.Sprintf("sudo %s/kubeadm reset --force --cri-socket unix:///opt/solo/weaver/sandbox/var/run/crio/crio.sock", models.Paths().SandboxBinDir)
 
-			_, err := automa_steps.RunBashScript(scripts, "")
+			_, err := runBashScript([]string{resetCmd}, "")
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "kubeadm reset failed, so the cluster this run initialized is still on the host"),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Run '%s' by hand and check its output", resetCmd))))
 			}
 
 			return automa.SuccessReport(stp)
