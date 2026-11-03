@@ -80,6 +80,19 @@ func CopyConfiguration() ([]string, error) {
 	return templates.CopyTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
 }
 
+// ConfigurationTargets returns the paths CopyConfiguration writes in /etc/sysctl.d.
+func ConfigurationTargets() ([]string, error) {
+	files, err := templates.ReadDir(sysctlConfigSourceDir)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]string, 0, len(files))
+	for _, src := range files {
+		targets = append(targets, path.Join(sysctlConfigDestinationDir, path.Base(src)))
+	}
+	return targets, nil
+}
+
 // CopyConfigurationFile copies a single named sysctl configuration file from the
 // embedded templates to the /etc/sysctl.d directory, leaving every other file in
 // the directory untouched. It returns the destination path.

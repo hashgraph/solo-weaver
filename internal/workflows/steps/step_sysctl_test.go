@@ -12,19 +12,20 @@ import (
 )
 
 // stubSysctlFiles makes /etc/sysctl.d hold existing before the copy, makes the
-// copy report copied, and records what rollback asked to delete.
-func stubSysctlFiles(t *testing.T, existing, copied []string) *[][]string {
+// copy write targets, and records what rollback asked to delete.
+func stubSysctlFiles(t *testing.T, existing, targets []string) *[][]string {
 	t.Helper()
 	deleted := &[][]string{}
-	origFind, origCopy, origDelete := findSysctlConfigFiles, copySysctlConfiguration, deleteSysctlFiles
+	origFind, origTargets, origCopy, origDelete := findSysctlConfigFiles, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles
 	findSysctlConfigFiles = func() ([]string, error) { return existing, nil }
-	copySysctlConfiguration = func() ([]string, error) { return copied, nil }
+	sysctlConfigTargets = func() ([]string, error) { return targets, nil }
+	copySysctlConfiguration = func() ([]string, error) { return targets, nil }
 	deleteSysctlFiles = func(paths []string) ([]string, error) {
 		*deleted = append(*deleted, paths)
 		return paths, nil
 	}
 	t.Cleanup(func() {
-		findSysctlConfigFiles, copySysctlConfiguration, deleteSysctlFiles = origFind, origCopy, origDelete
+		findSysctlConfigFiles, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles = origFind, origTargets, origCopy, origDelete
 	})
 	return deleted
 }
@@ -66,12 +67,13 @@ func TestCopySysctlFiles_RollbackRemovesOnlyCreatedFiles(t *testing.T) {
 	assert.Equal(t, [][]string{{"/etc/sysctl.d/99-kubernetes-cri.conf"}}, *deleted)
 }
 
-// A copy that fails partway has already written files; the failed step's
-// rollback must remove exactly those.
+// A copy that fails partway has written whole files and possibly a partial one
+// it does not report; the failed step's rollback must remove every new target.
 func TestCopySysctlFiles_PartialCopyFailureIsRolledBack(t *testing.T) {
-	deleted := stubSysctlFiles(t, nil, nil)
+	targets := []string{"/etc/sysctl.d/75-inotify.conf", "/etc/sysctl.d/99-kubernetes-cri.conf"}
+	deleted := stubSysctlFiles(t, nil, targets)
 	copySysctlConfiguration = func() ([]string, error) {
-		return []string{"/etc/sysctl.d/75-inotify.conf"}, assert.AnError
+		return targets[:1], assert.AnError
 	}
 
 	step, err := copySysctlConfigurationFiles().Build()
@@ -84,5 +86,5 @@ func TestCopySysctlFiles_PartialCopyFailureIsRolledBack(t *testing.T) {
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
 	assert.Equal(t, automa.StatusSuccess, rollback.Status)
-	assert.Equal(t, [][]string{{"/etc/sysctl.d/75-inotify.conf"}}, *deleted)
+	assert.Equal(t, [][]string{targets}, *deleted)
 }

@@ -35,6 +35,7 @@ const (
 // package vars so tests can stub /etc/sysctl.d.
 var (
 	findSysctlConfigFiles   = sysctl.FindSysctlConfigFiles
+	sysctlConfigTargets     = sysctl.ConfigurationTargets
 	copySysctlConfiguration = sysctl.CopyConfiguration
 	deleteSysctlFiles       = sysctl.DeleteFiles
 )
@@ -99,21 +100,33 @@ func copySysctlConfigurationFiles() automa.Builder {
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			existing, err := findSysctlConfigFiles()
 			if err != nil {
+				reason := reasons.PermissionDenied
+				if os.IsNotExist(err) {
+					reason = reasons.FileMissing
+				}
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to list sysctl configuration files"),
-					reasons.PreconditionNotMet,
+					reason,
 					"Check that /etc/sysctl.d exists and is readable: 'ls -l /etc/sysctl.d'")))
 			}
 
-			copied, err := copySysctlConfiguration()
-			// Only files that were not there before are in the rollback scope,
-			// including those a copy wrote before failing partway.
-			created := filesNotIn(copied, existing)
-			stp.State().Local().Set(SysctlFilesCreatedByThisStep, created)
+			targets, err := sysctlConfigTargets()
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to copy sysctl configuration files")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.InternalError.Wrap(err, "failed to list the embedded sysctl templates"),
+					reasons.Internal)))
+			}
+
+			// Recorded from the targets, not from what the copy reports: a file that
+			// fails midway through its write is not reported but is still on disk.
+			created := filesNotIn(targets, existing)
+			stp.State().Local().Set(SysctlFilesCreatedByThisStep, created)
+			copied, err := copySysctlConfiguration()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					automa.StepExecutionError.Wrap(err, "failed to copy sysctl configuration files"),
+					reasons.PermissionDenied,
+					"Check that /etc/sysctl.d is writable and the disk is not full: 'ls -ld /etc/sysctl.d' and 'df -h /etc'")))
 			}
 
 			meta := map[string]string{
@@ -128,11 +141,7 @@ func copySysctlConfigurationFiles() automa.Builder {
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			// Execute stores the list as []string; the state bag has no typed getter for it.
-			var created []string
-			if v, ok := stp.State().Local().Get(SysctlFilesCreatedByThisStep); ok {
-				created, _ = v.([]string)
-			}
+			created := automa.StringSliceFromState(stp.State().Local(), SysctlFilesCreatedByThisStep)
 			if len(created) == 0 {
 				return automa.SkippedReport(stp,
 					automa.WithDetail("No sysctl configuration files were created by this step, skipping rollback"))
@@ -140,9 +149,10 @@ func copySysctlConfigurationFiles() automa.Builder {
 
 			removed, err := deleteSysctlFiles(created)
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to remove sysctl configuration files")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					automa.StepExecutionError.Wrap(err, "failed to remove sysctl configuration files"),
+					reasons.PermissionDenied,
+					fmt.Sprintf("Remove what is left of these files by hand: %s", strings.Join(created, ", ")))))
 			}
 
 			meta := map[string]string{

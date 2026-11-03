@@ -34,6 +34,12 @@ func DisableSwap() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(DisableSwapStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			inUse, err := swapInUse()
+			if err != nil && errorx.IsOfType(err, osx.ErrSwapDeviceNotFound) {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to check whether swap is in use"),
+					reasons.FileMissing,
+					"An uncommented swap entry in /etc/fstab points at a device or file that does not exist: comment it out, then re-run")))
+			}
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to check whether swap is in use"),
@@ -48,8 +54,11 @@ func DisableSwap() *automa.StepBuilder {
 			// even when it fails midway.
 			stp.State().Local().Set(SwapDisabledByThisStep, true)
 			if err := disableSwap(); err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(automa.StepExecutionError.Wrap(err, "failed to disable swap")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					automa.StepExecutionError.Wrap(err, "failed to disable swap"),
+					ReasonHostCommandFailed,
+					"Check 'swapon --show' and 'free -h': swapoff fails when there is not enough free memory to move swapped pages back",
+					"Turn swap off by hand with 'sudo swapoff -a', then re-run")))
 			}
 			return automa.SuccessReport(stp)
 

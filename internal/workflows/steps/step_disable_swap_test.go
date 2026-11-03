@@ -7,8 +7,12 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	osx "github.com/hashgraph/solo-weaver/pkg/os"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 // stubSwap replaces the host swap calls and records which ran. inUse is what
@@ -75,4 +79,25 @@ func TestDisableSwap_MidwayFailureIsRolledBack(t *testing.T) {
 	require.NoError(t, rollback.Error)
 	assert.Equal(t, automa.StatusSuccess, rollback.Status)
 	assert.Equal(t, []string{"disable", "enable"}, *calls)
+}
+
+// A stale fstab entry is the operator's to fix, and the hint must say so rather
+// than point at file permissions.
+func TestDisableSwap_StaleFstabEntryNamesTheEntry(t *testing.T) {
+	calls := stubSwap(t, false)
+	swapInUse = func() (bool, error) {
+		return false, osx.ErrSwapDeviceNotFound.New("device with UUID abc not found in /dev/disk/by-uuid")
+	}
+
+	step, err := DisableSwap().Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+	require.Error(t, report.Error)
+	reason, _ := errx.ReasonOf(report.Error)
+	assert.Equal(t, reasons.FileMissing, reason)
+	hints, _ := errx.Hints(report.Error)
+	require.NotEmpty(t, hints)
+	assert.Contains(t, hints[0], "/etc/fstab")
+	assert.Empty(t, *calls)
 }

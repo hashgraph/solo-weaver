@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 
@@ -16,13 +17,14 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// runBashScript and configureKubeconfig are package vars so tests can stub
-// kubeadm and the admin kubeconfig copy.
+// runBashScript, configureKubeconfig and kubeconfigCopiesMissing are package
+// vars so tests can stub kubeadm and the admin kubeconfig copies.
 var (
 	runBashScript       = automa_steps.RunBashScript
 	configureKubeconfig = func() error {
@@ -31,6 +33,14 @@ var (
 			return errorx.InternalError.Wrap(err, "failed to create kubeconfig manager")
 		}
 		return kubeConfigManager.Configure()
+	}
+	kubeconfigCopiesMissing = func() bool {
+		for _, p := range []string{"/root/.kube/config", path.Join(config.WeaverHomeDir(), ".kube", "config")} {
+			if _, err := os.Stat(p); err != nil {
+				return true
+			}
+		}
+		return false
 	}
 )
 
@@ -204,6 +214,13 @@ func InitializeCluster() *automa.StepBuilder {
 			// A cluster whose API server answers through the admin kubeconfig is
 			// already initialized; it is outside this step's rollback scope.
 			if err := probeAPIServer(adminKubeconfigPath); err == nil {
+				// Later steps read the per-user copies of admin.conf. Only missing ones are
+				// restored, so an operator's edited copy is not overwritten on every run.
+				if kubeconfigCopiesMissing() {
+					if err := configureKubeconfig(); err != nil {
+						return automa.FailureReport(stp, automa.WithError(kubeconfigCopyError(err)))
+					}
+				}
 				return automa.SkippedReport(stp,
 					automa.WithDetail("Kubernetes cluster is already initialized"))
 			}
@@ -237,7 +254,11 @@ func InitializeCluster() *automa.StepBuilder {
 
 			_, err = runBashScript(pullImageCmd, "")
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to pull kubeadm images")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to pull kubeadm images"),
+					ReasonHostCommandFailed,
+					"Check the kubeadm output in the log for the image that failed and whether the host can reach its registry",
+					fmt.Sprintf("Retry the pull by hand: '%s'", pullImageCmd[0]))))
 			}
 			logx.As().Info().Msg("Kubeadm images pulled successfully.")
 
@@ -246,17 +267,33 @@ func InitializeCluster() *automa.StepBuilder {
 				fmt.Sprintf("sudo %s/kubeadm init --upload-certs --config %s/etc/weaver/kubeadm-init.yaml --v=3", models.Paths().SandboxBinDir, models.Paths().SandboxDir),
 			}
 
-			// A fresh host: whatever kubeadm init writes from here is this run's to
-			// undo, since a failed init does not clean up after itself.
+			// kubeadm init fails preflight without writing anything, so a preflight
+			// failure must not put the host in the rollback scope: kubeadm reset would
+			// then wipe leftovers (/var/lib/etcd, a running kubelet) this run did not make.
+			preflightCmd := fmt.Sprintf("sudo %s/kubeadm init phase preflight --config %s/etc/weaver/kubeadm-init.yaml", models.Paths().SandboxBinDir, models.Paths().SandboxDir)
+			if _, err := runBashScript([]string{preflightCmd}, ""); err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "kubeadm preflight checks failed, so the cluster was not initialized"),
+					reasons.PreconditionNotMet,
+					"Read the [ERROR ...] lines from kubeadm in the log: they name the port, directory or service in the way",
+					"If they are leftovers of an earlier cluster, run 'solo-provisioner kube cluster uninstall' before installing",
+					fmt.Sprintf("Re-run the check by hand: '%s'", preflightCmd))))
+			}
+
+			// Whatever kubeadm init writes from here is this run's to undo, since an
+			// init that fails after preflight does not clean up after itself.
 			stp.State().Local().Set(InitializedByThisStep, true)
 			_, err = runBashScript(initCmd, "")
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to initialize cluster with kubeadm")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to initialize cluster with kubeadm"),
+					ReasonHostCommandFailed,
+					"Check the kubeadm output in the log, and 'sudo journalctl -u kubelet' for why the control plane did not start")))
 			}
 
 			// Step 3: Configure kubeconfig
 			if err := configureKubeconfig(); err != nil {
-				return automa.FailureReport(stp, automa.WithError(errorx.ExternalError.Wrap(err, "failed to configure kubeconfig")))
+				return automa.FailureReport(stp, automa.WithError(kubeconfigCopyError(err)))
 			}
 
 			return automa.SuccessReport(stp, automa.WithDetail("Cluster initialized successfully"))
@@ -278,12 +315,19 @@ func InitializeCluster() *automa.StepBuilder {
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "kubeadm reset failed, so the cluster this run initialized is still on the host"),
-					reasons.PreconditionNotMet,
+					ReasonHostCommandFailed,
 					fmt.Sprintf("Run '%s' by hand and check its output", resetCmd))))
 			}
 
 			return automa.SuccessReport(stp)
 		})
+}
+
+func kubeconfigCopyError(err error) error {
+	return errx.Decorate(
+		errorx.ExternalError.Wrap(err, "failed to copy /etc/kubernetes/admin.conf to the user kubeconfigs"),
+		reasons.PermissionDenied,
+		"Check that /etc/kubernetes/admin.conf exists and that /root/.kube and the weaver user's ~/.kube are writable")
 }
 
 // ResetCluster runs kubeadm reset to tear down the Kubernetes cluster

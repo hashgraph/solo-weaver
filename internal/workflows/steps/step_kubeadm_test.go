@@ -116,8 +116,21 @@ func TestResetCluster_SkipsResetWhenKubeadmIsAbsent(t *testing.T) {
 // it. On a host that already has a cluster the step skips, and under
 // --rollback-on-error its rollback must leave that cluster alone.
 
+// stubKubeconfigCopies reports whether the per-user kubeconfigs are missing and
+// counts the copies made from admin.conf.
+func stubKubeconfigCopies(t *testing.T, missing bool) *int {
+	t.Helper()
+	copies := new(int)
+	origMissing, origCopy := kubeconfigCopiesMissing, configureKubeconfig
+	kubeconfigCopiesMissing = func() bool { return missing }
+	configureKubeconfig = func() error { *copies++; return nil }
+	t.Cleanup(func() { kubeconfigCopiesMissing, configureKubeconfig = origMissing, origCopy })
+	return copies
+}
+
 func TestInitializeCluster_ExistingClusterIsSkippedAndNotRolledBack(t *testing.T) {
 	probed := stubAPIServer(t, nil) // the API server answers: a cluster exists
+	copies := stubKubeconfigCopies(t, false)
 	calls := stubVerifyExecutables(t, func(string) error {
 		t.Fatal("no binary may be verified or run on an existing cluster")
 		return nil
@@ -130,11 +143,62 @@ func TestInitializeCluster_ExistingClusterIsSkippedAndNotRolledBack(t *testing.T
 	require.NoError(t, report.Error)
 	assert.Equal(t, automa.StatusSkipped, report.Status)
 	assert.Equal(t, []string{"/etc/kubernetes/admin.conf"}, *probed)
+	assert.Zero(t, *copies, "kubeconfigs that are present are left as they are")
 
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
 	assert.Equal(t, automa.StatusSkipped, rollback.Status)
 	assert.Empty(t, *calls, "kubeadm reset must not run for a cluster this run did not create")
+}
+
+// Later steps read the per-user kubeconfigs, so an existing cluster missing
+// them gets fresh copies from admin.conf and still skips.
+func TestInitializeCluster_ExistingClusterRestoresMissingKubeconfigs(t *testing.T) {
+	stubAPIServer(t, nil)
+	copies := stubKubeconfigCopies(t, true)
+	stubVerifyExecutables(t, func(string) error {
+		t.Fatal("no binary may be verified or run on an existing cluster")
+		return nil
+	})
+
+	step, err := InitializeCluster().Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+	require.NoError(t, report.Error)
+	assert.Equal(t, automa.StatusSkipped, report.Status)
+	assert.Equal(t, 1, *copies)
+}
+
+// kubeadm init that fails preflight has written nothing, and whatever made it
+// fail (a non-empty /var/lib/etcd, a running kubelet) is not this run's to reset.
+func TestInitializeCluster_FailedPreflightIsNotReset(t *testing.T) {
+	stubAPIServer(t, assert.AnError)
+	noControlPlane(t)
+	stubVerifyExecutables(t, func(string) error { return nil })
+	scripts := stubKubeadm(t, nil)
+	runBashScript = func(s []string, _ string) (string, error) {
+		*scripts = append(*scripts, s...)
+		if hasScript(s, "kubeadm init phase preflight") {
+			return "", assert.AnError
+		}
+		return "", nil
+	}
+
+	step, err := InitializeCluster().Build()
+	require.NoError(t, err)
+
+	report := step.Execute(context.Background())
+	require.Error(t, report.Error)
+	assert.Equal(t, automa.StatusFailed, report.Status)
+	reason, _ := errx.ReasonOf(report.Error)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	assert.False(t, hasScript(*scripts, "kubeadm init --upload-certs"), "init must not run after a failed preflight")
+
+	rollback := step.Rollback(context.Background())
+	require.NoError(t, rollback.Error)
+	assert.Equal(t, automa.StatusSkipped, rollback.Status)
+	assert.False(t, hasScript(*scripts, "kubeadm reset"))
 }
 
 // stubKubeadm makes every kubeadm command succeed, records the scripts run,
@@ -173,7 +237,8 @@ func TestInitializeCluster_FreshInitIsRolledBackWithReset(t *testing.T) {
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error)
 	assert.Equal(t, automa.StatusSuccess, report.Status)
-	assert.True(t, hasScript(*scripts, "kubeadm init"), "init must run on a fresh host")
+	assert.True(t, hasScript(*scripts, "kubeadm init phase preflight"), "preflight must run before init")
+	assert.True(t, hasScript(*scripts, "kubeadm init --upload-certs"), "init must run on a fresh host")
 
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
@@ -207,6 +272,7 @@ func TestInitializeCluster_KubeconfigCopyFailureStillResets(t *testing.T) {
 // stays skipped.
 func TestInitializeCluster_ExistingClusterSurvivesWorkflowRollback(t *testing.T) {
 	stubAPIServer(t, nil) // existing cluster
+	stubKubeconfigCopies(t, false)
 	calls := stubVerifyExecutables(t, func(string) error {
 		t.Fatal("no binary may be verified or run on an existing cluster")
 		return nil
@@ -247,7 +313,7 @@ func TestInitializeCluster_FailedFreshInitIsReset(t *testing.T) {
 	scripts := stubKubeadm(t, nil)
 	runBashScript = func(s []string, _ string) (string, error) {
 		*scripts = append(*scripts, s...)
-		if hasScript(s, "kubeadm init") {
+		if hasScript(s, "kubeadm init --upload-certs") {
 			return "", assert.AnError
 		}
 		return "", nil
@@ -259,6 +325,8 @@ func TestInitializeCluster_FailedFreshInitIsReset(t *testing.T) {
 	report := step.Execute(context.Background())
 	require.Error(t, report.Error)
 	assert.Equal(t, automa.StatusFailed, report.Status)
+	reason, _ := errx.ReasonOf(report.Error)
+	assert.Equal(t, ReasonHostCommandFailed, reason)
 
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
