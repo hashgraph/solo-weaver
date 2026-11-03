@@ -382,20 +382,8 @@ func (ci *crioInstaller) Configure() error {
 		return err
 	}
 
-	// Put crio and crictl on PATH; pinns is internal to cri-o (pinns_path), so it is not linked.
-	for _, name := range crioPathBinaries {
-		err = ci.fileManager.CreateSymbolicLink(
-			filepath.Join(sandboxDir, binDir, name), filepath.Join(models.SystemBinDir, name), true)
-		if err != nil {
-			return errorx.IllegalState.Wrap(err, "failed to create %s symlink in %s", name, models.SystemBinDir)
-		}
-	}
-
-	// crictl reads /etc/crictl.yaml by default
-	err = ci.fileManager.CreateSymbolicLink(
-		filepath.Join(sandboxDir, etcDir, CrictlYamlFile), filepath.Join(etcDir, CrictlYamlFile), true)
-	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to create /etc/%s symlink", CrictlYamlFile)
+	if err = ci.linkCrioToHost(); err != nil {
+		return err
 	}
 
 	// Record configured state
@@ -504,6 +492,58 @@ func CrioInstalled() (bool, error) {
 	ci := installer.(*crioInstaller)
 	_, exists, err := ci.fileManager.PathExists(filepath.Join(userSystemdDir, CrioServiceFile))
 	return exists, err
+}
+
+// linkCrioToHost puts crio and crictl on PATH and links the crictl config to
+// /etc/crictl.yaml, which crictl reads by default. pinns is internal to cri-o
+// (pinns_path), so it is not linked. Safe to re-run.
+func (ci *crioInstaller) linkCrioToHost() error {
+	sandboxDir := models.Paths().SandboxDir
+	for _, name := range crioPathBinaries {
+		err := ci.fileManager.CreateSymbolicLink(
+			filepath.Join(sandboxDir, binDir, name), filepath.Join(models.SystemBinDir, name), true)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to create %s symlink in %s", name, models.SystemBinDir)
+		}
+	}
+
+	err := ci.fileManager.CreateSymbolicLink(
+		filepath.Join(sandboxDir, etcDir, CrictlYamlFile), filepath.Join(etcDir, CrictlYamlFile), true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create /etc/%s symlink", CrictlYamlFile)
+	}
+	return nil
+}
+
+// CrioHostLinksPresent reports whether the crio and crictl PATH symlinks and the
+// /etc/crictl.yaml link all exist, so the migration is idempotent. See issue #1026.
+func CrioHostLinksPresent() (bool, error) {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return false, err
+	}
+	ci := installer.(*crioInstaller)
+	paths := []string{filepath.Join(etcDir, CrictlYamlFile)}
+	for _, name := range crioPathBinaries {
+		paths = append(paths, filepath.Join(models.SystemBinDir, name))
+	}
+	for _, p := range paths {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// LinkCrioToHost adds the missing crio/crictl host links on already-provisioned
+// clusters whose IsConfigured guard would otherwise skip Configure(). See issue #1026.
+func LinkCrioToHost() error {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return err
+	}
+	return installer.(*crioInstaller).linkCrioToHost()
 }
 
 // CrioSocketBridgePresent reports whether the cAdvisor socket-bridge drop-in host
