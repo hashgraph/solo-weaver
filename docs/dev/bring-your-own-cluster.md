@@ -379,6 +379,21 @@ Every message, log line and diagnostic shows them together, for example `perfnet
 
 The alias binds to a cluster ID when the cluster is registered with `solo-provisioner kube cluster connect` (section 4.1). If the alias later points at a different cluster ID, the command stops with an error. `--rebind` overrides it explicitly. An alias alone can never create state.
 
+### 6.4 Action history
+
+The action history records what ran, who ran it and how it ended. It has two layers, joined by a run ID. The host file is reshaped by #1352 (`LastAction` is gone, #1243), and `diagnose history` and `replay` build on it (#1372).
+
+- **Host ledger.** `action_history.yaml` stays at the state root, next to `provisioner.yaml`, not under `hosts/local/`. It is binary-level like `provisioner.yaml`, not part of one host's component state. On Linux, `hosts/local/` exists on every host once the layout migration has run, but it holds that host's component files, and external runs never write it. On macOS it never exists. The ledger records every run on the machine, whichever target the run touched (this host's cluster, an external cluster, or none yet), so it lives in one place that every run can write, and readers need only one directory. It is the complete record for that machine: host-only actions (firewall, profile, system, version stamps, startup migrations), actions before a cluster exists, and the command line, which makes it the only source for replay. It is root-owned with mode 0600. Weaver never deletes it. At 1000 entries the next append seals it as a numbered, immutable segment (`action_history.0001.yaml`), with an index of segments. `kube cluster uninstall` keeps the segments and the index.
+- **Run ID.** Each CLI run gets a run ID: the UTC start time plus six random hex characters, for example `20261103T091203Z-a1b2c3`. It needs no counter or coordination between machines, sorts by time as text, and is lowercased in object names. Entries written by one run (a startup migration pass and the command itself) share it, and only the command's entry goes to the cluster log. A replayed run has its own ID and records the original in `replayOf`.
+- **Cluster field.** Every entry records the cluster it touched (cluster ID, alias and short ID) once the cluster is known. An entry written before the cluster is identified, such as a failed run that stopped early or a host-only action, has none. The ledger is one ordered record per machine, and the view of one cluster is a filter on this field. A copy for sharing is a filtered export, so a laptop that manages several clusters can hand over one cluster's history without the others. There is no ledger per cluster directory: adopt, archive and uninstall move state files, never the ledger, and the field links the two.
+- **Cluster log.** A summary of the cluster-affecting actions (cluster install, block node, consensus, teleport), shared by every operator of that cluster: who, when, action, outcome, reason code and run ID. It never holds the command line or the config, which can carry local paths and secrets.
+- **Storage.** One small immutable ConfigMap per action, named `weaver-remote-config-<runId>`, labelled `app.kubernetes.io/managed-by: weaver`, in a namespace weaver owns (name to be decided). A single ConfigMap would hit the size limit of about 1 MiB, and every append would rewrite the whole object, so two operators writing at once would hit version conflicts. Unique names avoid both.
+- **Order.** The time the action ran is stored in an annotation (for example `weaver.hashgraph.io/recorded-at`), and readers sort by it, with `creationTimestamp` and the name as tiebreaks. The order depends on the writers' clocks. Each entry carries the host name, so a skewed clock is visible.
+- **Writers.** They need only `create`. A failed write is a warning and never fails a command. Writes are made under the lease (section 5.5), and each is also recorded in the host ledger first.
+- **Growth.** Nothing is deleted automatically. A maintainer runs `solo-provisioner state archive history`, one of the planned `state` commands. It bundles the oldest entries beyond `--keep` (default 1000) into one gzipped, immutable ConfigMap, then deletes those per-entry objects, so nothing is lost and etcd shrinks. It needs `create` and `delete`, so RBAC decides who can run it. It supports `--dry-run`, needs `--yes`, and always writes the bundle to a local file too. `diagnose` reports a finding when the live log holds more than 1000 entries.
+- **Backfill.** Once the cluster exists, `kube cluster install` (or a repair command) copies this host's earlier cluster-affecting entries into the cluster log. Names come from the run ID, so repeating the copy is safe.
+- **Readers.** They take a directory, so no code hardcodes the path.
+
 ## 7. External mode: API only
 
 > In external mode weaver only talks to the Kubernetes API. It touches nothing on the host.
@@ -390,7 +405,7 @@ External mode is experimental and provisioner-test-only (see the banner at the t
 - Preflight checks API-level facts only: server version range, access via `SelfSubjectAccessReview`, and that the CNI and StorageClass exist.
 - Provisioned-only commands fail in external mode with a reason code and hint: `solo-provisioner kube cluster install`, `solo-provisioner kube cluster uninstall`, `solo-provisioner teleport node ...`, and `solo-provisioner network firewall|shape|policy ...`.
 - Uninstall and reset remove only what weaver created in that cluster. **Ownership is authoritative on the resources themselves**: every weaver-created resource carries `app.kubernetes.io/managed-by: weaver` (plus `ownerReferences` where applicable), written with the resource. Uninstall deletes only labeled resources and **never touches anything unlabeled** — which is how an existing Helm release weaver did not create (it carries Helm's own `managed-by: Helm`) or any other foreign resource is left alone.
-- A per-cluster `weaver-remote-config` ConfigMap is the **audit log** (who did what, when), not the ownership authority — a central ledger can drift (a failed write orphans a resource; an out-of-band delete leaves a phantom entry), so the labels on the resources are the source of truth and the log sits on top. Writes to it are made under the per-component lease (section 5.5).
+- A per-cluster **audit log** (who did what, when) is not the ownership authority: a central ledger can drift (a failed write orphans a resource; an out-of-band delete leaves a phantom entry), so the labels on the resources are the source of truth and the log sits on top. It is kept as one small immutable ConfigMap per action, not as one ConfigMap for the whole log (section 6.4). Writes are made under the per-component lease (section 5.5).
 - This also applies on a provisioned host: pointing it at a remote cluster with `--kubeconfig` runs external mode and skips the host steps.
 
 ### 7.1 Local development with Kind
@@ -524,19 +539,21 @@ Order:
 
 9. **External mode is experimental and provisioner-test-only.** External mode exists to test `solo-provisioner` against a throwaway cluster (such as Kind) without a KVM or privileged runner. It is not supported for running real deployments, and we do not encourage operators to use it in their own CI or clusters. It is gated with `common.GateExperimental` (feature `external-cluster`): `--kubeconfig` against a non-provisioned cluster, and `solo-provisioner kube cluster connect`, both require `--experimental` or `SOLO_PROVISIONER_ENABLE_EXTERNAL_CLUSTER`, and are refused otherwise. The provisioned single-node Linux path is unaffected and needs no flag.
 
+10. **Action history.** Two layers joined by a run ID (section 6.4): a complete host ledger at the state root that weaver never deletes, and a shared cluster log kept as one immutable ConfigMap per action, with a separate `state archive history` command to compact it. The command line never leaves the host.
+
 ## 13. Still open
 
 - What `solo-provisioner kube cluster uninstall` does with state today. This decides whether archive-at-uninstall is new behaviour or a fix.
 - Whether to offer explicit commands so operators do not edit state by hand: one for cleanup after a stale-state stop, and one to discard or adopt external state for a cluster that now passes the local proof (section 5.2), for example `solo-provisioner state adopt`.
 - Details of `solo-provisioner kube cluster info` (which component states it shows) and of `disconnect` (what it does with state files). Both belong with the diagnostics work (#1110) and the prune command.
 - Whether the writer guard in section 6.2 is enough, or the files should be split by owner, and whether that belongs in #1245's follow-ups or in this work.
-- Where the action history (`LastAction` and `action_history.yaml`, #1244) lives. It is probably per target (host or cluster), but that needs a look.
+- The namespace name for the audit log, where sealed host segments are uploaded (S3, or a cluster bundle), and the details of `solo-provisioner state archive history` (section 6.4).
 - Agreeing the `ProvisionerState` and `Version` move out of `system` with #1245.
 - The lease timings, and the name of the explicit override flag for removing a dead lease.
 - The detail of report-only mode for `doctor` and `diagnose` (epic #1110).
 - The design of in-cluster state storage, if we want it. Prior art in section 14: a labelled ConfigMap with `lastUpdatedBy` and `lastUpdatedAt` (the lease holder identity already carries user, host and command), and a validator that checks the recorded components against the live cluster.
 - Whether a grouping of clusters is ever needed (Solo's deployments span several clusters). It may matter for consensus orbits that span clusters. Out of scope here.
-- The `solo-provisioner state prune` command and its safety rules.
+- The `solo-provisioner state prune` and `state archive history` commands and their safety rules.
 
 ## 14. Prior art: hiero-ledger/solo
 
@@ -607,7 +624,7 @@ This chain gates everything cluster-aware; it cannot start until the per-compone
 |---|---|---|---|---|
 | 9 | External-mode gating + workflow skips | experimental feature flag; skip host steps for external targets. | 2, 6 | later |
 | 10 | StorageClass storage path (block node) | PVC-only, no hostPath, for external clusters. | 9 | later |
-| 11 | Resource ownership | `managed-by: weaver` labels + ownerReferences; `weaver-remote-config` audit log (lease-protected); uninstall deletes only labeled. | 6, 7 | MVP |
+| 11 | Resource ownership | `managed-by: weaver` labels + ownerReferences; audit log as one immutable ConfigMap per action (lease-protected, section 6.4); uninstall deletes only labeled. | 6, 7 | MVP |
 | 12 | Drift / reconcile (3 outcomes) | match / confirmed-drift / unobservable-error; integrate with #1193. | 6 | later |
 
 ### Milestone 5 - Rollout and CI
@@ -621,7 +638,7 @@ This chain gates everything cluster-aware; it cannot start until the per-compone
 
 - Multi-VM from macOS (`--host`, SSH delegation) - section 9.
 - In-cluster state storage - section 13.
-- `state prune`, `state adopt` / discard, stale-state cleanup commands - section 13.
+- `state prune`, `state archive history`, `state adopt` / discard, stale-state cleanup commands - section 13.
 
 ### Sequencing notes
 
