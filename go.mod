@@ -1,6 +1,6 @@
 module github.com/hashgraph/solo-weaver
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -19,7 +19,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
-	github.com/hashgraph/solo-operator v0.10.0
+	github.com/hashgraph/solo-operator v0.11.0
 	github.com/jaypipes/ghw v0.26.0
 	github.com/joomcode/errorx v1.2.0
 	github.com/lorenzosaino/go-sysctl v0.3.1
@@ -110,7 +110,7 @@ require (
 	github.com/jaypipes/pcidb v1.1.1 // indirect
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect
 	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
