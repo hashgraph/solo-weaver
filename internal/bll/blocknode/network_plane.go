@@ -24,6 +24,7 @@ import (
 //   - upgrade resolves the target from persisted state and passes
 //     allowTeardown=false: it re-asserts (create-if-missing) whatever the install
 //     decision was, but never tears anything down from a routine version bump.
+//     The exception is removeShaping, for shaping that nobody chose.
 //
 // It is a thin adapter over workflows.NetworkPlaneSteps — the single assembler
 // also used by the install path (via NetworkSetupWorkflow) — that maps the
@@ -32,9 +33,10 @@ import (
 // daemon.yaml changed). See workflows.NetworkPlaneSteps for the step semantics.
 //
 // trafficShapingEnabled is the resolved traffic-shaping target. force is the
-// operator's --force. ports are the block-node facility ports resolved by
-// resolveBlockNodePorts.
-func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown bool, ports workflows.BlockNodePorts) []automa.Builder {
+// operator's --force. removeShaping tears the shaping bundle down without
+// allowTeardown's host-firewall teardown. ports are the block-node facility
+// ports resolved by resolveBlockNodePorts.
+func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled, allowTeardown, removeShaping bool, ports workflows.BlockNodePorts) []automa.Builder {
 	return workflows.NetworkPlaneSteps(workflows.NetworkPlaneOptions{
 		Force:                 force,
 		TrafficShapingEnabled: trafficShapingEnabled,
@@ -45,6 +47,7 @@ func networkPlaneSteps(ins models.BlockNodeInputs, force, trafficShapingEnabled,
 		LinkRate:              ins.LinkRate,
 		ShapeOverrides:        toClassOverrides(ins.ShapeOverrides),
 		AllowTeardown:         allowTeardown,
+		RemoveShaping:         removeShaping,
 		WithDaemonReload:      true,
 	})
 }

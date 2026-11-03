@@ -81,6 +81,24 @@ func TestPatch_TrafficShapingDisableRecordsOff(t *testing.T) {
 	assert.False(t, st.BlockNodeState.TrafficShapingEnabled)
 }
 
+// TestPatch_ExplicitDecisionClearsCleanupMark: install and reconfigure record a
+// decision, so the upgrade-time cleanup no longer applies.
+func TestPatch_ExplicitDecisionClearsCleanupMark(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+
+	for _, enabled := range []bool{true, false} {
+		st := deployedState()
+		st.BlockNodeState.TrafficShapingCleanupPending = true
+
+		patch := patchBlockNodeStateWithTrafficShaping()
+		require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
+			Custom: models.BlockNodeInputs{TrafficShapingEnabled: enabled},
+		}))
+
+		assert.False(t, st.BlockNodeState.TrafficShapingCleanupPending, "enabled=%v", enabled)
+	}
+}
+
 // TestPatch_DisablePreservesAllowlist covers AC2: disabling the firewall flips the
 // decision but must NOT wipe the stored allowlist, so a later bare re-enable can
 // restore it.

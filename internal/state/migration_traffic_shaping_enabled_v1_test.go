@@ -49,10 +49,12 @@ func TestTrafficShapingEnabledV1Migration_Metadata(t *testing.T) {
 
 func TestMigrateToTrafficShapingEnabled(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		in          string
-		wantApplies bool
-		wantEnabled bool
+		name           string
+		in             string
+		installOptedIn bool
+		wantApplies    bool
+		wantEnabled    bool
+		wantCleanup    bool
 	}{
 		{
 			name:        "shaping record without opt-out is enabled",
@@ -80,22 +82,45 @@ state:
 			wantApplies: true,
 		},
 		{
-			name: "no record is disabled",
+			name: "no record is disabled and marked for cleanup",
 			in: `
 state:
     blockNodeState:
         name: block-node
 `,
 			wantApplies: true,
+			wantCleanup: true,
 		},
 		{
-			name: "null shaping is disabled",
+			name: "no record with an opted-in install is enabled",
+			in: `
+state:
+    blockNodeState:
+        name: block-node
+`,
+			installOptedIn: true,
+			wantApplies:    true,
+			wantEnabled:    true,
+		},
+		{
+			name: "opt-out wins over an opted-in install",
+			in: `
+state:
+    blockNodeState:
+        trafficShapingDisabled: true
+`,
+			installOptedIn: true,
+			wantApplies:    true,
+		},
+		{
+			name: "null shaping is disabled and marked for cleanup",
 			in: `
 state:
     blockNodeState:
         shaping: null
 `,
 			wantApplies: true,
+			wantCleanup: true,
 		},
 		{
 			name: "new key wins over a leftover opt-out",
@@ -132,12 +157,17 @@ state:
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.wantApplies, needsTrafficShapingEnabled([]byte(tc.in)))
 
-			out, err := migrateToTrafficShapingEnabled([]byte(tc.in))
+			out, err := migrateToTrafficShapingEnabled([]byte(tc.in), tc.installOptedIn)
 			require.NoError(t, err)
 
 			bn := rawBlockNodeState(t, out)
 			assert.Equal(t, tc.wantEnabled, bn[trafficShapingEnabledKey])
 			assert.NotContains(t, bn, trafficShapingDisabledKey)
+			if tc.wantCleanup {
+				assert.Equal(t, true, bn[trafficShapingCleanupPendingKey])
+			} else {
+				assert.NotContains(t, bn, trafficShapingCleanupPendingKey)
+			}
 			assert.False(t, needsTrafficShapingEnabled(out), "must not apply twice")
 		})
 	}
@@ -147,13 +177,13 @@ func TestMigrateToTrafficShapingEnabled_NoBlockNodeState(t *testing.T) {
 	in := []byte("state:\n    version: v2\n")
 	assert.False(t, needsTrafficShapingEnabled(in))
 
-	out, err := migrateToTrafficShapingEnabled(in)
+	out, err := migrateToTrafficShapingEnabled(in, false)
 	require.NoError(t, err)
 	assert.NotContains(t, string(out), trafficShapingEnabledKey)
 }
 
 func TestMigrateToTrafficShapingEnabled_KeepsOtherFields(t *testing.T) {
-	out, err := migrateToTrafficShapingEnabled([]byte(shapingOnLegacyYAML))
+	out, err := migrateToTrafficShapingEnabled([]byte(shapingOnLegacyYAML), false)
 	require.NoError(t, err)
 
 	var doc struct {
@@ -177,6 +207,7 @@ func TestMigrateToTrafficShapingDisabled(t *testing.T) {
 	}{
 		{name: "enabled drops both keys", in: "state:\n    blockNodeState:\n        trafficShapingEnabled: true\n"},
 		{name: "disabled writes the opt-out", in: "state:\n    blockNodeState:\n        trafficShapingEnabled: false\n", wantDisabled: true},
+		{name: "drops the cleanup mark", in: "state:\n    blockNodeState:\n        trafficShapingEnabled: false\n        trafficShapingCleanupPending: true\n", wantDisabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := migrateToTrafficShapingDisabled([]byte(tc.in))
@@ -184,6 +215,7 @@ func TestMigrateToTrafficShapingDisabled(t *testing.T) {
 
 			bn := rawBlockNodeState(t, out)
 			assert.NotContains(t, bn, trafficShapingEnabledKey)
+			assert.NotContains(t, bn, trafficShapingCleanupPendingKey)
 			if tc.wantDisabled {
 				assert.Equal(t, true, bn[trafficShapingDisabledKey])
 			} else {
@@ -226,6 +258,50 @@ func TestTrafficShapingEnabledV1_ExecuteThenRollback(t *testing.T) {
 	applies, err = m.Applies(nil)
 	require.NoError(t, err)
 	assert.True(t, applies, "must apply again after Rollback")
+}
+
+func TestLastBlockNodeInstallOptedIn(t *testing.T) {
+	install := func(enabled string) string {
+		return "---\nintent:\n    action: install\n    target: blocknode\ninputs:\n    custom:\n        trafficshapingenabled: " + enabled + "\n"
+	}
+	upgrade := "---\nintent:\n    action: upgrade\n    target: blocknode\ninputs:\n    custom:\n        trafficshapingenabled: true\n"
+	reconfigure := "---\nintent:\n    action: reconfigure\n    target: blocknode\ninputs:\n    custom:\n        trafficshapingenabled: true\n"
+	truncated := "---\nintent:\n    action: [install\n"
+
+	for _, tc := range []struct {
+		name    string
+		history string
+		want    bool
+	}{
+		{name: "no history"},
+		{name: "install without the field", history: "---\nintent:\n    action: install\n    target: blocknode\n"},
+		{name: "opted-in install", history: install("true"), want: true},
+		{name: "later install opted out", history: install("true") + "\n" + install("false")},
+		{name: "later install opted in", history: install("false") + "\n" + install("true"), want: true},
+		{name: "upgrade and reconfigure are ignored", history: install("false") + "\n" + upgrade + "\n" + reconfigure},
+		{name: "truncated entry is skipped", history: install("true") + "\n" + truncated, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, lastBlockNodeInstallOptedIn([]byte(tc.history)))
+		})
+	}
+}
+
+func TestTrafficShapingEnabledV1_Execute_ReadsInstallHistory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("state:\n    blockNodeState:\n        name: block-node\n"), 0o600))
+	history := "---\nintent:\n    action: install\n    target: blocknode\ninputs:\n    custom:\n        trafficshapingenabled: true\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, actionHistoryFileName), []byte(history), 0o600))
+
+	m := &TrafficShapingEnabledV1Migration{stateFileOverride: path}
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	bn := rawBlockNodeState(t, b)
+	assert.Equal(t, true, bn[trafficShapingEnabledKey])
+	assert.NotContains(t, bn, trafficShapingCleanupPendingKey)
 }
 
 // TestBlockNodeState_WritesTrafficShapingEnabledWhenFalse pins the missing

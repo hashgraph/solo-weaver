@@ -405,6 +405,10 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 > `--traffic-shaping-enabled` and never prompts for them. A version bump is routine, so it
 > reads the install decision and re-asserts the matching network state create-if-missing.
 > To change what is enabled, use `reconfigure`.
+>
+> One exception: on a node installed before solo-provisioner v0.25.0 that never chose traffic
+> shaping, upgrade removes any traffic shaping an earlier upgrade turned on, and logs a warning.
+> To keep it, run `reconfigure --traffic-shaping-enabled` afterwards.
 
 ---
 

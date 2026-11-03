@@ -210,6 +210,10 @@ type BlockNodeState struct {
 	// always written, which is what stops migration_traffic_shaping_enabled_v1
 	// from re-applying to a state file this CLI wrote.
 	TrafficShapingEnabled bool `yaml:"trafficShapingEnabled" json:"trafficShapingEnabled"`
+	// TrafficShapingCleanupPending marks a node where an older upgrade may have
+	// turned shaping on with no recorded decision. The next upgrade removes any
+	// such shaping; install and reconfigure clear the mark.
+	TrafficShapingCleanupPending bool `yaml:"trafficShapingCleanupPending,omitempty" json:"trafficShapingCleanupPending,omitempty"`
 	// Shaping records the last-resolved traffic-shaping content (egress NIC, link
 	// rate, per-class overrides) that cannot be recovered from the Helm release or
 	// the live cluster. It is written on install/reconfigure when traffic shaping is
