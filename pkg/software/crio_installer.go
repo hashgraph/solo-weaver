@@ -121,6 +121,9 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 	return ci, nil
 }
 
+// crioPathBinaries are the cri-o binaries symlinked into models.SystemBinDir.
+var crioPathBinaries = []string{"crio", "crictl"}
+
 // crioInstalledBinaryPaths maps each cri-o binary basename to its install path
 // under destDir: runtime helpers under libexec/crio, crio/pinns/crictl under the
 // bin dir. Shared by Install and VerifyExecutables so their layouts never drift.
@@ -377,6 +380,22 @@ func (ci *crioInstaller) Configure() error {
 	err = ci.configureCrioSocketDropIn()
 	if err != nil {
 		return err
+	}
+
+	// Put crio and crictl on PATH; pinns is internal to cri-o (pinns_path), so it is not linked.
+	for _, name := range crioPathBinaries {
+		err = ci.fileManager.CreateSymbolicLink(
+			filepath.Join(sandboxDir, binDir, name), filepath.Join(models.SystemBinDir, name), true)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to create %s symlink in %s", name, models.SystemBinDir)
+		}
+	}
+
+	// crictl reads /etc/crictl.yaml by default
+	err = ci.fileManager.CreateSymbolicLink(
+		filepath.Join(sandboxDir, etcDir, CrictlYamlFile), filepath.Join(etcDir, CrictlYamlFile), true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create /etc/%s symlink", CrictlYamlFile)
 	}
 
 	// Record configured state
@@ -729,6 +748,15 @@ func (ci *crioInstaller) Uninstall() error {
 // RemoveConfiguration removes symlinks and restores the configuration files
 // This reverses the operations performed by Configure()
 func (ci *crioInstaller) RemoveConfiguration() error {
+	for _, name := range crioPathBinaries {
+		if err := ci.fileManager.RemoveAll(filepath.Join(models.SystemBinDir, name)); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to remove %s symlink", name)
+		}
+	}
+	if err := ci.fileManager.RemoveAll(filepath.Join(etcDir, CrictlYamlFile)); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove /etc/%s symlink", CrictlYamlFile)
+	}
+
 	// Remove CRI-O service symlink
 	systemdServicePath := filepath.Join(userSystemdDir, "crio.service")
 	err := ci.fileManager.RemoveAll(systemdServicePath)
