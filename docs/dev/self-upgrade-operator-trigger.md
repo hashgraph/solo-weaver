@@ -516,6 +516,34 @@ into flags on `consensus node upgrade`: the BLL and the #720 recovery-plan schem
 unchanged, only the command spelling moves. The standalone verbs are dropped (optionally
 kept as hidden aliases for one release).
 
+## Prior-art alignment and adopted refinements
+
+The shape here matches established CLIs. gcloud's component manager — a versioned snapshot of
+components + hashes, pinnable with `--version` / `component_manager/fixed_sdk_version` — maps to
+our embedded catalog + remote manifest; kubectl/kubeadm's version-skew policy (one minor at a
+time, latest three supported) is our one-hop ladder (#1252) plus "drop the catalog entry = out of
+the support range." Verification by hash over HTTPS, with signatures as provenance, is the norm —
+which is what the corrected trust model does.
+
+Three refinements adopted from that prior art:
+
+- **Refuse on a package-managed install** (#1374 / #523). Like gcloud refusing `components`
+  changes on a distro-packaged SDK, self-upgrade should detect an apt/rpm/brew-managed install and
+  refuse, pointing the operator at their package manager rather than fighting the OS package
+  database.
+- **Avoid the GitHub API rate limit** (#1375). Unauthenticated `api.github.com` is heavily
+  throttled; prefer the redirect-based `releases/latest/download/…` asset path (not the API) for
+  both the manifest fetch and the "newer version?" check, and fall back to `$GH_TOKEN` /
+  `$GITHUB_TOKEN` when present.
+- **Nag to stderr, keep stdout clean** (#1375), alongside the existing non-interactive / JSON
+  skip, so `cmd > out` stays uncontaminated. (We already record `lastCheckedAt`
+  before/independent of the network call, per the same lesson.)
+
+One deliberate divergence: gcloud and kubectl mostly **warn**; our **mandatory** gate *blocks*.
+That is justified — a root-level infra tool can break a live node — but it is stricter than the
+norm, so keep the mandatory set **narrow**, keep the `--compat-manifest` / air-gapped escape hatch
+solid, and prefer advisory for anything not genuinely unsafe.
+
 ## How this relates to the state-split and cluster-upgrade epics
 
 All three stand on one shared foundation that must be singular and land once:
