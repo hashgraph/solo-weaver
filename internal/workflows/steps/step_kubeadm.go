@@ -257,8 +257,8 @@ func InitializeCluster() *automa.StepBuilder {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to pull kubeadm images"),
 					ReasonHostCommandFailed,
-					"Check the kubeadm output in the log for the image that failed and whether the host can reach its registry",
-					fmt.Sprintf("Retry the pull by hand: '%s'", pullImageCmd[0]))))
+					fmt.Sprintf("Re-run '%s' by hand to see which image failed", pullImageCmd[0]),
+					"Check that the host can reach the image registry")))
 			}
 			logx.As().Info().Msg("Kubeadm images pulled successfully.")
 
@@ -275,9 +275,8 @@ func InitializeCluster() *automa.StepBuilder {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "kubeadm preflight checks failed, so the cluster was not initialized"),
 					reasons.PreconditionNotMet,
-					"Read the [ERROR ...] lines from kubeadm in the log: they name the port, directory or service in the way",
-					"If they are leftovers of an earlier cluster, run 'solo-provisioner kube cluster uninstall' before installing",
-					fmt.Sprintf("Re-run the check by hand: '%s'", preflightCmd))))
+					fmt.Sprintf("Re-run '%s' by hand: its [ERROR ...] lines name the port, directory or service in the way", preflightCmd),
+					"If they are leftovers of an earlier cluster, run 'solo-provisioner kube cluster uninstall' before installing")))
 			}
 
 			// Whatever kubeadm init writes from here is this run's to undo, since an
@@ -288,7 +287,7 @@ func InitializeCluster() *automa.StepBuilder {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 					errorx.ExternalError.Wrap(err, "failed to initialize cluster with kubeadm"),
 					ReasonHostCommandFailed,
-					"Check the kubeadm output in the log, and 'sudo journalctl -u kubelet' for why the control plane did not start")))
+					"Check 'sudo journalctl -u kubelet' and 'sudo crictl ps -a' for why the control plane did not start")))
 			}
 
 			// Step 3: Configure kubeconfig
