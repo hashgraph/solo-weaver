@@ -4,6 +4,8 @@ package steps
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -11,13 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubSysctlFiles makes /etc/sysctl.d hold existing before the copy, makes the
+// stubSysctlFiles makes existing present before the copy, makes the
 // copy write targets, and records what rollback asked to delete.
 func stubSysctlFiles(t *testing.T, existing, targets []string) *[][]string {
 	t.Helper()
 	deleted := &[][]string{}
-	origFind, origTargets, origCopy, origDelete := findSysctlConfigFiles, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles
-	findSysctlConfigFiles = func() ([]string, error) { return existing, nil }
+	origLstat, origTargets, origCopy, origDelete := lstatPath, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles
+	present := make(map[string]bool, len(existing))
+	for _, p := range existing {
+		present[p] = true
+	}
+	lstatPath = func(p string) (os.FileInfo, error) {
+		if present[p] {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
 	sysctlConfigTargets = func() ([]string, error) { return targets, nil }
 	copySysctlConfiguration = func() ([]string, error) { return targets, nil }
 	deleteSysctlFiles = func(paths []string) ([]string, error) {
@@ -25,7 +36,7 @@ func stubSysctlFiles(t *testing.T, existing, targets []string) *[][]string {
 		return paths, nil
 	}
 	t.Cleanup(func() {
-		findSysctlConfigFiles, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles = origFind, origTargets, origCopy, origDelete
+		lstatPath, sysctlConfigTargets, copySysctlConfiguration, deleteSysctlFiles = origLstat, origTargets, origCopy, origDelete
 	})
 	return deleted
 }
@@ -87,4 +98,17 @@ func TestCopySysctlFiles_PartialCopyFailureIsRolledBack(t *testing.T) {
 	require.NoError(t, rollback.Error)
 	assert.Equal(t, automa.StatusSuccess, rollback.Status)
 	assert.Equal(t, [][]string{targets}, *deleted)
+}
+
+// Any entry already at a target path is not this run's, even one that is not a
+// regular file: rollback must not remove a directory that was there before.
+func TestAbsentPaths_KeepsExistingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	existingDir := filepath.Join(dir, "75-inotify.conf")
+	require.NoError(t, os.Mkdir(existingDir, 0o755))
+	missing := filepath.Join(dir, "99-kubernetes-cri.conf")
+
+	absent, err := absentPaths([]string{existingDir, missing})
+	require.NoError(t, err)
+	assert.Equal(t, []string{missing}, absent)
 }

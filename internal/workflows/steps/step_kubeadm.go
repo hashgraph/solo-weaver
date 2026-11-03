@@ -5,7 +5,6 @@ package steps
 import (
 	"context"
 	"fmt"
-	"os"
 	"path"
 	"strings"
 
@@ -17,13 +16,12 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
-	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// runBashScript, configureKubeconfig and kubeconfigCopiesMissing are package
+// runBashScript, configureKubeconfig and restoreMissingKubeconfigs are package
 // vars so tests can stub kubeadm and the admin kubeconfig copies.
 var (
 	runBashScript       = automa_steps.RunBashScript
@@ -34,13 +32,12 @@ var (
 		}
 		return kubeConfigManager.Configure()
 	}
-	kubeconfigCopiesMissing = func() bool {
-		for _, p := range []string{"/root/.kube/config", path.Join(config.WeaverHomeDir(), ".kube", "config")} {
-			if _, err := os.Stat(p); err != nil {
-				return true
-			}
+	restoreMissingKubeconfigs = func() error {
+		kubeConfigManager, err := kube.NewKubeConfigManager()
+		if err != nil {
+			return errorx.InternalError.Wrap(err, "failed to create kubeconfig manager")
 		}
-		return false
+		return kubeConfigManager.ConfigureMissing()
 	}
 )
 
@@ -216,10 +213,8 @@ func InitializeCluster() *automa.StepBuilder {
 			if err := probeAPIServer(adminKubeconfigPath); err == nil {
 				// Later steps read the per-user copies of admin.conf. Only missing ones are
 				// restored, so an operator's edited copy is not overwritten on every run.
-				if kubeconfigCopiesMissing() {
-					if err := configureKubeconfig(); err != nil {
-						return automa.FailureReport(stp, automa.WithError(kubeconfigCopyError(err)))
-					}
+				if err := restoreMissingKubeconfigs(); err != nil {
+					return automa.FailureReport(stp, automa.WithError(kubeconfigCopyError(err)))
 				}
 				return automa.SkippedReport(stp,
 					automa.WithDetail("Kubernetes cluster is already initialized"))

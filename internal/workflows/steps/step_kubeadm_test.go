@@ -116,21 +116,20 @@ func TestResetCluster_SkipsResetWhenKubeadmIsAbsent(t *testing.T) {
 // it. On a host that already has a cluster the step skips, and under
 // --rollback-on-error its rollback must leave that cluster alone.
 
-// stubKubeconfigCopies reports whether the per-user kubeconfigs are missing and
-// counts the copies made from admin.conf.
-func stubKubeconfigCopies(t *testing.T, missing bool) *int {
+// stubKubeconfigCopies counts the full and missing-only kubeconfig copies.
+func stubKubeconfigCopies(t *testing.T) (full, missingOnly *int) {
 	t.Helper()
-	copies := new(int)
-	origMissing, origCopy := kubeconfigCopiesMissing, configureKubeconfig
-	kubeconfigCopiesMissing = func() bool { return missing }
-	configureKubeconfig = func() error { *copies++; return nil }
-	t.Cleanup(func() { kubeconfigCopiesMissing, configureKubeconfig = origMissing, origCopy })
-	return copies
+	full, missingOnly = new(int), new(int)
+	origCopy, origRestore := configureKubeconfig, restoreMissingKubeconfigs
+	configureKubeconfig = func() error { *full++; return nil }
+	restoreMissingKubeconfigs = func() error { *missingOnly++; return nil }
+	t.Cleanup(func() { configureKubeconfig, restoreMissingKubeconfigs = origCopy, origRestore })
+	return full, missingOnly
 }
 
 func TestInitializeCluster_ExistingClusterIsSkippedAndNotRolledBack(t *testing.T) {
 	probed := stubAPIServer(t, nil) // the API server answers: a cluster exists
-	copies := stubKubeconfigCopies(t, false)
+	full, missingOnly := stubKubeconfigCopies(t)
 	calls := stubVerifyExecutables(t, func(string) error {
 		t.Fatal("no binary may be verified or run on an existing cluster")
 		return nil
@@ -143,7 +142,8 @@ func TestInitializeCluster_ExistingClusterIsSkippedAndNotRolledBack(t *testing.T
 	require.NoError(t, report.Error)
 	assert.Equal(t, automa.StatusSkipped, report.Status)
 	assert.Equal(t, []string{"/etc/kubernetes/admin.conf"}, *probed)
-	assert.Zero(t, *copies, "kubeconfigs that are present are left as they are")
+	assert.Zero(t, *full, "an existing cluster's kubeconfigs are never overwritten")
+	assert.Equal(t, 1, *missingOnly, "missing kubeconfigs are restored")
 
 	rollback := step.Rollback(context.Background())
 	require.NoError(t, rollback.Error)
@@ -151,23 +151,20 @@ func TestInitializeCluster_ExistingClusterIsSkippedAndNotRolledBack(t *testing.T
 	assert.Empty(t, *calls, "kubeadm reset must not run for a cluster this run did not create")
 }
 
-// Later steps read the per-user kubeconfigs, so an existing cluster missing
-// them gets fresh copies from admin.conf and still skips.
-func TestInitializeCluster_ExistingClusterRestoresMissingKubeconfigs(t *testing.T) {
+// A failed restore of a missing kubeconfig fails the step: later steps need it.
+func TestInitializeCluster_ExistingClusterKubeconfigRestoreFailureFails(t *testing.T) {
 	stubAPIServer(t, nil)
-	copies := stubKubeconfigCopies(t, true)
-	stubVerifyExecutables(t, func(string) error {
-		t.Fatal("no binary may be verified or run on an existing cluster")
-		return nil
-	})
+	stubKubeconfigCopies(t)
+	restoreMissingKubeconfigs = func() error { return assert.AnError }
 
 	step, err := InitializeCluster().Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
-	require.NoError(t, report.Error)
-	assert.Equal(t, automa.StatusSkipped, report.Status)
-	assert.Equal(t, 1, *copies)
+	require.Error(t, report.Error)
+	assert.Equal(t, automa.StatusFailed, report.Status)
+	reason, _ := errx.ReasonOf(report.Error)
+	assert.Equal(t, reasons.PermissionDenied, reason)
 }
 
 // kubeadm init that fails preflight has written nothing, and whatever made it
@@ -272,7 +269,7 @@ func TestInitializeCluster_KubeconfigCopyFailureStillResets(t *testing.T) {
 // stays skipped.
 func TestInitializeCluster_ExistingClusterSurvivesWorkflowRollback(t *testing.T) {
 	stubAPIServer(t, nil) // existing cluster
-	stubKubeconfigCopies(t, false)
+	stubKubeconfigCopies(t)
 	calls := stubVerifyExecutables(t, func(string) error {
 		t.Fatal("no binary may be verified or run on an existing cluster")
 		return nil

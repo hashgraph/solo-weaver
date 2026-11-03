@@ -31,28 +31,30 @@ const (
 	KeyWarnings                        = "warnings"
 )
 
-// findSysctlConfigFiles, copySysctlConfiguration and deleteSysctlFiles are
-// package vars so tests can stub /etc/sysctl.d.
+// lstatPath, sysctlConfigTargets, copySysctlConfiguration and deleteSysctlFiles
+// are package vars so tests can stub /etc/sysctl.d.
 var (
-	findSysctlConfigFiles   = sysctl.FindSysctlConfigFiles
+	lstatPath               = os.Lstat
 	sysctlConfigTargets     = sysctl.ConfigurationTargets
 	copySysctlConfiguration = sysctl.CopyConfiguration
 	deleteSysctlFiles       = sysctl.DeleteFiles
 )
 
-// filesNotIn returns the entries of files that are absent from existing.
-func filesNotIn(files, existing []string) []string {
-	seen := make(map[string]struct{}, len(existing))
-	for _, f := range existing {
-		seen[f] = struct{}{}
-	}
-	var missing []string
-	for _, f := range files {
-		if _, ok := seen[f]; !ok {
-			missing = append(missing, f)
+// absentPaths returns the paths with nothing at them, not even a directory or a
+// dangling symlink, so rollback never removes an entry that was already there.
+func absentPaths(paths []string) ([]string, error) {
+	var absent []string
+	for _, p := range paths {
+		_, err := lstatPath(p)
+		if os.IsNotExist(err) {
+			absent = append(absent, p)
+			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	return missing
+	return absent, nil
 }
 
 func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
@@ -98,18 +100,6 @@ func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 func copySysctlConfigurationFiles() automa.Builder {
 	return automa.NewStepBuilder().WithId("copy-sysctl-files").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			existing, err := findSysctlConfigFiles()
-			if err != nil {
-				reason := reasons.PermissionDenied
-				if os.IsNotExist(err) {
-					reason = reasons.FileMissing
-				}
-				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
-					errorx.ExternalError.Wrap(err, "failed to list sysctl configuration files"),
-					reason,
-					"Check that /etc/sysctl.d exists and is readable: 'ls -l /etc/sysctl.d'")))
-			}
-
 			targets, err := sysctlConfigTargets()
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
@@ -119,7 +109,13 @@ func copySysctlConfigurationFiles() automa.Builder {
 
 			// Recorded from the targets, not from what the copy reports: a file that
 			// fails midway through its write is not reported but is still on disk.
-			created := filesNotIn(targets, existing)
+			created, err := absentPaths(targets)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to check the sysctl configuration files"),
+					reasons.PermissionDenied,
+					"Check that /etc/sysctl.d is readable: 'ls -l /etc/sysctl.d'")))
+			}
 			stp.State().Local().Set(SysctlFilesCreatedByThisStep, created)
 			copied, err := copySysctlConfiguration()
 			if err != nil {
