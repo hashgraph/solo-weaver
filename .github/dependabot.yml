@@ -19,6 +19,11 @@ updates:
       prefix-development: "build"
       include: "scope"
     open-pull-requests-limit: 5
+    ignore:
+      # solo-operator is still in development and any bump can break us.
+      # Bump it manually with `task bump:solo-operator VERSION=X.Y.Z`.
+      # The match is on the module path: update it if the repo moves to hiero.
+      - dependency-name: "github.com/hashgraph/solo-operator"
     groups:
       kubernetes:
         patterns:
