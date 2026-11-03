@@ -10,7 +10,11 @@ import (
 	"strings"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
+	"github.com/joomcode/errorx"
+
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 
 	"github.com/hashgraph/solo-weaver/internal/sysctl"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -22,9 +26,36 @@ const (
 	KeyBackupFile                      = "backup_file"
 	KeyReloadedFiles                   = "reloaded_files"
 	KeyCopiedFiles                     = "copied_files"
+	KeyCreatedFiles                    = "created_files"
 	KeyRemovedFiles                    = "removed_files"
 	KeyWarnings                        = "warnings"
 )
+
+// lstatPath, sysctlConfigTargets, copySysctlConfiguration and deleteSysctlFiles
+// are package vars so tests can stub /etc/sysctl.d.
+var (
+	lstatPath               = os.Lstat
+	sysctlConfigTargets     = sysctl.ConfigurationTargets
+	copySysctlConfiguration = sysctl.CopyConfiguration
+	deleteSysctlFiles       = sysctl.DeleteFiles
+)
+
+// absentPaths returns the paths with nothing at them, not even a directory or a
+// dangling symlink, so rollback never removes an entry that was already there.
+func absentPaths(paths []string) ([]string, error) {
+	var absent []string
+	for _, p := range paths {
+		_, err := lstatPath(p)
+		if os.IsNotExist(err) {
+			absent = append(absent, p)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return absent, nil
+}
 
 func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId(ConfigureSysctlForKubernetesStepId).
@@ -69,25 +100,55 @@ func ConfigureSysctlForKubernetes() *automa.WorkflowBuilder {
 func copySysctlConfigurationFiles() automa.Builder {
 	return automa.NewStepBuilder().WithId("copy-sysctl-files").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			copied, err := sysctl.CopyConfiguration()
+			targets, err := sysctlConfigTargets()
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to copy sysctl configuration files")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.InternalError.Wrap(err, "failed to list the embedded sysctl templates"),
+					reasons.Internal)))
+			}
+
+			// Recorded from the targets, not from what the copy reports: a file that
+			// fails midway through its write is not reported but is still on disk.
+			created, err := absentPaths(targets)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to check the sysctl configuration files"),
+					reasons.PermissionDenied,
+					"Check that /etc/sysctl.d is readable: 'ls -l /etc/sysctl.d'")))
+			}
+			stp.State().Local().Set(SysctlFilesCreatedByThisStep, created)
+			copied, err := copySysctlConfiguration()
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					automa.StepExecutionError.Wrap(err, "failed to copy sysctl configuration files"),
+					reasons.PermissionDenied,
+					"Check that /etc/sysctl.d is writable and the disk is not full: 'ls -ld /etc/sysctl.d' and 'df -h /etc'")))
 			}
 
 			meta := map[string]string{
-				KeyCopiedFiles: strings.Join(copied, ", "),
+				KeyCopiedFiles:  strings.Join(copied, ", "),
+				KeyCreatedFiles: strings.Join(created, ", "),
 			}
 
+			if len(created) == 0 {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("Sysctl configuration files are already present"), automa.WithMetadata(meta))
+			}
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
-			removed, err := sysctl.DeleteConfiguration()
+			created := automa.StringSliceFromState(stp.State().Local(), SysctlFilesCreatedByThisStep)
+			if len(created) == 0 {
+				return automa.SkippedReport(stp,
+					automa.WithDetail("No sysctl configuration files were created by this step, skipping rollback"))
+			}
+
+			removed, err := deleteSysctlFiles(created)
 			if err != nil {
-				return automa.FailureReport(stp,
-					automa.WithError(
-						automa.StepExecutionError.Wrap(err, "failed to remove sysctl configuration files")))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					automa.StepExecutionError.Wrap(err, "failed to remove sysctl configuration files"),
+					reasons.PermissionDenied,
+					fmt.Sprintf("Remove what is left of these files by hand: %s", strings.Join(created, ", ")))))
 			}
 
 			meta := map[string]string{

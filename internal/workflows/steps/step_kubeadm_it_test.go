@@ -552,7 +552,8 @@ func Test_StepKubeadm_ServiceConfiguration_RestoreConfiguration_Integration(t *t
 	require.Error(t, err, "kubeadm temp directory should be removed after rollback")
 }
 
-// It combines multiple integration tests: fresh install, attempt to reinitialize and then rollback.
+// Rollback scope, end to end: a fresh init is reset by its own rollback, and a
+// second run on the now-existing cluster skips and leaves it alone on rollback.
 // Execution time: 4 - 14 minutes
 func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	if testing.Short() {
@@ -569,18 +570,18 @@ func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	testutil.Reset(t)
 	SetupPrerequisitesToLevel(t, SetupCrioLevel)
 
-	step, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
+	setup, err := SetupKubeadm(nil).WithExecutionMode(automa.RollbackOnError).Build()
 	require.NoError(t, err)
-	report := step.Execute(context.Background())
+	report := setup.Execute(context.Background())
 	require.NoError(t, report.Error)
 
 	//
-	// When
+	// When - fresh init
 	//
-	step, err = InitializeCluster().Build()
+	initStep, err := InitializeCluster().Build()
 	require.NoError(t, err)
 
-	report = step.Execute(context.Background())
+	report = initStep.Execute(context.Background())
 	require.NoError(t, report.Error)
 	require.Equal(t, automa.StatusSuccess, report.Status)
 
@@ -601,30 +602,38 @@ func Test_InitializeCluster_Rollback_Integration(t *testing.T) {
 	require.Contains(t, string(output), "Ready", "node should be in Ready state")
 
 	//
-	// When - Try to initialize again
+	// When - a second run finds the cluster and rolls back
 	//
-	step, err = InitializeCluster().Build()
+	rerunStep, err := InitializeCluster().Build()
 	require.NoError(t, err)
-	report = step.Execute(context.Background())
+	report = rerunStep.Execute(context.Background())
+	require.NoError(t, report.Error)
+	require.Equal(t, automa.StatusSkipped, report.Status)
+
+	rollbackReport := rerunStep.Rollback(context.Background())
 
 	//
-	// Then
+	// Then - the cluster it did not create survives
 	//
-	require.NotNil(t, report)
-	// This may succeed or fail depending on implementation - kubeadm init typically fails if already initialized
-	// The important thing is that it handles the case gracefully
-	if report.Error != nil {
-		// If it fails, it should be a known error about cluster already being initialized
-		require.Contains(t, report.Error.Error(), "already exists")
-	}
+	require.NoError(t, rollbackReport.Error)
+	require.Equal(t, automa.StatusSkipped, rollbackReport.Status)
+
+	_, err = os.Stat("/etc/kubernetes/admin.conf")
+	require.NoError(t, err, "admin.conf must survive the rollback of a run that did not initialize the cluster")
+
+	cmd = exec.Command("sh", "-c",
+		"KUBECONFIG=/etc/kubernetes/admin.conf kubectl version --request-timeout=5s >/dev/null",
+	)
+	_, err = cmd.Output()
+	require.NoError(t, err, "kubectl should still be able to connect after the skipped rollback")
 
 	//
-	// When - Rollback
+	// When - the run that initialized the cluster rolls back
 	//
-	rollbackReport := step.Rollback(context.Background())
+	rollbackReport = initStep.Rollback(context.Background())
 
 	//
-	// Then
+	// Then - the cluster is reset
 	//
 	require.NoError(t, rollbackReport.Error)
 	require.Equal(t, automa.StatusSuccess, rollbackReport.Status)

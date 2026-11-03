@@ -80,6 +80,19 @@ func CopyConfiguration() ([]string, error) {
 	return templates.CopyTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
 }
 
+// ConfigurationTargets returns the paths CopyConfiguration writes in /etc/sysctl.d.
+func ConfigurationTargets() ([]string, error) {
+	files, err := templates.ReadDir(sysctlConfigSourceDir)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]string, 0, len(files))
+	for _, src := range files {
+		targets = append(targets, path.Join(sysctlConfigDestinationDir, path.Base(src)))
+	}
+	return targets, nil
+}
+
 // CopyConfigurationFile copies a single named sysctl configuration file from the
 // embedded templates to the /etc/sysctl.d directory, leaving every other file in
 // the directory untouched. It returns the destination path.
@@ -175,6 +188,22 @@ func RestoreSettings(backupFile string) error {
 // It returns a list of removed files.
 func DeleteConfiguration() ([]string, error) {
 	return templates.RemoveTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
+}
+
+// DeleteFiles removes the given sysctl configuration files, as returned by
+// CopyConfiguration, and returns those it removed; a file already gone is not an error.
+func DeleteFiles(paths []string) ([]string, error) {
+	var removed []string
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, errorx.ExternalError.Wrap(err, "failed to remove sysctl config file %s", p)
+		}
+		removed = append(removed, p)
+	}
+	return removed, nil
 }
 
 // FindSysctlConfigFiles returns a sorted list of sysctl configuration files in /etc/sysctl.d

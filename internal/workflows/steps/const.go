@@ -22,6 +22,10 @@ const (
 	CleanedUpByThisStep  = "cleanedUp"
 	ConfiguredByThisStep = "configured"
 
+	InitializedByThisStep        = "initialized"
+	SwapDisabledByThisStep       = "swapDisabled"
+	SysctlFilesCreatedByThisStep = "sysctlFilesCreated"
+
 	// FirewallCreatedByThisStep records whether NetworkFirewallCreate actually
 	// created the inet weaver-host-firewall table (true) or found it already present (false), so
 	// rollback only deletes a table this step introduced.
