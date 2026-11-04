@@ -549,8 +549,12 @@ tasks:
         echo '✅ Alloy Lifecycle: PASSED'
 
   uat:compat:
-    desc: "Run backward compatibility test (inside VM: install old CLI → upgrade → verify migrations)"
+    desc: "Run backward compatibility test (inside VM: install old CLI → upgrade → verify migrations). Pick the starting release with FROM_VERSION=vX.Y.Z (default v0.35.0)."
     interactive: true
+    vars:
+      # v0.35.0 predates both the trafficShapingEnabled migration and the per-component split,
+      # so the upgrade runs them in one startup pass.
+      FROM_VERSION: '{{.FROM_VERSION | default "v0.35.0"}}'
     cmds:
       - |
         set -e
@@ -561,7 +565,7 @@ tasks:
 
         echo -e '\n▶ Step 1: Install released version of solo-provisioner'
         cd /tmp
-        curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash
+        curl -sSL https://raw.githubusercontent.com/hashgraph/solo-weaver/main/install.sh | bash -s -- {{.FROM_VERSION}}
 
 
         echo -e '\n▶ Step 2: Record released version'
@@ -576,7 +580,7 @@ tasks:
 
 
         echo -e '\n▶ Step 4: Deploy block node with released version'
-        sudo solo-provisioner --skip-hardware-checks block node install -p local \
+        sudo solo-provisioner --skip-hardware-checks block node install -p local --non-interactive \
           -c /mnt/solo-weaver/test/config/config.yaml
 
 
@@ -586,10 +590,15 @@ tasks:
 
         echo -e '\n▶ Step 6: Record state file before upgrade'
         # The released CLI may predate the per-component split (state.yaml) or already use it (provisioner.yaml).
-        if [ -f /opt/solo/weaver/state/provisioner.yaml ]; then
-          STATE_VER_BEFORE=$(sudo grep 'stateVersion:' /opt/solo/weaver/state/provisioner.yaml || echo "none")
+        S=/opt/solo/weaver/state
+        LEGACY=false
+        OPT_OUT=false
+        if sudo test -f $S/provisioner.yaml; then
+          STATE_VER_BEFORE=$(sudo grep 'stateVersion:' $S/provisioner.yaml || echo "none")
         else
-          STATE_VER_BEFORE=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
+          LEGACY=true
+          STATE_VER_BEFORE=$(sudo grep 'version:' $S/state.yaml | head -1 || echo "none")
+          sudo grep -qE '^\s+trafficShapingDisabled: true' $S/state.yaml && OPT_OUT=true
         fi
         echo "   State version before: $STATE_VER_BEFORE"
 
@@ -619,6 +628,24 @@ tasks:
         STATE_VER_AFTER=$(sudo grep 'stateVersion:' /opt/solo/weaver/state/provisioner.yaml || echo "none")
         echo "   State version after: $STATE_VER_AFTER"
         echo "   Recorded CLI version: $(sudo sed -n 's/^ *version: *//p' /opt/solo/weaver/state/provisioner.yaml | head -1) (running: $NEW_VER)"
+
+        # The block node was installed with shaping off, so the decision must survive as an explicit false.
+        sudo grep -qE '^\s+trafficShapingEnabled: false\s*$' $S/blocknode.yaml || { echo "FAIL: blocknode.yaml lacks trafficShapingEnabled: false"; exit 1; }
+        ! sudo grep -qE '^\s+trafficShapingDisabled:' $S/blocknode.yaml || { echo "FAIL: blocknode.yaml still has trafficShapingDisabled"; exit 1; }
+        ! sudo grep -qE '^\s+trafficShapingCleanupPending:' $S/blocknode.yaml || { echo "FAIL: blocknode.yaml has trafficShapingCleanupPending on a node that recorded its opt-out"; exit 1; }
+        ! sudo nft list table inet weaver-workload-policy >/dev/null 2>&1 || { echo "FAIL: upgrade created the BN workload-policy table on a node with shaping off"; exit 1; }
+        echo "   blocknode.yaml: trafficShapingEnabled: false; no workload-policy table"
+
+        if [ "$LEGACY" = true ]; then
+          sudo test -f $S/state.yaml.legacy || { echo "FAIL: state.yaml.legacy missing after the split"; exit 1; }
+          MIGRATE_ENTRY=$(sudo awk '/^---$/{if (doc ~ /action: migrate/) last=doc; doc=""; next} {doc=doc $0 "\n"} END{if (doc ~ /action: migrate/) last=doc; printf "%s", last}' $S/action_history.yaml)
+          echo "$MIGRATE_ENTRY" | sed 's/^/     /'
+          echo "$MIGRATE_ENTRY" | grep -q -- '- per-component-state' || { echo "FAIL: no startup-pass history entry lists per-component-state"; exit 1; }
+          echo "$MIGRATE_ENTRY" | grep -q 'outcome: succeeded' || { echo "FAIL: the startup pass that split state.yaml did not succeed"; exit 1; }
+          if [ "$OPT_OUT" = true ]; then
+            echo "$MIGRATE_ENTRY" | grep -q -- '- traffic-shaping-enabled-v1' || { echo "FAIL: the startup pass did not run traffic-shaping-enabled-v1"; exit 1; }
+          fi
+        fi
 
 
         echo -e '\n▶ Step 11: Verify block node is running'
