@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 	htime "helm.sh/helm/v3/pkg/time"
 )
@@ -66,4 +67,42 @@ func fillNonZero(v reflect.Value, depth int) {
 		fillNonZero(s.Index(0), depth+1)
 		v.Set(s)
 	}
+}
+
+// Fails when a consensus node's clone shares a pointer or map with the
+// original, so editing the clone would also edit the manager's baseline.
+func TestConsensusNodeStateClone_SharesNothing(t *testing.T) {
+	var original ConsensusNodeState
+	fillNonZero(reflect.ValueOf(&original).Elem(), 0)
+
+	clone := original.Clone()
+	require.Equal(t, original, *clone)
+
+	clone.ManagedSpec.CPULimit = "changed"
+	for k := range clone.ManagedSpec.ImagePullSecrets.ByHost {
+		clone.ManagedSpec.ImagePullSecrets.ByHost[k] = "changed"
+	}
+	for k := range clone.ManagedSpec.Volumes.Volumes {
+		clone.ManagedSpec.Volumes.Volumes[k] = models.ConsensusVolumeSpec{Path: "changed"}
+	}
+	clone.ObservedShape.CPULimit = "changed"
+	clone.ObservedShape.Orbit.ExternalAddresses[0] = OrbitExternalAddress{}
+	for k := range clone.ObservedShape.HostPathOwners {
+		clone.ObservedShape.HostPathOwners[k] = HostPathOwner{UID: 99}
+	}
+	for k := range clone.ObservedShape.Volumes.Volumes {
+		clone.ObservedShape.Volumes.Volumes[k] = models.ConsensusVolumeSpec{Path: "changed"}
+	}
+	for k := range clone.ObservedShape.ImagePullSecrets.ByHost {
+		clone.ObservedShape.ImagePullSecrets.ByHost[k] = "changed"
+	}
+
+	var untouched ConsensusNodeState
+	fillNonZero(reflect.ValueOf(&untouched).Elem(), 0)
+	require.Equal(t, untouched.ManagedSpec, original.ManagedSpec)
+	require.Equal(t, untouched.ObservedShape.CPULimit, original.ObservedShape.CPULimit)
+	require.Equal(t, untouched.ObservedShape.Orbit.ExternalAddresses, original.ObservedShape.Orbit.ExternalAddresses)
+	require.Equal(t, untouched.ObservedShape.HostPathOwners, original.ObservedShape.HostPathOwners)
+	require.Equal(t, untouched.ObservedShape.Volumes, original.ObservedShape.Volumes)
+	require.Equal(t, untouched.ObservedShape.ImagePullSecrets, original.ObservedShape.ImagePullSecrets)
 }

@@ -143,6 +143,33 @@ func (f *HostFirewallState) Clone() *HostFirewallState {
 func (c *ConsensusNodeState) Clone() *ConsensusNodeState {
 	clone := *c
 	clone.ConfigHashes = maps.Clone(c.ConfigHashes)
+	if c.ManagedSpec != nil {
+		clone.ManagedSpec = c.ManagedSpec.Clone()
+	}
+	if c.ObservedShape != nil {
+		clone.ObservedShape = c.ObservedShape.Clone()
+	}
+	return &clone
+}
+
+// Clone creates a deep copy of ConsensusNodeManagedSpec
+func (m *ConsensusNodeManagedSpec) Clone() *ConsensusNodeManagedSpec {
+	clone := *m
+	clone.ImagePullSecrets.ByHost = maps.Clone(m.ImagePullSecrets.ByHost)
+	clone.Volumes.Volumes = maps.Clone(m.Volumes.Volumes)
+	return &clone
+}
+
+// Clone creates a deep copy of ConsensusNodeObservedShape
+func (o *ConsensusNodeObservedShape) Clone() *ConsensusNodeObservedShape {
+	clone := *o
+	if o.Orbit != nil {
+		orbit := o.Orbit.Clone()
+		clone.Orbit = &orbit
+	}
+	clone.ImagePullSecrets.ByHost = maps.Clone(o.ImagePullSecrets.ByHost)
+	clone.Volumes.Volumes = maps.Clone(o.Volumes.Volumes)
+	clone.HostPathOwners = maps.Clone(o.HostPathOwners)
 	return &clone
 }
 
