@@ -14,7 +14,6 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -41,6 +40,7 @@ type BaseHandler[T any] struct {
 	Runtime          *rsl.RuntimeResolver
 	Target           models.TargetType // expected target for intent validation
 	ProfileExtractor func(T) string    // optional; extracts profile from custom inputs (nil for handlers without profile)
+	Managed          []Component       // components this handler owns; scopes drift detection and the state flush (none by default)
 }
 
 // BaseHandlerOption is a functional option for configuring a BaseHandler.
@@ -53,6 +53,17 @@ type BaseHandlerOption[T any] func(*BaseHandler[T])
 func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
 	return func(h *BaseHandler[T]) {
 		h.ProfileExtractor = fn
+	}
+}
+
+// WithManagedComponents returns a BaseHandlerOption that declares the components a
+// handler owns. The declaration scopes both drift detection (only managed components'
+// producers run) and the state flush (only managed components' sections are written
+// from reality; others are reverted to the persisted baseline). Handlers that omit it
+// manage nothing: they report no drift and revert every component section to baseline.
+func WithManagedComponents[T any](components ...Component) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.Managed = components
 	}
 }
 
@@ -118,7 +129,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 	// Only this refresh can see out-of-band changes: by the flush, reality also
 	// holds the workflow's own changes.
-	outOfBand := detectOutOfBandChanges(baseline, currentState, drift.DefaultProducers()...)
+	outOfBand := detectOutOfBandChanges(baseline, currentState, producersOf(h.Managed)...)
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(intent, inputs)
@@ -173,9 +184,18 @@ func (h *BaseHandler[T]) FlushState(
 		Inputs: effectiveInputs,
 	})
 
-	fullState, err := h.Runtime.Refresh(ctx, true)
+	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
 	if err != nil {
 		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
+	}
+
+	// Scope the write to the components this handler manages: revert every
+	// unmanaged component's section to the persisted baseline, so the command
+	// does not rewrite state it does not own. With no baseline (first write, no
+	// state file) there is nothing to preserve, so the full composed state is
+	// written as it establishes the initial file.
+	if baseline != nil {
+		restoreUnmanaged(&fullState, *baseline, h.Managed)
 	}
 
 	// Persist the deployment profile when the handler carries one.

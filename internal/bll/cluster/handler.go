@@ -20,6 +20,7 @@ func NewHandlerFactory(
 ) (*HandlerFactory, error) {
 	base, err := bll.NewBaseHandler[models.ClusterInputs](runtime, models.TargetCluster,
 		bll.WithProfileExtractor(func(i models.ClusterInputs) string { return i.Profile }),
+		bll.WithManagedComponents[models.ClusterInputs](bll.Cluster),
 	)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create BaseHandler: %v", err)
