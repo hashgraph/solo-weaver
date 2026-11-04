@@ -227,13 +227,16 @@ func render(data listing) string {
 		}
 	}
 	if len(alpha) > 0 {
-		b.WriteString("\nALPHA features are off by default. Enable all of them with --experimental, " +
-			"or one at a time by setting its opt-in env var to 1:\n")
+		b.WriteString("\nALPHA features are off by default.\n")
+		b.WriteString("  - Force one on now, regardless of the activation version (non-production testing),\n")
+		b.WriteString("    by setting its override env var to 1:\n")
 		et := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 		for _, r := range alpha {
-			fmt.Fprintf(et, "  %s=1\t# %s\n", r.EnvVar, r.Feature)
+			fmt.Fprintf(et, "      %s=1\t# %s\n", r.EnvVar, r.Feature)
 		}
 		_ = et.Flush()
+		b.WriteString("  - --experimental opts into ALL ALPHA features, but only once the activation\n")
+		b.WriteString("    version reaches each feature's ACTIVE FROM.\n")
 	}
 	return b.String()
 }

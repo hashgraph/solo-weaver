@@ -25,9 +25,9 @@ const (
 	// model for block nodes against the provisioner-managed one.
 	BlockNodeOperatorManaged gatekit.Feature = "BlockNodeOperatorManaged"
 
-	// ConsensusOperatorManaged gates consensus-node lifecycle via solo-operator
+	// ConsensusNodeOperatorManaged gates consensus-node lifecycle via solo-operator
 	// against the legacy path.
-	ConsensusOperatorManaged gatekit.Feature = "ConsensusOperatorManaged"
+	ConsensusNodeOperatorManaged gatekit.Feature = "ConsensusNodeOperatorManaged"
 
 	// KubeOperatorManagement covers the solo-operator lifecycle managed by
 	// solo-provisioner: install, uninstall, and upgrade (`kube operator ...`).
@@ -43,16 +43,16 @@ const (
 	// (`network firewall`).
 	NetworkFirewall gatekit.Feature = "NetworkFirewall"
 
-	// ConsensusMigrationSoak gates the migration soak watcher
+	// ConsensusNodeMigrationSoak gates the migration soak watcher
 	// (`consensus migration soak`).
-	ConsensusMigrationSoak gatekit.Feature = "ConsensusMigrationSoak"
+	ConsensusNodeMigrationSoak gatekit.Feature = "ConsensusNodeMigrationSoak"
 
 	// EsoSecretManagement gates the external-secrets operator and secret
 	// handling (`eso`).
 	EsoSecretManagement gatekit.Feature = "EsoSecretManagement"
 
-	// DaemonSelfUpgrade gates paired daemon self-upgrade / auto-finalize (#500).
-	DaemonSelfUpgrade gatekit.Feature = "DaemonSelfUpgrade"
+	// SelfUpgrade gates paired daemon self-upgrade / auto-finalize (#500).
+	SelfUpgrade gatekit.Feature = "SelfUpgrade"
 )
 
 // CurrentActivationVersion is the activation version in force for this binary —
