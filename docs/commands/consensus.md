@@ -41,6 +41,13 @@ otherwise on disk; recompute it any time with `openssl dgst -sha384` over
 `hedera.crt`). solo-provisioner does **not** generate the admin key and does
 **not** submit the transaction — your wallet or SDK does both.
 
+`nodeCreate` requires the gossip certificate in DER form, not PEM. Convert
+`s-public.pem` before you give it to your wallet or SDK:
+
+```bash
+openssl x509 -in s-public.pem -outform der -out s-public.der
+```
+
 ```bash
 # All key types, node-id-free (typical for a DAB join):
 sudo solo-provisioner consensus keys generate --experimental \
