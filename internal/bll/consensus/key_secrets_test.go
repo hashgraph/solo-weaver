@@ -157,18 +157,17 @@ func TestResolveKeySecrets_AdminKeyIsOptional(t *testing.T) {
 	assert.Empty(t, custom.AdminKeySecret)
 }
 
-// With several generations of a required key type, the install stops and names
-// them. Several admin generations are skipped: the capsule just gets no admin
-// reference, unless one is named.
+// With several generations of any key type, the admin key included, the install
+// stops and names them, unless one is named.
 func TestResolveKeySecrets_SeveralGenerations(t *testing.T) {
 	client := newFakeKeyClient()
 	genAndImport(t, client, 0, cnkeys.Selectors{})
 	genAndImport(t, client, 0, cnkeys.Selectors{Admin: true}) // second admin generation only
 
 	custom := &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0}
-	require.NoError(t, resolveKeySecrets(context.Background(), client, custom))
-	assert.NotEmpty(t, custom.SigningSecret)
-	assert.Empty(t, custom.AdminKeySecret, "an ambiguous admin key must be skipped")
+	err := resolveKeySecrets(context.Background(), client, custom)
+	require.Error(t, err, "an ambiguous admin key must stop the install")
+	assert.Contains(t, err.Error(), "key secrets found")
 
 	custom = &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0, AdminKeySecret: "chosen"}
 	require.NoError(t, resolveKeySecrets(context.Background(), client, custom))
@@ -176,10 +175,26 @@ func TestResolveKeySecrets_SeveralGenerations(t *testing.T) {
 
 	// Two signing generations are not skipped.
 	genAndImport(t, client, 0, cnkeys.Selectors{Gossip: true})
-	custom = &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0}
-	err := resolveKeySecrets(context.Background(), client, custom)
+	custom = &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0, AdminKeySecret: "chosen"}
+	err = resolveKeySecrets(context.Background(), client, custom)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "key secrets found")
+}
+
+// A bad admin secret stops the install: only a missing one is skipped.
+func TestResolveKeySecrets_BadAdminSecretFails(t *testing.T) {
+	client := newFakeKeyClient()
+	genAndImport(t, client, 0, cnkeys.Selectors{})
+	for k, data := range client.data {
+		if strings.Contains(k, "node0-admin-pubkey-") {
+			data[cnkeys.FileAdminPublic] = []byte("not raw key bytes")
+		}
+	}
+
+	custom := &models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "ns", NodeId: 0}
+	err := resolveKeySecrets(context.Background(), client, custom)
+	require.Error(t, err)
+	assert.Empty(t, custom.AdminKeySecret)
 }
 
 // A reinstall keeps the secrets the live capsule references, even when a second

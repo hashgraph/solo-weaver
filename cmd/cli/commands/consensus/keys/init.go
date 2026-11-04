@@ -123,7 +123,8 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	for _, name := range res.Skipped {
 		cmd.Printf("  secret/%s (already up to date)\n", name)
 	}
-	if !hasAdminSecret(res) {
+	// Only when the admin key was selected: `--tls` alone never imports it.
+	if (selectors.Admin || !selectors.Any()) && !hasAdminSecret(res) {
 		cmd.Println("No admin public key was imported: save it from your wallet as " + cnkeys.FileAdminPublic + " in --keys-dir, then run `keys import --admin`.")
 	}
 	return nil

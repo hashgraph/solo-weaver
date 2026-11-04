@@ -150,6 +150,16 @@ func TestInitCmd_EquivalentToGenerateThenImport(t *testing.T) {
 	assert.False(t, fake.hasSecretWithPrefix("ns", "node1-admin-pubkey-"))
 }
 
+func TestInitCmd_TlsOnlyDoesNotReportMissingAdminKey(t *testing.T) {
+	// The admin key is not selected, so its absence is not reported.
+	dir := filepath.Join(t.TempDir(), "keys")
+	stubSecretClient(t, &fakeSecretClient{store: map[string]map[string][]byte{}})
+
+	out, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", dir, "--machine-id", "m", "--tls")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "No admin public key was imported")
+}
+
 func TestInitCmd_GrpcFlags(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "keys")
 	stubSecretClient(t, &fakeSecretClient{store: map[string]map[string][]byte{}})

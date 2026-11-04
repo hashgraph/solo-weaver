@@ -235,12 +235,28 @@ func TestImport_AdminSecretHoldsRawBytes(t *testing.T) {
 }
 
 func TestImport_RejectsBadAdminPublicKey(t *testing.T) {
-	for name, content := range map[string]string{"not hex": "zzzz\n", "wrong length": "deadbeef\n"} {
+	for name, content := range map[string]string{
+		"not hex":      "zzzz\n",
+		"wrong length": "deadbeef\n",
+		"secp256k1":    "02" + strings.Repeat("ab", 32) + "\n",
+	} {
 		dir := writeGeneratedFolder(t)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, FileAdminPublic), []byte(content), 0o644))
 		_, err := Import(context.Background(), newFakeSecretClient(), ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir, Selectors: Selectors{Admin: true}})
 		require.Error(t, err, name)
 	}
+}
+
+// With no selector, a bad admin.pub stops the import before any secret is written.
+func TestImport_BadAdminPublicKeyWritesNothing(t *testing.T) {
+	dir := writeGeneratedFolder(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, FileAdminPublic), []byte("02"+strings.Repeat("ab", 32)+"\n"), 0o644))
+	client := newFakeSecretClient()
+
+	_, err := Import(context.Background(), client, ImportOptions{Namespace: "ns", NodeId: 0, FromDir: dir})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remove admin.pub")
+	assert.Empty(t, client.store)
 }
 
 func TestExport_AdminRoundTripsToHexFile(t *testing.T) {
