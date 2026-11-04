@@ -107,6 +107,95 @@ func TestUnifiedState_YAMLMarshal(t *testing.T) {
 	assert.False(t, helm.Configured)
 }
 
+// TestUnifiedStateMigration_Execute_PreservesExistingStateFile covers a host
+// where legacy *.installed/*.configured marker files coexist with an
+// already-written state.yaml (e.g. marker-file removal failed on a prior
+// run). Execute must merge the marker files' software entries into the
+// existing cluster/block-node data, not overwrite it with defaults.
+func TestUnifiedStateMigration_Execute_PreservesExistingStateFile(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
+
+	existing := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
+	existing.ClusterState.Created = true
+	existing.ClusterState.Host = "existing-cluster"
+	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
+	b, err := yaml.Marshal(existing)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(models.Paths().StateDir, "cilium.installed"),
+		[]byte("installed at version 1.16.0\n"), 0o644))
+
+	m := NewUnifiedStateMigration()
+	applies, err := m.Applies(&migration.Context{})
+	require.NoError(t, err)
+	require.True(t, applies, "precondition: the marker file must be found")
+
+	require.NoError(t, m.Execute(context.Background(), &migration.Context{}))
+
+	// The merge lands in state.yaml itself, for the later startup migrations
+	// and the per-component split to pick up.
+	for _, id := range AllComponentIDs {
+		_, statErr := os.Stat(componentFilePath(models.Paths().StateDir, id))
+		require.Truef(t, os.IsNotExist(statErr), "%s state file must not be written while state.yaml exists", id)
+	}
+	b, err = os.ReadFile(filepath.Join(models.Paths().StateDir, StateFileName))
+	require.NoError(t, err)
+	var got State
+	require.NoError(t, yaml.Unmarshal(b, &got))
+
+	assert.True(t, got.ClusterState.Created, "existing cluster data must survive the marker-file merge")
+	assert.Equal(t, "existing-cluster", got.ClusterState.Host)
+	assert.Equal(t, "existing-block-node", got.BlockNodeState.ReleaseInfo.Name)
+	cilium := GetSoftwareState(got, "cilium")
+	assert.Equal(t, "1.16.0", cilium.Version)
+	assert.True(t, cilium.Installed)
+}
+
+// TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly covers
+// marker files on a host with no state.yaml: the software entries are merged
+// into machine.yaml, no state.yaml is created, and other component files are
+// left as they were.
+func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesMachineOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	existing := NewState(filepath.Join(dir, StateFileName))
+	existing.MachineState.Profile = "mainnet"
+	existing.BlockNodeState.ReleaseInfo.Name = "existing-block-node"
+	sm, err := NewStateManager(WithState(existing))
+	require.NoError(t, err)
+	require.NoError(t, sm.FlushScoped(ComponentMachine, ComponentBlockNode))
+	blockNodeBefore, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cilium.installed"), []byte("installed at version 1.16.0\n"), 0o644))
+
+	require.NoError(t, NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{}))
+
+	_, err = os.Stat(filepath.Join(dir, StateFileName))
+	require.True(t, os.IsNotExist(err), "no state.yaml must be created on an already-split host")
+
+	b, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	require.NoError(t, err)
+	var machine State
+	require.NoError(t, yaml.Unmarshal(b, &machine))
+	assert.True(t, GetSoftwareState(machine, "cilium").Installed)
+	assert.Equal(t, "mainnet", machine.MachineState.Profile, "existing machine data must survive the merge")
+
+	blockNodeAfter, err := os.ReadFile(componentFilePath(dir, ComponentBlockNode))
+	require.NoError(t, err)
+	assert.Equal(t, string(blockNodeBefore), string(blockNodeAfter), "blocknode.yaml must not be rewritten")
+
+	_, err = os.Stat(filepath.Join(dir, "cilium.installed"))
+	assert.True(t, os.IsNotExist(err), "the marker file is removed once merged")
+}
+
 func TestRegisterMigrations_State(t *testing.T) {
 	migration.ClearRegistry()
 	defer migration.ClearRegistry()
@@ -152,9 +241,10 @@ func TestUnifiedStateMigration_RetryAfterSyncFailure(t *testing.T) {
 	require.Empty(t, recorded)
 }
 
-// TestUnifiedStateMigration_RefusesOlderSchemaStateFile verifies that legacy files are not
-// merged into a state.yaml that helm-release-schema-v2 has yet to convert.
-func TestUnifiedStateMigration_RefusesOlderSchemaStateFile(t *testing.T) {
+// TestUnifiedStateMigration_MergesIntoOlderSchemaStateFile verifies that legacy files merge
+// into a state.yaml that helm-release-schema-v2 has yet to convert, without dropping the
+// older-schema fields that migration still has to read.
+func TestUnifiedStateMigration_MergesIntoOlderSchemaStateFile(t *testing.T) {
 	restore := models.SetPaths(t.TempDir())
 	defer restore()
 	stateDir := models.Paths().StateDir
@@ -167,9 +257,39 @@ func TestUnifiedStateMigration_RefusesOlderSchemaStateFile(t *testing.T) {
 
 	err := NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{Component: migration.ScopeStartup})
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	got, readErr := os.ReadFile(stateFile)
 	require.NoError(t, readErr)
-	require.Equal(t, v1, string(got))
+	require.Contains(t, string(got), "chartVersion: \"0.28.1\"")
+	require.Contains(t, string(got), "cilium")
+	require.NoFileExists(t, legacy)
+}
+
+// TestUnifiedStateMigration_RetryAfterSyncFailureOnStateFile verifies that a failed directory
+// sync leaves the legacy files in place and that the next run merges them exactly once.
+func TestUnifiedStateMigration_RetryAfterSyncFailureOnStateFile(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	stateDir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	stateFile := filepath.Join(stateDir, StateFileName)
+	v1 := strings.Replace(v1StateYAML, "stateFile: /opt/solo/weaver/state/state.yaml", "stateFile: "+stateFile, 1)
+	require.NoError(t, os.WriteFile(stateFile, []byte(v1), 0o644))
+	legacy := filepath.Join(stateDir, "cilium.installed")
+	require.NoError(t, os.WriteFile(legacy, []byte("installed at version 1.16.0\n"), 0o644))
+	m := NewUnifiedStateMigration()
+	mctx := &migration.Context{Component: migration.ScopeStartup}
+
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+	require.Error(t, m.Execute(context.Background(), mctx))
 	require.FileExists(t, legacy)
+
+	recordDirSyncs(t, nil)
+	require.NoError(t, m.Execute(context.Background(), mctx))
+	require.NoFileExists(t, legacy)
+
+	got, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(got), "name: cilium"))
+	require.Contains(t, string(got), "chartVersion: \"0.28.1\"")
 }
