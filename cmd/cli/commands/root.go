@@ -21,6 +21,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/diagnose"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/features"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
@@ -128,6 +129,11 @@ func init() {
 	versionCmd := newVersionCmd()
 	common.SkipGlobalChecks(versionCmd)
 
+	// `features` is a read-only listing of the feature catalog; it changes
+	// nothing and must run on an uninstalled host, so it skips the global checks.
+	featuresCmd := features.GetCmd()
+	common.SkipGlobalChecks(featuresCmd)
+
 	// add subcommands
 	rootCmd.AddCommand(selfInstallCmd)
 	rootCmd.AddCommand(selfUninstallCmd)
@@ -139,6 +145,7 @@ func init() {
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(eso.GetCmd())
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(featuresCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 	rootCmd.AddCommand(daemon.GetCmd())
 	rootCmd.AddCommand(diagnose.GetCmd())
@@ -356,8 +363,8 @@ func initConfig(ctx context.Context) {
 }
 
 // isPrivilegeExemptInvocation reports whether args represents an invocation
-// that does not require superuser privileges: version output, help text, or
-// `block node reconcile-shaper --check`. The latter's entire design point (see
+// that does not require superuser privileges: version output, help text, the
+// read-only `features` listing, or `block node reconcile-shaper --check`. The latter's entire design point (see
 // #893) is running unprivileged so the daemon scheduler can cheaply detect a
 // real change before ever escalating to sudo for the apply path.
 func isPrivilegeExemptInvocation(args []string) bool {
@@ -379,7 +386,7 @@ func isPrivilegeExemptInvocation(args []string) bool {
 	// Only the leading subcommand word can be exempt; flag values and nested
 	// subcommands after it are not checked because they may follow a
 	// flag=value pair whose value looks like a word (e.g. --log-level debug).
-	if args[0] == "version" || args[0] == "help" {
+	if args[0] == "version" || args[0] == "help" || args[0] == "features" {
 		return true
 	}
 
