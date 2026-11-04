@@ -14,191 +14,166 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// readProvisionerVersionFrom parses the provisioner version from the machine
-// component file inside dir (unlike the reader's fixed models.Paths() path).
-func readProvisionerVersionFrom(t *testing.T, dir string) string {
+// readProvisionerRecordFrom reads provisioner.yaml inside dir and fails the
+// test when it does not exist.
+func readProvisionerRecordFrom(t *testing.T, dir string) ProvisionerRecord {
 	t.Helper()
-	data, err := os.ReadFile(componentFilePath(dir, ComponentMachine))
+	rec, ok, err := readProvisionerRecord(dir)
 	require.NoError(t, err)
-	var doc ProvisionerVersionDoc
-	require.NoError(t, unmarshalStateDoc(data, &doc))
-	return doc.State.Provisioner.Version
+	require.True(t, ok, "provisioner.yaml should exist")
+	return rec
 }
 
-// TestPersistProvisionerVersion_CreatesFileWhenAbsent: with no machine file, the write creates one holding the running binary's version.
-func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
+// writeLegacyStateWithVersion writes a pre-split state.yaml into dir that
+// records cliVersion the way such a file did: inside its state record.
+func writeLegacyStateWithVersion(t *testing.T, dir, cliVersion string) {
+	t.Helper()
+	path := filepath.Join(dir, StateFileName)
+	b, err := yaml.Marshal(NewState(path))
+	require.NoError(t, err)
+	b, err = withLegacyProvisionerFields(b, ProvisionerRecord{CLI: ProvisionerInfo{Version: cliVersion, StateVersion: ModelVersion}})
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(path, b, 0o644))
+}
+
+// TestPersistProvisionerVersion_RecordsTheRunningCLI: the write creates
+// provisioner.yaml describing the running binary and the state model it writes.
+func TestPersistProvisionerVersion_RecordsTheRunningCLI(t *testing.T) {
 	dir := t.TempDir()
-	tmp := filepath.Join(dir, "state.yaml")
-	machineFile := componentFilePath(dir, ComponentMachine)
 
-	_, err := os.Stat(machineFile)
-	require.True(t, os.IsNotExist(err), "precondition: machine state file must not exist")
+	require.NoError(t, persistProvisionerVersionIn(dir))
 
-	err = PersistProvisionerVersion(
-		WithState(newTestState(tmp)),
-		WithFileManager(newTestFileManager(t)),
-	)
-	require.NoError(t, err)
-
-	_, err = os.Stat(machineFile)
-	require.NoError(t, err, "machine state file should now exist")
-
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
+	rec := readProvisionerRecordFrom(t, dir)
+	assert.Equal(t, version.Get().Version, rec.CLI.Version)
+	assert.Equal(t, ModelVersion, rec.CLI.StateVersion)
 }
 
-// TestPersistProvisionerVersion_PreservesExistingState: the write merges — an existing software entry survives; only provisioner.version advances.
-func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
+// TestPersistProvisionerVersion_OnlyWritesProvisionerFile: it is called from
+// the startup pass and from Kubernetes setup, neither of which owns any
+// component, so it must not create a component file.
+func TestPersistProvisionerVersion_OnlyWritesProvisionerFile(t *testing.T) {
 	dir := t.TempDir()
-	tmp := filepath.Join(dir, "state.yaml")
-	fm := newTestFileManager(t)
 
-	const oldVersion = "0.0.0-pre-existing"
-	const swKey = "crio"
+	require.NoError(t, persistProvisionerVersionIn(dir))
 
-	// Seed a rich state file the way a provisioned cluster would have one.
-	seed := newTestState(tmp)
-	seed.ProvisionerState.Version = oldVersion
-	seed.MachineState.Software[swKey] = SoftwareState{Name: "cri-o", Version: "1.30.0", Installed: true}
-
-	seedMgr, err := NewStateManager(WithState(seed), WithFileManager(fm))
-	require.NoError(t, err)
-	require.NoError(t, seedMgr.Refresh())
-	require.NoError(t, seedMgr.FlushState())
-	require.NotEqual(t, oldVersion, version.Get().Version, "sentinel must differ from current version")
-
-	// Record the provisioner version against the existing file.
-	err = PersistProvisionerVersion(
-		WithState(newTestState(tmp)),
-		WithFileManager(fm),
-	)
-	require.NoError(t, err)
-
-	// Version advanced; the pre-existing software entry is untouched.
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
-
-	reloaded, err := NewStateManager(WithState(newTestState(tmp)), WithFileManager(fm))
-	require.NoError(t, err)
-	require.NoError(t, reloaded.Refresh())
-	sw, ok := reloaded.State().MachineState.Software[swKey]
-	require.True(t, ok, "pre-existing software entry must be preserved")
-	assert.Equal(t, "1.30.0", sw.Version)
+	for _, id := range AllComponentIDs {
+		_, err := os.Stat(componentFilePath(dir, id))
+		require.Truef(t, os.IsNotExist(err), "%s state file must not be created by a version-only persist", id)
+	}
 }
 
-// TestPersistProvisionerVersion_Idempotent: repeated calls succeed (the concurrency baseline resets each call).
+// TestPersistProvisionerVersion_Idempotent: repeated calls succeed and keep the
+// same record.
 func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
 	dir := t.TempDir()
-	tmp := filepath.Join(dir, "state.yaml")
-	fm := newTestFileManager(t)
 
 	for i := range 3 {
-		err := PersistProvisionerVersion(WithState(newTestState(tmp)), WithFileManager(fm))
-		require.NoErrorf(t, err, "call %d should succeed", i)
+		require.NoErrorf(t, persistProvisionerVersionIn(dir), "call %d should succeed", i)
 	}
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, dir))
+	assert.Equal(t, version.Get().Version, readProvisionerRecordFrom(t, dir).CLI.Version)
 }
 
-// TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on the state-file path and shape — the round-trip #789 depends on.
+// TestPersistProvisionerVersion_FailsFastWhenLocked: a writer holding the
+// provisioner lock makes the write fail at once, leaving the file untouched.
+func TestPersistProvisionerVersion_FailsFastWhenLocked(t *testing.T) {
+	dir := t.TempDir()
+	release, err := AcquireProvisionerLock(dir, 0)
+	require.NoError(t, err)
+	defer release()
+
+	err = persistProvisionerVersionIn(dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "provisioner.yaml is being modified")
+
+	_, ok, err := readProvisionerRecord(dir)
+	require.NoError(t, err)
+	require.False(t, ok, "a refused write must not create provisioner.yaml")
+}
+
+// TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on
+// the file's path and shape — the round-trip #789 depends on.
 func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
-	home := t.TempDir()
-	restore := models.SetPaths(home)
-	t.Cleanup(restore)
-
-	machineFile := componentFilePath(models.Paths().StateDir, ComponentMachine)
-
-	// Precondition: state dir exists but no machine state file — the reader returns "".
+	t.Cleanup(models.SetPaths(t.TempDir()))
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
-	_, statErr := os.Stat(machineFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: machine state file must not exist yet")
 
 	absent, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.Empty(t, absent, "absent machine state file must read back as an empty version")
+	assert.Empty(t, absent, "no recorded version must read back as an empty version")
 
-	// Write the running version at the default path (no opts → the reader's path).
 	require.NoError(t, PersistProvisionerVersion())
 
-	_, statErr = os.Stat(machineFile)
-	require.NoError(t, statErr, "machine state file should now exist at the reader's path")
-
-	// The reader observes exactly the version just written (non-empty).
 	readBack, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.NotEmpty(t, readBack, "recorded version must read back non-empty, unlike the absent case")
 	assert.Equal(t, version.Get().Version, readBack,
 		"the reader must observe the version the writer persisted")
 }
 
-// TestReadProvisionerVersion_FallsBackToLegacyStateFile: on a host that has not
-// run the per-component split migration yet, machine.yaml does not exist, but
-// the legacy state.yaml already has a real recorded version. RunStartupMigrations
-// reads this to decide which migrations apply — including the split migration
-// itself — before any migration for this invocation has run, so a reader that
-// only looked at machine.yaml would see "" and re-run every version-gated
-// migration on every upgrade from a pre-split host. The reader must fall back
-// to the legacy file instead.
+// TestReadProvisionerVersion_FallsBackToLegacyStateFile: on a host the
+// per-component split has not reached yet, provisioner.yaml does not exist but
+// state.yaml has a real recorded version. RunStartupMigrations reads it to
+// decide which migrations apply — including the split itself — before any has
+// run, so the reader must fall back to state.yaml rather than report "" and
+// re-run every version-gated migration.
 func TestReadProvisionerVersion_FallsBackToLegacyStateFile(t *testing.T) {
-	home := t.TempDir()
-	t.Cleanup(models.SetPaths(home))
-	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
-
-	legacy := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
-	legacy.ProvisionerState.Version = "1.2.3-legacy"
-	b, err := yaml.Marshal(legacy)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
-
-	_, statErr := os.Stat(componentFilePath(models.Paths().StateDir, ComponentMachine))
-	require.True(t, os.IsNotExist(statErr), "precondition: machine.yaml must not exist yet")
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, StateFileName), []byte(v034StateYAML), 0o644))
 
 	got, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.Equal(t, "1.2.3-legacy", got, "must read the version from the legacy file, not treat it as absent")
+	assert.Equal(t, "0.34.0", got, "must read the version from the legacy file, not treat it as absent")
 }
 
-// TestReadProvisionerVersion_PrefersMachineFileOverLegacy: once the split has
-// happened, machine.yaml is authoritative even if a stale state.yaml is still
-// sitting around.
-func TestReadProvisionerVersion_PrefersMachineFileOverLegacy(t *testing.T) {
-	home := t.TempDir()
-	t.Cleanup(models.SetPaths(home))
-	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
-
-	legacy := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
-	legacy.ProvisionerState.Version = "0.0.0-stale-legacy"
-	b, err := yaml.Marshal(legacy)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(models.Paths().StateDir, StateFileName), b, 0o644))
-
-	machine := NewState(filepath.Join(models.Paths().StateDir, StateFileName))
-	machine.ProvisionerState.Version = "9.9.9-current"
-	mb, err := yaml.Marshal(machine)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(componentFilePath(models.Paths().StateDir, ComponentMachine), mb, 0o644))
+// TestReadProvisionerVersion_PrefersProvisionerFileOverLegacy: once the split
+// has happened, provisioner.yaml is authoritative even if a stale state.yaml
+// is still sitting around.
+func TestReadProvisionerVersion_PrefersProvisionerFileOverLegacy(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	writeLegacyStateWithVersion(t, dir, "0.0.0-stale-legacy")
+	require.NoError(t, writeProvisionerRecord(dir, ProvisionerRecord{CLI: ProvisionerInfo{Version: "9.9.9-current"}}))
 
 	got, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.Equal(t, "9.9.9-current", got, "machine.yaml must win once it exists")
+	assert.Equal(t, "9.9.9-current", got, "provisioner.yaml must win once it exists")
 }
 
-// TestPersistProvisionerVersion_OnlyCreatesMachineFile verifies the version
-// backfill writes only machine.yaml. It's called from startup-migration
-// backfill and the cluster-install tail step, neither of which manages
-// cluster/blocknode/consensus/teleport — writing those files anyway is
-// exactly the class of stray write the per-component split exists to prevent.
-func TestPersistProvisionerVersion_OnlyCreatesMachineFile(t *testing.T) {
+// TestReadProvisionerVersion_IgnoresMachineFile: a machine.yaml written before
+// the version moved to provisioner.yaml still carries it, but such files exist
+// only on development hosts, which are reprovisioned rather than migrated.
+func TestReadProvisionerVersion_IgnoresMachineFile(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	writeLegacyStateWithVersion(t, dir, "1.2.3-in-machine-file")
+	require.NoError(t, os.Rename(filepath.Join(dir, StateFileName), filepath.Join(dir, "machine.yaml")))
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestFlushingHostStateDoesNotRecordTheVersion: a command's refresh and flush
+// no longer stamp the running version anywhere; only the version-record path
+// writes it.
+func TestFlushingHostStateDoesNotRecordTheVersion(t *testing.T) {
 	dir := t.TempDir()
-	tmp := filepath.Join(dir, "state.yaml")
+	sm, err := NewStateManager(WithState(newTestState(filepath.Join(dir, StateFileName))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+	require.NoError(t, sm.FlushScoped(ComponentProfile, ComponentFirewall, ComponentSystem))
 
-	require.NoError(t, PersistProvisionerVersion(
-		WithState(newTestState(tmp)),
-		WithFileManager(newTestFileManager(t)),
-	))
+	_, ok, err := readProvisionerRecord(dir)
+	require.NoError(t, err)
+	assert.False(t, ok, "a component flush must not create provisioner.yaml")
 
-	_, err := os.Stat(componentFilePath(dir, ComponentMachine))
-	require.NoError(t, err, "machine.yaml must exist")
-
-	for _, id := range []ComponentID{ComponentCluster, ComponentBlockNode, ComponentConsensus, ComponentTeleport} {
-		_, err := os.Stat(componentFilePath(dir, id))
-		require.Truef(t, os.IsNotExist(err), "%s state file must not be created by a version-only persist", id)
+	for _, id := range []ComponentID{ComponentProfile, ComponentFirewall, ComponentSystem} {
+		b, err := os.ReadFile(componentFilePath(dir, id))
+		require.NoError(t, err)
+		var doc ProvisionerVersionDoc
+		require.NoError(t, yaml.Unmarshal(b, &doc))
+		assert.Emptyf(t, doc.State.Provisioner.Version, "%s.yaml must not carry the provisioner version", id)
+		assert.Emptyf(t, doc.State.Version, "%s.yaml must not carry the state model version", id)
 	}
 }

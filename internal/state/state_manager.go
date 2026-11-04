@@ -7,13 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 
 	"github.com/automa-saga/logx"
-	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
@@ -64,6 +64,8 @@ type Writer interface {
 type Persister interface {
 	// Refresh reloads the persisted state from disk, overwriting in-memory state.
 	Refresh() error
+	// RefreshScoped reloads only the listed components' files.
+	RefreshScoped(ids ...ComponentID) error
 	// FileManager returns the underlying file-system abstraction.
 	FileManager() fsx.Manager
 }
@@ -153,32 +155,6 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	return m, nil
 }
 
-// PersistProvisionerVersion records the running binary's version in machine.yaml
-// so version-boundary startup migrations are not re-evaluated — and
-// non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
-// invocation. It writes machine.yaml only; no other component file is created
-// or touched.
-//
-// It Refresh()es first, so any existing reality-detected machine fields are
-// preserved and the optimistic-concurrency baseline is set; on a host with no
-// state file it writes a minimal one from NewState defaults. A missing file is
-// not an error. Call only after a successful startup-migration pass and only
-// on a provisioned host, so a genuinely fresh machine keeps having no state file.
-func PersistProvisionerVersion(opts ...ManagerOption) error {
-	sm, err := NewStateManager(opts...)
-	if err != nil {
-		return err
-	}
-
-	if err := sm.Refresh(); err != nil && !errorx.IsOfType(err, NotFoundError) {
-		return err
-	}
-
-	s := sm.State()
-	s.ProvisionerState.Version = version.Get().Version
-	return sm.Set(s).FlushScoped(ComponentMachine)
-}
-
 // State returns a copy of the current in-memory state (thread-safe).
 // Returns a value copy so callers cannot mutate the manager's internals
 // through the returned value.
@@ -209,6 +185,19 @@ func (m *stateManager) FileManager() fsx.Manager {
 // same "no file on disk, keep initial state" behavior the single-file version
 // had, applied per component instead of to the whole state.
 func (m *stateManager) Refresh() error {
+	return m.refresh(AllComponentIDs, false)
+}
+
+// RefreshScoped reloads only ids' files, keeping every other component's
+// in-memory value and baseline, so a file the caller neither reads nor writes
+// cannot fail it.
+func (m *stateManager) RefreshScoped(ids ...ComponentID) error {
+	return m.refresh(DedupeComponentIDs(ids), true)
+}
+
+// refresh reads ids' files onto a clone of the in-memory state. keepOthers
+// keeps every other component's baseline; otherwise only ids' survive.
+func (m *stateManager) refresh(ids []ComponentID, keepOthers bool) error {
 	// Prevent Refresh from interleaving with an in-progress FlushState.
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
@@ -222,9 +211,18 @@ func (m *stateManager) Refresh() error {
 	}
 
 	baseline := make(map[ComponentID]string, len(AllComponentIDs))
+	if keepOthers {
+		baseline = maps.Clone(m.baselineHash)
+		if baseline == nil {
+			baseline = make(map[ComponentID]string, len(ids))
+		}
+		for _, id := range ids {
+			delete(baseline, id)
+		}
+	}
 	dir := m.dir()
 
-	for _, id := range AllComponentIDs {
+	for _, id := range ids {
 		b, readErr := m.fm.ReadFile(componentFilePath(dir, id), -1)
 		if readErr != nil {
 			if errorx.IsOfType(readErr, fsx.FileNotFound) {
@@ -235,7 +233,7 @@ func (m *stateManager) Refresh() error {
 
 		var fileState State
 		if err := yaml.Unmarshal(b, &fileState); err != nil {
-			return errorx.InternalError.Wrap(err, "failed to unmarshal %s state from YAML", id)
+			return errorx.InternalError.Wrap(err, "failed to parse the %s state file %s", id, componentFilePath(dir, id))
 		}
 		applyComponentSection(composed, id, fileState)
 
@@ -245,13 +243,6 @@ func (m *stateManager) Refresh() error {
 		}
 		baseline[id] = hash
 	}
-
-	// Stamp the current CLI version so the provisioner.version field on disk
-	// always reflects the binary that last ran, establishing the two-value
-	// invariant used by startup migrations:
-	//   lastCLIVersion  = the version read from disk before this Refresh()
-	//   currentCLIVersion = version.Get().Version (the running binary)
-	composed.ProvisionerState.Version = version.Get().Version
 
 	m.state = *composed
 	m.baselineHash = baseline

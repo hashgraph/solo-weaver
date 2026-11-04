@@ -4,6 +4,8 @@ package state
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -46,10 +50,18 @@ func AcquireComponentLocks(dir string, ids []ComponentID, wait time.Duration) (r
 	}
 
 	for _, id := range ordered {
-		unlock, lockErr := acquireOneLock(lockFilePath(dir, id), string(id), wait)
+		path := lockFilePath(dir, id)
+		unlock, acquired, pid, lockErr := acquireOneLock(path, wait)
 		if lockErr != nil {
 			release()
-			return func() {}, lockErr
+			return func() {}, lockOpenError(string(id), path, lockErr)
+		}
+		if !acquired {
+			release()
+			return func() {}, errx.Decorate(
+				errorx.IllegalState.New("%s is being modified (held by %s)", id, lockHolder(pid)),
+				reasons.PreconditionNotMet,
+				waitForHolderHint(pid, "to finish"))
 		}
 		held = append(held, unlock)
 	}
@@ -66,28 +78,92 @@ func lockFilePath(dir string, id ComponentID) string {
 // per-component split in particular) delete and rename state files, so two
 // running at once can fail spuriously or leave a reader seeing missing files.
 func AcquireStartupMigrationsLock(dir string, wait time.Duration) (release func(), err error) {
-	return acquireOneLock(filepath.Join(dir, ".startup-migrations.lock"), "the state directory", wait)
+	const label = "the state directory"
+	path := filepath.Join(dir, ".startup-migrations.lock")
+	unlock, acquired, pid, err := acquireOneLock(path, wait)
+	if err != nil {
+		return func() {}, lockOpenError(label, path, err)
+	}
+	if !acquired {
+		waited := ""
+		if wait > 0 {
+			waited = fmt.Sprintf(" after waiting %s", wait)
+		}
+		return func() {}, errx.Decorate(
+			errorx.IllegalState.New("%s is still being migrated by another command (held by %s)%s",
+				label, lockHolder(pid), waited),
+			reasons.PreconditionNotMet,
+			waitForHolderHint(pid, "to finish its startup migrations"))
+	}
+	return unlock, nil
+}
+
+// AcquireProvisionerLock takes the lock that guards provisioner.yaml. It is
+// never part of a command's owned components: each writer holds it only
+// around its own write, except `kube cluster uninstall`, which deletes the file.
+func AcquireProvisionerLock(dir string, wait time.Duration) (release func(), err error) {
+	path := filepath.Join(dir, ".provisioner.lock")
+	unlock, acquired, pid, err := acquireOneLock(path, wait)
+	if err != nil {
+		return func() {}, lockOpenError(ProvisionerFileName, path, err)
+	}
+	if !acquired {
+		return func() {}, errx.Decorate(
+			errorx.IllegalState.New("%s is being modified (held by %s)", ProvisionerFileName, lockHolder(pid)),
+			reasons.PreconditionNotMet,
+			waitForHolderHint(pid, "to finish"))
+	}
+	return unlock, nil
 }
 
 // acquireOneLock tries to lock path, retrying every lockPollInterval until
-// wait has elapsed. wait == 0 still tries exactly once.
-func acquireOneLock(path, label string, wait time.Duration) (func(), error) {
+// wait has elapsed. wait == 0 still tries exactly once. A lock still held
+// elsewhere once wait runs out is not an error: acquired is false and pid is
+// the holder's recorded pid ("" when unknown), so each caller can say what to
+// do. err is only a failure to create or open the lock file.
+func acquireOneLock(path string, wait time.Duration) (unlock func(), acquired bool, pid string, err error) {
 	deadline := time.Now().Add(wait)
 	for {
 		unlock, acquired, err := tryFlock(path)
 		if err != nil {
-			return nil, errorx.ExternalError.Wrap(err, "failed to acquire lock for %s", label)
+			return unlock, false, "", err
 		}
 		if acquired {
-			return unlock, nil
+			return unlock, true, "", nil
 		}
 		if time.Now().After(deadline) {
-			return nil, errorx.IllegalState.New(
-				"%s is being modified (held by %s); re-run with a longer wait or try again once it finishes",
-				label, readLockHolder(path))
+			return unlock, false, readLockPID(path), nil
 		}
 		time.Sleep(lockPollInterval)
 	}
+}
+
+// lockOpenError wraps a failure to create or open a lock file. Only a
+// permission error has an operator fix, so only it is decorated.
+func lockOpenError(label, path string, err error) error {
+	wrapped := errorx.ExternalError.Wrap(err, "failed to acquire lock for %s", label)
+	if errors.Is(err, fs.ErrPermission) {
+		return errx.Decorate(wrapped, reasons.PermissionDenied,
+			fmt.Sprintf("Check the permissions on %s and its parent directory, or re-run with sudo.", path))
+	}
+	return wrapped
+}
+
+// lockHolder names a lock's holder for an error message.
+func lockHolder(pid string) string {
+	if pid == "" {
+		return "another process"
+	}
+	return "pid " + pid
+}
+
+// waitForHolderHint asks the operator to wait for a lock's holder; done says
+// what to wait for, e.g. "to finish".
+func waitForHolderHint(pid, done string) string {
+	if pid == "" {
+		return fmt.Sprintf("Wait for the other solo-provisioner command %s, then re-run this command.", done)
+	}
+	return fmt.Sprintf("Wait for pid %s %s (check with: ps -p %s), then re-run this command.", pid, done, pid)
 }
 
 // tryFlock takes a single non-blocking exclusive lock on path, creating it if
@@ -125,13 +201,13 @@ func tryFlock(path string) (func(), bool, error) {
 	}, true, nil
 }
 
-// readLockHolder returns a diagnostic-only description of who holds path's
-// lock. Best-effort: the pid recorded there may belong to a process that has
-// since exited without updating it.
-func readLockHolder(path string) string {
+// readLockPID returns the pid recorded in path's lock file, or "" when none is
+// recorded. Diagnostic only: the pid may belong to a process that has since
+// exited without updating it.
+func readLockPID(path string) string {
 	b, err := os.ReadFile(path)
-	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
-		return "another process"
+	if err != nil {
+		return ""
 	}
-	return "pid " + strings.TrimSpace(string(b))
+	return strings.TrimSpace(string(b))
 }

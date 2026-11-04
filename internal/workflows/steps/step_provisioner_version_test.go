@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -17,18 +18,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// the cluster install tail step writes a machine.yaml whose provisioner.version
-// is the running binary's version, which the next invocation's reader then
-// observes instead of synthesising the 0.0.0 baseline.
+// TestRecordProvisionerVersion_WritesStateFile: the Kubernetes setup tail step
+// writes a provisioner.yaml holding the running binary's version, which the
+// next invocation's reader then observes instead of synthesising the 0.0.0
+// baseline.
 func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
-	// A provisioned host has the state dir (created at install) but no machine.yaml.
+	// A provisioned host has the state dir (created at install) but no recorded version.
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
 
-	machineFile := state.ComponentFilePath(models.Paths().StateDir, state.ComponentMachine)
-	_, statErr := os.Stat(machineFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: machine state file must not exist yet")
+	provisionerFile := filepath.Join(models.Paths().StateDir, state.ProvisionerFileName)
+	_, statErr := os.Stat(provisionerFile)
+	require.True(t, os.IsNotExist(statErr), "precondition: provisioner.yaml must not exist yet")
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
@@ -36,8 +38,8 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error, "step must succeed")
 
-	_, statErr = os.Stat(machineFile)
-	require.NoError(t, statErr, "machine state file should now exist")
+	_, statErr = os.Stat(provisionerFile)
+	require.NoError(t, statErr, "provisioner.yaml should now exist")
 
 	recorded, err := state.ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
@@ -47,13 +49,13 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 
 // TestRecordProvisionerVersion_PersistFailureIsNonFatal: recording the version is
 // best-effort — a failure is logged, not fatal. The cluster install must not fail
-// just because state.yaml could not be written. Regression guard: returning the
+// just because provisioner.yaml could not be written. Regression guard: returning the
 // error here (instead of swallowing it) would abort `kube cluster install`.
 func TestRecordProvisionerVersion_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+	persistProvisionerVersion = func() error {
 		persistCalled++
 		return errors.New("simulated persist failure")
 	}
@@ -86,7 +88,7 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 
 	// Failure path: the completion message must signal the miss.
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+	persistProvisionerVersion = func() error {
 		return errors.New("simulated persist failure")
 	}
 	step, err := RecordProvisionerVersion().Build()
@@ -100,7 +102,7 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 
 	// Success path: the completion message reports the version recorded.
 	gotMsg = ""
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error { return nil }
+	persistProvisionerVersion = func() error { return nil }
 	step, err = RecordProvisionerVersion().Build()
 	require.NoError(t, err)
 	report = step.Execute(context.Background())

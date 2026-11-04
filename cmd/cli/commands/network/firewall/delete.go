@@ -53,14 +53,12 @@ var deleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := mgr.Delete(cmd.Context()); err != nil {
+		// Record the opt-out so the block-node workflow agrees the host no longer
+		// wants a firewall. A recorded decision still saying "enabled" would make
+		// the next `block node reconfigure` re-create the table just removed here.
+		if err := applyHostFirewallChange(true, func() error { return mgr.Delete(cmd.Context()) }); err != nil {
 			return err
 		}
-
-		// Record the opt-out so the block-node workflow agrees the host no longer
-		// wants a firewall. A machine state still saying "enabled" would make the
-		// next `block node reconfigure` re-create the table just removed here.
-		recordHostFirewallDecision(true)
 
 		logx.As().Info().Msg("inet weaver-host-firewall firewall removed")
 		return nil

@@ -10,13 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestReadPromptDefaultsFromDisk_BlockNodeFileDoesNotClobberMachineFields
-// covers the case where both machine.yaml and blocknode.yaml exist.
-// blocknode.yaml is a marshaled State too, so it carries a zero-valued
-// machineState section (MachineState has no omitempty tag). Decoding both
-// files into one shared doc would let the second decode (blocknode) silently
-// overwrite the Profile/Firewall the first decode (machine) just loaded.
-func TestReadPromptDefaultsFromDisk_BlockNodeFileDoesNotClobberMachineFields(t *testing.T) {
+// TestReadPromptDefaultsFromDisk_FilesDoNotClobberEachOther covers the case
+// where profile.yaml, firewall.yaml and blocknode.yaml all exist. Each is a
+// marshaled State, so each carries the others' sections zero-valued. Decoding
+// the files into one shared doc would let a later decode silently overwrite
+// the Profile or Firewall an earlier one just loaded.
+func TestReadPromptDefaultsFromDisk_FilesDoNotClobberEachOther(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
@@ -34,8 +33,8 @@ func TestReadPromptDefaultsFromDisk_BlockNodeFileDoesNotClobberMachineFields(t *
 	got, err := ReadPromptDefaultsFromDisk()
 	require.NoError(t, err)
 
-	require.Equal(t, "mainnet", got.Profile, "profile must survive blocknode.yaml also being present")
-	require.NotNil(t, got.Firewall, "firewall must survive blocknode.yaml also being present")
+	require.Equal(t, "mainnet", got.Profile, "profile must survive the other files also being present")
+	require.NotNil(t, got.Firewall, "firewall must survive the other files also being present")
 	require.Equal(t, []string{"10.0.0.0/8"}, got.Firewall.ManagementCIDRs)
 	require.Equal(t, "my-release", got.BlockNode.ReleaseName)
 	require.Equal(t, "my-ns", got.BlockNode.Namespace)

@@ -585,10 +585,12 @@ tasks:
 
 
         echo -e '\n▶ Step 6: Record state file before upgrade'
-        # The released CLI may predate the per-component split (state.yaml) or already use it (machine.yaml).
-        STATE_FILE_BEFORE=/opt/solo/weaver/state/state.yaml
-        [ -f /opt/solo/weaver/state/machine.yaml ] && STATE_FILE_BEFORE=/opt/solo/weaver/state/machine.yaml
-        STATE_VER_BEFORE=$(sudo grep 'version:' "$STATE_FILE_BEFORE" | head -1 || echo "none")
+        # The released CLI may predate the per-component split (state.yaml) or already use it (provisioner.yaml).
+        if [ -f /opt/solo/weaver/state/provisioner.yaml ]; then
+          STATE_VER_BEFORE=$(sudo grep 'stateVersion:' /opt/solo/weaver/state/provisioner.yaml || echo "none")
+        else
+          STATE_VER_BEFORE=$(sudo grep 'version:' /opt/solo/weaver/state/state.yaml | head -1 || echo "none")
+        fi
         echo "   State version before: $STATE_VER_BEFORE"
 
 
@@ -610,12 +612,13 @@ tasks:
 
 
         echo -e '\n▶ Step 10: Verify state file after upgrade'
-        for f in machine.yaml blocknode.yaml; do
+        for f in provisioner.yaml profile.yaml firewall.yaml system.yaml blocknode.yaml; do
           [ -f "/opt/solo/weaver/state/$f" ] || { echo "FAIL: $f missing after upgrade"; exit 1; }
         done
         [ ! -f /opt/solo/weaver/state/state.yaml ] || { echo "FAIL: state.yaml still present after upgrade (split migration did not run)"; exit 1; }
-        STATE_VER_AFTER=$(sudo grep 'version:' /opt/solo/weaver/state/machine.yaml | head -1 || echo "none")
+        STATE_VER_AFTER=$(sudo grep 'stateVersion:' /opt/solo/weaver/state/provisioner.yaml || echo "none")
         echo "   State version after: $STATE_VER_AFTER"
+        echo "   Recorded CLI version: $(sudo sed -n 's/^ *version: *//p' /opt/solo/weaver/state/provisioner.yaml | head -1) (running: $NEW_VER)"
 
 
         echo -e '\n▶ Step 11: Verify block node is running'
