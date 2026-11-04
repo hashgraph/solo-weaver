@@ -5,10 +5,13 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -668,6 +671,146 @@ func (c *Client) GetSecretKeys(ctx context.Context, namespace, name string) ([]s
 		keys = append(keys, k)
 	}
 	return keys, nil
+}
+
+// secretsGVR is the GroupVersionResource for core v1 Secrets.
+var secretsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"}
+
+// ApplySecret creates or updates an Opaque Secret via Server-Side Apply, keeping
+// the key bytes in memory (no temp file). The named data values are stored
+// base64-encoded under .data. fieldManager "solo-weaver" owns the fields it sets,
+// matching ApplyManifest; force resolves ownership conflicts in weaver's favor.
+func (c *Client) ApplySecret(ctx context.Context, namespace, name string, data map[string][]byte, labels, annotations map[string]string) error {
+	encoded := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		encoded[k] = base64.StdEncoding.EncodeToString(v)
+	}
+
+	metadata := map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+	}
+	if len(labels) > 0 {
+		lbls := make(map[string]interface{}, len(labels))
+		for k, v := range labels {
+			lbls[k] = v
+		}
+		metadata["labels"] = lbls
+	}
+	if len(annotations) > 0 {
+		anns := make(map[string]interface{}, len(annotations))
+		for k, v := range annotations {
+			anns[k] = v
+		}
+		metadata["annotations"] = anns
+	}
+
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   metadata,
+		"type":       "Opaque",
+		"data":       encoded,
+	}}
+
+	payload, err := obj.MarshalJSON()
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "marshal Secret %s/%s for server-side apply", namespace, name)
+	}
+
+	force := true
+	dr := c.Dyn.Resource(secretsGVR).Namespace(namespace)
+	if _, err := dr.Patch(ctx, name, types.ApplyPatchType, payload, metav1.PatchOptions{
+		FieldManager: "solo-weaver",
+		Force:        &force,
+	}); err != nil {
+		if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+			return errorx.ExternalError.Wrap(err, "apply Secret %s/%s", namespace, name)
+		}
+		return errorx.InternalError.Wrap(err, "apply Secret %s/%s", namespace, name)
+	}
+	return nil
+}
+
+// SecretInfo is a Secret's name and metadata, without its data.
+type SecretInfo struct {
+	Name        string
+	Labels      map[string]string
+	Annotations map[string]string
+}
+
+// GetSecretInfo returns a Secret's name and metadata, without its data. The
+// second result is false (with no error) when the Secret does not exist.
+func (c *Client) GetSecretInfo(ctx context.Context, namespace, name string) (*SecretInfo, bool, error) {
+	obj, err := c.Dyn.Resource(secretsGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, errorx.InternalError.Wrap(err, "get Secret %s/%s", namespace, name)
+	}
+	return &SecretInfo{Name: obj.GetName(), Labels: obj.GetLabels(), Annotations: obj.GetAnnotations()}, true, nil
+}
+
+// PatchSecretLabels sets the given labels on a Secret with a merge patch that
+// touches only metadata.labels. The Secret's data is never sent, so it cannot be
+// overwritten. Labels not in the map are left as they are.
+func (c *Client) PatchSecretLabels(ctx context.Context, namespace, name string, labels map[string]string) error {
+	body, err := json.Marshal(map[string]interface{}{"metadata": map[string]interface{}{"labels": labels}})
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "marshal label patch for Secret %s/%s", namespace, name)
+	}
+	if _, err := c.Dyn.Resource(secretsGVR).Namespace(namespace).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{FieldManager: "solo-weaver"}); err != nil {
+		if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+			return errorx.ExternalError.Wrap(err, "label Secret %s/%s", namespace, name)
+		}
+		return errorx.InternalError.Wrap(err, "label Secret %s/%s", namespace, name)
+	}
+	return nil
+}
+
+// ListSecrets returns the Secrets in a namespace that match a label selector
+// (empty selects all), sorted by name. Only metadata is returned; read the data
+// with GetSecretData.
+func (c *Client) ListSecrets(ctx context.Context, namespace, labelSelector string) ([]SecretInfo, error) {
+	list, err := c.Dyn.Resource(secretsGVR).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "list Secrets in %s (selector %q)", namespace, labelSelector)
+	}
+	out := make([]SecretInfo, 0, len(list.Items))
+	for _, item := range list.Items {
+		out = append(out, SecretInfo{Name: item.GetName(), Labels: item.GetLabels(), Annotations: item.GetAnnotations()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// GetSecretData returns a Secret's decoded data values. The second result is
+// false (with no error) when the Secret does not exist.
+func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map[string][]byte, bool, error) {
+	dr := c.Dyn.Resource(secretsGVR).Namespace(namespace)
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, errorx.InternalError.Wrap(err, "get Secret %s/%s", namespace, name)
+	}
+
+	data, _, _ := unstructured.NestedMap(obj.Object, "data")
+	out := make(map[string][]byte, len(data))
+	for k, v := range data {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false, errorx.IllegalState.New("Secret %s/%s data key %q is not a string", namespace, name, k)
+		}
+		decoded, derr := base64.StdEncoding.DecodeString(s)
+		if derr != nil {
+			return nil, false, errorx.IllegalState.Wrap(derr, "decode Secret %s/%s data key %q", namespace, name, k)
+		}
+		out[k] = decoded
+	}
+	return out, true, nil
 }
 
 // =====================
