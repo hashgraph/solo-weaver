@@ -40,8 +40,15 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 	if o.Experimental {
 		opts = append(opts, gatekit.WithExperimental(true))
 	}
-	if len(o.Overrides) > 0 {
-		opts = append(opts, gatekit.WithOverrides(o.Overrides))
+
+	// Per-feature opt-ins: SOLO_PROVISIONER_ENABLE_<FEATURE> env vars, with any
+	// explicit Options.Overrides taking precedence.
+	overrides := EnvOverrides()
+	for k, v := range o.Overrides {
+		overrides[k] = v
+	}
+	if len(overrides) > 0 {
+		opts = append(opts, gatekit.WithOverrides(overrides))
 	}
 
 	return gatekit.New(Catalog(), staticSource{v: current}, opts...)
