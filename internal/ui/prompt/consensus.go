@@ -114,7 +114,7 @@ func ConsensusNodeInputPrompts(flagNamespace, nodeIdTarget, flagAccountId, flagP
 // still install without hunting for the right flags.
 //
 //   - flagImageRepo/flagImageTag: required image coordinates
-//   - flagLedgerId:               required hex ledger identity (e.g. 0x00)
+//   - flagLedgerId:               required ledger ID (e.g. 0x00)
 //   - flagChainId:                optional decimal EVM chain ID
 func ConsensusNodeIdentityInputPrompts(flagImageRepo, flagImageTag, flagLedgerId, flagChainId *string) []InputPrompt {
 	return []InputPrompt{
@@ -149,7 +149,7 @@ func ConsensusNodeIdentityInputPrompts(flagImageRepo, flagImageTag, flagLedgerId
 		{
 			FlagName:       "ledger-id",
 			Title:          "Ledger ID",
-			Description:    "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev)",
+			Description:    "Ledger ID of the network: 0x00 (mainnet), 0x01 (local/dev), or the 64-character genesis address-book hash on TSS networks",
 			Placeholder:    *flagLedgerId,
 			EffectiveValue: *flagLedgerId,
 			Target:         flagLedgerId,

@@ -142,12 +142,12 @@ func (c *consensusChecker) RefreshState(ctx context.Context) (map[string]state.C
 		if err == nil && orbitExists {
 			if lid, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindOrbit),
 				"", ns.OrbitName,
-				fieldSpec, "consensus", "genesis", "addressBook", "ledgerId"); err == nil && lid != "" {
+				fieldSpec, "network", "ledgerId"); err == nil && lid != "" {
 				updated.LedgerId = lid
 			}
 			if cid, err := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindOrbit),
 				"", ns.OrbitName,
-				fieldSpec, "consensus", "genesis", "addressBook", "chainId"); err == nil && cid != "" {
+				fieldSpec, "network", "chainId"); err == nil && cid != "" {
 				updated.ChainId = cid
 			}
 		}
