@@ -256,21 +256,17 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 
 // Commit persists only the listed components' state from currentState, then
 // appends entry to the action history; see state.Writer.Commit. State that
-// landed with its entry lost (state.EntryNotAppendedError) or not synced
-// (fsx.FileSyncError) keeps its type, with the reason and hint the operator
-// needs; any other failure is "failed to persist state".
+// landed but was not synced (fsx.FileSyncError) keeps its type, with the
+// reason and hint the operator needs; any other failure is "failed to
+// persist state".
 func (r *RuntimeResolver) Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error {
 	err := r.sm.Set(currentState).Commit(entry, ids...)
 	switch {
 	case err == nil:
 		return nil
-	case errorx.IsOfType(err, state.EntryNotAppendedError):
-		// Its own message already says the state was written and the entry was not.
-		return errx.Decorate(err, reasons.StateOperationFailed,
-			"Check that "+state.ActionHistoryFilePath(r.StateDir())+" is writable.")
 	case errorx.IsOfType(err, fsx.FileSyncError):
 		return errx.Decorate(
-			errorx.Decorate(err, "the state was saved and its action history entry appended, but not synced to disk"),
+			errorx.Decorate(err, "the state was saved but not synced to disk"),
 			reasons.StateOperationFailed,
 			"Check the disk holding "+r.StateDir()+".")
 	}

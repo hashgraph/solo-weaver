@@ -566,20 +566,20 @@ func TestFlushState_UnobservedAgentIsNeverWrittenOrHashed(t *testing.T) {
 	require.Equal(t, readHash, unread)
 }
 
-// TestCommit_LandedStateWithALostEntryIsItsOwnError: when the files land but the
-// entry can't be appended, Commit says exactly that, so a caller can tell a
-// saved state from one that never reached disk. A re-run records its entry with
-// no components: the files already hold its content.
-func TestCommit_LandedStateWithALostEntryIsItsOwnError(t *testing.T) {
+// TestCommit_LandedStateWithALostEntryIsAWarning: when the files land but the
+// entry can't be appended, the action already ran, so Commit succeeds and the
+// operator is warned. A re-run records its entry with no components: the files
+// already hold its content.
+func TestCommit_LandedStateWithALostEntryIsAWarning(t *testing.T) {
+	emptyWarnings(t)
 	dir := t.TempDir()
 	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
 
-	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode)
-
-	require.True(t, errorx.IsOfType(err, EntryNotAppendedError), "got %v", err)
+	require.NoError(t, m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode))
 	require.FileExists(t, componentFilePath(dir, ComponentBlockNode), "the state landed")
+	requireLostEntryWarning(t, dir)
 
 	require.NoError(t, os.Remove(ActionHistoryFilePath(dir)))
 	fresh, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
@@ -646,8 +646,8 @@ func TestCommit_FailedActionWithAnUnsyncedWriteIsAWarning(t *testing.T) {
 }
 
 // TestCommit_UnsyncedWriteAndALostEntry: when the state lands unsynced and its
-// entry is lost, Commit returns EntryNotAppendedError and the unsynced write is
-// a warning, so the operator learns both.
+// entry is lost, Commit returns the sync error and the lost entry is a
+// warning, so the operator learns both.
 func TestCommit_UnsyncedWriteAndALostEntry(t *testing.T) {
 	emptyWarnings(t)
 	dir := t.TempDir()
@@ -658,8 +658,8 @@ func TestCommit_UnsyncedWriteAndALostEntry(t *testing.T) {
 
 	err = m.Commit(ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}}, ComponentBlockNode)
 
-	require.True(t, errorx.IsOfType(err, EntryNotAppendedError), "got %v", err)
-	requireWarning(t, "The state was written but not synced to disk")
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	requireLostEntryWarning(t, dir)
 }
 
 // failingAppender is an fsx.Manager whose first AppendToFile fails and writes

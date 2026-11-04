@@ -3,28 +3,21 @@
 package cluster
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
-	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 type funcChecker[T any] func() (T, error)
@@ -64,19 +57,9 @@ func installEntry(outcome state.Outcome) state.ActionHistory {
 // readHistory decodes every entry of dir's action history.
 func readHistory(t *testing.T, dir string) []state.ActionHistory {
 	t.Helper()
-	b, err := os.ReadFile(state.ActionHistoryFilePath(dir))
+	entries, err := state.ReadActionHistory(dir)
 	require.NoError(t, err)
-	var entries []state.ActionHistory
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	for {
-		var e state.ActionHistory
-		err := dec.Decode(&e)
-		if errors.Is(err, io.EOF) {
-			return entries
-		}
-		require.NoError(t, err)
-		entries = append(entries, e)
-	}
+	return entries
 }
 
 var systemOnly = []state.ComponentID{state.ComponentSystem}
@@ -112,25 +95,21 @@ func TestRecordClusterInstall_FailedRefreshIsNotPersisted(t *testing.T) {
 	require.Contains(t, entries[0].Error, "failed to refresh state after cluster install")
 }
 
-// TestRecordClusterInstall_LandedRecordWithALostEntrySaysSo: a system record
-// that landed with its entry lost returns rsl's message, reason and hint.
-func TestRecordClusterInstall_LandedRecordWithALostEntrySaysSo(t *testing.T) {
+// TestRecordClusterInstall_LandedRecordWithALostEntryIsAWarning: the install
+// ran and its system record landed, so a lost entry is a warning, not the
+// command's error.
+func TestRecordClusterInstall_LandedRecordWithALostEntryIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
 	rt, dir := newInstallRuntime(t, nil)
 	require.NoError(t, os.Mkdir(state.ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
 
-	err := recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, systemOnly)
+	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, systemOnly))
 
-	require.True(t, errorx.IsOfType(err, state.EntryNotAppendedError), "got %v", err)
 	require.FileExists(t, state.ComponentFilePath(dir, state.ComponentSystem))
-	msg := doctor.OperatorMessage(err)
-	require.Contains(t, msg, "the state was written but its action history entry was not appended")
-	require.NotContains(t, msg, "failed to persist")
-	reason, ok := errx.ReasonOf(err)
-	require.True(t, ok)
-	require.Equal(t, reasons.StateOperationFailed, reason)
-	hints, ok := errx.Hints(err)
-	require.True(t, ok)
-	require.Contains(t, hints, "Check that "+state.ActionHistoryFilePath(dir)+" is writable.")
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "Check that "+state.ActionHistoryFilePath(dir)+" is writable.")
 }
 
 // TestRecordClusterInstall_SuccessRecordsOneEntry: a successful install writes

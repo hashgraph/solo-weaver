@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -162,7 +163,8 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 
 // cleanupWeaverHome removes every top-level entry of weaverHome except the
 // downloads, bin and logs folders, and empties the state directory except its
-// action history. It is best-effort: a failure is logged and teardown goes on.
+// action history and lock files. It is best-effort: a failure is logged and
+// teardown goes on.
 func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
 	// Open the directory so its entries can be read in batches instead of all at once.
 	dir, err := os.Open(weaverHome)
@@ -199,9 +201,11 @@ func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
 			}
 
 			// Empty the state directory but keep the action history, which
-			// records this uninstall too.
+			// records this uninstall too, and the lock files the uninstall
+			// holds: deleting a held one lets another command take a fresh
+			// lock and write state before the uninstall records what it removed.
 			if entryPath == models.Paths().StateDir {
-				removeAllExcept(fsManager, entryPath, state.ActionHistoryFileName)
+				removeAllExcept(fsManager, entryPath, keptStateEntry)
 				continue
 			}
 
@@ -221,15 +225,20 @@ func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
 	}
 }
 
-// removeAllExcept removes every entry of dir but the one named keep.
-func removeAllExcept(fsManager fsx.Manager, dir, keep string) {
+// keptStateEntry reports whether cleanup keeps a state directory entry.
+func keptStateEntry(name string) bool {
+	return name == state.ActionHistoryFileName || strings.HasSuffix(name, ".lock")
+}
+
+// removeAllExcept removes every entry of dir for which keep is false.
+func removeAllExcept(fsManager fsx.Manager, dir string, keep func(name string) bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		logx.As().Warn().Err(err).Msgf("Failed to read %s, continuing with teardown", dir)
 		return
 	}
 	for _, entry := range entries {
-		if entry.Name() == keep {
+		if keep(entry.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())

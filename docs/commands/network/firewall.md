@@ -400,9 +400,12 @@ agrees with what you did here:
   `StateOperationFailed`. Re-running it is safe and records the decision.
 - Each run that got past the lock and read the state adds one entry to
   `/opt/solo/weaver/state/action_history.yaml`: `install` / `firewall` for `create`,
-  `uninstall` / `firewall` for `delete`, even when the ruleset change fails. A run that can't
-  read the state stops before changing anything and records nothing, and `delete --name`
-  records nothing. See [Action history](../../dev/action-history.md).
+  `uninstall` / `firewall` for `delete`, even when the ruleset change fails. A `create` entry's
+  `inputs.config` is the applied table in the `--from-file` format. A run that can't read the
+  state stops before changing anything and records nothing. The other verbs
+  (`create-allow-rule`, `delete --name`, `add`, `remove`, `set`, `reapply`, `refresh-dns`)
+  record nothing. See
+  [Action history](../../dev/action-history.md).
 - A **live table always wins** over the recorded decision, so removing an active host firewall
   through `block node reconfigure` needs an explicit `--firewall-enabled=false`.
 - The membership verbs (`add`, `remove`, `set`) record no decision. `reconfigure` reads their

@@ -20,6 +20,9 @@ import (
 // run starts and records nothing; once run has started, entry is appended to
 // the action history however the command ends.
 func RunOwning(sm Manager, entry ActionHistory, ids []ComponentID, run func() error, patch func(*State) error) error {
+	if err := CheckTargetOwns(entry.Intent.Target, ids); err != nil {
+		return err
+	}
 	release, err := AcquireComponentLocks(filepath.Dir(sm.State().StateFile), ids, 0)
 	if err != nil {
 		return err
@@ -46,7 +49,7 @@ func RunOwning(sm Manager, entry ActionHistory, ids []ComponentID, run func() er
 		return err
 	}
 	if err := sm.Set(st).Commit(entry, ids...); err != nil {
-		if errorx.IsOfType(err, EntryNotAppendedError) || errorx.IsOfType(err, fsx.FileSyncError) {
+		if errorx.IsOfType(err, fsx.FileSyncError) {
 			return err // the state did land; the caller says so
 		}
 		return errorx.IllegalState.Wrap(err, "failed to persist state")

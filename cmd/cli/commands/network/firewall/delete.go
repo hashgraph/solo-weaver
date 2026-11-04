@@ -56,7 +56,8 @@ var deleteCmd = &cobra.Command{
 		// Record the opt-out so the block-node workflow agrees the host no longer
 		// wants a firewall. A recorded decision still saying "enabled" would make
 		// the next `block node reconfigure` re-create the table just removed here.
-		if err := applyHostFirewallChange(true, func() error { return mgr.Delete(cmd.Context()) }); err != nil {
+		if err := applyHostFirewallChange(cmd.Context(), true, map[string]any{"force": force},
+			func() error { return mgr.Delete(cmd.Context()) }); err != nil {
 			return err
 		}
 

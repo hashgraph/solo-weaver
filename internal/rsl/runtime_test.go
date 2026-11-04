@@ -230,11 +230,17 @@ func TestRefreshMachine_IgnoresUnreachableClusterRuntimes(t *testing.T) {
 	require.Equal(t, persistedTeleport().NodeAgent, current.TeleportState.NodeAgent, "other sections keep their persisted value")
 }
 
-// unsyncedAppender is an fsx.Manager whose appends land but report a failed sync.
-type unsyncedAppender struct{ fsx.Manager }
+// unsyncedCommits is a state.Manager whose commits land but report a failed
+// sync.
+type unsyncedCommits struct{ state.Manager }
 
-func (a unsyncedAppender) AppendToFile(path string, payload []byte) error {
-	if err := a.Manager.AppendToFile(path, payload); err != nil {
+func (u unsyncedCommits) Set(s state.State) state.Writer {
+	u.Manager.Set(s)
+	return u
+}
+
+func (u unsyncedCommits) Commit(entry state.ActionHistory, ids ...state.ComponentID) error {
+	if err := u.Manager.Commit(entry, ids...); err != nil {
 		return err
 	}
 	return fsx.FileSyncError.New("disk gone")
@@ -252,10 +258,11 @@ func requireStateOperationFailed(t *testing.T, err error, hint string) {
 	require.Contains(t, strings.Join(hints, "\n"), hint)
 }
 
-// TestCommit_LandedStateWithALostEntrySaysSo: state that landed with its entry
-// lost keeps EntryNotAppendedError, says so once, and tells the operator what
-// to check, rather than "failed to persist state".
-func TestCommit_LandedStateWithALostEntrySaysSo(t *testing.T) {
+// TestCommit_LandedStateWithALostEntryIsAWarning: state that landed with its
+// entry lost is a success, and the operator is warned to check the history.
+func TestCommit_LandedStateWithALostEntryIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm := writePersistedState(t, stateFile)
 	r := newResolver(t, sm, liveTeleport(), nil)
@@ -265,30 +272,26 @@ func TestCommit_LandedStateWithALostEntrySaysSo(t *testing.T) {
 
 	s := sm.State()
 	s.TeleportState.NodeAgent.Configured = false
-	err := r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+	require.NoError(t, r.Commit(s, state.ActionHistory{}, state.ComponentTeleport))
 
-	require.True(t, errorx.IsOfType(err, state.EntryNotAppendedError), "got %v", err)
-	msg := doctor.OperatorMessage(err)
-	require.Equal(t, 1, strings.Count(msg, "the state was written but its action history entry was not appended"), msg)
-	require.NotContains(t, msg, "failed to persist state")
-	requireStateOperationFailed(t, err, history+" is writable")
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was not appended")
+	require.Contains(t, warnings[0], history+" is writable")
 }
 
-// TestCommit_UnsyncedStateSaysSo: state whose entry was appended but not synced
-// keeps FileSyncError and says it was saved but not synced.
+// TestCommit_UnsyncedStateSaysSo: state written but not synced keeps
+// FileSyncError and says it was saved but not synced.
 func TestCommit_UnsyncedStateSaysSo(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
-	writePersistedState(t, stateFile)
-	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(unsyncedAppender{newFileManager(t)}))
-	require.NoError(t, err)
-	require.NoError(t, sm.Refresh())
-	r := newResolver(t, sm, liveTeleport(), nil)
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, unsyncedCommits{sm}, liveTeleport(), nil)
 
 	s := sm.State()
 	s.TeleportState.NodeAgent.Configured = false
-	err = r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+	err := r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
 
 	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
-	require.Contains(t, doctor.OperatorMessage(err), "the state was saved and its action history entry appended, but not synced to disk")
+	require.Contains(t, doctor.OperatorMessage(err), "the state was saved but not synced to disk")
 	requireStateOperationFailed(t, err, "Check the disk holding "+filepath.Dir(stateFile))
 }

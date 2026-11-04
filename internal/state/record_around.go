@@ -5,18 +5,14 @@ package state
 import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
-	"github.com/hashgraph/solo-weaver/pkg/fsx"
-	"github.com/joomcode/errorx"
 )
 
 // RecordAround runs fn, an action that changes state files without Commit, and
 // appends entry with Components set to the state files fn created, changed or
 // removed, however fn ends. The outcome is fn's, and failed when fn returns an
 // error with a succeeded outcome. The caller holds the locks for every state
-// file fn writes. When fn failed, its error is returned and a failed append is
-// a state warning. When fn succeeded, a failed append is an
-// EntryNotAppendedError, or the fsx.FileSyncError of an append that landed but
-// was not synced.
+// file fn writes. fn's error is returned; an entry that can't be appended, or
+// was appended but not synced, is a state warning.
 func RecordAround(dir string, entry ActionHistory, fn func() (Outcome, error)) error {
 	files := append(legacyStateFiles(dir), provisionerFilePath(dir))
 	files = append(files, componentFiles(dir)...)
@@ -40,15 +36,9 @@ func RecordAround(dir string, entry ActionHistory, fn func() (Outcome, error)) e
 			doctor.OperatorMessage(snapErr) + ". Its action history entry names none of them.")
 	}
 
-	appendErr := appendEntry(dir, entry, err)
-	if err != nil {
-		return err
+	// With fn's error as the cause, Record has already warned.
+	if appendErr := appendEntry(dir, entry, err); appendErr != nil {
+		warnRecordFailure(dir, appendErr)
 	}
-	if errorx.IsOfType(appendErr, fsx.FileSyncError) {
-		return errorx.Decorate(appendErr, "the action ran and its action history entry was appended, but not synced to disk")
-	}
-	if appendErr != nil {
-		return EntryNotAppendedError.Wrap(appendErr, "the action ran but its action history entry was not appended")
-	}
-	return nil
+	return err
 }

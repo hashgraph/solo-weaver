@@ -240,8 +240,8 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 
 > **Every running workload stops.** This includes the block node.
 
-It also deletes everything under `/opt/solo/weaver/state/` except `action_history.yaml`, so it
-takes every state lock first. While any other solo-provisioner command holds one, it fails at
+It also deletes everything under `/opt/solo/weaver/state/` except `action_history.yaml` and the
+`.lock` files, so it takes every state lock first. While any other solo-provisioner command holds one, it fails at
 once with `<record> is being modified (held by pid N)`, before tearing anything down. Re-run it
 once that command finishes.
 

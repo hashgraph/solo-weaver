@@ -125,26 +125,31 @@ const (
 	startStepID  = "migration-start"
 )
 
-// RanIDs reads a MigrationsToWorkflow report: the ids of the migrations that
-// were applied, in order, and the id of the one that failed, if any. A
-// migration rolled back after a later one failed still counts as applied.
-func RanIDs(report *automa.Report) (applied []string, failed string) {
+// RanIDs reads a MigrationsToWorkflow report: the ids of the migrations
+// applied and still in effect, in order, those applied and then rolled back
+// after a later one failed, and the id of the one that failed, if any. A
+// migration whose rollback failed is still in effect, at least in part, so it
+// counts as applied.
+func RanIDs(report *automa.Report) (applied, rolledBack []string, failed string) {
 	if report == nil {
-		return nil, ""
+		return nil, nil, ""
 	}
 	for _, sr := range report.StepReports {
 		if sr.Id == startStepID || !strings.HasPrefix(sr.Id, stepIDPrefix) {
 			continue
 		}
 		id := strings.TrimPrefix(sr.Id, stepIDPrefix)
-		switch sr.Status {
-		case automa.StatusFailed:
+		switch {
+		case sr.Status == automa.StatusFailed:
 			failed = id
-		case automa.StatusSuccess:
+		case sr.Status != automa.StatusSuccess:
+		case sr.Rollback != nil && sr.Rollback.Status == automa.StatusSuccess:
+			rolledBack = append(rolledBack, id)
+		default:
 			applied = append(applied, id)
 		}
 	}
-	return applied, failed
+	return applied, rolledBack, failed
 }
 
 // MigrationsToWorkflow converts a list of migrations into an automa workflow.

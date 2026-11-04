@@ -401,7 +401,7 @@ func RunStartupMigrations(ctx context.Context) error {
 	}
 
 	pass := &state.StartupPass{FromVersion: onDiskCLIVersion, ToVersion: currentCLIVersion, Pending: migrations}
-	return state.RecordStartupPass(models.Paths().StateDir, pass, stamp, func() (state.StartupPassRun, error) {
+	return state.RecordStartupPass(ctx, models.Paths().StateDir, pass, stamp, func() (state.StartupPassRun, error) {
 		if wf == nil {
 			logx.As().Debug().Msg("No startup migrations needed")
 			return state.StartupPassRun{}, nil
@@ -409,7 +409,7 @@ func RunStartupMigrations(ctx context.Context) error {
 		logx.As().Info().Msg("Running startup migrations...")
 		report := wf.Execute(ctx)
 		run := state.StartupPassRun{Outcome: steps.OutcomeOf(report)}
-		run.Migrations, run.Failed = migration.RanIDs(report)
+		run.Migrations, run.RolledBack, run.Failed = migration.RanIDs(report)
 		if report.Error != nil {
 			// The workflow error only names the failed step; the migration's own
 			// error carries the reason and hints the operator needs.

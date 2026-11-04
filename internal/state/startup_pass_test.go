@@ -52,7 +52,7 @@ func TestRecordStartupPass_RecordsOnePassEntry(t *testing.T) {
 		return true, writeProvisionerRecord(dir, ProvisionerRecord{CLI: ProvisionerInfo{Version: "0.15.0"}})
 	}
 
-	require.NoError(t, RecordStartupPass(dir, pass, stamp, func() (StartupPassRun, error) {
+	require.NoError(t, RecordStartupPass(context.Background(), dir, pass, stamp, func() (StartupPassRun, error) {
 		return StartupPassRun{Migrations: []string{"mgmt-ports-v1"}}, os.WriteFile(filepath.Join(dir, StateFileName), []byte(mgmtPortsYAML), 0o644)
 	}))
 
@@ -74,7 +74,7 @@ func TestRecordStartupPass_RecordsOnePassEntry(t *testing.T) {
 func TestRecordStartupPass_NothingChangedRecordsNothing(t *testing.T) {
 	dir, pass := passDir(t)
 
-	require.NoError(t, RecordStartupPass(dir, pass, nil, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, pass, nil, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
 
 	require.Empty(t, passHistory(t, dir))
 }
@@ -87,16 +87,16 @@ func TestRecordStartupPass_RecordsOnlyFailuresThatChangedAFile(t *testing.T) {
 	leftChanged := func() (StartupPassRun, error) {
 		state, err := os.ReadFile(filepath.Join(dir, StateFileName))
 		require.NoError(t, err)
-		return StartupPassRun{Outcome: OutcomeFailed, Migrations: []string{"mgmt-ports-v1"}, Failed: "per-component-state"}, errors.Join(errors.New("rollback failed"),
+		return StartupPassRun{Outcome: OutcomeFailed, Migrations: []string{"mgmt-ports-v1"}, RolledBack: []string{"unified-state"}, Failed: "per-component-state"}, errors.Join(errors.New("rollback failed"),
 			os.WriteFile(filepath.Join(dir, StateFileName), append(state, '\n'), 0o644))
 	}
 
 	for range 3 {
-		require.Error(t, RecordStartupPass(dir, pass, nil, failedCleanly("cilium-host-legacy-routing")))
+		require.Error(t, RecordStartupPass(context.Background(), dir, pass, nil, failedCleanly("cilium-host-legacy-routing")))
 	}
 	require.Empty(t, passHistory(t, dir), "a failure that changed no state file is no state update")
 
-	require.Error(t, RecordStartupPass(dir, pass, nil, leftChanged))
+	require.Error(t, RecordStartupPass(context.Background(), dir, pass, nil, leftChanged))
 	entries := passHistory(t, dir)
 	require.Len(t, entries, 1)
 	require.Equal(t, OutcomeFailed, entries[0].Outcome)
@@ -105,6 +105,7 @@ func TestRecordStartupPass_RecordsOnlyFailuresThatChangedAFile(t *testing.T) {
 	inputs, ok := entries[0].Inputs.(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "per-component-state", inputs["failed"])
+	require.Equal(t, []any{"unified-state"}, inputs["rolledBack"])
 }
 
 // TestRecordStartupPass_LoneFailedStampOnlyWarns: a pass that changed nothing
@@ -116,7 +117,7 @@ func TestRecordStartupPass_LoneFailedStampOnlyWarns(t *testing.T) {
 	dir := t.TempDir()
 	failedStamp := func() (bool, error) { return false, errors.New("disk full") }
 
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, failedStamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, failedStamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
 
 	require.Empty(t, passHistory(t, dir))
 	warnings := TakeWarnings()
@@ -132,7 +133,7 @@ func TestRecordStartupPass_FailedStampAfterChangedFilesIsNotPersisted(t *testing
 	dir, pass := passDir(t)
 	failedStamp := func() (bool, error) { return false, errors.New("disk full") }
 
-	require.NoError(t, RecordStartupPass(dir, pass, failedStamp, func() (StartupPassRun, error) {
+	require.NoError(t, RecordStartupPass(context.Background(), dir, pass, failedStamp, func() (StartupPassRun, error) {
 		return StartupPassRun{Migrations: []string{"mgmt-ports-v1"}}, os.WriteFile(filepath.Join(dir, StateFileName), []byte(mgmtPortsYAML), 0o644)
 	}))
 
@@ -154,7 +155,7 @@ func TestRecordStartupPass_LostEntryIsAWarning(t *testing.T) {
 	dir, pass := passDir(t)
 	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
 
-	err := RecordStartupPass(dir, pass, nil, func() (StartupPassRun, error) {
+	err := RecordStartupPass(context.Background(), dir, pass, nil, func() (StartupPassRun, error) {
 		return StartupPassRun{}, os.WriteFile(filepath.Join(dir, StateFileName), []byte(mgmtPortsYAML), 0o644)
 	})
 
@@ -252,8 +253,8 @@ func TestRecordStartupPass_StampThatChangesNothingRecordsNothing(t *testing.T) {
 	stamp := func() (bool, error) { return persistProvisionerVersionIn(dir) }
 	nothing := func() (StartupPassRun, error) { return StartupPassRun{}, nil }
 
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, stamp, nothing))
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, stamp, nothing))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, stamp, nothing))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, stamp, nothing))
 
 	entries := passHistory(t, dir)
 	require.Len(t, entries, 1, "only the stamp that wrote provisioner.yaml is recorded")
@@ -269,7 +270,7 @@ func TestRecordStartupPass_UnreadableSnapshotStillRecordsAndWarns(t *testing.T) 
 	// A directory where a legacy file's glob matches cannot be read as a file.
 	require.NoError(t, os.Mkdir(filepath.Join(dir, StateFileName+".diverged-x"), 0o755))
 
-	require.NoError(t, RecordStartupPass(dir, pass, nil, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, pass, nil, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
 
 	entries := passHistory(t, dir)
 	require.Len(t, entries, 1)
@@ -288,7 +289,7 @@ func TestRecordStartupPass_UnsyncedStampIsRecorded(t *testing.T) {
 	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
 	stamp := func() (bool, error) { return persistProvisionerVersionIn(dir) }
 
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, stamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, stamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
 
 	entries := passHistory(t, dir)
 	require.Len(t, entries, 1)
@@ -311,7 +312,7 @@ func TestRecordStartupPass_UnsyncedEntryWarnsNotSynced(t *testing.T) {
 	}
 	dir, pass := passDir(t)
 
-	require.NoError(t, RecordStartupPass(dir, pass, nil, func() (StartupPassRun, error) {
+	require.NoError(t, RecordStartupPass(context.Background(), dir, pass, nil, func() (StartupPassRun, error) {
 		return StartupPassRun{}, os.Remove(filepath.Join(dir, StateFileName))
 	}))
 
@@ -338,7 +339,7 @@ func TestRecordStartupPass_ConcurrentStampsCreditTheVersionOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = RecordStartupPass(dir, &StartupPass{}, stamp, nothing)
+			errs[i] = RecordStartupPass(context.Background(), dir, &StartupPass{}, stamp, nothing)
 		}()
 	}
 	wg.Wait()
@@ -368,7 +369,7 @@ func TestRecordStartupPass_StampOnlyPassCreditsNoConcurrentWrite(t *testing.T) {
 	}
 	foundCurrent := func() (bool, error) { return false, nil }
 
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, foundCurrent, concurrentRemoval))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, foundCurrent, concurrentRemoval))
 
 	require.Empty(t, passHistory(t, dir))
 }
@@ -386,7 +387,7 @@ func TestRecordStartupPass_StampWaitsOutAShortHeldLock(t *testing.T) {
 	time.AfterFunc(300*time.Millisecond, release)
 	stamp := func() (bool, error) { return persistProvisionerVersionIn(dir) }
 
-	require.NoError(t, RecordStartupPass(dir, &StartupPass{}, stamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
+	require.NoError(t, RecordStartupPass(context.Background(), dir, &StartupPass{}, stamp, func() (StartupPassRun, error) { return StartupPassRun{}, nil }))
 
 	require.Empty(t, passHistory(t, dir), "the version was current once the lock was free")
 	require.Empty(t, TakeWarnings())

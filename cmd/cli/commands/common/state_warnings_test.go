@@ -4,6 +4,7 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -64,7 +65,7 @@ func TestStateWarnings_StartupPassWarningShowsOnce(t *testing.T) {
 	noMigrations := func() (state.StartupPassRun, error) { return state.StartupPassRun{}, nil }
 
 	// A workflow ran: its summary takes the warning, and the end prints nothing.
-	require.NoError(t, state.RecordStartupPass(t.TempDir(), &state.StartupPass{}, failedStamp, noMigrations))
+	require.NoError(t, state.RecordStartupPass(context.Background(), t.TempDir(), &state.StartupPass{}, failedStamp, noMigrations))
 	r := automa.StepSuccessReport("root")
 	require.NoError(t, finalizeWorkflowReport(r))
 	require.Len(t, ui.CollectWarnings(r), 1)
@@ -73,7 +74,7 @@ func TestStateWarnings_StartupPassWarningShowsOnce(t *testing.T) {
 	require.Empty(t, end.String())
 
 	// No workflow ran: the end prints it, once.
-	require.NoError(t, state.RecordStartupPass(t.TempDir(), &state.StartupPass{}, failedStamp, noMigrations))
+	require.NoError(t, state.RecordStartupPass(context.Background(), t.TempDir(), &state.StartupPass{}, failedStamp, noMigrations))
 	PrintStateWarnings(&end, state.TakeWarnings())
 	require.Equal(t, 1, strings.Count(end.String(), "The provisioner version was not recorded"))
 }

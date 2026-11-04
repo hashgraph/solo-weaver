@@ -3,7 +3,8 @@
 `/opt/solo/weaver/state/action_history.yaml` records every action solo-provisioner ran on a
 host and the state files each one changed. Persisted state says what a component looked like
 after its last run; the action history is the only account of which command got it there.
-No production code reads the file back. It is for operators and tooling.
+No production code reads the file back. It is for operators and tooling, which read it with
+`state.ReadActionHistory`.
 
 ## The contract
 
@@ -22,12 +23,11 @@ have changed the host. A command that stops earlier (bad input, a lock another c
 state it cannot read, the drift guard) changed nothing and records nothing.
 
 State files are written first and the entry second. A crash between the two, or an append
-that fails after the state landed, leaves state with no entry. The command fails and says the
-state was saved but its entry was not appended, and a re-run records its entry with no
-`components`, since the files already hold its content. That is the accepted limit of writing
-state and history without a transaction. When the action failed and its entry can't be appended
-either, or its state was written but not synced, the command fails with the action's own error,
-and a warning says what went wrong recording it. Every other way a run can end is recorded.
+that fails after the state landed, leaves state with no entry. By then the action has run, so
+a lost entry never fails the command: it ends as the action did, and a warning says the entry
+was not appended and which file to check. A re-run records its entry with no `components`,
+since the files already hold its content. That is the accepted limit of writing state and
+history without a transaction. Every other way a run can end is recorded.
 
 State files and history appends are synced to disk. Each append starts on a new line, so an
 entry a full disk cut short doesn't run into the next one. A file or entry that landed but could
@@ -44,7 +44,7 @@ intent:
   action: uninstall
   target: firewall
 inputs:
-  disabled: true
+  force: true
 timestamp: 2026-10-24T09:12:03Z
 outcome: succeeded
 components:
@@ -58,7 +58,7 @@ components:
 | `timestamp` | When the entry was recorded. |
 | `outcome` | `succeeded` or `failed`. A workflow that failed and was rolled back is `failed`: a rollback does not prove the host is back where it was. |
 | `notPersisted` | Set only when a state file the action meant to write did not land, so persisted state does not match what the action did: a component file, or `provisioner.yaml` when a version stamp failed (in the command's workflow, or in a startup pass that changed files). A failed action that wrote nothing is just `failed`. |
-| `error`, `reason` | Why the action failed or its state did not land, as the operator sees it, and the reason code attached to that error. |
+| `error`, `reason` | Why the action failed or its state did not land, as the operator sees it, and the reason code attached to that error. For a failed workflow, this is the failed step's own error. |
 | `components` | The state files whose content the action changed, created or removed. |
 | `ownedDrift` | The out-of-band changes to the action's owned components that it ran over. |
 
@@ -83,15 +83,32 @@ Each record names the component and field, its persisted and live values, and:
   failed, so whether the change is gone is unknown;
 - `unobserved`: the run could not read the live value at all.
 
+## Which files each target can change
+
+`state.TargetFiles(target)` lists the state files a target's commands can change. Tooling uses
+it to go from a target to its files. `bll.NewBaseHandler` and `state.RunOwning` refuse to
+manage a component outside their target's row, so the table can't drift from the writers.
+
+| Target | Files |
+|---|---|
+| `blocknode` | `blocknode`, `profile`, `firewall`, `system`, `provisioner` |
+| `consensus` | `consensus`, `profile` |
+| `teleport-node` | `teleport`, `system` |
+| `teleport-cluster` | `teleport` |
+| `firewall` | `firewall` |
+| `cluster` | every state file: `kube cluster uninstall` removes them all |
+| `system` | every state file: a startup migration pass can rewrite them all |
+
 ## Which commands record what
 
 | Command | Entry |
 |---|---|
 | `block node`, `consensus`, `teleport` commands | One entry per run, after its workflow, naming the files it changed. A run whose workflow failed still writes its state and records `failed`. |
-| `network firewall create` | `install` / `firewall`. |
-| `network firewall delete` (with or without `--all`) | `uninstall` / `firewall`. `delete --name` edits only the firewall's own config and records nothing. |
+| `network firewall create` | `install` / `firewall`. `inputs.config` is the applied table in the `--from-file` format, and `inputs.force` the `--force` flag. |
+| `network firewall delete` (with or without `--all`) | `uninstall` / `firewall`, with `inputs.force`. |
+| Other `network firewall` verbs | Nothing: `create-allow-rule`, `delete --name`, `add`, `remove`, `set`, `reapply` and `refresh-dns` change only the firewall's own config and the kernel, not a state file. |
 | `kube cluster install` | `install` / `cluster`. A failed install leaves the `system` record as it was and records `failed`. |
-| `kube cluster uninstall` | `uninstall` / `cluster`, naming every state file it removed. The uninstall empties the state directory but keeps `action_history.yaml`, so the history outlives the cluster. |
+| `kube cluster uninstall` | `uninstall` / `cluster`, naming every state file it removed. The uninstall empties the state directory but keeps `action_history.yaml`, so the history outlives the cluster, and the `.lock` files it holds, so no other command can write state before it records what it removed. |
 
 When a command's workflow records the provisioner version (cluster creation inside
 `kube cluster install` or `block node install`), that command's entry lists `provisioner`; a
@@ -122,8 +139,10 @@ outcome: succeeded
 components: [profile, firewall, system, cluster, blocknode, consensus, teleport, provisioner, legacy]
 ```
 
-- `migrations` lists every migration the pass applied, host ones included, and `failed` the one
-  that failed. `fromVersion` is empty on a host with no recorded version.
+- `migrations` lists every migration the pass applied that is still in effect, host ones
+  included. `rolledBack` lists those applied and then rolled back after a later one failed, and
+  `failed` the one that failed. A migration whose rollback failed stays in `migrations`.
+  `fromVersion` is empty on a host with no recorded version.
 - A pass is recorded when it changed a state file. A pass that changed no state file records
   nothing: host-only migrations on a host with nothing to stamp, a stamp that found
   `provisioner.yaml` already describing the running binary (such as a concurrent invocation's
@@ -149,12 +168,15 @@ components: [profile, firewall, system, cluster, blocknode, consensus, teleport,
 
 ## Writing state in code
 
+- Start every entry with `state.NewEntry(ctx, intent, inputs)`. For a workflow's run,
+  `steps.WorkflowEntry` also sets the outcome, the failed step's error and the provisioner
+  version from the report.
 - Write state only through `state.Writer.Commit` (or `state.RunOwning`, for a command outside
   `BaseHandler`). It writes the listed component files, then appends the entry, on every exit:
-  when a file did not land, the entry is marked `notPersisted` with the error, and an entry
-  that can't be appended either is a warning, so the write error stays the one returned. When
-  the entry's outcome is `failed`, a lost entry or an unsynced write is a warning too, and
-  `Commit` returns nil, so the command reports the workflow's own failure.
+  when a file did not land, the entry is marked `notPersisted` with the error. An entry that
+  can't be appended is always a warning, never `Commit`'s error. When the entry's outcome is
+  `failed`, an unsynced write is a warning too, and `Commit` returns nil, so the command reports
+  the workflow's own failure.
 - Use `state.Writer.Record` for an action that changed the host but whose state never reached
   `Commit`, such as a refresh that failed after the workflow. With a cause (the action failed),
   an entry that can't be appended is a warning and `Record` returns nil, so the command fails
@@ -162,13 +184,14 @@ components: [profile, firewall, system, cluster, blocknode, consensus, teleport,
 - Use `state.RecordAround` for an action that changes state files without `Commit`, such as
   `kube cluster uninstall`. It compares every state file before and after, so the caller must
   hold every lock for them; if the files can't be read, the entry names none and the operator
-  is warned.
+  is warned. It returns the action's own error.
+- Record a workflow's run inside the function passed to `common.RunWorkflow`, before it
+  returns the report, so a warning about recording it reaches the run summary and the saved
+  report.
 - The startup pass runs through `state.RecordStartupPass`. A startup migration that writes state
   lives in `internal/state` and declares its files with `stateFiles(dir)`; see
   [Migration Framework](migration-framework.md#startup-migration-runner).
-- Set `Outcome` from the workflow report with `steps.OutcomeOf`, and add
-  `state.ChangedProvisioner` when `steps.ProvisionerVersionPersisted` says the workflow
-  recorded the version.
+- A new writer's target needs a row in `state.TargetFiles`.
 - `TestEveryStateWriterIsAccountedFor` (`internal/state/lock_invariant_test.go`) fails when a
   call that writes state appears without a row saying how it holds its lock and how its write
   reaches the action history.

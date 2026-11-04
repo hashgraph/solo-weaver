@@ -13,7 +13,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
@@ -47,12 +46,12 @@ type Writer interface {
 	// appends entry to action_history.yaml. A component with no prior baseline
 	// (first write) is written outright. entry.Components gains the listed
 	// files whose content changed. entry is appended even when a file did not
-	// land, marked NotPersisted with the error. An fsx.FileSyncError means the
-	// files landed and the entry was appended, but not all of it is synced.
-	// When a file did not land, or entry.Outcome is failed, the command reports
-	// the action's own failure: Commit returns the write error (nil for a
-	// failed action whose state landed), and a lost entry or an unsynced write
-	// is a state warning, as with Record's cause.
+	// land, marked NotPersisted with the error. An entry that can't be
+	// appended is a state warning, never Commit's error: the action already
+	// ran. Commit returns the write error, where an fsx.FileSyncError means the
+	// files landed but are not synced; for a failed action it returns nil, and
+	// an unsynced write is a state warning too, so the command reports the
+	// action's own failure.
 	Commit(entry ActionHistory, ids ...ComponentID) error
 	// Record appends entry to action_history.yaml for an action that changed
 	// the host but writes no state through Commit. cause, when not nil, is the
@@ -272,35 +271,22 @@ func (m *stateManager) Commit(entry ActionHistory, ids ...ComponentID) error {
 	landed := writeErr == nil || errorx.IsOfType(writeErr, fsx.FileSyncError)
 	if !landed {
 		entry.NotPersisted = true
-		entry = withError(entry, writeErr)
+		entry = entry.WithError(writeErr)
 	}
 
 	m.addActionHistory(entry)
-	appendErr := m.flushActionHistory()
+	if appendErr := m.flushActionHistory(); appendErr != nil {
+		warnRecordFailure(m.dir(), appendErr)
+	}
 	switch {
 	case !landed:
-		if appendErr != nil {
-			warnRecordFailure(m.dir(), appendErr)
-		}
 		return writeErr
 	case entry.Outcome == OutcomeFailed:
-		// The action's own failure is what the command reports; trouble
-		// recording it is a warning.
+		// The action's own failure is what the command reports.
 		if writeErr != nil {
 			warnUnsynced(m.dir(), writeErr)
-		}
-		if appendErr != nil {
-			warnRecordFailure(m.dir(), appendErr)
 		}
 		return nil
-	case appendErr != nil:
-		if writeErr != nil {
-			warnUnsynced(m.dir(), writeErr)
-		}
-		if errorx.IsOfType(appendErr, fsx.FileSyncError) {
-			return appendErr
-		}
-		return EntryNotAppendedError.Wrap(appendErr, "the state was written but its action history entry was not appended")
 	}
 	return writeErr
 }
@@ -310,7 +296,7 @@ func (m *stateManager) Record(entry ActionHistory, cause error) error {
 	defer m.flushMu.Unlock()
 
 	if cause != nil {
-		entry = withError(entry, cause)
+		entry = entry.WithError(cause)
 	}
 	m.addActionHistory(entry)
 	err := m.flushActionHistory()
@@ -339,11 +325,12 @@ func warnUnsynced(dir string, err error) {
 		". Check the disk holding " + dir + ".")
 }
 
-// warnRecordFailure tells the operator that an entry could not be appended
-// after its action had already failed, without replacing the action's own
-// error. An fsx.FileSyncError means the entry was appended but not synced.
+// warnRecordFailure tells the operator that an entry could not be appended,
+// without failing the command: the action already ran, and its own result is
+// what the command reports. An fsx.FileSyncError means the entry was appended
+// but not synced.
 func warnRecordFailure(dir string, err error) {
-	logx.As().Warn().Err(err).Msg("Failed to append the action history entry of a failed action")
+	logx.As().Warn().Err(err).Msg("Failed to append the action history entry")
 	if errorx.IsOfType(err, fsx.FileSyncError) {
 		addWarning("The command's action history entry was appended but not synced to disk: " +
 			doctor.OperatorMessage(err) + ".")
@@ -351,16 +338,6 @@ func warnRecordFailure(dir string, err error) {
 	}
 	addWarning("The command's action history entry was not appended: " + doctor.OperatorMessage(err) +
 		". Check that " + ActionHistoryFilePath(dir) + " is writable.")
-}
-
-// withError records err on entry the way an operator reads it: the message
-// without its printable reason, which goes in Reason instead.
-func withError(entry ActionHistory, err error) ActionHistory {
-	entry.Error = doctor.OperatorMessage(err)
-	if reason, ok := errx.ReasonOf(err); ok {
-		entry.Reason = reason
-	}
-	return entry
 }
 
 // preparedComponentFlush is one component's validated, ready-to-write output:

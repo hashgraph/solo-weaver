@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/automa-saga/errx"
+	netfw "github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -282,31 +283,16 @@ func TestFirewallVerbs_RecordAnEntry(t *testing.T) {
 
 	require.Len(t, fake.entries, 2)
 	require.Equal(t, models.Intent{Action: models.ActionInstall, Target: models.TargetFirewall}, fake.entries[0].Intent)
-	require.Equal(t, map[string]bool{"disabled": false}, fake.entries[0].Inputs)
+	created, ok := fake.entries[0].Inputs.(map[string]any)
+	require.True(t, ok, "got %T", fake.entries[0].Inputs)
+	require.Equal(t, false, created["force"])
+	config, ok := created["config"].(*netfw.FileConfig)
+	require.True(t, ok, "the entry records the applied table as a --from-file config, got %T", created["config"])
+	require.Equal(t, []string{"192.168.50.0/24"}, config.Mgmt.CIDRs)
 	require.Equal(t, state.OutcomeSucceeded, fake.entries[0].Outcome)
 	require.Equal(t, models.Intent{Action: models.ActionUninstall, Target: models.TargetFirewall}, fake.entries[1].Intent)
-	require.Equal(t, map[string]bool{"disabled": true}, fake.entries[1].Inputs)
+	require.Equal(t, map[string]any{"force": false}, fake.entries[1].Inputs)
 	require.Equal(t, state.OutcomeSucceeded, fake.entries[1].Outcome)
-}
-
-// TestCreateCmd_LostEntryIsReportedAsALostEntry: when the decision is recorded
-// but its history entry can't be appended, the command says that, not that the
-// decision was lost.
-func TestCreateCmd_LostEntryIsReportedAsALostEntry(t *testing.T) {
-	stubManager(t)
-	fake := stubStateManager(t)
-	fake.commitErr = state.EntryNotAppendedError.New("the state was written but its action history entry was not appended")
-
-	err := run(t, "create", "--mgmt-cidrs", "192.168.50.0/24")
-
-	require.ErrorContains(t, err, "its decision recorded, but its action history entry was not appended")
-	require.NotContains(t, err.Error(), "the decision was not recorded")
-	fw := flushedFirewall(t, fake)
-	require.NotNil(t, fw)
-	require.False(t, fw.Disabled, "the decision landed")
-	reason, ok := errx.ReasonOf(err)
-	require.True(t, ok)
-	require.Equal(t, reasons.StateOperationFailed, reason)
 }
 
 // TestCreateCmd_UnsyncedDecisionIsReportedAsRecorded: a decision written but not

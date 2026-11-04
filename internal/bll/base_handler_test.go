@@ -28,7 +28,6 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
-	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
@@ -207,12 +206,30 @@ func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
-	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, opts...)
+	probe := BaseHandler[struct{}]{}
+	for _, opt := range opts {
+		opt(&probe)
+	}
+	target := fixtureTarget(probe.ownedComponentIDs())
+	base, err := NewBaseHandler[struct{}](runtime, target, opts...)
 	require.NoError(t, err)
 
 	inputs := models.UserInputs[struct{}]{Common: common}
 	return base.HandleIntent(context.Background(),
-		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, inputs, intent, nil)
+		models.Intent{Action: models.ActionInstall, Target: target}, inputs, intent, nil)
+}
+
+func managedIDs(managed []Component) []state.ComponentID { return componentIDsOf(managed) }
+
+// fixtureTarget is a target that owns every component in ids, so a fixture
+// can manage any set of components.
+func fixtureTarget(ids []state.ComponentID) models.TargetType {
+	for _, target := range []models.TargetType{models.TargetBlockNode, models.TargetTeleportCluster} {
+		if state.CheckTargetOwns(target, ids) == nil {
+			return target
+		}
+	}
+	return models.TargetCluster
 }
 
 func configuredNodeAgent() state.TeleportState {
@@ -436,6 +453,17 @@ func TestOwnedComponentIDs_AreTheManagedComponentsOnce(t *testing.T) {
 	require.False(t, h.Owns(Profile))
 }
 
+// TestNewBaseHandler_RefusesAComponentItsTargetDoesNotOwn: a handler can only
+// manage files in its target's row of state.TargetFiles, which diagnose
+// tooling reads to go from a target to its files.
+func TestNewBaseHandler_RefusesAComponentItsTargetDoesNotOwn(t *testing.T) {
+	_, err := NewBaseHandler[struct{}](&rsl.RuntimeResolver{}, models.TargetTeleportCluster, owns(Teleport, System))
+	require.ErrorContains(t, err, `target "teleport-cluster" does not own the system state file`)
+
+	_, err = NewBaseHandler[struct{}](&rsl.RuntimeResolver{}, models.TargetTeleportNode, owns(Teleport, System))
+	require.NoError(t, err)
+}
+
 // TestNewBaseHandler_ProfileExtractorRequiresTheProfileComponent: the extractor
 // writes MachineState.Profile, which reaches disk only through the profile
 // file, so a handler that would extract a profile it never flushes is refused.
@@ -510,14 +538,15 @@ func handleBlockNodeIntentWithCallback(
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
-	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, WithManagedComponents[struct{}](managed...))
+	target := fixtureTarget(managedIDs(managed))
+	base, err := NewBaseHandler[struct{}](runtime, target, WithManagedComponents[struct{}](managed...))
 	require.NoError(t, err)
 
 	inputs := models.UserInputs[struct{}]{Common: models.CommonInputs{
 		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
 	}}
 	return base.HandleIntent(context.Background(),
-		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, inputs, intent, callback)
+		models.Intent{Action: models.ActionInstall, Target: target}, inputs, intent, callback)
 }
 
 // TestHandleIntent_DisjointHandlersNeverContend: two commands that
@@ -594,7 +623,8 @@ func TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow(t *testing.T) {
 
 	runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
-	report, err := handleBlockNodeIntent(t, stateFile, h, noopIntent{stepErr: errors.New("step failed")})
+	stepErr := errx.Decorate(errors.New("step failed"), reasons.PreconditionNotMet, "fix it")
+	report, err := handleBlockNodeIntent(t, stateFile, h, noopIntent{stepErr: stepErr})
 	require.NoError(t, err, "a failed workflow is reported, and its state is still flushed")
 	require.Error(t, report.Error)
 
@@ -611,16 +641,21 @@ func TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow(t *testing.T) {
 	require.False(t, entries[0].NotPersisted)
 	require.Equal(t, state.OutcomeFailed, entries[1].Outcome)
 	require.False(t, entries[1].NotPersisted, "a failed workflow's state still landed")
+	require.Contains(t, entries[1].Error, "step failed", "a failed workflow's entry says why")
+	require.NotContains(t, entries[1].Error, "{reason:", "the printable reason stays out of the message")
+	require.Equal(t, reasons.PreconditionNotMet, entries[1].Reason)
 	require.Equal(t, state.OutcomeSucceeded, entries[2].Outcome)
 	require.True(t, entries[2].NotPersisted)
 	require.Contains(t, entries[2].Error, "failed to refresh runtime state before flush")
 	require.Empty(t, entries[2].Components)
 }
 
-// TestFlushState_LandedStateWithALostEntrySaysSo: when the state lands but its
-// entry can't be appended, the command says exactly that, with the reason and
-// a hint, rather than "failed to persist state".
-func TestFlushState_LandedStateWithALostEntrySaysSo(t *testing.T) {
+// TestFlushState_LandedStateWithALostEntryIsAWarning: when the state lands but
+// its entry can't be appended, the action already ran, so the command succeeds
+// and the operator is warned.
+func TestFlushState_LandedStateWithALostEntryIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	dir := filepath.Dir(stateFile)
 	writeState(t, stateFile, configuredNodeAgent())
@@ -630,16 +665,11 @@ func TestFlushState_LandedStateWithALostEntrySaysSo(t *testing.T) {
 
 	_, err := handleBlockNodeIntent(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{execute: breakHistory})
 
-	require.True(t, errorx.IsOfType(err, state.EntryNotAppendedError), "got %v", err)
-	msg := doctor.OperatorMessage(err)
-	require.Contains(t, msg, "the state was written but its action history entry was not appended")
-	require.NotContains(t, msg, "failed to persist state")
-	reason, ok := errx.ReasonOf(err)
-	require.True(t, ok)
-	require.Equal(t, reasons.StateOperationFailed, reason)
-	hints, ok := errx.Hints(err)
-	require.True(t, ok)
-	require.Contains(t, hints, "Check that "+state.ActionHistoryFilePath(dir)+" is writable.")
+	require.NoError(t, err)
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was not appended")
+	require.Contains(t, warnings[0], "Check that "+state.ActionHistoryFilePath(dir)+" is writable.")
 }
 
 // TestFlushState_FailedWorkflowKeepsItsFailureWhenRecordingHasTrouble: a

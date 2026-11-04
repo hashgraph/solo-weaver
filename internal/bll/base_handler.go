@@ -130,6 +130,9 @@ func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType, o
 	for _, opt := range opts {
 		opt(&h)
 	}
+	if err := state.CheckTargetOwns(target, h.ownedComponentIDs()); err != nil {
+		return BaseHandler[T]{}, errx.WithReason(err, reasons.Internal)
+	}
 	// The extractor writes MachineState.Profile, which only reaches disk when
 	// the handler flushes the profile file.
 	if h.ProfileExtractor != nil && !h.Owns(Profile) {
@@ -285,18 +288,7 @@ func (h *BaseHandler[T]) flushState(
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
-	entry := state.ActionHistory{
-		Intent:  intent,
-		Inputs:  effectiveInputs,
-		Outcome: steps.OutcomeOf(report),
-	}
-	if steps.ProvisionerVersionPersisted(report) {
-		entry.Components = []state.ChangedFile{state.ChangedProvisioner}
-	}
-	if steps.ProvisionerVersionFailed(report) {
-		entry.NotPersisted = true
-		entry.Error = "the provisioner version was not recorded; startup migrations may run again on the next invocation"
-	}
+	entry := steps.WorkflowEntry(ctx, intent, effectiveInputs, report)
 	notPersisted := func(err error) error {
 		entry.NotPersisted = true
 		_ = h.Runtime.Record(entry, err) // with a cause, a lost entry is a state warning
@@ -334,7 +326,7 @@ func (h *BaseHandler[T]) flushState(
 
 	// Write only the files this handler owns, then the entry.
 	if err := h.Runtime.Commit(fullState, entry, h.ownedComponentIDs()...); err != nil {
-		if errorx.IsOfType(err, state.EntryNotAppendedError) || errorx.IsOfType(err, fsx.FileSyncError) {
+		if errorx.IsOfType(err, fsx.FileSyncError) {
 			return nil, err // the state landed; rsl says what to check
 		}
 		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")

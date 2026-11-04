@@ -3,6 +3,7 @@
 package firewall
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/automa-saga/errx"
@@ -41,20 +42,20 @@ var stateManager = func() (state.Manager, error) { return state.NewStateManager(
 // decision fails before touching the kernel. A record that still fails after
 // apply is returned, never only logged: a dropped decision is what makes the
 // next reconfigure undo this command.
-func applyHostFirewallChange(disabled bool, apply func() error) error {
+//
+// inputs is what the command applied, recorded in the entry.
+func applyHostFirewallChange(ctx context.Context, disabled bool, inputs any, apply func() error) error {
 	sm, err := stateManager()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
 	// create records install/firewall, delete records uninstall/firewall.
-	entry := state.ActionHistory{
-		Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetFirewall},
-		Inputs: map[string]bool{"disabled": disabled},
-	}
+	action := models.ActionInstall
 	if disabled {
-		entry.Intent.Action = models.ActionUninstall
+		action = models.ActionUninstall
 	}
+	entry := state.NewEntry(ctx, models.Intent{Action: action, Target: models.TargetFirewall}, inputs)
 
 	applied := false
 	err = state.RunOwning(sm, entry, []state.ComponentID{state.ComponentFirewall},
@@ -74,13 +75,6 @@ func applyHostFirewallChange(disabled bool, apply func() error) error {
 			st.MachineState.Firewall = fw
 			return nil
 		})
-	if err != nil && applied && errorx.IsOfType(err, state.EntryNotAppendedError) {
-		return errx.Decorate(
-			errorx.Decorate(err, "the host firewall change was applied and its decision recorded, but its action history entry was not appended"),
-			reasons.StateOperationFailed,
-			"Check that "+state.ActionHistoryFilePath(filepath.Dir(sm.State().StateFile))+" is writable. "+
-				"The decision is already recorded; a re-run records a new entry, which can't name the files this run changed.")
-	}
 	if err != nil && applied && errorx.IsOfType(err, fsx.FileSyncError) {
 		return errx.Decorate(
 			errorx.Decorate(err, "the host firewall change was applied and its decision recorded, but not synced to disk"),

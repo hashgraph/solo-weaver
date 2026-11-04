@@ -103,36 +103,26 @@ var installCmd = &cobra.Command{
 		defer release()
 
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
-		// Keep the workflow's report: it says how the run ended, and whether it
-		// recorded the provisioner version.
-		var report *automa.Report
-		runErr := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
+		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}
+		inputs := map[string]any{"profile": profile, "nodeType": nodeType, "skipHardwareChecks": skipHardwareChecks}
+		// Record inside the run, before its report is saved and summarised, so
+		// a warning about recording it reaches both. A failed install returns
+		// its own error from the report.
+		var recordErr error
+		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
 			wf, err := wb.Build()
 			if err != nil {
 				return nil, err
 			}
-			report = wf.Execute(cmd.Context())
+			report := wf.Execute(cmd.Context())
+			entry := steps.WorkflowEntry(cmd.Context(), intent, inputs, report)
+			recordErr = recordClusterInstall(cmd.Context(), sr.Runtime, entry, steps.FailureOf(report), owned)
 			return report, nil
-		})
-		if report == nil {
-			// The workflow never started, so the host is unchanged.
-			return runErr
-		}
-
-		entry := state.ActionHistory{
-			Intent:  models.Intent{Action: models.ActionInstall, Target: models.TargetCluster},
-			Inputs:  map[string]any{"profile": profile, "nodeType": nodeType, "skipHardwareChecks": skipHardwareChecks},
-			Outcome: steps.OutcomeOf(report),
-		}
-		if steps.ProvisionerVersionPersisted(report) {
-			entry.Components = []state.ChangedFile{state.ChangedProvisioner}
-		}
-		if steps.ProvisionerVersionFailed(report) {
-			entry.NotPersisted = true
-			entry.Error = "the provisioner version was not recorded; startup migrations may run again on the next invocation"
-		}
-		if err := recordClusterInstall(cmd.Context(), sr.Runtime, entry, runErr, owned); err != nil {
+		}); err != nil {
 			return err
+		}
+		if recordErr != nil {
+			return recordErr
 		}
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
@@ -149,15 +139,16 @@ type clusterRecorder interface {
 }
 
 // recordClusterInstall records the install once its workflow ran. A failed
-// install leaves the system record as it was, and records only that it
-// failed; otherwise the live state's owned files are written with the entry.
-func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.ActionHistory, runErr error, owned []state.ComponentID) error {
+// install (failure is the workflow's error) leaves the system record as it
+// was, records only that it failed, and returns failure; otherwise the live
+// state's owned files are written with the entry.
+func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.ActionHistory, failure error, owned []state.ComponentID) error {
 	record := func(err error) error {
 		_ = rt.Record(entry, err) // with a cause, a lost entry is a state warning
 		return err
 	}
-	if runErr != nil {
-		return record(runErr)
+	if failure != nil {
+		return record(failure)
 	}
 	live, err := rt.RefreshMachine(ctx, true)
 	if err != nil {
@@ -165,7 +156,7 @@ func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.A
 		return record(errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install"))
 	}
 	if err := rt.Commit(live, entry, owned...); err != nil {
-		if errorx.IsOfType(err, state.EntryNotAppendedError) || errorx.IsOfType(err, fsx.FileSyncError) {
+		if errorx.IsOfType(err, fsx.FileSyncError) {
 			return err // the system record landed; rsl says what to check
 		}
 		return errorx.IllegalState.Wrap(err, "failed to persist the system record")

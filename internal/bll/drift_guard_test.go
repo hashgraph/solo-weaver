@@ -5,10 +5,7 @@
 package bll
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +21,6 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // destroyingIntent is a noopIntent whose action destroys the owned drift
@@ -82,7 +78,7 @@ func TestHandleIntent_DestructiveActionStopsOnOwnedDrift(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dir, "action_history.yaml"))
 
 	require.True(t, errorx.IsOfType(err, errorx.IllegalState))
-	require.Equal(t, "blocknode install would overwrite out-of-band changes to teleport:\n"+
+	require.Equal(t, "teleport-cluster install would overwrite out-of-band changes to teleport:\n"+
 		`  teleport nodeAgent.configured differs from persisted state: recorded "false", live "true"`,
 		errorx.Cast(err).Message())
 	require.Contains(t, doctor.OperatorMessage(err), `teleport nodeAgent.configured differs from persisted state: recorded "false", live "true"`)
@@ -101,19 +97,9 @@ func TestHandleIntent_DestructiveActionStopsOnOwnedDrift(t *testing.T) {
 // readActionHistory decodes every entry of dir's action history.
 func readActionHistory(t *testing.T, dir string) []state.ActionHistory {
 	t.Helper()
-	b, err := os.ReadFile(state.ActionHistoryFilePath(dir))
+	entries, err := state.ReadActionHistory(dir)
 	require.NoError(t, err)
-	var entries []state.ActionHistory
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	for {
-		var e state.ActionHistory
-		err := dec.Decode(&e)
-		if errors.Is(err, io.EOF) {
-			return entries
-		}
-		require.NoError(t, err)
-		entries = append(entries, e)
-	}
+	return entries
 }
 
 // The override lets a destructive action run over the drift it destroys, and
@@ -326,7 +312,7 @@ func TestHandleIntent_UnobservedPartStopsADestructiveAction(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, ran, "the workflow must not run")
 	require.NoFileExists(t, state.ActionHistoryFilePath(dir))
-	require.Equal(t, "blocknode install cannot verify teleport:\n"+
+	require.Equal(t, "teleport-cluster install cannot verify teleport:\n"+
 		`  teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
 		errorx.Cast(err).Message())
 	reason, ok := errx.ReasonOf(err)
@@ -366,7 +352,7 @@ func TestHandleIntent_NoFlagGetsPastAnUnobservedPart(t *testing.T) {
 
 			_, err := handleIntent(t, stateFile, h, destroyingIntent{noopIntent{execute: func() { ran = true }}, destroysAll}, common, owns(Teleport))
 
-			require.ErrorContains(t, err, "blocknode install cannot verify teleport:")
+			require.ErrorContains(t, err, "teleport-cluster install cannot verify teleport:")
 			require.False(t, ran, "the workflow must not run")
 			require.NoFileExists(t, state.ActionHistoryFilePath(filepath.Dir(stateFile)))
 			require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)

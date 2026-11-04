@@ -140,7 +140,7 @@ var stateWriters = map[string]writerRow{
 	},
 	"internal/workflows/steps/step_cluster_uninstall.go:cleanupWeaverHome": {
 		lock:    "kube cluster uninstall holds every state lock: TestLockAllState_FailsFastOnEveryStateLock",
-		history: "inside kube cluster uninstall's RecordAround; keeps action_history.yaml: TestCleanupWeaverHome_KeepsTheActionHistory",
+		history: "inside kube cluster uninstall's RecordAround; keeps action_history.yaml and the held locks: TestCleanupWeaverHome_KeepsTheActionHistoryAndLocks",
 	},
 	"internal/workflows/steps/step_cluster_uninstall.go:removeAllExcept": {
 		lock:    "helper of cleanupWeaverHome",

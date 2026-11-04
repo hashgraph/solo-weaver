@@ -3,6 +3,7 @@
 package state
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 
@@ -15,11 +16,12 @@ import (
 )
 
 // StartupPass is what one startup migration pass ran: its entry's inputs.
-// RecordStartupPass fills Migrations and Failed from the pass's run.
+// RecordStartupPass fills Migrations, RolledBack and Failed from the pass's run.
 type StartupPass struct {
 	FromVersion string   `yaml:"fromVersion" json:"fromVersion"`
 	ToVersion   string   `yaml:"toVersion" json:"toVersion"`
 	Migrations  []string `yaml:"migrations" json:"migrations"`
+	RolledBack  []string `yaml:"rolledBack,omitempty" json:"rolledBack,omitempty"`
 	Failed      string   `yaml:"failed,omitempty" json:"failed,omitempty"`
 	// Pending is the migrations the pass runs, re-checked under the
 	// startup-migrations lock. Those in this package declare the state files
@@ -31,7 +33,8 @@ type StartupPass struct {
 // that ran nothing.
 type StartupPassRun struct {
 	Outcome    Outcome  // succeeded when empty and the run returned no error
-	Migrations []string // applied, in order
+	Migrations []string // applied and still in effect, in order
+	RolledBack []string // applied, then rolled back after a later one failed
 	Failed     string   // the one that failed, if any
 }
 
@@ -52,7 +55,7 @@ type fileDeclarer interface{ stateFiles(dir string) []string }
 // records the entry without the migrations' files and warns. Recording is
 // best-effort: a failed or unsynced append becomes a warning, and the error
 // returned is fn's.
-func RecordStartupPass(dir string, pass *StartupPass, stamp func() (changed bool, err error), fn func() (StartupPassRun, error)) error {
+func RecordStartupPass(ctx context.Context, dir string, pass *StartupPass, stamp func() (changed bool, err error), fn func() (StartupPassRun, error)) error {
 	// A stamp-only pass compares no file: anything that changes one meanwhile
 	// is another command's.
 	var files []string
@@ -73,15 +76,12 @@ func RecordStartupPass(dir string, pass *StartupPass, stamp func() (changed bool
 	} else if outcome == "" {
 		outcome = OutcomeSucceeded
 	}
-	pass.Migrations, pass.Failed = run.Migrations, run.Failed
-	entry := ActionHistory{
-		Intent:  models.Intent{Action: models.ActionMigrate, Target: models.TargetSystem},
-		Inputs:  pass,
-		Outcome: outcome,
-	}
+	pass.Migrations, pass.RolledBack, pass.Failed = run.Migrations, run.RolledBack, run.Failed
+	entry := NewEntry(ctx, models.Intent{Action: models.ActionMigrate, Target: models.TargetSystem}, pass)
+	entry.Outcome = outcome
 	stamped := false
 	if err != nil {
-		entry = withError(entry, err)
+		entry = entry.WithError(err)
 	} else if stamp != nil {
 		var stampErr error
 		stamped, stampErr = stamp()
@@ -97,7 +97,7 @@ func RecordStartupPass(dir string, pass *StartupPass, stamp func() (changed bool
 			addWarning("The provisioner version was not recorded: " + doctor.OperatorMessage(stampErr) +
 				". Startup migrations may run again on the next invocation.")
 			entry.NotPersisted = true
-			entry = withError(entry, stampErr)
+			entry = entry.WithError(stampErr)
 		}
 	}
 

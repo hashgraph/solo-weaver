@@ -10,7 +10,6 @@ import (
 
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,16 +76,15 @@ func TestRecordAround_RecordsAFailedAction(t *testing.T) {
 	require.Empty(t, entries[0].Components)
 }
 
-// TestRecordAround_LostEntryAfterASuccessIsEntryNotAppended: when the action
-// succeeded but its entry cannot be appended, the error says exactly that.
-func TestRecordAround_LostEntryAfterASuccessIsEntryNotAppended(t *testing.T) {
+// TestRecordAround_LostEntryAfterASuccessIsAWarning: the action ran, so an
+// entry that can't be appended is a state warning, not the command's error.
+func TestRecordAround_LostEntryAfterASuccessIsAWarning(t *testing.T) {
+	emptyWarnings(t)
 	dir := seedStateDir(t)
 	require.NoError(t, os.Mkdir(ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
 
-	err := RecordAround(dir, uninstallCluster, func() (Outcome, error) { return OutcomeSucceeded, nil })
-
-	require.True(t, errorx.IsOfType(err, EntryNotAppendedError), "got %v", err)
-	require.ErrorContains(t, err, "failed to append action history entries")
+	require.NoError(t, RecordAround(dir, uninstallCluster, func() (Outcome, error) { return OutcomeSucceeded, nil }))
+	requireLostEntryWarning(t, dir)
 }
 
 // TestRecordAround_LostEntryOfAFailedActionIsAWarning: when fn fails and the
@@ -104,9 +102,9 @@ func TestRecordAround_LostEntryOfAFailedActionIsAWarning(t *testing.T) {
 }
 
 // TestRecordAround_UnsyncedEntryIsNotALostEntry: an entry appended but not
-// synced is in the history, so RecordAround returns the sync error, not
-// EntryNotAppendedError.
+// synced is in the history; the operator is warned it was not synced.
 func TestRecordAround_UnsyncedEntryIsNotALostEntry(t *testing.T) {
+	emptyWarnings(t)
 	orig := historyFileManager
 	t.Cleanup(func() { historyFileManager = orig })
 	historyFileManager = func() (fsx.Manager, error) {
@@ -115,11 +113,10 @@ func TestRecordAround_UnsyncedEntryIsNotALostEntry(t *testing.T) {
 	dir := t.TempDir()
 	entry := ActionHistory{Intent: models.Intent{Action: models.ActionUninstall, Target: models.TargetCluster}}
 
-	err := RecordAround(dir, entry, func() (Outcome, error) { return OutcomeSucceeded, nil })
-
-	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
-	require.False(t, errorx.IsOfType(err, EntryNotAppendedError))
-	require.ErrorContains(t, err, "appended, but not synced to disk")
+	require.NoError(t, RecordAround(dir, entry, func() (Outcome, error) { return OutcomeSucceeded, nil }))
+	warnings := TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "appended but not synced to disk")
 	require.Len(t, decodeHistoryFile(t, ActionHistoryFilePath(dir)), 1)
 }
 

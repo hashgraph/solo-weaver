@@ -317,17 +317,27 @@ func TestRanIDs_ReadsBackTheIDsMigrationsToWorkflowBuilt(t *testing.T) {
 		return wf.Execute(context.Background())
 	}
 
-	applied, failed := RanIDs(run(NewMockMigration("unified-state", "1.0.0"), NewMockMigration("helm-release-schema-v2", "1.0.0")))
+	applied, rolledBack, failed := RanIDs(run(NewMockMigration("unified-state", "1.0.0"), NewMockMigration("helm-release-schema-v2", "1.0.0")))
 	assert.Equal(t, []string{"unified-state", "helm-release-schema-v2"}, applied, "the start step is not a migration")
+	assert.Empty(t, rolledBack)
 	assert.Empty(t, failed)
 
 	broken := NewMockMigration("per-component-state", "2.0.0")
 	broken.executeFunc = func(context.Context, *Context) error { return errors.New("split failed") }
-	applied, failed = RanIDs(run(NewMockMigration("mgmt-ports-v1", "1.0.0"), broken, NewMockMigration("never-runs", "3.0.0")))
-	assert.Equal(t, []string{"mgmt-ports-v1"}, applied)
+	applied, rolledBack, failed = RanIDs(run(NewMockMigration("mgmt-ports-v1", "1.0.0"), broken, NewMockMigration("never-runs", "3.0.0")))
+	assert.Empty(t, applied, "a migration rolled back after a later one failed is no longer in effect")
+	assert.Equal(t, []string{"mgmt-ports-v1"}, rolledBack)
 	assert.Equal(t, "per-component-state", failed)
 
-	applied, failed = RanIDs(nil)
+	stuck := NewMockMigration("mgmt-ports-v1", "1.0.0")
+	stuck.rollbackFunc = func(context.Context, *Context) error { return errors.New("rollback failed") }
+	applied, rolledBack, failed = RanIDs(run(stuck, broken))
+	assert.Equal(t, []string{"mgmt-ports-v1"}, applied, "a migration whose rollback failed is still in effect")
+	assert.Empty(t, rolledBack)
+	assert.Equal(t, "per-component-state", failed)
+
+	applied, rolledBack, failed = RanIDs(nil)
 	assert.Empty(t, applied)
+	assert.Empty(t, rolledBack)
 	assert.Empty(t, failed)
 }
