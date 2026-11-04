@@ -203,6 +203,31 @@ func TestUnifiedStateMigration_Execute_AlreadySplitHostWritesSystemOnly(t *testi
 	assert.True(t, os.IsNotExist(err), "the marker file is removed once merged")
 }
 
+// TestUnifiedStateMigration_Execute_AlreadySplitHostWaitsForTheSystemLock: a
+// command past its startup migrations may own the system record, so the merge
+// refuses rather than writing system.yaml under it, and keeps the marker for
+// the next run.
+func TestUnifiedStateMigration_Execute_AlreadySplitHostWaitsForTheSystemLock(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	marker := filepath.Join(dir, "cilium.installed")
+	require.NoError(t, os.WriteFile(marker, []byte("installed at version 1.16.0\n"), 0o644))
+
+	release, err := AcquireComponentLocks(dir, []ComponentID{ComponentSystem}, 0)
+	require.NoError(t, err)
+	defer release()
+
+	err = NewUnifiedStateMigration().Execute(context.Background(), &migration.Context{})
+	require.ErrorContains(t, err, "system is being modified")
+
+	_, err = os.Stat(componentFilePath(dir, ComponentSystem))
+	assert.True(t, os.IsNotExist(err), "system.yaml must not be written under another command's lock")
+	_, err = os.Stat(marker)
+	assert.NoError(t, err, "the marker is kept so the next run merges it")
+}
+
 func TestRegisterMigrations_State(t *testing.T) {
 	migration.ClearRegistry()
 	defer migration.ClearRegistry()

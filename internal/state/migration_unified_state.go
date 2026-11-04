@@ -89,7 +89,15 @@ func (m *UnifiedStateMigration) Execute(_ context.Context, _ *migration.Context)
 
 	case os.IsNotExist(readErr):
 		// Already split, or old enough to have only marker files: the software
-		// entries belong to system.yaml, so merge into that alone.
+		// entries belong to system.yaml, so merge into that alone. The startup
+		// migrations lock does not stop a command already past startup that
+		// owns the system record, so hold its lock through the marker cleanup.
+		release, err := AcquireComponentLocks(models.Paths().StateDir, []ComponentID{ComponentSystem}, 0)
+		if err != nil {
+			return err
+		}
+		defer release()
+
 		sm, err := NewStateManager()
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to create state manager for unified-state migration")
