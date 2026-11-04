@@ -32,13 +32,19 @@ const experimentalFlagName = "experimental"
 //     propagate to every subcommand, so the whole tree is gated with one call; and
 //   - a single leaf subcommand — only that command is gated.
 //
-// Unlike the old GateExperimental this does NOT hide the command: an alpha
-// command stays visible in --help with an "[alpha]" label (the Kubernetes model),
-// and is simply refused until opted in.
+// Visibility is maturity-driven: an ALPHA command is hidden from --help (not yet
+// for end users) but still runs when opted in; a BETA command stays visible with
+// a "[beta]" label. Either way it is refused until opted in. A hidden alpha
+// command is still discoverable via `solo-provisioner feature list`, which shows
+// the feature and its exact opt-in env var.
 func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
-	// Label the command with its maturity in --help (static, registry-derived).
-	if m := featuregate.MaturityOf(f); m == gatekit.Alpha || m == gatekit.Beta {
-		cmd.Short = strings.TrimSpace(cmd.Short) + " [" + strings.ToLower(string(m)) + "]"
+	// Label / hide the command by its maturity (static, registry-derived).
+	switch featuregate.MaturityOf(f) {
+	case gatekit.Alpha:
+		cmd.Short = strings.TrimSpace(cmd.Short) + " [alpha]"
+		cmd.Hidden = true
+	case gatekit.Beta:
+		cmd.Short = strings.TrimSpace(cmd.Short) + " [beta]"
 	}
 
 	// Register the hidden gate-wide opt-in once (inherited by subcommands).
