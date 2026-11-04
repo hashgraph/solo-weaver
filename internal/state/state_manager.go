@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,6 +64,8 @@ type Writer interface {
 type Persister interface {
 	// Refresh reloads the persisted state from disk, overwriting in-memory state.
 	Refresh() error
+	// RefreshScoped reloads only the listed components' files.
+	RefreshScoped(ids ...ComponentID) error
 	// FileManager returns the underlying file-system abstraction.
 	FileManager() fsx.Manager
 }
@@ -182,6 +185,19 @@ func (m *stateManager) FileManager() fsx.Manager {
 // same "no file on disk, keep initial state" behavior the single-file version
 // had, applied per component instead of to the whole state.
 func (m *stateManager) Refresh() error {
+	return m.refresh(AllComponentIDs, false)
+}
+
+// RefreshScoped reloads only ids' files, keeping every other component's
+// in-memory value and baseline, so a file the caller neither reads nor writes
+// cannot fail it.
+func (m *stateManager) RefreshScoped(ids ...ComponentID) error {
+	return m.refresh(DedupeComponentIDs(ids), true)
+}
+
+// refresh reads ids' files onto a clone of the in-memory state. keepOthers
+// keeps every other component's baseline; otherwise only ids' survive.
+func (m *stateManager) refresh(ids []ComponentID, keepOthers bool) error {
 	// Prevent Refresh from interleaving with an in-progress FlushState.
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
@@ -195,9 +211,18 @@ func (m *stateManager) Refresh() error {
 	}
 
 	baseline := make(map[ComponentID]string, len(AllComponentIDs))
+	if keepOthers {
+		baseline = maps.Clone(m.baselineHash)
+		if baseline == nil {
+			baseline = make(map[ComponentID]string, len(ids))
+		}
+		for _, id := range ids {
+			delete(baseline, id)
+		}
+	}
 	dir := m.dir()
 
-	for _, id := range AllComponentIDs {
+	for _, id := range ids {
 		b, readErr := m.fm.ReadFile(componentFilePath(dir, id), -1)
 		if readErr != nil {
 			if errorx.IsOfType(readErr, fsx.FileNotFound) {

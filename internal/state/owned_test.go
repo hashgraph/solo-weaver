@@ -76,12 +76,12 @@ func TestRunOwning_FailedRunRecordsNothing(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr))
 }
 
-// TestRunOwning_UnreadableStateStopsBeforeRun: state is read before run changes
-// the host, so a state file that cannot be parsed stops the command with
-// nothing changed, and the error names that file.
-func TestRunOwning_UnreadableStateStopsBeforeRun(t *testing.T) {
+// TestRunOwning_UnreadableOwnedStateStopsBeforeRun: owned state is read before
+// run changes the host, so an owned file that cannot be parsed stops the
+// command with nothing changed, and the error names that file.
+func TestRunOwning_UnreadableOwnedStateStopsBeforeRun(t *testing.T) {
 	sm, dir := newOwnedTestManager(t)
-	broken := componentFilePath(dir, ComponentBlockNode)
+	broken := componentFilePath(dir, ComponentFirewall)
 	require.NoError(t, os.WriteFile(broken, []byte("state: [not, a, mapping"), 0o644))
 
 	ran := false
@@ -90,7 +90,62 @@ func TestRunOwning_UnreadableStateStopsBeforeRun(t *testing.T) {
 		func(st *State) error { st.MachineState.Firewall = &HostFirewallState{}; return nil })
 
 	require.ErrorContains(t, err, broken)
-	require.False(t, ran, "run must not change the host when state cannot be read")
+	require.False(t, ran, "run must not change the host when owned state cannot be read")
+}
+
+// TestRunOwning_UnreadableUnownedStateDoesNotBlock: a broken file the command
+// neither reads nor writes must not block it — `network firewall delete` is the
+// way out of a bad allowlist.
+func TestRunOwning_UnreadableUnownedStateDoesNotBlock(t *testing.T) {
+	sm, dir := newOwnedTestManager(t)
+	broken := componentFilePath(dir, ComponentBlockNode)
+	require.NoError(t, os.WriteFile(broken, []byte("state: [not, a, mapping"), 0o644))
+
+	ran := false
+	require.NoError(t, RunOwning(sm, []ComponentID{ComponentFirewall},
+		func() error { ran = true; return nil },
+		func(st *State) error { st.MachineState.Firewall = &HostFirewallState{Disabled: true}; return nil }))
+
+	require.True(t, ran)
+	b, err := os.ReadFile(broken)
+	require.NoError(t, err)
+	require.Equal(t, "state: [not, a, mapping", string(b), "the unowned file is left untouched")
 	_, statErr := os.Stat(componentFilePath(dir, ComponentFirewall))
-	require.True(t, os.IsNotExist(statErr))
+	require.NoError(t, statErr)
+}
+
+// TestRefreshScoped_KeepsOtherComponentsAndBaselines: a scoped refresh reloads
+// only the listed files, so the other components keep both their in-memory
+// value and the baseline a later flush of them is checked against.
+func TestRefreshScoped_KeepsOtherComponentsAndBaselines(t *testing.T) {
+	dir := t.TempDir()
+	fm := newTestFileManager(t)
+	stateFile := filepath.Join(dir, StateFileName)
+
+	seed := newTestState(stateFile)
+	seed.MachineState.Profile = "mainnet"
+	seed.MachineState.Firewall = &HostFirewallState{}
+	w, err := NewStateManager(WithState(seed), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, w.FlushState())
+
+	sm, err := NewStateManager(WithState(newTestState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+
+	other, err := NewStateManager(WithState(newTestState(stateFile)), WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, other.Refresh())
+	changed := other.State()
+	changed.MachineState.Firewall = &HostFirewallState{Disabled: true}
+	require.NoError(t, other.Set(changed).FlushScoped(ComponentFirewall))
+
+	require.NoError(t, sm.RefreshScoped(ComponentFirewall))
+	require.True(t, sm.State().MachineState.Firewall.Disabled)
+	require.Equal(t, "mainnet", sm.State().MachineState.Profile)
+
+	st := sm.State()
+	st.MachineState.Profile = "testnet"
+	require.NoError(t, sm.Set(st).FlushScoped(ComponentProfile, ComponentFirewall),
+		"both baselines must still match disk")
 }
