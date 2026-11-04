@@ -785,27 +785,17 @@ func (ci *crioInstaller) Uninstall() error {
 	return nil
 }
 
-// removeLinkIfTarget removes link only when it is a symlink pointing at target, so
-// files the operator placed there are left alone.
-func (ci *crioInstaller) removeLinkIfTarget(link, target string) error {
-	dest, err := os.Readlink(link)
-	if err != nil || dest != target {
-		return nil
-	}
-	return ci.fileManager.RemoveAll(link)
-}
-
 // RemoveConfiguration removes symlinks and restores the configuration files
 // This reverses the operations performed by Configure()
 func (ci *crioInstaller) RemoveConfiguration() error {
 	sandboxDir := models.Paths().SandboxDir
 	for _, name := range crioPathBinaries {
-		err := ci.removeLinkIfTarget(filepath.Join(models.SystemBinDir, name), filepath.Join(sandboxDir, binDir, name))
+		_, err := ci.fileManager.RemoveSymbolicLinkIfTarget(filepath.Join(models.SystemBinDir, name), filepath.Join(sandboxDir, binDir, name))
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to remove %s symlink", name)
 		}
 	}
-	err := ci.removeLinkIfTarget(filepath.Join(etcDir, CrictlYamlFile), filepath.Join(sandboxDir, etcDir, CrictlYamlFile))
+	_, err := ci.fileManager.RemoveSymbolicLinkIfTarget(filepath.Join(etcDir, CrictlYamlFile), filepath.Join(sandboxDir, etcDir, CrictlYamlFile))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove /etc/%s symlink", CrictlYamlFile)
 	}
