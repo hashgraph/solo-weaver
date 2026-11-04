@@ -6,15 +6,20 @@ package rsl
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
@@ -49,7 +54,7 @@ func writePersistedState(t *testing.T, stateFile string) state.Manager {
 	s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth0"}
 	writer, err := state.NewStateManager(state.WithState(s), state.WithFileManager(fm))
 	require.NoError(t, err)
-	require.NoError(t, writer.FlushState())
+	require.NoError(t, writer.Commit(state.ActionHistory{}, state.AllComponentIDs...))
 
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
 	require.NoError(t, err)
@@ -129,7 +134,7 @@ func TestRefreshWithBaseline_BaselineSurvivesARefreshDuringTheRuntimeRefresh(t *
 		s := sm.State()
 		s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth9"}
 		s.TeleportState = state.TeleportState{}
-		require.NoError(t, sm.Set(s).FlushScoped(state.ComponentBlockNode, state.ComponentTeleport))
+		require.NoError(t, sm.Set(s).Commit(state.ActionHistory{}, state.ComponentBlockNode, state.ComponentTeleport))
 	}
 	r := newResolver(t, sm, liveTeleport(), rewrite)
 
@@ -155,11 +160,11 @@ func TestRefreshWithBaseline_NoStateFileHasNoBaseline(t *testing.T) {
 	require.Equal(t, liveTeleport().NodeAgent, current.TeleportState.NodeAgent)
 }
 
-// TestFlushScoped_PreservesUnderlyingErrorCause verifies FlushScoped wraps
+// TestCommit_PreservesUnderlyingErrorCause verifies Commit wraps
 // (rather than stringifies via %v) the state manager's error, so the
 // underlying errorx cause — here, the per-file hash-conflict error — survives
 // in the error chain for diagnostics instead of being flattened to text.
-func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
+func TestCommit_PreservesUnderlyingErrorCause(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm := writePersistedState(t, stateFile)
 	r := newResolver(t, sm, liveTeleport(), nil)
@@ -172,11 +177,11 @@ func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
 	require.NoError(t, other.Refresh())
 	otherState := other.State()
 	otherState.TeleportState.NodeAgent.Configured = false // flips from persistedTeleport()'s true
-	require.NoError(t, other.Set(otherState).FlushScoped(state.ComponentTeleport))
+	require.NoError(t, other.Set(otherState).Commit(state.ActionHistory{}, state.ComponentTeleport))
 
 	staleState := sm.State()
 	staleState.TeleportState.NodeAgent.Configured = false
-	err = r.FlushScoped(staleState, state.ComponentTeleport)
+	err = r.Commit(staleState, state.ActionHistory{}, state.ComponentTeleport)
 	require.Error(t, err)
 
 	// errorx.Wrap is opaque to errors.Is/As/Unwrap by design (see the errorx
@@ -223,4 +228,70 @@ func TestRefreshMachine_IgnoresUnreachableClusterRuntimes(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, current.MachineState.Software["kubeadm"].Installed)
 	require.Equal(t, persistedTeleport().NodeAgent, current.TeleportState.NodeAgent, "other sections keep their persisted value")
+}
+
+// unsyncedCommits is a state.Manager whose commits land but report a failed
+// sync.
+type unsyncedCommits struct{ state.Manager }
+
+func (u unsyncedCommits) Set(s state.State) state.Writer {
+	u.Manager.Set(s)
+	return u
+}
+
+func (u unsyncedCommits) Commit(entry state.ActionHistory, ids ...state.ComponentID) error {
+	if err := u.Manager.Commit(entry, ids...); err != nil {
+		return err
+	}
+	return fsx.FileSyncError.New("disk gone")
+}
+
+// requireStateOperationFailed checks err's reason and that one of its hints
+// contains hint.
+func requireStateOperationFailed(t *testing.T, err error, hint string) {
+	t.Helper()
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason on %v", err)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, strings.Join(hints, "\n"), hint)
+}
+
+// TestCommit_LandedStateWithALostEntryIsAWarning: state that landed with its
+// entry lost is a success, and the operator is warned to check the history.
+func TestCommit_LandedStateWithALostEntryIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, sm, liveTeleport(), nil)
+	history := state.ActionHistoryFilePath(filepath.Dir(stateFile))
+	require.NoError(t, os.RemoveAll(history))
+	require.NoError(t, os.Mkdir(history, 0o755)) // appending to a directory fails
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	require.NoError(t, r.Commit(s, state.ActionHistory{}, state.ComponentTeleport))
+
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was not appended")
+	require.Contains(t, warnings[0], history+" is writable")
+}
+
+// TestCommit_UnsyncedStateSaysSo: state written but not synced keeps
+// FileSyncError and says it was saved but not synced.
+func TestCommit_UnsyncedStateSaysSo(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, unsyncedCommits{sm}, liveTeleport(), nil)
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	err := r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	require.Contains(t, doctor.OperatorMessage(err), "the state was saved but not synced to disk")
+	requireStateOperationFailed(t, err, "Check the disk holding "+filepath.Dir(stateFile))
 }

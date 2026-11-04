@@ -59,6 +59,11 @@ func NewHelmReleaseSchemaV2Migration() *HelmReleaseSchemaV2Migration {
 }
 
 func (m *HelmReleaseSchemaV2Migration) ID() string { return "helm-release-schema-v2" }
+
+// stateFiles is every state file Execute or Rollback can write in dir.
+func (m *HelmReleaseSchemaV2Migration) stateFiles(dir string) []string {
+	return []string{filepath.Join(dir, StateFileName)}
+}
 func (m *HelmReleaseSchemaV2Migration) Description() string {
 	return "Migrate HelmReleaseInfo schema v1→v2: chartVersion→version, version→appVersion, deleted→deletedAt"
 }

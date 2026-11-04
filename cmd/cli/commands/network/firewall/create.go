@@ -63,7 +63,8 @@ var createCmd = &cobra.Command{
 		// firewall" is true either way, and it is the decision — not the ruleset —
 		// that a later `block node reconfigure` seeds its enable/disable choice from.
 		var changed bool
-		if err := applyHostFirewallChange(false, func() error {
+		inputs := map[string]any{"config": fw.FileConfigFromTable(t), "force": force}
+		if err := applyHostFirewallChange(cmd.Context(), false, inputs, func() error {
 			var err error
 			changed, err = newManager().Create(cmd.Context(), t, force)
 			return err

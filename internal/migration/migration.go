@@ -31,6 +31,7 @@ package migration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/automa-saga/automa"
@@ -117,6 +118,40 @@ func GetApplicableMigrations(component string, mctx *Context) ([]Migration, erro
 	return applicable, nil
 }
 
+// stepIDPrefix prefixes the id of the workflow step that runs each migration;
+// startStepID is the workflow's first step, which runs none.
+const (
+	stepIDPrefix = "migration-"
+	startStepID  = "migration-start"
+)
+
+// RanIDs reads a MigrationsToWorkflow report: the ids of the migrations
+// applied and still in effect, in order, those applied and then rolled back
+// after a later one failed, and the id of the one that failed, if any. A
+// migration whose rollback failed is still in effect, at least in part, so it
+// counts as applied.
+func RanIDs(report *automa.Report) (applied, rolledBack []string, failed string) {
+	if report == nil {
+		return nil, nil, ""
+	}
+	for _, sr := range report.StepReports {
+		if sr.Id == startStepID || !strings.HasPrefix(sr.Id, stepIDPrefix) {
+			continue
+		}
+		id := strings.TrimPrefix(sr.Id, stepIDPrefix)
+		switch {
+		case sr.Status == automa.StatusFailed:
+			failed = id
+		case sr.Status != automa.StatusSuccess:
+		case sr.Rollback != nil && sr.Rollback.Status == automa.StatusSuccess:
+			rolledBack = append(rolledBack, id)
+		default:
+			applied = append(applied, id)
+		}
+	}
+	return applied, rolledBack, failed
+}
+
 // MigrationsToWorkflow converts a list of migrations into an automa workflow.
 // Each migration becomes a step with execute and rollback handlers.
 // The workflow executes migrations in order with rollback on failure.
@@ -131,7 +166,7 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 	migrationCount := len(migrations)
 	component := mctx.Component
 	steps = append(steps, automa.NewStepBuilder().
-		WithId("migration-start").
+		WithId(startStepID).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			logx.As().Info().
 				Str("component", component).
@@ -143,7 +178,7 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 	for _, m := range migrations {
 		migration := m // capture for closure
 		step := automa.NewStepBuilder().
-			WithId(fmt.Sprintf("migration-%s", migration.ID())).
+			WithId(stepIDPrefix + migration.ID()).
 			WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 				logx.As().Info().
 					Str("migrationID", migration.ID()).

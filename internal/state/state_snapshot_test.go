@@ -78,7 +78,7 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm, err := NewStateManager(WithState(nestedState(stateFile)), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushState())
+	require.NoError(t, sm.Commit(ActionHistory{}, AllComponentIDs...))
 	require.NoError(t, sm.Refresh())
 
 	plainCopy := sm.State()
@@ -87,7 +87,7 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 
 	changed := sm.State()
 	changed.BlockNodeState.Shaping = &ShapingState{EgressInterface: "eth9"}
-	require.NoError(t, sm.Set(changed).FlushScoped(ComponentBlockNode))
+	require.NoError(t, sm.Set(changed).Commit(ActionHistory{}, ComponentBlockNode))
 	require.NoError(t, sm.Refresh())
 
 	require.Equal(t, "eth0", plainCopy.BlockNodeState.Shaping.EgressInterface,

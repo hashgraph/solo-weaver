@@ -4,9 +4,16 @@ package steps
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,4 +65,39 @@ func TestRemoveShellCompletionLoaders_FailureIsSkippedNotFailed(t *testing.T) {
 	assert.True(t, *called)
 	assert.Equal(t, automa.StatusSkipped, report.Status)
 	require.NoError(t, report.Error, "a skipped teardown step must not carry an error")
+}
+
+// TestCleanupWeaverHome_KeepsTheActionHistoryAndLocks: the cleanup empties the
+// state directory but keeps action_history.yaml, which records the uninstall
+// too, and the lock files the uninstall holds; it still keeps the downloads,
+// bin and logs folders.
+func TestCleanupWeaverHome_KeepsTheActionHistoryAndLocks(t *testing.T) {
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	paths := models.Paths()
+	for _, d := range []string{paths.StateDir, paths.DownloadsDir, paths.BinDir, paths.LogsDir, filepath.Join(home, "config")} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	history := state.ActionHistoryFilePath(paths.StateDir)
+	lock := filepath.Join(paths.StateDir, ".blocknode.lock")
+	for _, f := range []string{history, lock, filepath.Join(paths.StateDir, "blocknode.yaml"), filepath.Join(paths.StateDir, "blocknode.yaml.tmp")} {
+		require.NoError(t, os.WriteFile(f, []byte("x"), 0o644))
+	}
+	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
+	require.NoError(t, err)
+
+	cleanupWeaverHome(fm, home)
+
+	entries, err := os.ReadDir(paths.StateDir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	require.ElementsMatch(t, []string{".blocknode.lock", state.ActionHistoryFileName}, names,
+		"the uninstall still holds the lock files, and records itself in the history")
+	for _, kept := range []string{paths.DownloadsDir, paths.BinDir, paths.LogsDir} {
+		require.DirExists(t, kept)
+	}
+	require.NoDirExists(t, filepath.Join(home, "config"))
 }

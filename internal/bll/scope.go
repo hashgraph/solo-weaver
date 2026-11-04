@@ -13,7 +13,7 @@ import (
 //
 //   - drift detection — only the producers of managed components run, so a
 //     command reports out-of-band drift for what it owns, not for everything.
-//   - the state flush — internal/state.Writer.FlushScoped writes only the
+//   - the state flush — internal/state.Writer.Commit writes only the
 //     listed components' files; every other component's file is left
 //     untouched (not read, not rewritten), so a command never rewrites state
 //     it does not own.

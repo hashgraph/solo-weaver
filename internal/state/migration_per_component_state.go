@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // migration_per_component_state.go splits the single state.yaml into the
-// per-component files internal/bll.BaseHandler.FlushScoped writes —
+// per-component files internal/bll.BaseHandler commits —
 // profile.yaml, firewall.yaml, system.yaml, cluster.yaml, blocknode.yaml,
 // consensus.yaml, teleport.yaml — plus provisioner.yaml, each in the same
 // state directory. It must run after every other
@@ -48,6 +48,19 @@ func NewPerComponentStateMigration() *PerComponentStateMigration {
 }
 
 func (m *PerComponentStateMigration) ID() string { return "per-component-state" }
+
+// stateFiles is every state file Execute or Rollback can write in dir: the
+// legacy state.yaml and the copies it leaves, every component file, and
+// provisioner.yaml.
+func (m *PerComponentStateMigration) stateFiles(dir string) []string {
+	files := []string{
+		filepath.Join(dir, StateFileName),
+		filepath.Join(dir, StateFileName+legacyStateBackupSuffix),
+		filepath.Join(dir, StateFileName+".diverged-*"),
+		provisionerFilePath(dir),
+	}
+	return append(files, componentFiles(dir)...)
+}
 func (m *PerComponentStateMigration) Description() string {
 	return "Split the single state.yaml into one file per component (profile, firewall, system, cluster, blocknode, consensus, teleport) plus provisioner.yaml"
 }
@@ -141,11 +154,11 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Con
 		}
 	}
 
-	sm, err := NewStateManager(WithState(legacy))
+	sm, err := newStateManager(WithState(legacy))
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager for per-component migration")
 	}
-	if err := sm.FlushState(); err != nil {
+	if err := sm.writeUnrecorded(AllComponentIDs...); err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to write per-component state files")
 	}
 

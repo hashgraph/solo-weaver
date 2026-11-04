@@ -3,8 +3,13 @@
 package firewall
 
 import (
+	"context"
+	"path/filepath"
+
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
@@ -31,18 +36,29 @@ var stateManager = func() (state.Manager, error) { return state.NewStateManager(
 // above the recorded state — mirroring it here would have to squeeze a Rule's
 // port specs into HostConfig's []int and would silently drop any inclusive range.
 //
-// The lock is taken before apply, so a command that could not record its
+// The decision and the action history entry are written together, and the
+// entry is appended even when apply fails, since apply may have changed the
+// kernel. The lock is taken before apply, so a command that could not record its
 // decision fails before touching the kernel. A record that still fails after
 // apply is returned, never only logged: a dropped decision is what makes the
 // next reconfigure undo this command.
-func applyHostFirewallChange(disabled bool, apply func() error) error {
+//
+// inputs is what the command applied, recorded in the entry.
+func applyHostFirewallChange(ctx context.Context, disabled bool, inputs any, apply func() error) error {
 	sm, err := stateManager()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create state manager")
 	}
 
+	// create records install/firewall, delete records uninstall/firewall.
+	action := models.ActionInstall
+	if disabled {
+		action = models.ActionUninstall
+	}
+	entry := state.NewEntry(ctx, models.Intent{Action: action, Target: models.TargetFirewall}, inputs)
+
 	applied := false
-	err = state.RunOwning(sm, []state.ComponentID{state.ComponentFirewall},
+	err = state.RunOwning(sm, entry, []state.ComponentID{state.ComponentFirewall},
 		func() error {
 			if err := apply(); err != nil {
 				return err
@@ -59,6 +75,13 @@ func applyHostFirewallChange(disabled bool, apply func() error) error {
 			st.MachineState.Firewall = fw
 			return nil
 		})
+	if err != nil && applied && errorx.IsOfType(err, fsx.FileSyncError) {
+		return errx.Decorate(
+			errorx.Decorate(err, "the host firewall change was applied and its decision recorded, but not synced to disk"),
+			reasons.StateOperationFailed,
+			"Check the disk holding "+filepath.Dir(sm.State().StateFile)+". "+
+				"The decision is already recorded; re-running the same command is safe.")
+	}
 	if err != nil && applied {
 		return errx.Decorate(
 			errorx.IllegalState.Wrap(err, "the host firewall change was applied but the decision was not recorded"),
