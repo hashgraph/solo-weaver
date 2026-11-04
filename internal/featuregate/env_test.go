@@ -15,8 +15,8 @@ func TestOverrideEnvVar_CamelToScreamingSnake(t *testing.T) {
 		"SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED",
 		featuregate.OverrideEnvVar(featuregate.ConsensusNodeOperatorManaged))
 	require.Equal(t,
-		"SOLO_PROVISIONER_ENABLE_BLOCK_NODE_OPERATOR_MANAGED",
-		featuregate.OverrideEnvVar(featuregate.BlockNodeOperatorManaged))
+		"SOLO_PROVISIONER_ENABLE_BLOCK_NODE_PROVISIONER_MANAGED",
+		featuregate.OverrideEnvVar(featuregate.BlockNodeProvisionerManaged))
 }
 
 func TestEnvOverride_EnablesAlphaFeature(t *testing.T) {

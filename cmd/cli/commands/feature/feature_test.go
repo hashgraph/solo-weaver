@@ -32,7 +32,7 @@ func TestBuild_ResolvesStateAndMaturity(t *testing.T) {
 	require.True(t, np.Enabled)
 
 	// Alpha feature is listed, tagged ALPHA, and off by default.
-	bn := by[string(featuregate.BlockNodeOperatorManaged)]
+	bn := by[string(featuregate.ConsensusNodeOperatorManaged)]
 	require.Equal(t, "ALPHA", bn.Maturity)
 	require.EqualValues(t, 2, bn.ActiveFrom)
 	require.False(t, bn.Enabled)
@@ -47,7 +47,7 @@ func TestRunList_Text(t *testing.T) {
 
 	s := out.String()
 	require.Contains(t, s, "FEATURE")
-	require.Contains(t, s, string(featuregate.BlockNodeOperatorManaged))
+	require.Contains(t, s, string(featuregate.ConsensusNodeOperatorManaged))
 	require.Contains(t, s, "--experimental")
 }
 

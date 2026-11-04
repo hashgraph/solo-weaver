@@ -27,6 +27,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -115,7 +116,8 @@ func init() {
 	// usage string directly) show it once too. Appending to both would duplicate
 	// the footer on `--help`.
 	buildInfo := version.Get()
-	buildFooter := fmt.Sprintf("\nBuild:  %s (commit %s)\n", buildInfo.Version, buildInfo.ShortCommit(12))
+	buildFooter := fmt.Sprintf("\nBuild:               %s (commit %s)\nActivation version:  %d\n",
+		buildInfo.Version, buildInfo.ShortCommit(12), featuregate.CurrentActivationVersion)
 	rootCmd.SetUsageTemplate(rootCmd.UsageTemplate() + buildFooter)
 
 	// disable command sorting to keep the order of commands as added

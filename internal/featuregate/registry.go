@@ -62,36 +62,42 @@ func Catalog() gatekit.Registry {
 		// ALPHA: dormant until the axis reaches 2 AND the operator opts in via
 		// --experimental (or a per-feature override). Each graduates to GA with a
 		// later spec once validated.
-		//
-		// NOTE: block node has two named deployment models — BlockNodeProvisionerManaged
-		// (direct Helm, GA, in the floor above) and BlockNodeOperatorManaged (via
-		// solo-operator, Alpha). Code branches on the operator feature; the
-		// provisioner model is the GA path it falls back to. The operator model
-		// graduates by adding a later GA spec, at which point the provisioner model
-		// can be marked Deprecated.
-		BlockNodeOperatorManaged: {
-			Description: "Manage block node lifecycle through solo-operator.",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
-			},
-		},
 		ConsensusNodeOperatorManaged: {
 			Description: "Manage consensus node lifecycle through solo-operator.",
 			Specs: gatekit.VersionedSpecs{
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
-		ConsensusNodeMigrationSoak: {
-			Description: "Soak-watch health during consensus migration (`consensus migration soak`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
-			},
-		},
-		SelfUpgrade: {
-			Description: "Paired CLI/daemon self-upgrade with coordinated activation finalize.",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
-			},
-		},
+
+		// Not yet in main. A feature enters the registry in the same PR that lands
+		// the code it gates, so the catalog never advertises a gate with no
+		// behavior behind it. Uncomment each (and its constant in features.go)
+		// in its implementing PR:
+		//   - BlockNodeOperatorManaged (operator HelmCapsule path) -> PR #1364.
+		//     Block node has two deployment models: BlockNodeProvisionerManaged
+		//     (direct Helm, GA, in the floor above) is today's default; the
+		//     operator model is the Alpha alternative the gate selects, with the
+		//     provisioner model as the fallback.
+		//   - ConsensusNodeMigrationSoak (`consensus migration soak` watcher).
+		//   - SelfUpgrade (paired CLI/daemon self-upgrade, #500).
+		//
+		// BlockNodeOperatorManaged: {
+		// 	Description: "Manage block node lifecycle through solo-operator.",
+		// 	Specs: gatekit.VersionedSpecs{
+		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 	},
+		// },
+		// ConsensusNodeMigrationSoak: {
+		// 	Description: "Soak-watch health during consensus migration (`consensus migration soak`).",
+		// 	Specs: gatekit.VersionedSpecs{
+		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 	},
+		// },
+		// SelfUpgrade: {
+		// 	Description: "Paired CLI/daemon self-upgrade with coordinated activation finalize.",
+		// 	Specs: gatekit.VersionedSpecs{
+		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 	},
+		// },
 	}
 }

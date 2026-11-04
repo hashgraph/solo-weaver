@@ -27,30 +27,30 @@ func TestGate_VersionAndMaturityAxes(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{Current: 1})
 		require.NoError(t, err)
 		// ActiveFrom 2 has not been reached: no active spec, so off.
-		require.False(t, g.Enabled(featuregate.BlockNodeOperatorManaged))
+		require.False(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 	})
 
 	t.Run("Alpha at its version is still off without --experimental", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{Current: 2})
 		require.NoError(t, err)
 		// Spec is active, but Alpha maturity withholds it until opt-in.
-		require.False(t, g.Enabled(featuregate.BlockNodeOperatorManaged))
+		require.False(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 	})
 
 	t.Run("Alpha at its version turns on with --experimental", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{Current: 2, Experimental: true})
 		require.NoError(t, err)
-		require.True(t, g.Enabled(featuregate.BlockNodeOperatorManaged))
+		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 		// A GA feature is unaffected by the opt-in.
 		require.True(t, g.Enabled(featuregate.NetworkPolicy))
 	})
 
 	t.Run("per-feature override forces on regardless of version/maturity", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{
-			Current:   1, // before BlockNodeOperatorManaged's ActiveFrom
-			Overrides: map[gatekit.Feature]bool{featuregate.BlockNodeOperatorManaged: true},
+			Current:   1, // before ConsensusNodeOperatorManaged's ActiveFrom
+			Overrides: map[gatekit.Feature]bool{featuregate.ConsensusNodeOperatorManaged: true},
 		})
 		require.NoError(t, err)
-		require.True(t, g.Enabled(featuregate.BlockNodeOperatorManaged))
+		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 	})
 }

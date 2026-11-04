@@ -21,9 +21,9 @@ const (
 	// managed by solo-provisioner itself — today's GA default.
 	BlockNodeProvisionerManaged gatekit.Feature = "BlockNodeProvisionerManaged"
 
-	// BlockNodeOperatorManaged gates the solo-operator (HelmCapsule) deployment
-	// model for block nodes against the provisioner-managed one.
-	BlockNodeOperatorManaged gatekit.Feature = "BlockNodeOperatorManaged"
+	// Not yet in main — uncommented by their implementing PR (see registry.go):
+	//   BlockNodeOperatorManaged (operator HelmCapsule path) -> PR #1364.
+	// BlockNodeOperatorManaged gatekit.Feature = "BlockNodeOperatorManaged"
 
 	// ConsensusNodeOperatorManaged gates consensus-node lifecycle via solo-operator
 	// against the legacy path.
@@ -43,16 +43,15 @@ const (
 	// (`network firewall`).
 	NetworkFirewall gatekit.Feature = "NetworkFirewall"
 
-	// ConsensusNodeMigrationSoak gates the migration soak watcher
-	// (`consensus migration soak`).
-	ConsensusNodeMigrationSoak gatekit.Feature = "ConsensusNodeMigrationSoak"
-
 	// EsoSecretManagement gates the external-secrets operator and secret
 	// handling (`eso`).
 	EsoSecretManagement gatekit.Feature = "EsoSecretManagement"
 
-	// SelfUpgrade gates paired daemon self-upgrade / auto-finalize (#500).
-	SelfUpgrade gatekit.Feature = "SelfUpgrade"
+	// Not yet in main — uncommented by their implementing PR (see registry.go):
+	//   ConsensusNodeMigrationSoak (`consensus migration soak` watcher).
+	//   SelfUpgrade (paired CLI/daemon self-upgrade, #500).
+	// ConsensusNodeMigrationSoak gatekit.Feature = "ConsensusNodeMigrationSoak"
+	// SelfUpgrade                gatekit.Feature = "SelfUpgrade"
 )
 
 // CurrentActivationVersion is the activation version in force for this binary —
