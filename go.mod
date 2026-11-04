@@ -8,6 +8,7 @@ require (
 	github.com/automa-saga/automa v1.1.0
 	github.com/automa-saga/daemonkit v0.4.0
 	github.com/automa-saga/errx v1.0.0
+	github.com/automa-saga/gatekit v0.3.0
 	github.com/automa-saga/logx v0.10.1
 	github.com/automa-saga/version v1.0.1
 	github.com/bluet/syspkg v0.1.7
@@ -54,7 +55,6 @@ require (
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/automa-saga/gatekit v0.2.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
