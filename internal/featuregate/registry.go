@@ -75,19 +75,19 @@ func Catalog() gatekit.Registry {
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
-		ConsensusOperatorManaged: {
+		ConsensusNodeOperatorManaged: {
 			Description: "Manage consensus node lifecycle through solo-operator.",
 			Specs: gatekit.VersionedSpecs{
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
-		ConsensusMigrationSoak: {
+		ConsensusNodeMigrationSoak: {
 			Description: "Soak-watch health during consensus migration (`consensus migration soak`).",
 			Specs: gatekit.VersionedSpecs{
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
-		DaemonSelfUpgrade: {
+		SelfUpgrade: {
 			Description: "Paired CLI/daemon self-upgrade with coordinated activation finalize.",
 			Specs: gatekit.VersionedSpecs{
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},

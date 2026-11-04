@@ -19,7 +19,7 @@ const envPrefix = "SOLO_PROVISIONER_ENABLE_"
 
 // OverrideEnvVar returns the opt-in environment variable for a feature, mapping
 // the CamelCase feature name to UPPER_SNAKE_CASE. For example
-// ConsensusOperatorManaged -> SOLO_PROVISIONER_ENABLE_CONSENSUS_OPERATOR_MANAGED.
+// ConsensusNodeOperatorManaged -> SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED.
 // Setting it to a truthy value forces that feature on (a per-feature override);
 // a falsy value forces it off.
 func OverrideEnvVar(f gatekit.Feature) string {
