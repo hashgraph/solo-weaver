@@ -928,27 +928,9 @@ func (b *baseInstaller) cleanupSymlinks() error {
 		sandboxBinary := path.Join(sandboxBinDir, binaryBasename)
 		systemBinary := path.Join(models.SystemBinDir, binaryBasename)
 
-		// Check if symlink exists in system bin directory
-		_, exists, err := b.fileManager.PathExists(systemBinary)
-		if err != nil {
-			continue // If we can't check, skip this one
-		}
-		if !exists {
-			continue // Symlink doesn't exist, nothing to clean up
-		}
-
-		// Verify the symlink points to our sandbox binary before removing
-		linkInfo, err := os.Readlink(systemBinary)
-		if err != nil {
-			continue // Can't read symlink, skip
-		}
-
 		// Only remove symlinks that point to our sandbox binary
-		if linkInfo == sandboxBinary {
-			err = b.fileManager.RemoveAll(systemBinary)
-			if err != nil {
-				return err
-			}
+		if _, err = b.fileManager.RemoveSymbolicLinkIfTarget(systemBinary, sandboxBinary); err != nil {
+			return err
 		}
 	}
 
