@@ -21,9 +21,10 @@ var consensusCmd = &cobra.Command{
 func init() {
 	// Nothing in the consensus stack is production-ready yet, but solo-provisioner
 	// ships to production block-node operators. Gate the whole group on the
-	// ConsensusNodeOperatorManaged feature: it is labelled "[alpha]" in --help and
+	// ConsensusNodeOperatorManaged feature (alpha): it is hidden from --help and
 	// refuses to run unless the operator opts in (--experimental, or
-	// SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED).
+	// SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED). It stays
+	// discoverable via `solo-provisioner feature list`.
 	common.GateFeature(consensusCmd, featuregate.ConsensusNodeOperatorManaged)
 
 	consensusCmd.AddCommand(migration.GetCmd())

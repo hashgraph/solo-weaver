@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// GateFeature labels an alpha command and installs the hidden --experimental
-// opt-in, without hiding the command (mark + gate).
-func TestGateFeature_LabelsAndFlagNoHide(t *testing.T) {
+// GateFeature hides an alpha command, labels it, and installs the hidden
+// --experimental opt-in.
+func TestGateFeature_HidesAlphaAndInstallsFlag(t *testing.T) {
 	cmd := &cobra.Command{Use: "demo", Short: "Demo"}
 	GateFeature(cmd, featuregate.ConsensusNodeOperatorManaged) // alpha
 
-	require.False(t, cmd.Hidden)
+	require.True(t, cmd.Hidden)
 	require.Contains(t, cmd.Short, "[alpha]")
 
 	f := cmd.PersistentFlags().Lookup(experimentalFlagName)
