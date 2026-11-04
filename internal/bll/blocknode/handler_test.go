@@ -73,8 +73,8 @@ func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 	}{
 		{"install on a cluster", models.ActionInstall, true, []string{"blocknode", "profile", "firewall"}},
 		{"install that creates the cluster", models.ActionInstall, false, []string{"blocknode", "profile", "firewall", "system"}},
-		{"reconfigure", models.ActionReconfigure, true, []string{"blocknode", "firewall"}},
-		{"upgrade", models.ActionUpgrade, true, []string{"blocknode"}},
+		{"reconfigure", models.ActionReconfigure, true, []string{"blocknode", "profile", "firewall"}},
+		{"upgrade", models.ActionUpgrade, true, []string{"blocknode", "profile", "firewall"}},
 		{"reset", models.ActionReset, true, []string{"blocknode"}},
 		{"uninstall", models.ActionUninstall, true, []string{"blocknode"}},
 	} {
@@ -94,9 +94,9 @@ func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 
 // TestStateCallbacks_PatchOnlyOwnedSections: a callback's changes reach disk
 // only for the sections its base flushes, so each one must leave every other
-// section alone. Install and reconfigure pass patchBlockNodeStateWithTrafficShaping
-// and own blocknode and firewall; upgrade, reset and uninstall pass
-// patchBlockNodeState and own blocknode alone.
+// section alone. Install and reconfigure pass patchBlockNodeStateWithTrafficShaping,
+// which may change the firewall record; upgrade, reset and uninstall pass
+// patchBlockNodeState, which must not.
 func TestStateCallbacks_PatchOnlyOwnedSections(t *testing.T) {
 	inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{
 		Chart: "oci://example.com/block-node", PluginPreset: "full", TrafficShapingEnabled: true,

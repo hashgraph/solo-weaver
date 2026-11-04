@@ -36,10 +36,10 @@ type Handlers struct {
 func NewHandlerFactory(
 	runtime *rsl.RuntimeResolver,
 ) (*Handlers, error) {
-	// Each intent owns only the files it writes: install records the profile
-	// and the host-firewall decision (and the system record too when it also
-	// stands up Kubernetes), reconfigure re-asserts the firewall, and upgrade,
-	// reset and uninstall touch the block node alone.
+	// Each intent owns only the files it writes. Install, reconfigure and
+	// upgrade take --profile and re-assert the host firewall, so they own both
+	// records (install also owns the system record when it stands up
+	// Kubernetes); reset and uninstall touch the block node alone.
 	profile := bll.WithProfileExtractor(func(i models.BlockNodeInputs) string { return i.Profile })
 	managed := bll.WithManagedComponents[models.BlockNodeInputs]
 
@@ -53,10 +53,15 @@ func NewHandlerFactory(
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create cluster install BaseHandler: %v", err)
 	}
-	reconfigureBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode,
-		managed(bll.BlockNode, bll.Firewall))
+	reconfigureBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, profile,
+		managed(bll.BlockNode, bll.Profile, bll.Firewall))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create reconfigure BaseHandler: %v", err)
+	}
+	upgradeBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, profile,
+		managed(bll.BlockNode, bll.Profile, bll.Firewall))
+	if err != nil {
+		return nil, errorx.IllegalArgument.New("failed to create upgrade BaseHandler: %v", err)
 	}
 	base, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, managed(bll.BlockNode))
 	if err != nil {
@@ -91,7 +96,7 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("failed to create InstallHandler: %v", err)
 	}
 
-	upgradeHandler, err := NewUpgradeHandler(base, bnr)
+	upgradeHandler, err := NewUpgradeHandler(upgradeBase, bnr)
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create UpgradeHandler: %v", err)
 	}
