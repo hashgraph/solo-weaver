@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +24,7 @@ import (
 )
 
 const (
+	CheckGossipFqdnAllowedStepId    = "check-gossip-fqdn-allowed"
 	EnsureNetworkGenesisStepId      = "ensure-network-genesis"
 	WaitNetworkGenesisStepId        = "wait-network-genesis"
 	WaitConsensusNetworkReadyStepId = "wait-consensus-network-ready"
@@ -29,7 +32,113 @@ const (
 	NetworkGenesisConfigMapName     = "genesis-config"
 	networkGenesisPollInterval      = 5 * time.Second
 	networkGenesisDefaultOpIDFmt    = "genesis-%s"
+	gossipFqdnRestrictedKey         = "nodes.gossipFqdnRestricted"
 )
+
+// CheckGossipFqdnAllowed fails discovery genesis early unless every node's
+// application.properties sets nodes.gossipFqdnRestricted=false. Discovery writes
+// cluster-DNS gossip endpoints, and the network rejects them at genesis otherwise.
+func CheckGossipFqdnAllowed(namespace string, provider CapsuleKubeProvider) automa.Builder {
+	return automa.NewStepBuilder().WithId(CheckGossipFqdnAllowedStepId).
+		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			kc, err := provider(ctx)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+					reasons.PreconditionNotMet,
+					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+			}
+
+			list, err := kc.List(ctx, kube.KindConsensusCapsule, namespace, kube.WaitOptions{})
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.ExternalError.Wrap(err, "failed to list ConsensusCapsules in namespace %s", namespace),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Check cluster access: kubectl -n %s get consensuscapsules", namespace))))
+			}
+
+			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			var restricted, refs []string
+			for i := range list.Items {
+				item := &list.Items[i]
+				// The operator uses spec.internalAddress as the gossip host when set; an IP needs no FQDN.
+				if addr, _, _ := unstructured.NestedString(item.Object, "spec", "internalAddress"); net.ParseIP(addr) != nil {
+					continue
+				}
+				ref := applicationPropertiesRef(item)
+				content, err := kc.GetResourceNestedString(ctx, apiVersion, "ApplicationProperties", namespace, ref, "spec", "content")
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.ExternalError.Wrap(err, "failed to read ApplicationProperties %s", ref),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Check cluster access: kubectl -n %s get applicationproperties %s", namespace, ref))))
+				}
+				value, found := propertyValue(content, gossipFqdnRestrictedKey)
+				if !found || !strings.EqualFold(value, "false") {
+					if !found {
+						value = "unset, network default true"
+					}
+					restricted = append(restricted, fmt.Sprintf("%s (%s)", item.GetName(), value))
+					refs = append(refs, ref)
+				}
+			}
+
+			if len(restricted) > 0 {
+				sort.Strings(restricted)
+				sort.Strings(refs)
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("discovery genesis writes cluster-DNS gossip endpoints, but %s is not false for: %s",
+						gossipFqdnRestrictedKey, strings.Join(restricted, ", ")),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Add %s=false to data/config/application.properties in the deployment package, then re-run 'consensus node install' for each node", gossipFqdnRestrictedKey),
+					"Or run genesis with --genesis-file: a pre-built genesis whose gossip endpoints are IPs and whose keys match the installed nodes",
+					fmt.Sprintf("Inspect the deployed value: kubectl -n %s get applicationproperties %s -o jsonpath='{.spec.content}'", namespace, refs[0]))))
+			}
+			return automa.StepSuccessReport(stp.Id())
+		}).
+		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
+			notify.As().StepStart(ctx, stp, "Checking that the nodes allow cluster-DNS gossip endpoints")
+			return ctx, nil
+		}).
+		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepFailure(ctx, stp, rpt, "Nodes do not allow cluster-DNS gossip endpoints")
+		}).
+		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			notify.As().StepCompletion(ctx, stp, rpt, "Nodes allow cluster-DNS gossip endpoints")
+		})
+}
+
+// applicationPropertiesRef returns the capsule's ApplicationProperties CR name,
+// falling back to the name derived from spec.nodeId.
+func applicationPropertiesRef(capsule *unstructured.Unstructured) string {
+	if ref, _, _ := unstructured.NestedString(capsule.Object, "spec", "applicationPropertiesRef"); ref != "" {
+		return ref
+	}
+	nodeID, _, _ := unstructured.NestedInt64(capsule.Object, "spec", "nodeId")
+	return models.ConsensusConfigCRName(models.ConsensusNodeScope(nodeID), models.ConfigKeyAppProperties)
+}
+
+// propertyValue returns the last value of key in Java properties content.
+// Separators are '=', ':' or whitespace; '#' and '!' lines are comments.
+func propertyValue(content, key string) (string, bool) {
+	value, found := "", false
+	for line := range strings.SplitSeq(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' || line[0] == '!' {
+			continue
+		}
+		i := strings.IndexAny(line, "=: \t")
+		if i < 0 || line[:i] != key {
+			continue
+		}
+		rest := strings.TrimLeft(line[i:], " \t")
+		if rest != "" && (rest[0] == '=' || rest[0] == ':') {
+			rest = rest[1:]
+		}
+		value, found = strings.TrimSpace(rest), true
+	}
+	return value, found
+}
 
 // EnsureNetworkGenesis creates the orbit's NetworkGenesis CR so the operator
 // generates genesis-network.json. When genesisNetworkJSON is non-empty (a

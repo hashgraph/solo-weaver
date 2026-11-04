@@ -271,6 +271,9 @@ func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string
 	cmd.Println("     Choose one:")
 	cmd.Println("     a) Discovery (recommended for a fresh in-cluster network — operator writes cluster-DNS endpoints):")
 	cmd.Printf("          %s\n", base)
+	if strings.TrimSpace(pkgDir) != "" {
+		cmd.Println("        Needs nodes.gossipFqdnRestricted=false in the package's data/config/application.properties.")
+	}
 	cmd.Println("     b) From a deployment package (mainnet/testnet/... — its genesis-network.json is applied verbatim):")
 	cmd.Printf("          %s --deployment-package-dir %s\n", base, pkg)
 	cmd.Println("     c) From a custom genesis file:")

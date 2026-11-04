@@ -81,9 +81,12 @@ func (h *GenesisHandler) BuildWorkflow(
 ) (*automa.WorkflowBuilder, error) {
 	ins := inputs.Custom
 
-	stepList := []automa.Builder{
-		steps.EnsureNetworkGenesis(ins.Namespace, ins.Orbit, ins.GenesisNetworkJSON, steps.DefaultCapsuleKubeProvider),
+	var stepList []automa.Builder
+	if ins.GenesisNetworkJSON == "" {
+		// Discovery writes cluster-DNS gossip endpoints; the nodes must allow them.
+		stepList = append(stepList, steps.CheckGossipFqdnAllowed(ins.Namespace, steps.DefaultCapsuleKubeProvider))
 	}
+	stepList = append(stepList, steps.EnsureNetworkGenesis(ins.Namespace, ins.Orbit, ins.GenesisNetworkJSON, steps.DefaultCapsuleKubeProvider))
 	if ins.ReadyTimeout > 0 {
 		// After genesis unblocks the network, confirm the nodes actually come up —
 		// otherwise a fresh install's readiness wait is skipped (no genesis yet) and

@@ -17,11 +17,11 @@ import (
 const sourceFolder = "folder"
 
 var (
-	flagImportKeysDir string
-	flagImportSource  string
-	flagImportForce   bool
-	flagImportSuffix  string
-	flagImportLabels  []string
+	flagImportKeysDir   string
+	flagImportSource    string
+	flagImportOverwrite bool
+	flagImportSuffix    string
+	flagImportLabels    []string
 
 	importSelectors func() cnkeys.Selectors
 
@@ -37,7 +37,7 @@ var (
 			"The admin key is created in an external wallet: put its PUBLIC key (hex) in --keys-dir as " +
 			"admin.pub. With no selector flag the admin secret is created only when admin.pub exists; " +
 			"pass --admin to require it. Re-importing identical material is idempotent. A secret of the same name " +
-			"whose content was edited is refused unless --force is passed.",
+			"whose content was edited is refused unless --overwrite is passed.",
 		RunE: runImport,
 	}
 )
@@ -46,7 +46,7 @@ func init() {
 	importSelectors = addSelectorFlags(importCmd)
 	importCmd.Flags().StringVar(&flagImportKeysDir, "keys-dir", "", "Node key folder to import from (required for --source folder)")
 	importCmd.Flags().StringVar(&flagImportSource, "source", sourceFolder, "Key material source: folder (vault support is tracked separately)")
-	importCmd.Flags().BoolVar(&flagImportForce, "force", false, "Overwrite a same-named secret whose content differs (e.g. one edited by hand); re-importing identical material is idempotent without this")
+	importCmd.Flags().BoolVar(&flagImportOverwrite, "overwrite", false, "Replace a same-named secret whose content differs (e.g. one edited by hand); re-importing identical material is idempotent without this")
 	importCmd.Flags().StringArrayVar(&flagImportLabels, "label", nil, "Extra label to put on every secret, as key=value, e.g. example.com/external-ref=ticket-42 (repeatable). On a secret whose content is already up to date only labels are changed")
 	importCmd.Flags().StringVar(&flagImportSuffix, "secret-suffix", "", "Replace the certificate date in the secret names, e.g. v0.75.6 (lowercase letters, digits, '-' and '.')")
 }
@@ -93,7 +93,7 @@ func runImport(cmd *cobra.Command, _ []string) error {
 		NodeId:    nodeID,
 		FromDir:   flagImportKeysDir,
 		Selectors: importSelectors(),
-		Force:     flagImportForce,
+		Overwrite: flagImportOverwrite,
 		Suffix:    flagImportSuffix,
 		Labels:    labels,
 	})

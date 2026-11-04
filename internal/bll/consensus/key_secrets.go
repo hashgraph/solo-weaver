@@ -4,7 +4,7 @@ package consensus
 
 import (
 	"context"
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/automa-saga/errx"
@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 )
 
 // keyCluster is the cluster access resolveKeySecrets needs: labelled Secrets,
@@ -33,12 +34,24 @@ var newKeyCluster = func() (keyCluster, error) {
 func liveSecretNames(ctx context.Context, c keyCluster, custom *models.ConsensusNodeInputs) (signing, grpc, admin string) {
 	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 	capsule := models.ConsensusCapsuleName(custom.OrbitName, custom.NodeId)
+	var readErr error
 	get := func(field string) string {
-		v, _ := c.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), custom.Namespace, capsule,
+		if readErr != nil {
+			return ""
+		}
+		v, err := c.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), custom.Namespace, capsule,
 			"spec", "secrets", "secretResources", field, "secretName")
+		readErr = err
 		return v
 	}
-	return get("signingPrivateKey"), get("grpcTlsPrivateKey"), get("adminPublicKey")
+	signing, grpc, admin = get("signingPrivateKey"), get("grpcTlsPrivateKey"), get("adminPublicKey")
+	if readErr != nil {
+		// A missing capsule is not an error, so this is a real read failure.
+		logx.As().Warn().Err(readErr).Str("capsule", capsule).
+			Msg("Cannot read the live ConsensusCapsule; using the labelled key secrets")
+		return "", "", ""
+	}
+	return signing, grpc, admin
 }
 
 const keySecretLookupTimeout = 30 * time.Second
@@ -56,9 +69,14 @@ const keySecretLookupTimeout = 30 * time.Second
 // The label-matched secret has its content checked against its name and
 // fingerprint.
 //
-// The admin public key secret is optional: when none exists, or several exist and
-// none is named, it is left empty and the capsule carries no admin key reference.
+// The admin public key secret is optional: when none exists, it is left empty and
+// the capsule carries no admin key reference. Several admin secrets stop the install.
 func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.ConsensusNodeInputs) error {
+	// Without the orbit name the live-capsule lookup reads the wrong capsule and
+	// silently falls back to the labels.
+	if custom.OrbitName == "" {
+		return errx.Decorate(errorx.IllegalState.New("orbit name is not set before the key secret lookup"), reasons.Internal)
+	}
 	liveSigning, liveGrpc, liveAdmin := liveSecretNames(ctx, client, custom)
 	pick := func(t cnkeys.KeyType, current *string, live string, optional bool) error {
 		if *current != "" {
@@ -70,12 +88,14 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 		}
 		secret, err := cnkeys.ResolveSecret(ctx, client, custom.Namespace, custom.NodeId, t, cnkeys.ResolveOptions{})
 		if err != nil {
-			if optional {
-				if hasMultiple(err) {
-					logx.As().Warn().Err(err).Str("keyType", string(t)).
-						Msg("Several key secrets found and none named; leaving the admin key reference out (pass --admin-key-secret to choose one)")
-				}
+			if optional && cnkeys.IsNoKeySecret(err) {
 				return nil
+			}
+			if optional {
+				return errx.Decorate(err, reasons.PreconditionNotMet,
+					"Name the admin public key secret to use with --admin-key-secret",
+					fmt.Sprintf("Check the admin secret with `consensus keys verify --from-cluster --admin --namespace %s --node-id %d`",
+						custom.Namespace, custom.NodeId))
 			}
 			return errx.Decorate(err, reasons.PreconditionNotMet,
 				"Import the node's keys first with `consensus keys import` (or `consensus keys init`)",
@@ -92,12 +112,6 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 		return err
 	}
 	return pick(cnkeys.KeyTypeAdmin, &custom.AdminKeySecret, liveAdmin, true)
-}
-
-// hasMultiple reports whether a resolve error means several generations exist
-// (which is never ignored), as opposed to none.
-func hasMultiple(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "key secrets found")
 }
 
 func lookupContext() (context.Context, context.CancelFunc) {

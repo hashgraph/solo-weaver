@@ -64,6 +64,31 @@ func TestWriteToDir(t *testing.T) {
 	}
 }
 
+func TestWriteToDir_TightensExistingPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits differ on windows")
+	}
+	dir := filepath.Join(t.TempDir(), "keys")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	stale := filepath.Join(dir, FileGossipPrivate)
+	require.NoError(t, os.WriteFile(stale, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(stale, 0o644))
+
+	set, err := Generate(GenerateOptions{MachineID: "m"})
+	require.NoError(t, err)
+	require.NoError(t, set.WriteToDir(dir))
+
+	assertPerm(t, stale, 0o600)
+	got, err := os.ReadFile(stale)
+	require.NoError(t, err)
+	assert.NotEqual(t, []byte("old"), got)
+
+	// No temp files remain after the rename.
+	tmps, err := filepath.Glob(filepath.Join(dir, ".*.tmp.*"))
+	require.NoError(t, err)
+	assert.Empty(t, tmps)
+}
+
 func TestWriteToDir_SubsetOmitsFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "gossip-only")
 	set, err := Generate(GenerateOptions{Selectors: Selectors{Gossip: true}, MachineID: "m"})

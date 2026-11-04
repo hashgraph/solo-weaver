@@ -24,7 +24,7 @@ func runGenerateCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	flagKeysDir, flagIdentity, flagMachineID = "", "", ""
 	flagGossip, flagTLS = false, false
-	flagGenerateForce = false
+	flagGenerateOverwrite = false
 	resetGrpcFlags(t, generateCmd)
 
 	root := GetCmd()
@@ -76,12 +76,12 @@ func TestGenerateCmd_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(first), string(again), "existing key must be preserved")
 
-	// --force regenerates (overwrites).
-	_, err = runGenerateCmd(t, "--keys-dir", dir, "--machine-id", "m", "--gossip", "--force")
+	// --overwrite regenerates.
+	_, err = runGenerateCmd(t, "--keys-dir", dir, "--machine-id", "m", "--gossip", "--overwrite")
 	require.NoError(t, err)
 	forced, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
 	require.NoError(t, err)
-	assert.NotEqual(t, string(first), string(forced), "--force must regenerate")
+	assert.NotEqual(t, string(first), string(forced), "--overwrite must regenerate")
 }
 
 func TestGenerateCmd_DistinctPerRun(t *testing.T) {

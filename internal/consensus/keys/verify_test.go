@@ -36,7 +36,7 @@ func TestVerifyDir_Valid(t *testing.T) {
 	assert.Equal(t, "ed25519", findingFor(report, "admin").Detail)
 }
 
-func TestVerifyDir_ECDSAAdmin(t *testing.T) {
+func TestVerifyDir_RejectsECDSAAdmin(t *testing.T) {
 	dir := writeGeneratedFolder(t)
 	// A compressed secp256k1 public key (33 bytes, 0x02 prefix) from a wallet.
 	pub := "02" + strings.Repeat("ab", 32)
@@ -44,8 +44,8 @@ func TestVerifyDir_ECDSAAdmin(t *testing.T) {
 
 	report, err := VerifyDir(dir, Selectors{Admin: true})
 	require.NoError(t, err)
-	assert.True(t, report.OK())
-	assert.Contains(t, findingFor(report, "admin").Detail, "ecdsa")
+	assert.False(t, report.OK())
+	assert.Contains(t, findingFor(report, "admin").Detail, "accepts only Ed25519")
 }
 
 func TestVerifyDir_NoAdminPubIsNotAFailureByDefault(t *testing.T) {
