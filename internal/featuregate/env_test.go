@@ -38,3 +38,11 @@ func TestEnvOverride_EnablesAlphaFeature(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, g3.Enabled(featuregate.ConsensusNodeOperatorManaged))
 }
+
+// A mistyped opt-in var that matches no feature fails fast (error-and-stop).
+func TestEnvOverride_UnknownVarErrors(t *testing.T) {
+	t.Setenv("SOLO_PROVISIONER_ENABLE_NOPE", "1")
+	_, err := featuregate.NewDefault()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SOLO_PROVISIONER_ENABLE_NOPE")
+}
