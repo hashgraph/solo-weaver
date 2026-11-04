@@ -90,8 +90,9 @@ BlockNodeOperatorManaged: {
 ### 3. Branch the code with `gate.Enabled`
 
 Business code calls `gate.Enabled(Feature)` — **never** compare versions inline.
-Obtain a gate with `featuregate.NewDefault()` (wiring a shared gate into each
-command's `RunE` is tracked in [#1392](https://github.com/hashgraph/solo-weaver/issues/1392)):
+Obtain a gate with `featuregate.NewDefault()`. (To gate a whole command or a flag
+by maturity instead of a code path, see
+[Gating commands and flags](#gating-commands-and-flags).)
 
 ```go
 gate, err := featuregate.NewDefault()
@@ -101,6 +102,68 @@ if err != nil {
 if gate.Enabled(featuregate.BlockNodeOperatorManaged) {
     // new path
 }
+```
+
+## Gating commands and flags
+
+`gate.Enabled` above gates a *code path*. To gate a whole **command** or a single
+**flag** by its feature's maturity — hiding or labelling it in `--help` and
+refusing it unless the operator opts in — use the entry-level gate in
+`cmd/cli/commands/common`.
+
+### Gate a command — `common.GateFeature(cmd, feature)`
+
+```go
+// cmd/cli/commands/consensus/consensus.go
+common.GateFeature(consensusCmd, featuregate.ConsensusNodeOperatorManaged)
+```
+
+Visibility and availability follow the feature's maturity:
+
+| Maturity | `--help` | Runs? |
+|---|---|---|
+| `ALPHA` | **hidden** | only when opted in |
+| `BETA`  | visible, labelled `[beta]` | only when opted in |
+| `GA`    | visible | always |
+
+An opted-in operator runs the command with the hidden gate-wide `--experimental`
+flag, or the feature's `SOLO_PROVISIONER_ENABLE_<FEATURE>` override. A hidden
+alpha command stays **discoverable** via `solo-provisioner feature list`, which
+prints the feature and its exact opt-in env var.
+
+Command availability is *maturity-based*, independent of the activation-version
+axis: `--experimental` enables an alpha command even when the feature's
+`ActiveFrom` is a future version. (The activation-version axis governs behaviour
+rollout, not command availability.)
+
+### Gate a flag — `common.GateFeatureFlag(cmd, flagName, feature)`
+
+When a stable (GA) command gains an unproven flag, gate just the flag, not the
+whole command:
+
+```go
+cmd.Flags().String("firewall-config-file", "", "declarative firewall input")
+common.GateFeatureFlag(cmd, "firewall-config-file", featuregate.SomeAlphaFeature)
+```
+
+An `ALPHA` flag is hidden from the command's `--help` and errors if the operator
+sets it without opting in; a `BETA` flag is labelled `[beta]`. The flag must
+already be registered on the command.
+
+### The `--help` surface golden test
+
+`TestRootHelpSurface_Golden` (`cmd/cli/commands/help_surface_golden_test.go`) pins
+the **visible** command/flag surface — every non-hidden command (top level and one
+level down) plus the root persistent flags — to
+`cmd/cli/commands/testdata/help-surface.golden`.
+
+If a change exposes a new command or flag (for example, forgetting to gate an
+alpha feature), the surface changes and the test fails with a reviewable diff, so
+accidental exposure cannot merge silently. When the change is intended — a feature
+graduated, or a new GA command landed — regenerate the golden:
+
+```bash
+go test ./cmd/cli/commands -run TestRootHelpSurface_Golden -update-golden
 ```
 
 ## Enabling a feature
