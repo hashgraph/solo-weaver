@@ -10,9 +10,9 @@ import "path/filepath"
 type ComponentID string
 
 const (
-	// ComponentMachine holds Version, ProvisionerState, MachineState and
-	// LastAction — the fields with no single owning handler. It is written by
-	// every handler alongside whatever it manages (see internal/bll.WithManagedComponents).
+	// ComponentMachine holds Version, ProvisionerState and MachineState — the
+	// fields with no single owning handler. It is written by every handler
+	// alongside whatever it manages (see internal/bll.WithManagedComponents).
 	ComponentMachine ComponentID = "machine"
 	ComponentCluster ComponentID = "cluster"
 	// ComponentBlockNode is the block node's persisted state.
@@ -57,7 +57,6 @@ func applyComponentSection(dst *State, id ComponentID, src State) {
 		dst.Version = src.Version
 		dst.ProvisionerState = src.ProvisionerState
 		dst.MachineState = src.MachineState
-		dst.LastAction = src.LastAction
 	case ComponentCluster:
 		dst.ClusterState = src.ClusterState
 	case ComponentBlockNode:
