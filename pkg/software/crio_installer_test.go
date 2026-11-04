@@ -3,6 +3,7 @@
 package software
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -60,4 +61,32 @@ func Test_crioSocketDropInPaths(t *testing.T) {
 		filepath.Join(getCrioServiceDropInDir(), CrioSocketDropInFile),
 		getCrioSocketDropInPath())
 	require.Equal(t, "/usr/lib/systemd/system/crio.service.d", getSystemCrioServiceDropInDir())
+}
+
+func Test_removeLinkIfTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sandbox", "crictl")
+	installer, err := NewCrioInstaller()
+	require.NoError(t, err)
+	ci := installer.(*crioInstaller)
+
+	ours := filepath.Join(dir, "ours")
+	require.NoError(t, os.Symlink(target, ours))
+	require.NoError(t, ci.removeLinkIfTarget(ours, target))
+	_, err = os.Lstat(ours)
+	require.True(t, os.IsNotExist(err), "link to our target must be removed")
+
+	foreign := filepath.Join(dir, "foreign")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "other"), foreign))
+	require.NoError(t, ci.removeLinkIfTarget(foreign, target))
+	_, err = os.Lstat(foreign)
+	require.NoError(t, err, "link to another target must be kept")
+
+	regular := filepath.Join(dir, "regular")
+	require.NoError(t, os.WriteFile(regular, []byte("x"), 0o644))
+	require.NoError(t, ci.removeLinkIfTarget(regular, target))
+	_, err = os.Stat(regular)
+	require.NoError(t, err, "regular file must be kept")
+
+	require.NoError(t, ci.removeLinkIfTarget(filepath.Join(dir, "missing"), target))
 }
