@@ -47,12 +47,7 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 		cmd.Short = strings.TrimSpace(cmd.Short) + " [beta]"
 	}
 
-	// Register the hidden gate-wide opt-in once (inherited by subcommands).
-	if cmd.PersistentFlags().Lookup(experimentalFlagName) == nil {
-		cmd.PersistentFlags().Bool(experimentalFlagName, false,
-			"Enable experimental (alpha) features (not supported in production)")
-		_ = cmd.PersistentFlags().MarkHidden(experimentalFlagName)
-	}
+	installExperimentalFlag(cmd)
 
 	prev := cmd.PersistentPreRunE
 	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
@@ -67,6 +62,58 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 			return err
 		}
 		return requireFeatureEnabled(c, f)
+	}
+}
+
+// GateFeatureFlag ties a single flag's visibility and availability to a feature's
+// maturity: an ALPHA flag is hidden from --help and errors if the operator sets
+// it without opting in; a BETA flag is labelled "[beta]". The flag must already
+// be registered on cmd (local or persistent). Opt-in is the same as GateFeature:
+// --experimental, or the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> override.
+//
+// Use this when a stable (GA) command gains an unproven flag — gate just the
+// flag, not the whole command.
+func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
+	flag := cmd.Flags().Lookup(flagName)
+	if flag == nil {
+		flag = cmd.PersistentFlags().Lookup(flagName)
+	}
+	if flag == nil {
+		return
+	}
+
+	installExperimentalFlag(cmd)
+
+	switch featuregate.MaturityOf(f) {
+	case gatekit.Alpha:
+		flag.Hidden = true
+		flag.Usage = strings.TrimSpace(flag.Usage) + " [alpha]"
+	case gatekit.Beta:
+		flag.Usage = strings.TrimSpace(flag.Usage) + " [beta]"
+	}
+
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(c, args); err != nil {
+				return err
+			}
+		}
+		// Only enforce the gate when the operator actually used the flag.
+		if c.Flags().Changed(flagName) {
+			return requireFeatureEnabled(c, f)
+		}
+		return nil
+	}
+}
+
+// installExperimentalFlag registers the hidden gate-wide --experimental opt-in
+// once on cmd (inherited by subcommands when persistent).
+func installExperimentalFlag(cmd *cobra.Command) {
+	if cmd.PersistentFlags().Lookup(experimentalFlagName) == nil {
+		cmd.PersistentFlags().Bool(experimentalFlagName, false,
+			"Enable experimental (alpha) features (not supported in production)")
+		_ = cmd.PersistentFlags().MarkHidden(experimentalFlagName)
 	}
 }
 

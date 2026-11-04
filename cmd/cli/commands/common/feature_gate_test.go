@@ -44,3 +44,23 @@ func TestRequireFeatureEnabled_EnvOverride(t *testing.T) {
 	t.Setenv(featuregate.OverrideEnvVar(featuregate.ConsensusNodeOperatorManaged), "1")
 	require.NoError(t, requireFeatureEnabled(cmd, featuregate.ConsensusNodeOperatorManaged))
 }
+
+// GateFeatureFlag hides and labels an alpha flag, installs the opt-in, and
+// refuses the flag when it is set without opting in.
+func TestGateFeatureFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo"}
+	cmd.Flags().String("thing", "", "do a thing")
+	GateFeatureFlag(cmd, "thing", featuregate.ConsensusNodeOperatorManaged) // alpha
+
+	fl := cmd.Flags().Lookup("thing")
+	require.True(t, fl.Hidden)
+	require.Contains(t, fl.Usage, "[alpha]")
+	require.NotNil(t, cmd.PersistentFlags().Lookup(experimentalFlagName))
+
+	// Flag not set -> allowed.
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+
+	// Flag set without opt-in -> refused.
+	require.NoError(t, cmd.Flags().Set("thing", "x"))
+	require.Error(t, cmd.PreRunE(cmd, nil))
+}
