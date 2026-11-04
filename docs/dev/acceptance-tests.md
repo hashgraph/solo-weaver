@@ -416,6 +416,11 @@ export NS=hiero-network-2
 export PKG=./test/data/build-v0.74.2   # extracted HIP-1494 deployment package
 export KEYS=/opt/solo/cn-keys          # node key material; survives a VM reboot (not /tmp)
 
+# Discovery genesis writes cluster-DNS gossip endpoints, so the package's
+# application.properties must allow them (`network genesis` fails otherwise).
+grep -q '^nodes.gossipFqdnRestricted' "${PKG}/data/config/application.properties" ||
+  printf '\nnodes.gossipFqdnRestricted=false\n' >> "${PKG}/data/config/application.properties"
+
 # 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
 task uat:registry:login:ghcr
 

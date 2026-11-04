@@ -564,6 +564,9 @@ tasks:
         mkdir -p "{{.WEAVER_ROOT}}/test/data" "{{.PKG_SRC}}"
         # Base package UNZIPPED — `consensus node install` reads a directory.
         unzip -o "$BASE_ZIP" -d "{{.PKG_SRC}}"
+        # Discovery genesis writes cluster-DNS gossip endpoints; the network must allow them.
+        APP_PROPS="{{.PKG_SRC}}/data/config/application.properties"
+        grep -q '^nodes.gossipFqdnRestricted' "$APP_PROPS" || printf '\nnodes.gossipFqdnRestricted=false\n' >> "$APP_PROPS"
         # Upgrade package as a ZIP — beacon uploads the .zip.
         cp -f "{{.ZIP_SRC}}" "{{.WEAVER_ROOT}}/test/data/build-v{{.UPGRADE_VERSION}}.zip"
         echo "✓ staged base package -> {{.PKG_SRC}} and upgrade zip -> test/data/"
