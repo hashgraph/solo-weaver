@@ -152,14 +152,23 @@ func (m *PerComponentStateMigration) Execute(_ context.Context, _ *migration.Con
 	// The recorded version that startup migrations gate on moves to
 	// provisioner.yaml. Write it before the rename: once state.yaml is gone,
 	// nothing else holds it, and the next run would see no version at all.
-	var prov ProvisionerVersionDoc
-	if err := yaml.Unmarshal(b, &prov); err != nil {
-		return errorx.IllegalFormat.Wrap(err, "legacy state file %s is not parseable YAML", legacyPath)
-	}
-	rec := ProvisionerRecord{CLI: prov.State.Provisioner}
-	rec.CLI.StateVersion = prov.State.Version
-	if err := writeProvisionerRecord(dir, rec); err != nil {
+	// An existing provisioner.yaml is newer than any restored state.yaml, and
+	// startup skips its own version write when that record already matches
+	// the running CLI, so overwriting it would re-run historical migrations.
+	_, hasRecord, err := readProvisionerRecord(dir)
+	if err != nil {
 		return err
+	}
+	if !hasRecord {
+		var prov ProvisionerVersionDoc
+		if err := yaml.Unmarshal(b, &prov); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "legacy state file %s is not parseable YAML", legacyPath)
+		}
+		rec := ProvisionerRecord{CLI: prov.State.Provisioner}
+		rec.CLI.StateVersion = prov.State.Version
+		if err := writeProvisionerRecord(dir, rec); err != nil {
+			return err
+		}
 	}
 
 	backupPath := legacyPath + legacyStateBackupSuffix

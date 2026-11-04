@@ -361,6 +361,30 @@ func TestPerComponentStateMigration_ExecuteKeepsComponentFilesWhenLegacyDiverges
 	require.False(t, applies)
 }
 
+// TestPerComponentStateMigration_KeepsAnExistingProvisionerRecord: an old
+// state.yaml restored by hand whose components still match must not roll
+// provisioner.yaml back to the version it recorded. Startup skips its own
+// version write when the record already matches the running CLI, so an older
+// version left there would re-run historical migrations on the next command.
+func TestPerComponentStateMigration_KeepsAnExistingProvisionerRecord(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, StateFileName)
+	legacy := legacyStateFixture(t, dir)
+	writeLegacyStateFixture(t, legacyPath, legacy)
+	m := &PerComponentStateMigration{legacyStateFileOverride: legacyPath}
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	current := ProvisionerRecord{CLI: ProvisionerInfo{Version: "0.40.0", StateVersion: "v2"}}
+	require.NoError(t, writeProvisionerRecord(dir, current))
+	writeLegacyStateFixture(t, legacyPath, legacy)
+
+	require.NoError(t, m.Execute(context.Background(), nil))
+
+	require.Equal(t, current, readProvisionerRecordFrom(t, dir))
+	_, err := os.Stat(legacyPath)
+	require.True(t, os.IsNotExist(err), "the restored state.yaml is still moved out of the way")
+}
+
 func TestPerComponentStateMigration_FreshInstallNeverApplies(t *testing.T) {
 	dir := t.TempDir()
 	m := &PerComponentStateMigration{legacyStateFileOverride: filepath.Join(dir, StateFileName)}
