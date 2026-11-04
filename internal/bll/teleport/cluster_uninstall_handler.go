@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -18,6 +19,8 @@ type ClusterUninstallHandler struct {
 	bll.BaseHandler[models.TeleportClusterInputs]
 	runtime *rsl.TeleportRuntimeResolver
 }
+
+var _ bll.DriftDestroyer[models.TeleportClusterInputs] = (*ClusterUninstallHandler)(nil)
 
 func (h *ClusterUninstallHandler) PrepareEffectiveInputs(
 	intent models.Intent,
@@ -31,6 +34,12 @@ func (h *ClusterUninstallHandler) BuildWorkflow(
 	_ models.UserInputs[models.TeleportClusterInputs],
 ) (*automa.WorkflowBuilder, error) {
 	return steps.TeardownTeleportClusterAgent(), nil
+}
+
+// DestroysDrift reports a change to the cluster agent, which the uninstall
+// removes. A node agent change is not its to destroy.
+func (h *ClusterUninstallHandler) DestroysDrift(_ models.UserInputs[models.TeleportClusterInputs], c drift.Change) bool {
+	return drift.OnTeleportClusterAgent(c)
 }
 
 func (h *ClusterUninstallHandler) HandleIntent(

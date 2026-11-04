@@ -11,6 +11,7 @@ var (
 	flagStopOnError     bool
 	flagRollbackOnError bool
 	flagContinueOnError bool
+	flagOverrideDrift   bool
 
 	// Teleport cluster agent configuration flags
 	flagVersion    string

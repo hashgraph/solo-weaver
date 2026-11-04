@@ -40,6 +40,11 @@ func ComponentFilePath(dir string, id ComponentID) string {
 	return componentFilePath(dir, id)
 }
 
+// ActionHistoryFilePath returns the path of the action history inside dir.
+func ActionHistoryFilePath(dir string) string {
+	return filepath.Join(dir, "action_history.yaml")
+}
+
 // componentFilePath returns the path of id's persisted file inside dir.
 func componentFilePath(dir string, id ComponentID) string {
 	return filepath.Join(dir, string(id)+".yaml")

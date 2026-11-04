@@ -45,11 +45,15 @@ type noReleases struct{}
 
 func (noReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
-// noopIntent runs a one-step workflow that calls execute, or fails to build
-// the workflow when buildErr is set.
+// noopIntent is a converging test handler. It runs a one-step workflow that
+// calls execute. With buildErr set, BuildWorkflow fails; with noSteps set, it
+// returns a workflow with no steps, which then fails to build; with stepErr
+// set, the step fails.
 type noopIntent struct {
 	execute  func()
 	buildErr error
+	noSteps  bool
+	stepErr  error
 }
 
 func (n noopIntent) PrepareEffectiveInputs(_ models.Intent, in models.UserInputs[struct{}]) (*models.UserInputs[struct{}], error) {
@@ -60,10 +64,16 @@ func (n noopIntent) BuildWorkflow(state.State, models.UserInputs[struct{}]) (*au
 	if n.buildErr != nil {
 		return nil, n.buildErr
 	}
+	if n.noSteps {
+		return automa.NewWorkflowBuilder().WithId("test"), nil
+	}
 	step := automa.NewStepBuilder().WithId("noop").
 		WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
 			if n.execute != nil {
 				n.execute()
+			}
+			if n.stepErr != nil {
+				return automa.FailureReport(stp, automa.WithError(n.stepErr))
 			}
 			return automa.SuccessReport(stp)
 		})
@@ -117,6 +127,25 @@ func handleBlockNodeIntent(t *testing.T, stateFile string, h *host, intent noopI
 // handleBlockNodeIntentWith is handleBlockNodeIntent with the handler's managed components chosen.
 func handleBlockNodeIntentWith(t *testing.T, stateFile string, h *host, intent noopIntent, managed ...Component) (*automa.Report, error) {
 	t.Helper()
+	return handleIntent(t, stateFile, h, intent, commonInputs(), owns(managed...))
+}
+
+// owns is the handler option that declares the components a test handler manages.
+func owns(managed ...Component) BaseHandlerOption[struct{}] {
+	return WithManagedComponents[struct{}](managed...)
+}
+
+// commonInputs is an interactive run with no override.
+func commonInputs() models.CommonInputs {
+	return models.CommonInputs{
+		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
+	}
+}
+
+// handleIntent is handleBlockNodeIntentWith with the common inputs and the
+// handler's options chosen.
+func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[struct{}], common models.CommonInputs, opts ...BaseHandlerOption[struct{}]) (*automa.Report, error) {
+	t.Helper()
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
@@ -145,12 +174,10 @@ func handleBlockNodeIntentWith(t *testing.T, stateFile string, h *host, intent n
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
 	require.NoError(t, err)
-	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, WithManagedComponents[struct{}](managed...))
+	base, err := NewBaseHandler[struct{}](runtime, models.TargetBlockNode, opts...)
 	require.NoError(t, err)
 
-	inputs := models.UserInputs[struct{}]{Common: models.CommonInputs{
-		ExecutionOptions: models.WorkflowExecutionOptions{ExecutionMode: automa.StopOnError, RollbackMode: automa.StopOnError},
-	}}
+	inputs := models.UserInputs[struct{}]{Common: common}
 	return base.HandleIntent(context.Background(),
 		models.Intent{Action: models.ActionInstall, Target: models.TargetBlockNode}, inputs, intent, nil)
 }
@@ -243,8 +270,8 @@ func installedClusterAgent() state.TeleportState {
 }
 
 // The cluster runtime reaches the cluster, then the Teleport checker's own probe
-// finds the API server silent. The persisted cluster agent stands and nothing is
-// reported.
+// finds the API server silent. The persisted cluster agent stands, and the run
+// reports that it could not read the agent, not a removal.
 func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeState(t, stateFile, installedClusterAgent())
@@ -252,7 +279,9 @@ func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 
 	report := runBlockNodeIntent(t, stateFile, h, noopIntent{})
 
-	require.Empty(t, ui.CollectWarnings(report))
+	require.Equal(t, []string{
+		`teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
+	}, ui.CollectWarnings(report))
 	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
 }
 
