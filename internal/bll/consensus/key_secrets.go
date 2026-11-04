@@ -4,6 +4,7 @@ package consensus
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -69,8 +70,8 @@ const keySecretLookupTimeout = 30 * time.Second
 // The label-matched secret has its content checked against its name and
 // fingerprint.
 //
-// The admin public key secret is optional: when none exists, or several exist and
-// none is named, it is left empty and the capsule carries no admin key reference.
+// The admin public key secret is optional: when none exists, it is left empty and
+// the capsule carries no admin key reference. Several admin secrets stop the install.
 func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.ConsensusNodeInputs) error {
 	// Without the orbit name the live-capsule lookup reads the wrong capsule and
 	// silently falls back to the labels.
@@ -88,12 +89,14 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 		}
 		secret, err := cnkeys.ResolveSecret(ctx, client, custom.Namespace, custom.NodeId, t, cnkeys.ResolveOptions{})
 		if err != nil {
-			if optional {
-				if hasMultiple(err) {
-					logx.As().Warn().Err(err).Str("keyType", string(t)).
-						Msg("Several key secrets found and none named; leaving the admin key reference out (pass --admin-key-secret to choose one)")
-				}
+			if optional && hasNone(err) {
 				return nil
+			}
+			if optional {
+				return errx.Decorate(err, reasons.PreconditionNotMet,
+					"Name the admin public key secret to use with --admin-key-secret",
+					fmt.Sprintf("Check the admin secret with `consensus keys verify --from-cluster --admin --namespace %s --node-id %d`",
+						custom.Namespace, custom.NodeId))
 			}
 			return errx.Decorate(err, reasons.PreconditionNotMet,
 				"Import the node's keys first with `consensus keys import` (or `consensus keys init`)",
@@ -112,10 +115,10 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 	return pick(cnkeys.KeyTypeAdmin, &custom.AdminKeySecret, liveAdmin, true)
 }
 
-// hasMultiple reports whether a resolve error means several generations exist
-// (which is never ignored), as opposed to none.
-func hasMultiple(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "key secrets found")
+// hasNone reports whether a resolve error means no secret of the type exists, as
+// opposed to several, a bad secret or a failed lookup.
+func hasNone(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "key secret found for node")
 }
 
 func lookupContext() (context.Context, context.CancelFunc) {

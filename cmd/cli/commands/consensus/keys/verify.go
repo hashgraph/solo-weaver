@@ -25,7 +25,7 @@ var (
 		Short: "Validate consensus node key material in a folder or in the cluster",
 		Long: "Check that the selected key material is well-formed: private keys and certificates parse, " +
 			"each certificate's public key matches its private key, the gossip key is RSA-3072, and the admin " +
-			"public key is a valid Ed25519 or secp256k1 key. Verify a folder with --keys-dir, or the in-cluster " +
+			"public key is a valid Ed25519 key. Verify a folder with --keys-dir, or the in-cluster " +
 			"secrets with --from-cluster --node-id N.\n\n" +
 			"With no selector flag, a folder's admin public key (admin.pub) is checked only when the file exists.",
 		RunE: runVerify,

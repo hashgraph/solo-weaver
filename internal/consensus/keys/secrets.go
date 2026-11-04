@@ -5,6 +5,7 @@ package keys
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"os"
 	"path/filepath"
@@ -96,6 +97,18 @@ func Import(ctx context.Context, client SecretClient, opts ImportOptions) (*Impo
 		_, err := os.Stat(filepath.Join(opts.FromDir, FileAdminPublic))
 		sel = Selectors{Gossip: true, Grpc: true, Admin: err == nil}
 	}
+	// Check admin.pub before any secret is written, so a bad key changes nothing.
+	// The operator reads the admin secret as raw key bytes, so decode the hex file.
+	var adminRaw []byte
+	if sel.Admin {
+		files, err := readFiles(opts.FromDir, FileAdminPublic)
+		if err != nil {
+			return nil, err
+		}
+		if adminRaw, err = AdminPublicToRaw(files[FileAdminPublic]); err != nil {
+			return nil, err
+		}
+	}
 	result := &ImportResult{}
 
 	apply := func(gen Generation, data map[string][]byte) error {
@@ -180,17 +193,7 @@ func Import(ctx context.Context, client SecretClient, opts ImportOptions) (*Impo
 		}
 	}
 	if sel.Admin {
-		// Only the public key. The operator reads this secret's
-		// value as raw key bytes, so decode the hex file before storing it.
-		files, err := readFiles(opts.FromDir, FileAdminPublic)
-		if err != nil {
-			return nil, err
-		}
-		raw, err := AdminPublicToRaw(files[FileAdminPublic])
-		if err != nil {
-			return nil, err
-		}
-		if err := apply(adminGeneration(raw), map[string][]byte{FileAdminPublic: raw}); err != nil {
+		if err := apply(adminGeneration(adminRaw), map[string][]byte{FileAdminPublic: adminRaw}); err != nil {
 			return nil, err
 		}
 	}
@@ -314,8 +317,7 @@ func writeFileGuarded(dir, name string, payload []byte, perm os.FileMode, overwr
 }
 
 // AdminPublicToRaw converts the contents of an admin.pub file (hex text, with or
-// without a trailing newline) to the raw key bytes stored in the admin secret:
-// 32 bytes for Ed25519 or a 33-byte compressed point for secp256k1.
+// without a trailing newline) to the raw 32-byte Ed25519 key stored in the admin secret.
 func AdminPublicToRaw(fileContent []byte) ([]byte, error) {
 	raw, err := hex.DecodeString(strings.TrimSpace(string(fileContent)))
 	if err != nil {
@@ -336,9 +338,15 @@ func AdminPublicToFile(raw []byte) ([]byte, error) {
 	return []byte(hex.EncodeToString(raw) + "\n"), nil
 }
 
+// checkAdminPublicLen accepts only Ed25519: the consensus node reads genesis admin
+// keys (node-admin-keys.json) as Ed25519 only.
 func checkAdminPublicLen(n int) error {
-	if n != 32 && n != 33 {
-		return errorx.IllegalArgument.New("unexpected admin public key length %d (want 32 for ed25519 or 33 for secp256k1)", n)
+	if n == 33 {
+		return errorx.IllegalArgument.New("admin public key is 33 bytes (secp256k1); the consensus node accepts only Ed25519 (32-byte) node admin keys at genesis. " +
+			"For a DAB join, give the key in NodeCreate only and remove admin.pub from --keys-dir")
+	}
+	if n != ed25519.PublicKeySize {
+		return errorx.IllegalArgument.New("unexpected admin public key length %d (want 32 for ed25519)", n)
 	}
 	return nil
 }
