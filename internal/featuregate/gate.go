@@ -36,19 +36,19 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 		current = CurrentActivationVersion
 	}
 
-	var opts []gatekit.Option
+	// Per-feature opt-ins from SOLO_PROVISIONER_ENABLE_<FEATURE> env vars. Strict:
+	// an unknown or malformed <prefix>* variable fails New (and stops the binary).
+	// Safe now that every SOLO_PROVISIONER_ENABLE_* var maps to a feature — the
+	// experimental command gate was converged into the registry (#1392).
+	opts := []gatekit.Option{gatekit.WithEnvOverrides(envPrefix)}
+
 	if o.Experimental {
 		opts = append(opts, gatekit.WithExperimental(true))
 	}
 
-	// Per-feature opt-ins: SOLO_PROVISIONER_ENABLE_<FEATURE> env vars, with any
-	// explicit Options.Overrides taking precedence.
-	overrides := EnvOverrides()
-	for k, v := range o.Overrides {
-		overrides[k] = v
-	}
-	if len(overrides) > 0 {
-		opts = append(opts, gatekit.WithOverrides(overrides))
+	// Explicit overrides win over env (applied last — gatekit is last-writer).
+	if len(o.Overrides) > 0 {
+		opts = append(opts, gatekit.WithOverrides(o.Overrides))
 	}
 
 	return gatekit.New(Catalog(), staticSource{v: current}, opts...)

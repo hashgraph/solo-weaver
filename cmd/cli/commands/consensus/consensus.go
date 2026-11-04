@@ -7,6 +7,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/migration"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/consensus/node"
+	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/spf13/cobra"
 )
 
@@ -19,10 +20,11 @@ var consensusCmd = &cobra.Command{
 
 func init() {
 	// Nothing in the consensus stack is production-ready yet, but solo-provisioner
-	// ships to production block-node operators. Gate the whole group behind the
-	// experimental feature gate so it is hidden from --help and refuses to run
-	// unless the operator opts in (--experimental or SOLO_PROVISIONER_ENABLE_CONSENSUS).
-	common.GateExperimental(consensusCmd, "consensus")
+	// ships to production block-node operators. Gate the whole group on the
+	// ConsensusNodeOperatorManaged feature: it is labelled "[alpha]" in --help and
+	// refuses to run unless the operator opts in (--experimental, or
+	// SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED).
+	common.GateFeature(consensusCmd, featuregate.ConsensusNodeOperatorManaged)
 
 	consensusCmd.AddCommand(migration.GetCmd())
 	consensusCmd.AddCommand(node.GetCmd())
