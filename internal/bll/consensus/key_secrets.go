@@ -5,7 +5,6 @@ package consensus
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/automa-saga/errx"
@@ -89,7 +88,7 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 		}
 		secret, err := cnkeys.ResolveSecret(ctx, client, custom.Namespace, custom.NodeId, t, cnkeys.ResolveOptions{})
 		if err != nil {
-			if optional && hasNone(err) {
+			if optional && cnkeys.IsNoKeySecret(err) {
 				return nil
 			}
 			if optional {
@@ -113,12 +112,6 @@ func resolveKeySecrets(ctx context.Context, client keyCluster, custom *models.Co
 		return err
 	}
 	return pick(cnkeys.KeyTypeAdmin, &custom.AdminKeySecret, liveAdmin, true)
-}
-
-// hasNone reports whether a resolve error means no secret of the type exists, as
-// opposed to several, a bad secret or a failed lookup.
-func hasNone(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "key secret found for node")
 }
 
 func lookupContext() (context.Context, context.CancelFunc) {

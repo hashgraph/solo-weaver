@@ -460,6 +460,7 @@ func TestResolveSecret_SeveralGenerationsNeedAChoice(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), names[0])
 	assert.Contains(t, err.Error(), names[1])
+	assert.False(t, IsNoKeySecret(err), "several generations must not read as none")
 
 	fp := strings.TrimPrefix(client.labels["ns/"+names[1]][LabelFingerprint], "")
 	got, err := ResolveSecret(context.Background(), client, "ns", 0, KeyTypeGossip, ResolveOptions{Fingerprint: fp[:8]})
@@ -475,6 +476,7 @@ func TestResolveSecret_SeveralGenerationsNeedAChoice(t *testing.T) {
 func TestResolveSecret_NothingFound(t *testing.T) {
 	_, err := ResolveSecret(context.Background(), newFakeSecretClient(), "ns", 0, KeyTypeGrpc, ResolveOptions{})
 	require.Error(t, err)
+	assert.True(t, IsNoKeySecret(err), "callers branch on this subtype to skip an optional key")
 }
 
 // A secret renamed or edited so that its name and label no longer match its key

@@ -300,6 +300,6 @@ func decodeAdminPub(raw []byte) ([]byte, adminAlgo, error) {
 		}
 		return nil, "", errorx.IllegalArgument.New("secp256k1 admin key has invalid compression prefix 0x%02x", b[0])
 	default:
-		return nil, "", errorx.IllegalArgument.New("unexpected admin public key length %d (want 32 for ed25519 or 33 for secp256k1)", len(b))
+		return nil, "", errorx.IllegalArgument.New("unexpected admin public key length %d (want 32 for ed25519)", len(b))
 	}
 }

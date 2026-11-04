@@ -43,6 +43,10 @@ func (f *fakeSecretClient) List(context.Context, kube.ResourceKind, string, kube
 	return &unstructured.UnstructuredList{}, nil
 }
 
+func (f *fakeSecretClient) GetResourceNestedMap(context.Context, string, string, string, string, ...string) (map[string]interface{}, bool, error) {
+	return nil, false, nil
+}
+
 func (f *fakeSecretClient) with(secret string, entries ...string) *fakeSecretClient {
 	if f.secrets == nil {
 		f.secrets = map[string]map[string]string{}

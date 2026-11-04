@@ -365,18 +365,6 @@ func ConsensusNodeScope(nodeId int64) string {
 	return fmt.Sprintf("node%d", nodeId)
 }
 
-// ConsensusNodeName returns the name the consensus node itself uses for node id,
-// which appears in CN-native file names such as s-private-node<N>.pem. The CN
-// numbers its nodes from 1 unless zeroBased is set, so id 0 is "node1" by
-// default. Use it only at that CN boundary; secret and Kubernetes resource names
-// stay 0-based through ConsensusNodeScope.
-func ConsensusNodeName(nodeId int64, zeroBased bool) string {
-	if zeroBased {
-		return ConsensusNodeScope(nodeId)
-	}
-	return ConsensusNodeScope(nodeId + 1)
-}
-
 // ConsensusDefaultAccountId returns the node account id the operator's genesis
 // assigns by default: 0.0.(3 + nodeId).
 func ConsensusDefaultAccountId(nodeId int64) string {
