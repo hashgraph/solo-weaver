@@ -188,3 +188,39 @@ func TestFlushScoped_PreservesUnderlyingErrorCause(t *testing.T) {
 	require.NotNil(t, cause, "the underlying errorx cause must still be reachable via .Cause(), not flattened to text by %%v")
 	require.Contains(t, cause.Error(), "changed externally on disk")
 }
+
+// RefreshMachine must not reach the cluster: right after `kube cluster install`
+// the API server may still be settling, and only the system record is written.
+func TestRefreshMachine_IgnoresUnreachableClusterRuntimes(t *testing.T) {
+	sm := writePersistedState(t, filepath.Join(t.TempDir(), "state.yaml"))
+	unreachable := func() (state.ClusterState, error) {
+		return state.ClusterState{}, errorx.ExternalError.New("connection refused")
+	}
+	checkers := reality.Checkers{
+		Cluster: funcChecker[state.ClusterState](unreachable),
+		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
+			ms := sm.State().MachineState
+			ms.Software["kubeadm"] = state.SoftwareState{Name: "kubeadm", Version: "1.36.5", Installed: true}
+			return ms, nil
+		}),
+		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
+			return state.BlockNodeState{}, errorx.ExternalError.New("connection refused")
+		}),
+		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
+			return nil, errorx.ExternalError.New("connection refused")
+		}),
+		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) {
+			return state.TeleportState{}, errorx.ExternalError.New("connection refused")
+		}),
+	}
+	r, err := NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
+	require.NoError(t, err)
+
+	_, err = r.Refresh(context.Background(), true)
+	require.Error(t, err, "precondition: a full refresh fails on the unreachable runtimes")
+
+	current, err := r.RefreshMachine(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, current.MachineState.Software["kubeadm"].Installed)
+	require.Equal(t, persistedTeleport().NodeAgent, current.TeleportState.NodeAgent, "other sections keep their persisted value")
+}

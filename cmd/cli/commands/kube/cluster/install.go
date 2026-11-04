@@ -89,8 +89,8 @@ var installCmd = &cobra.Command{
 
 		// Setting up Kubernetes installs host binaries, so this command owns the
 		// system record: it holds that lock for the whole run, then records what
-		// the host now has. Only the system file is written, so flushing the
-		// whole live state records just its Software and Hardware.
+		// the host now has. Only the system file is written, so only the machine
+		// runtime is refreshed.
 		owned := []state.ComponentID{state.ComponentSystem}
 		release, err := state.AcquireComponentLocks(sr.Runtime.StateDir(), owned, 0)
 		if err != nil {
@@ -102,7 +102,7 @@ var installCmd = &cobra.Command{
 		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
 			return err
 		}
-		live, err := sr.Runtime.Refresh(cmd.Context(), true)
+		live, err := sr.Runtime.RefreshMachine(cmd.Context(), true)
 		if err != nil {
 			return errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install")
 		}

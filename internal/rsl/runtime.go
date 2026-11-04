@@ -122,6 +122,32 @@ func (r *RuntimeResolver) persistedBaseline() *state.State {
 	return &baseline
 }
 
+// RefreshMachine refreshes the persisted state and the machine runtime alone,
+// for a caller that writes only machine-owned files. It never reaches the
+// cluster, so an API server that is still settling cannot fail it.
+func (r *RuntimeResolver) RefreshMachine(ctx context.Context, force bool) (state.State, error) {
+	if err := r.refreshPersisted(); err != nil {
+		return state.State{}, err
+	}
+	if r.MachineRuntime == nil {
+		return state.State{}, errorx.IllegalState.New("machine runtime is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultRefreshTimeout)
+	defer cancel()
+	if err := r.MachineRuntime.RefreshState(ctx, force); err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to refresh machine state: %v", err)
+	}
+	machineState, err := r.MachineRuntime.CurrentState()
+	if err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to read machine state: %v", err)
+	}
+
+	current := r.sm.State()
+	current.MachineState = machineState
+	return current, nil
+}
+
 func (r *RuntimeResolver) refreshPersisted() error {
 	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
