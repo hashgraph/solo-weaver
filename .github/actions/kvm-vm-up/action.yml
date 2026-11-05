@@ -73,7 +73,7 @@ inputs:
   max-concurrent-vms:
     description: "Most VMs allowed to run at once on this host, across all runners. Size it so this many full overlays (vm-disk-gb each) plus the host's own usage fit on its disk"
     required: false
-    default: "3"
+    default: "4"
   slot-wait-timeout-minutes:
     description: "How long to wait for a free VM slot before failing the job"
     required: false

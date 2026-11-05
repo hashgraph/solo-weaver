@@ -16,12 +16,12 @@ Three layers handle this:
 
 | Layer | Where | What it does |
 |---|---|---|
-| VM slots | `kvm-vm-up` action | At most `max-concurrent-vms` (default 3) VMs run at once on the host, so the disk cannot fill from live jobs. The slot is an `flock` that QEMU itself holds, so it is freed whenever QEMU exits. |
+| VM slots | `kvm-vm-up` action | At most `max-concurrent-vms` (default 4) VMs run at once on the host, so the disk cannot fill from live jobs. The slot is an `flock` that QEMU itself holds, so it is freed whenever QEMU exits. |
 | Job-started hook | `job-started.sh` on the host | Runs before checkout and stops/removes orphaned VMs, so a full disk cannot block cleanup. |
 | Restart script | `restart.sh` on the host | Manual recovery: stops runners, kills VMs, removes their directories, repairs empty `runsvc.sh`, starts runners with retries. |
 
 Size the slots so `max-concurrent-vms * vm-disk-gb` plus the host's own usage fits the disk.
-The default is 3 slots of 20 GB for a 99 GB disk.
+The default is 4 slots of 20 GB for the 200 GB disk (4 x 20 + about 30 GB for the host = 110 GB). Six would fit the disk too (about 150 GB), but the host has 8 vCPUs and about 30 GB RAM, so measure load and memory with 4 VMs running before raising it.
 
 ## Installing the job-started hook
 
