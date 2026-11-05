@@ -759,13 +759,15 @@ func TestChecks_ScopeFollowsTheFinalArtifactState(t *testing.T) {
 		wantNIC    string
 		wantShaped string
 		wantNoName bool
+		wantUnread bool
 	}{
-		"all live":           {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscPresent: true}, allProvisioned(), true, "eth0", "eth0", false},
-		"restored this run":  {&fakeKernel{qdiscPresent: true, restartFixes: true}, allProvisioned(), true, "eth0", "eth0", false},
-		"policy missing":     {&fakeKernel{firewallPresent: true, qdiscPresent: true, nftRestartErr: errors.New("x")}, allProvisioned(), false, "eth0", "eth0", false},
-		"qdisc probe failed": {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscErr: errors.New("x")}, allProvisioned(), true, "", "eth0", false},
-		"script unreadable":  {&fakeKernel{firewallPresent: true, policyPresent: true}, unreadable, true, "", "", true},
-		"shaping disabled":   {&fakeKernel{firewallPresent: true, policyPresent: true}, provisioned{hostNft: true, policyNft: true}, true, "", "", false},
+		"all live":            {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscPresent: true}, allProvisioned(), true, "eth0", "eth0", false, false},
+		"restored this run":   {&fakeKernel{qdiscPresent: true, restartFixes: true}, allProvisioned(), true, "eth0", "eth0", false, false},
+		"policy missing":      {&fakeKernel{firewallPresent: true, qdiscPresent: true, nftRestartErr: errors.New("x")}, allProvisioned(), false, "eth0", "eth0", false, true},
+		"policy probe failed": {&fakeKernel{firewallPresent: true, qdiscPresent: true, policyErr: errors.New("x")}, allProvisioned(), false, "eth0", "eth0", false, true},
+		"qdisc probe failed":  {&fakeKernel{firewallPresent: true, policyPresent: true, qdiscErr: errors.New("x")}, allProvisioned(), true, "", "eth0", false, false},
+		"script unreadable":   {&fakeKernel{firewallPresent: true, policyPresent: true}, unreadable, true, "", "", true, false},
+		"shaping disabled":    {&fakeKernel{firewallPresent: true, policyPresent: true}, provisioned{hostNft: true, policyNft: true}, true, "", "", false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			newTestReasserter(tc.k, tc.p).Reassert(context.Background())
@@ -775,6 +777,7 @@ func TestChecks_ScopeFollowsTheFinalArtifactState(t *testing.T) {
 			assert.Equal(t, tc.wantNIC, tc.k.verifyScope.egressNIC)
 			assert.Equal(t, tc.wantShaped, tc.k.verifyScope.shapedNIC)
 			assert.Equal(t, tc.wantNoName, tc.k.verifyScope.nicUnknown)
+			assert.Equal(t, tc.wantUnread, tc.k.verifyScope.policyUnread != "")
 		})
 	}
 }

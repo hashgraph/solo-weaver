@@ -273,6 +273,9 @@ func (r *Reasserter) runChecks(ctx context.Context, nftLock, shapeLock planeLock
 		switch a.Artifact {
 		case ArtifactWorkloadPolicy:
 			scope.policyLive = live
+			if a.Expected && !live {
+				scope.policyUnread = policyUnreadReason(a)
+			}
 		case ArtifactEgressQdisc:
 			if live {
 				scope.egressNIC = p.nic
@@ -454,6 +457,14 @@ func probeCause(st ArtifactStatus) string {
 		return st.Detail[i+len(marker):]
 	}
 	return st.Detail
+}
+
+// policyUnreadReason says why a provisioned workload-policy table was not read.
+func policyUnreadReason(st ArtifactStatus) string {
+	if st.ProbeFailed {
+		return "probing the workload-policy table failed: " + probeCause(st)
+	}
+	return "the workload-policy table is provisioned but missing"
 }
 
 // withDetail appends a clause to an existing detail string.

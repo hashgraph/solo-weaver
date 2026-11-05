@@ -192,8 +192,8 @@ filters  failed
 | `ok` | Checked; nothing wrong |
 | `failed` | Drifted rules, or a stray filter — the lines under it say which |
 | `older-format` | The live rules were written by an older version (before the counters existed) and otherwise match the registry. Not drift. `--check` leaves them alone; a run without it — the daemon's, once a minute — reloads them in the current format in one atomic `nft -f`, keeping every peer list, reports `ok` with the detail `reloaded the live rules from render format 1 to 2`, and logs it at INFO with reason `NetworkRulesReloaded`. Only an older format is reloaded, never a newer one. A hand edit on such a table still reads `failed` and is never overwritten |
-| `unknown` | The check could not run — e.g. the registry could not be read — so nothing is claimed |
-| `not-checked` | Nothing to check here: no policy table, or no lane tree |
+| `unknown` | The check could not run — e.g. the registry could not be read, or the policy table is provisioned but missing or its probe failed — so nothing is claimed and no earlier problem clears |
+| `not-checked` | Nothing to check here: no policy table is provisioned, or no lane tree |
 | `skipped` | An operator apply held a lock |
 
 A pod veth that carries no lane tree — a pod restarting — is noted in the detail column and

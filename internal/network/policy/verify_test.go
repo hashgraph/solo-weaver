@@ -211,6 +211,59 @@ func TestSaveIfStale_WritesOnlyAStaleArtifact(t *testing.T) {
 	assert.False(t, saved, "an artifact that already matches is not rewritten")
 }
 
+func TestElemText(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		want string
+	}{
+		"address":  {`"10.2.0.1"`, "10.2.0.1"},
+		"port":     {`40840`, "40840"},
+		"prefix":   {`{"prefix":{"addr":"10.1.0.0","len":24}}`, "10.1.0.0/24"},
+		"range":    {`{"range":["10.0.0.1","10.0.0.9"]}`, "10.0.0.1-10.0.0.9"},
+		"concat":   {`{"concat":["fd00::1",40840]}`, "fd00::1 . 40840"},
+		"wrapped":  {`{"elem":{"val":"10.2.0.1","counter":{"packets":0,"bytes":0}}}`, "10.2.0.1"},
+		"in a set": {`{"elem":{"val":{"prefix":{"addr":"10.1.0.0","len":24}}}}`, "10.1.0.0/24"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dec := json.NewDecoder(strings.NewReader(tc.in))
+			dec.UseNumber()
+			var v any
+			require.NoError(t, dec.Decode(&v))
+			got, err := elemText(v)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	_, err := elemText(map[string]any{"set": "bn-peers"})
+	assert.Error(t, err, "an unknown element form is an error, not a guess")
+}
+
+func TestExpectedDocument_TakesSetsFromTheListing(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"}, []string{"10.7.0.0/24"}, "10.4.0.0/24")
+	r.listElemErr = errors.New("nft list set must not run")
+
+	live, err := ParseListing(listingJSON(1, 1, elemsA, pubMatch))
+	require.NoError(t, err)
+	doc, err := m.ExpectedDocument(context.Background(), live)
+	require.NoError(t, err)
+	assert.Contains(t, doc, "set bn-publisher { type ipv4_addr; flags interval; elements = { 10.1.0.0/24, 10.2.0.1 }; }")
+}
+
+func TestExpectedDocument_ReadsTheSetsWhenTheListingCannot(t *testing.T) {
+	r := newFakeRunner()
+	m, _, _ := newTestManager(t, r)
+	seedPolicy(t, m, "bn-publisher", "publisher", []string{"40840"}, []string{"10.7.0.0/24"}, "10.4.0.0/24")
+
+	live, err := ParseListing(listingJSON(1, 1, `{"set":"bn-peers"}`, pubMatch))
+	require.NoError(t, err, "an unknown element does not fail the listing")
+	doc, err := m.ExpectedDocument(context.Background(), live)
+	require.NoError(t, err)
+	assert.Contains(t, doc, "elements = { 10.7.0.0/24 }", "the sets come from nft list set instead")
+}
+
 func TestInt64Of(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in   any

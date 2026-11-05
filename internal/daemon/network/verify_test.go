@@ -465,6 +465,28 @@ func TestJudge_NoPolicyTableClearsAnEarlierLaneProblem(t *testing.T) {
 	assert.Equal(t, at, *j.lastGood)
 }
 
+// TestJudge_MissingPolicyTableKeepsEarlierProblems: a provisioned table that is gone reads unknown.
+func TestJudge_MissingPolicyTableKeepsEarlierProblems(t *testing.T) {
+	b := baseline()
+	broken := func(s sample) sample {
+		return s.grow(map[string]uint64{"publisher": 5 * mib}, nil, 5*mib, 5*mib)
+	}
+	m1 := broken(b)
+	j, _ := run(t, b, m1, broken(m1))
+	require.Len(t, j.state.Problems, 1)
+	good := *j.lastGood
+
+	gone := okChecks(nil)
+	gone.Rules = privexec.NetworkRulesCheck{Status: privexec.NetworkCheckUnknown,
+		Detail: "cannot determine: the workload-policy table is provisioned but missing"}
+	ev := j.observe(gone, t0.Add(3*time.Minute))
+
+	assert.Empty(t, reasons(ev, eventCleared))
+	assert.Contains(t, reasons(ev, eventRaised), reasonCheckUnknown)
+	assert.Len(t, j.state.Problems, 2, "the lane problem stays")
+	assert.Equal(t, good, *j.lastGood, "last good must not move")
+}
+
 func TestJudge_StrayFilterNamesItsDevice(t *testing.T) {
 	j := newJudge()
 	c := okChecks(nil)

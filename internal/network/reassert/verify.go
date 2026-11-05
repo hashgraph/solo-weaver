@@ -104,6 +104,8 @@ type DeviceCounters struct {
 type verifyScope struct {
 	// policyLive is true when the workload-policy table is provisioned and present.
 	policyLive bool
+	// policyUnread says why a provisioned table was not read: missing or probe failed.
+	policyUnread string
 	// egressNIC is the shaped NIC when its lane tree is present, else "".
 	egressNIC string
 	// shapedNIC is the NIC the shaper script names, even when its probe failed.
@@ -125,7 +127,7 @@ func skippedChecks(detail string) *Checks {
 
 // verifier runs the checks. Every kernel read is a seam so tests need no kernel.
 type verifier struct {
-	expectedRules func(ctx context.Context) (string, error)
+	expectedRules func(ctx context.Context, live *policy.Listing) (string, error)
 	liveRules     func(ctx context.Context) ([]byte, error)
 	scratchRules  func(ctx context.Context, doc string) ([]byte, error)
 	reloadRules   func(ctx context.Context, doc string) error
@@ -180,6 +182,11 @@ func (v *verifier) verify(ctx context.Context, scope verifyScope) *Checks {
 
 // checkRules fills rc and returns the live listing, nil when it was not read.
 func (v *verifier) checkRules(ctx context.Context, scope verifyScope, rc *RulesCheck) *policy.Listing {
+	// A provisioned table that is gone or unread proves nothing, so the daemon must not clear on it.
+	if scope.policyUnread != "" {
+		*rc = RulesCheck{Status: CheckUnknown, Detail: "cannot determine: " + scope.policyUnread}
+		return nil
+	}
 	if !scope.policyLive {
 		*rc = RulesCheck{Status: CheckNotChecked, Detail: "the workload-policy table is not live on this host"}
 		return nil
@@ -195,7 +202,7 @@ func (v *verifier) checkRules(ctx context.Context, scope verifyScope, rc *RulesC
 	}
 
 	// The listing is usable for counters even if the comparison fails.
-	doc, err := v.expectedRules(ctx)
+	doc, err := v.expectedRules(ctx, live)
 	if err != nil {
 		unknown("building the expected rules from the registry failed", err)
 		return live

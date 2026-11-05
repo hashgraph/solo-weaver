@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 	"github.com/hashgraph/solo-weaver/internal/network/shape"
 )
 
@@ -43,7 +44,7 @@ const (
 // fakeVerifier returns a verifier whose kernel is healthy; tests break one seam.
 func fakeVerifier() *verifier {
 	return &verifier{
-		expectedRules: func(context.Context) (string, error) { return "doc", nil },
+		expectedRules: func(context.Context, *policy.Listing) (string, error) { return "doc", nil },
 		liveRules: func(context.Context) ([]byte, error) {
 			return listing(7, "2", matchGood, map[string]uint64{"partner": 100, "publisher": 200}), nil
 		},
@@ -342,7 +343,7 @@ func TestVerify_UnreadableRulesAfterReloadAreUnknown(t *testing.T) {
 func TestVerify_CannotBuildExpectedIsUnknownNeverDrift(t *testing.T) {
 	for name, mutate := range map[string]func(*verifier){
 		"registry unreadable": func(v *verifier) {
-			v.expectedRules = func(context.Context) (string, error) { return "", errors.New("registry gone") }
+			v.expectedRules = func(context.Context, *policy.Listing) (string, error) { return "", errors.New("registry gone") }
 		},
 		"scratch load failed": func(v *verifier) {
 			v.scratchRules = func(context.Context, string) ([]byte, error) { return nil, errors.New("unshare: EPERM") }
@@ -369,6 +370,18 @@ func TestVerify_UnreadableLiveRulesDropTheCounters(t *testing.T) {
 
 	assert.Equal(t, CheckUnknown, c.Rules.Status)
 	assert.Nil(t, c.Counters)
+}
+
+// TestVerify_ProvisionedPolicyNotLiveIsUnknown: a gone or unread table proves nothing.
+func TestVerify_ProvisionedPolicyNotLiveIsUnknown(t *testing.T) {
+	scope := verifyScope{policyUnread: "the workload-policy table is provisioned but missing", egressNIC: "eth0", shapedNIC: "eth0"}
+
+	c := fakeVerifier().verify(context.Background(), scope)
+
+	assert.Equal(t, CheckUnknown, c.Rules.Status)
+	assert.Contains(t, c.Rules.Detail, "provisioned but missing")
+	assert.Nil(t, c.Counters)
+	assert.Equal(t, CheckOK, c.Filters.Status, "the lanes are still checked")
 }
 
 func TestVerify_PolicyNotLiveSkipsTheRulesCheck(t *testing.T) {

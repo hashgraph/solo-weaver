@@ -29,6 +29,11 @@ type Listing struct {
 	// ClassBytes sums the byte counters of the stamp rules, keyed by class.
 	ClassBytes map[string]uint64
 
+	// sets holds each set's elements as `nft list set` spells them, keyed by name.
+	sets map[string][]string
+	// setsErr is set when an element had a form elemText does not know.
+	setsErr error
+
 	// entries are the table's objects, normalised for comparison.
 	entries []string
 	// bareEntries drop counters and weaver: comments, so another render format
@@ -75,7 +80,7 @@ func ParseListing(out []byte) (*Listing, error) {
 		return nil, errorx.IllegalFormat.Wrap(err, "failed to parse nft JSON listing of %s", TableName)
 	}
 
-	l := &Listing{FormatVersion: 1, ClassBytes: map[string]uint64{}}
+	l := &Listing{FormatVersion: 1, ClassBytes: map[string]uint64{}, sets: map[string][]string{}}
 	sawTable := false
 	for _, item := range doc.Nftables {
 		for kind, raw := range item {
@@ -87,6 +92,8 @@ func ParseListing(out []byte) (*Listing, error) {
 			case "table":
 				sawTable = true
 				l.TableHandle = int64Of(obj["handle"])
+			case "set":
+				l.readSet(obj)
 			case "rule":
 				l.readRule(obj)
 			}
@@ -126,6 +133,80 @@ func (l *Listing) readRule(rule map[string]any) {
 	if class, ok := ParseClassComment(comment); ok && counted {
 		l.ClassBytes[class] += bytesSeen
 	}
+}
+
+// readSet records one set's elements.
+func (l *Listing) readSet(set map[string]any) {
+	name, _ := set["name"].(string)
+	list, _ := set["elem"].([]any)
+	elems := make([]string, 0, len(list))
+	for _, e := range list {
+		s, err := elemText(e)
+		if err != nil {
+			l.setsErr = err
+			return
+		}
+		elems = append(elems, s)
+	}
+	l.sets[name] = elems
+}
+
+// membership returns the daemon-owned sets that have elements, as
+// snapshotMembership does; false when the listing cannot supply them.
+func (l *Listing) membership(policies []*Policy) (map[string][]string, bool) {
+	if l == nil || l.setsErr != nil {
+		return nil, false
+	}
+	out := map[string][]string{}
+	for _, p := range policies {
+		for _, name := range daemonSetNames(p) {
+			if elems := l.sets[name]; len(elems) > 0 {
+				out[name] = elems
+			}
+		}
+	}
+	return out, true
+}
+
+// elemText spells one `nft -j` set element the way `nft list set` prints it.
+func elemText(v any) (string, error) {
+	switch t := v.(type) {
+	case string:
+		return t, nil
+	case json.Number:
+		return t.String(), nil
+	case map[string]any:
+		if e, ok := t["elem"].(map[string]any); ok {
+			// An element with its own counter or timeout wraps the value.
+			return elemText(e["val"])
+		}
+		if p, ok := t["prefix"].(map[string]any); ok {
+			addr, err := elemText(p["addr"])
+			n, isNum := p["len"].(json.Number)
+			if err == nil && isNum {
+				return addr + "/" + n.String(), nil
+			}
+		}
+		if r, ok := t["range"].([]any); ok && len(r) == 2 {
+			lo, loErr := elemText(r[0])
+			hi, hiErr := elemText(r[1])
+			if loErr == nil && hiErr == nil {
+				return lo + "-" + hi, nil
+			}
+		}
+		if c, ok := t["concat"].([]any); ok {
+			parts := make([]string, len(c))
+			for i, part := range c {
+				s, err := elemText(part)
+				if err != nil {
+					return "", err
+				}
+				parts[i] = s
+			}
+			return strings.Join(parts, " . "), nil
+		}
+	}
+	return "", errorx.IllegalFormat.New("unknown nft set element %v in the listing of %s", v, TableName)
 }
 
 // Compare returns what differs between the expected and the live listing.

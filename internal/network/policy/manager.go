@@ -365,7 +365,7 @@ func (m *Manager) persistMembership(ctx context.Context) error {
 // renderAndWriteArtifact is persistMembership's fallible half, split out so the
 // error can be logged in one place and so tests can assert on it directly.
 func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
-	r, err := m.renderFromLive(ctx)
+	r, err := m.renderFromLive(ctx, nil)
 	if err != nil || r == nil {
 		// No registry means no table and no artifact, so nothing to persist.
 		return err
@@ -379,10 +379,11 @@ func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
 	return nil
 }
 
-// ExpectedDocument renders the table the live table should match. The caller
-// must hold the apply lock, so an operator change cannot land half way through.
-func (m *Manager) ExpectedDocument(ctx context.Context) (string, error) {
-	r, err := m.renderFromLive(ctx)
+// ExpectedDocument renders the table the live table should match, with the
+// daemon-owned sets taken from live, the listing just read. The caller must
+// hold the apply lock, so an operator change cannot land half way through.
+func (m *Manager) ExpectedDocument(ctx context.Context, live *Listing) (string, error) {
+	r, err := m.renderFromLive(ctx, live)
 	if err != nil {
 		return "", err
 	}
@@ -435,8 +436,9 @@ type liveRender struct {
 }
 
 // renderFromLive renders from the registry and the live daemon-owned sets; nil
-// when the registry is empty.
-func (m *Manager) renderFromLive(ctx context.Context) (*liveRender, error) {
+// when the registry is empty. The sets come from listing when it can supply
+// them, which saves one `nft list set` per set.
+func (m *Manager) renderFromLive(ctx context.Context, listing *Listing) (*liveRender, error) {
 	policies, err := loadAll(m.registryDir)
 	if err != nil {
 		return nil, err
@@ -445,9 +447,11 @@ func (m *Manager) renderFromLive(ctx context.Context) (*liveRender, error) {
 		return nil, nil
 	}
 
-	membership, err := m.snapshotMembership(ctx, policies)
-	if err != nil {
-		return nil, err
+	membership, ok := listing.membership(policies)
+	if !ok {
+		if membership, err = m.snapshotMembership(ctx, policies); err != nil {
+			return nil, err
+		}
 	}
 
 	// A stamp policy needs the pod CIDR to render, and this layer is never handed

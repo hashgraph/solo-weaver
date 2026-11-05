@@ -147,3 +147,34 @@ func TestIT_ScratchNamespaceLeavesTheHostUntouched(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "the scratch load must never reach the host namespace")
 }
+
+func TestIT_ListingSuppliesTheDaemonOwnedSets(t *testing.T) {
+	bin := requireScratchNft(t)
+	// bn-publisher with daemon-filled ports, so an inet_service set is covered too.
+	policies := sampleBNPolicies()
+	for i, p := range policies {
+		if p.Name == "bn-publisher" {
+			p.Ports, p.ManagedPorts = nil, true
+			policies[i] = p
+		}
+	}
+	membership := itMembership()
+	membership["bn-publisher_ports"] = []string{"40840", "40841"}
+	doc, err := Render(policies, membership, "10.4.0.0/24", "2001:db8:c0de::/64")
+	require.NoError(t, err)
+
+	got, ok := listIT(t, bin, doc).membership(policies)
+	require.True(t, ok, "every element nft prints must have a known form, or verify falls back to nft list set")
+	want := map[string][]string{}
+	for _, p := range policies {
+		for _, name := range daemonSetNames(p) {
+			if len(membership[name]) > 0 {
+				want[name] = CanonicalizeElements(membership[name])
+			}
+		}
+	}
+	for name, elems := range got {
+		got[name] = CanonicalizeElements(elems)
+	}
+	assert.Equal(t, want, got)
+}
