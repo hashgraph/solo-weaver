@@ -70,6 +70,18 @@ inputs:
     description: "A VM left by another runner on this host is only swept once older than this (must exceed the longest job)"
     required: false
     default: "240"
+  max-concurrent-vms:
+    description: "Most VMs allowed to run at once on this host, across all runners. Size it so this many full overlays (vm-disk-gb each) plus the host's own usage fit on its disk"
+    required: false
+    default: "3"
+  slot-wait-timeout-minutes:
+    description: "How long to wait for a free VM slot before failing the job"
+    required: false
+    default: "30"
+  slot-dir:
+    description: "Host directory holding the VM slot lock files, shared by every runner on the host"
+    required: false
+    default: "/run/lock/weaver-vm-slots"
 
 outputs:
   vm-dir:
@@ -415,6 +427,66 @@ runs:
         PID_FILE="${VM_DIR}/vm.pid"
         STDERR_LOG="${VM_DIR}/qemu-stderr.log"
         CONSOLE_LOG="${VM_DIR}/vm-console.log"
+
+        MAX_VMS="${{ inputs.max-concurrent-vms }}"
+        SLOT_WAIT_MINUTES="${{ inputs.slot-wait-timeout-minutes }}"
+        SLOT_DIR="${{ inputs.slot-dir }}"
+
+        for value in "${MAX_VMS}" "${SLOT_WAIT_MINUTES}"; do
+          if ! printf '%s' "${value}" | grep -Eq '^[0-9]+$' || [ "${value}" -lt 1 ]; then
+            echo "Invalid number '${value}': must be a whole number of at least 1."
+            exit 1
+          fi
+        done
+        case "${SLOT_DIR}" in
+          /?*) ;;
+          *)
+            echo "Invalid slot-dir '${SLOT_DIR}': must be an absolute path."
+            exit 1
+            ;;
+        esac
+
+        # Every runner on this host shares one disk, and each VM's overlay grows
+        # to vm-disk-gb. With nothing limiting how many boot at once, a busy
+        # period fills the disk, the runner workers die mid-job, and their VMs
+        # are orphaned still holding the space. So a VM needs a host-wide slot.
+        #
+        # A slot is an flock on slot-N. The lock is taken on fd 9, which QEMU
+        # inherits when it is started below, and the lock lives as long as any
+        # process holds that open file. So the slot is held by QEMU itself, not
+        # by this step or the runner: it is released when QEMU exits for any
+        # reason (kvm-vm-down, the stale-VM sweep, a manual kill, a reboot), and
+        # an orphaned VM keeps its slot only for as long as it is really running.
+        mkdir -p "${SLOT_DIR}"
+        chmod 1777 "${SLOT_DIR}" 2>/dev/null || true
+
+        acquire_slot() {
+          local n
+          for n in $(seq 1 "${MAX_VMS}"); do
+            exec 9>>"${SLOT_DIR}/slot-${n}"
+            chmod 666 "${SLOT_DIR}/slot-${n}" 2>/dev/null || true
+            if flock -n 9; then
+              echo "Acquired VM slot ${n} of ${MAX_VMS}."
+              return 0
+            fi
+            exec 9>&-
+          done
+          return 1
+        }
+
+        SLOT_DEADLINE=$(( $(date +%s) + SLOT_WAIT_MINUTES * 60 ))
+        SLOT_WAITED=0
+        until acquire_slot; do
+          if [ "$(date +%s)" -ge "${SLOT_DEADLINE}" ]; then
+            echo "::error::No free VM slot after ${SLOT_WAIT_MINUTES} minutes: ${MAX_VMS} VMs are already running on this host. Not a test failure; re-run the job."
+            exit 1
+          fi
+          if [ $(( SLOT_WAITED % 60 )) -eq 0 ]; then
+            echo "All ${MAX_VMS} VM slots are in use on this host; waiting for one to free up..."
+          fi
+          sleep 10
+          SLOT_WAITED=$(( SLOT_WAITED + 10 ))
+        done
 
         # QEMU is the only authority on whether a host forwarding port is free,
         # because QEMU is what binds it. Probing the port with `ss` and binding
