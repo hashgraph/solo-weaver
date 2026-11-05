@@ -37,12 +37,14 @@ type WeaverPaths struct {
 	// Path: /opt/solo/weaver/config/infrastructure-versions.yaml
 	InfraVersionsPath string
 
-	// DaemonServiceSandboxPath is the canonical unit file location inside the
-	// weaver sandbox: $home/sandbox/usr/lib/systemd/system/solo-provisioner-daemon.service
-	// DaemonServiceSymlinkPath is the system-wide symlink that points to it:
+	// DaemonServiceUnitPath is the unit file location:
 	// /usr/lib/systemd/system/solo-provisioner-daemon.service
-	DaemonServiceSandboxPath string
-	DaemonServiceSymlinkPath string
+	// DaemonServiceLegacyUnitPath is where the unit used to live, inside the
+	// sandbox. A cluster install rebuilds the sandbox, so a unit kept there is
+	// destroyed while its symlink survives and dangles. Retained only so uninstall
+	// and the next install can clear it from hosts provisioned earlier.
+	DaemonServiceUnitPath       string
+	DaemonServiceLegacyUnitPath string
 
 	DaemonEventsDir string // $home/daemon/events
 
@@ -95,8 +97,8 @@ func NewWeaverPaths(home string) *WeaverPaths {
 	pp.SandboxBinDir = path.Join(pp.SandboxDir, "bin")
 	pp.SandboxLocalBinDir = path.Join(pp.SandboxDir, "usr", "local", "bin")
 
-	pp.DaemonServiceSandboxPath = path.Join(pp.SandboxDir, "usr", "lib", "systemd", "system", "solo-provisioner-daemon.service")
-	pp.DaemonServiceSymlinkPath = "/usr/lib/systemd/system/solo-provisioner-daemon.service"
+	pp.DaemonServiceLegacyUnitPath = path.Join(pp.SandboxDir, "usr", "lib", "systemd", "system", "solo-provisioner-daemon.service")
+	pp.DaemonServiceUnitPath = "/usr/lib/systemd/system/solo-provisioner-daemon.service"
 
 	pp.SandboxDirectories = []string{
 		pp.SandboxDir,
