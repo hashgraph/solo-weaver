@@ -537,6 +537,75 @@ func (c *Client) DeleteResource(ctx context.Context, apiVersion, kind, namespace
 	return true, nil
 }
 
+// IsKindNotServed reports whether err comes from a REST mapping of a kind the cluster does not
+// serve (its CRD is absent). It walks errorx causes, which errors.Is cannot see through.
+func IsKindNotServed(err error) bool {
+	for e := err; e != nil; {
+		if meta.IsNoMatchError(e) {
+			return true
+		}
+		if ex := errorx.Cast(e); ex != nil {
+			e = ex.Cause()
+			continue
+		}
+		e = errors.Unwrap(e)
+	}
+	return false
+}
+
+// ResourceChecker is the part of *Client that ResourceAbsent needs, so callers can pass a narrow fake.
+type ResourceChecker interface {
+	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+}
+
+// ResourceAbsent reports whether a resource is absent. A kind the cluster does not serve counts as absent.
+func ResourceAbsent(ctx context.Context, rc ResourceChecker, apiVersion, kind, namespace, name string) (bool, error) {
+	exists, err := rc.ResourceExists(ctx, apiVersion, kind, namespace, name)
+	if err != nil {
+		if IsKindNotServed(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return !exists, nil
+}
+
+// RemoveOwnerReference drops every ownerReference to ownerKind/ownerName from a namespaced
+// resource, so deleting that owner does not garbage-collect it. It reports whether it changed anything.
+func (c *Client) RemoveOwnerReference(ctx context.Context, kind ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error) {
+	gvr, err := ToGroupVersionResource(kind)
+	if err != nil {
+		return false, err
+	}
+	dr := c.Dyn.Resource(gvr).Namespace(namespace)
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, errorx.ExternalError.Wrap(err, "failed to get %s %s/%s", kind, namespace, name)
+	}
+
+	refs := obj.GetOwnerReferences()
+	kept := make([]metav1.OwnerReference, 0, len(refs))
+	for _, r := range refs {
+		if r.Kind != ownerKind || r.Name != ownerName {
+			kept = append(kept, r)
+		}
+	}
+	if len(kept) == len(refs) {
+		return false, nil
+	}
+
+	// Update carries the read resourceVersion, so a concurrent change fails instead of being overwritten.
+	obj.SetOwnerReferences(kept)
+	if _, err := dr.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		return false, errorx.ExternalError.Wrap(err, "failed to remove %s %s owner from %s %s/%s", ownerKind, ownerName, kind, namespace, name)
+	}
+	return true, nil
+}
+
 // GetResourceNestedString retrieves a nested string value from a Kubernetes resource.
 // For cluster-scoped resources, pass empty string for namespace.
 // The apiVersion should be in the format "group/version" (e.g., "external-secrets.io/v1beta1").
