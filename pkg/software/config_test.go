@@ -1483,7 +1483,7 @@ func Test_Config_InfrastructureCatalog_validate(t *testing.T) {
 
 func Test_Config_LoadInfrastructureCatalog(t *testing.T) {
 	catalog, err := LoadInfrastructureCatalog()
-	require.NoError(t, err, "embedded infrastructure-catalog.yaml must load")
+	require.NoError(t, err, "embedded catalog must load")
 	require.NotNil(t, catalog)
 	require.NotEmpty(t, catalog.Host, "host section must not be empty")
 	require.NotEmpty(t, catalog.Cluster, "cluster section must not be empty")

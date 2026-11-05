@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// chart-checksums recomputes the integrity values stored in
-// pkg/software/infrastructure-catalog.yaml under cluster:*.versions.
+// chart-checksums recomputes the integrity values stored in the catalog files
+// under pkg/software/catalog/, in cluster:*.versions.
 //
 // For classic charts it prints the SHA256 of the chart .tgz fetched with
 // `helm pull`. For OCI charts it prints the OCI manifest digest reported
@@ -39,9 +39,9 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// catalogPath is the on-disk catalog the -write mode rewrites. The tool runs from
-// the repo root via the Taskfile, so a repo-relative path is correct.
-const catalogPath = "pkg/software/infrastructure-catalog.yaml"
+// catalogDir holds the on-disk catalog files the -write mode rewrites. The tool
+// runs from the repo root via the Taskfile, so a repo-relative path is correct.
+const catalogDir = "pkg/software/catalog"
 
 func main() {
 	if err := run(); err != nil {
@@ -52,7 +52,7 @@ func main() {
 
 func run() error {
 	write := flag.Bool("write", false,
-		"rewrite the checksum values in "+catalogPath+" in place (default: print only)")
+		"rewrite the checksum values in "+catalogDir+" in place (default: print only)")
 	flag.Parse()
 
 	if _, err := exec.LookPath("helm"); err != nil {
@@ -120,10 +120,19 @@ func run() error {
 	}
 
 	if *write {
-		if err := writeChecksums(catalogPath, digests); err != nil {
-			return errorx.ExternalError.Wrap(err, "write %s", catalogPath)
+		files, err := filepath.Glob(filepath.Join(catalogDir, "*.yaml"))
+		if err != nil {
+			return errorx.ExternalError.Wrap(err, "list %s", catalogDir)
 		}
-		fmt.Fprintf(os.Stderr, "\n✓ Wrote checksums into %s\n", catalogPath)
+		for _, file := range files {
+			changed, err := writeChecksums(file, digests)
+			if err != nil {
+				return errorx.ExternalError.Wrap(err, "write %s", file)
+			}
+			if changed {
+				fmt.Fprintf(os.Stderr, "\n✓ Wrote checksums into %s\n", file)
+			}
+		}
 	}
 
 	return nil
@@ -145,11 +154,12 @@ var (
 // digit-leading version key), and replaces a `checksum:` line with the freshly
 // computed digest for that (chart, version). Lines for charts/versions not in
 // digests are left untouched. After writing, it re-parses the file to fail loudly
-// rather than leave a corrupt catalog on disk.
-func writeChecksums(path string, digests map[string]map[string]string) error {
+// rather than leave a corrupt catalog on disk. It reports whether the file changed;
+// an unchanged file is not rewritten.
+func writeChecksums(path string, digests map[string]map[string]string) (bool, error) {
 	orig, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	lines := strings.Split(string(orig), "\n")
@@ -174,14 +184,17 @@ func writeChecksums(path string, digests map[string]map[string]string) error {
 	}
 
 	out := []byte(strings.Join(lines, "\n"))
+	if bytes.Equal(out, orig) {
+		return false, nil
+	}
 
 	// Safety: never leave a catalog on disk that no longer parses as YAML.
 	var probe map[string]any
 	if err := yaml.Unmarshal(out, &probe); err != nil {
-		return errorx.IllegalFormat.Wrap(err, "refusing to write — result does not parse as YAML")
+		return false, errorx.IllegalFormat.Wrap(err, "refusing to write — result does not parse as YAML")
 	}
 
-	return os.WriteFile(path, out, 0o644)
+	return true, os.WriteFile(path, out, 0o644)
 }
 
 // helmRunner wraps a workdir-scoped helm environment. Setting

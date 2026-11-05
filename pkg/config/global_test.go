@@ -118,7 +118,7 @@ func TestDefaultsConfig_ReturnsDepsConstants(t *testing.T) {
 		t.Error("Storage.BasePath: expected non-empty deps constant, got empty")
 	}
 	// Teleport.Version is intentionally empty in DefaultsConfig: the chart
-	// version is now sourced from pkg/software/infrastructure-catalog.yaml at
+	// version is now sourced from pkg/software/catalog/ at
 	// install time (see internal/workflows/steps/step_teleport.go). The
 	// version constant in pkg/deps/deps.go was removed in issue #589.
 	if cfg.Teleport.Version != "" {
