@@ -26,10 +26,11 @@ The default is 4 slots of 20 GB for the 200 GB disk (4 x 20 + about 30 GB for th
 
 ## Installing the job-started hook
 
-Runners only accept a hook script with a file extension, owned by the runner user.
+Runners only accept a hook script with a file extension. Install it owned by root and not writable by
+the runner user: every job runs as that user, so a script it can edit would let one job run code in all later ones.
 
 ```bash
-sudo install -m 755 -o github-runner -g github-runner scripts/kvm-runner/job-started.sh /usr/local/sbin/weaver-job-started.sh
+sudo install -m 755 -o root -g root scripts/kvm-runner/job-started.sh /usr/local/sbin/weaver-job-started.sh
 
 for dir in /home/github-runner/actions-runner*/; do
   grep -q '^ACTIONS_RUNNER_HOOK_JOB_STARTED=' "${dir}.env" 2>/dev/null ||
@@ -44,8 +45,10 @@ The hook's output appears in each job's "Set up job" log, prefixed `[weaver-job-
 ## Installing the restart script
 
 ```bash
-sudo install -m 755 scripts/kvm-runner/restart.sh /home/github-runner/actions-runner/restart.sh
+sudo install -m 755 -o root -g root scripts/kvm-runner/restart.sh /usr/local/sbin/weaver-restart.sh
 ```
+
+Run it as `sudo /usr/local/sbin/weaver-restart.sh`. Keep it out of the runner's home directory, which jobs can write to, because an admin runs it with sudo.
 
 `restart.sh` stops running jobs. Use it for recovery, not routinely.
 
@@ -62,7 +65,7 @@ Jobs only report while runners are alive, so also run it from cron on the host. 
 webhook (Slack-style `{"text": ...}`) when the status changes, and stays quiet otherwise:
 
 ```bash
-sudo install -m 755 scripts/kvm-runner/health-check.sh /usr/local/sbin/weaver-health-check.sh
+sudo install -m 755 -o root -g root scripts/kvm-runner/health-check.sh /usr/local/sbin/weaver-health-check.sh
 echo '*/10 * * * * github-runner WEBHOOK_URL=<webhook-url> /usr/local/sbin/weaver-health-check.sh --notify >/dev/null 2>&1' | sudo tee /etc/cron.d/weaver-health-check
 ```
 
