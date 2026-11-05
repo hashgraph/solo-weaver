@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# The default version of every catalog component: the version installed when
+# no other is requested. Each must be a version listed in a component file.
+# solo-operator has no entry: its default is injected from
+# deps.SOLO_OPERATOR_VERSION at load. See README.md.
+
+host:
+  cri-o: "1.36.7"
+  kubelet: "1.36.5"
+  kubeadm: "1.36.5"
+  kubectl: "1.36.5"
+  helm: "3.22.1"
+  k9s: "0.51.0"
+  cilium: "0.20.1"
+  teleport: "18.11.3"
+  solo-provisioner-daemon: "0.0.0"
+
+cluster:
+  alloy: "1.13.1"
+  teleport-cluster-agent: "18.11.3"
+  metallb: "0.16.1"
+  metrics-server: "3.14.0"
+  external-secrets: "2.13.0"
+  node-exporter: "4.59.0"
+  prometheus-operator-crds: "32.0.1"

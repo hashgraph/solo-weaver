@@ -1,0 +1,268 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Host tools whose versions are not tied to a Kubernetes minor. See README.md.
+
+host:
+
+- name: helm
+  versions:
+    3.18.6:
+      archives:
+        - name: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://get.helm.sh/helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '3f43c0aa57243852dd542493a0f54f1396c0bc8ec7296bbb2c01e802010819ce'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '5b8e00b6709caab466cbbb0bc29ee09059b8dc9417991dd04b497530e49b1737'
+      binaries:
+        - name: '{{.OS}}-{{.ARCH}}/helm'
+          archive: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'c153fd9c1173f39aefe8e9aa9f00fd3daf6b40c8ea01e94a0d2f2c1787fc60e0'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'c7550b38b3b7c9df31f7052432b5eb45e0cfec7238310de0133789598c2449e4'
+
+    3.22.1:
+      archives:
+        - name: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://get.helm.sh/helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea' # from https://get.helm.sh/helm-v3.22.1-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: '4c29e286b279d170fa048ddfc3e4e83dcd069ca9c52102766ba672d7149e694d' # from https://get.helm.sh/helm-v3.22.1-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: '{{.OS}}-{{.ARCH}}/helm'
+          archive: 'helm-v{{.VERSION}}-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '46aeab5e043f62d01f7c168823b392cabc1cea3807b67906296290483791be43'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '2bd1b649ef89175bc0ae1e0fa7de7e0583a5b0401de9896b644b8acbcae1ba64'
+
+- name: k9s
+  versions:
+    0.50.9:
+      archives:
+        - name: 'k9s_{{.OS}}_{{.ARCH}}.tar.gz'
+          url: 'https://github.com/derailed/k9s/releases/download/v{{.VERSION}}/k9s_{{.OS}}_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '5e625efa26c3e14256cf29d242179b32129183b549937ec62d0ad9be1bfe2ca4' # from https://github.com/derailed/k9s/releases/download/v0.50.9/checksums.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '147e696b608da9a300b9db6b35fd6dfc0713ce8c64865e550c90452696bb779a'
+      binaries:
+        - name: 'k9s'
+          archive: 'k9s_{{.OS}}_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '492f8906febc010a12b03cb69a9dc47c9bd9d4b20abcf6d30d75ae304813547d'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '26bcae69dd653838db00a0e777aa52e87877c325a06ad6f625857604c02e9efc'
+
+    0.51.0:
+      archives:
+        - name: 'k9s_Linux_{{.ARCH}}.tar.gz'
+          url: 'https://github.com/derailed/k9s/releases/download/v{{.VERSION}}/k9s_Linux_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'c3752ad51a5a4015a113819c4eeb6e55a4d0e4b8e652494797532f6fc8161dd7' # from https://github.com/derailed/k9s/releases/download/v0.51.0/checksums.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '3ee05c82e5f9198928a4e86133608ba6a2c10a2244d6a7789e820f78319d640c' # from https://github.com/derailed/k9s/releases/download/v0.51.0/checksums.sha256
+      binaries:
+        - name: 'k9s'
+          archive: 'k9s_Linux_{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'da2a7b4844204e5f31da0e57536e85a848f4d2260cd58737402bbb04ce4c99a2'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '92ed2bc895004d08d080d08a9cff9e85d38603e6a34a8df15761481de7533801'
+
+- name: cilium
+  versions:
+    0.20.1:
+      archives:
+        - name: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://github.com/cilium/cilium-cli/releases/download/v{{.VERSION}}/cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61' # from https://github.com/cilium/cilium-cli/releases/download/v0.20.1/cilium-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'd237550b882af6f2e01e8985e1e024d57c0774611c0a527c7a20dcee7dc4fd07' # from https://github.com/cilium/cilium-cli/releases/download/v0.20.1/cilium-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: 'cilium'
+          archive: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '1409138d78f4215fb342949233ea91dde4847a4923910255e78ac52a0bdf54aa'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '822ca5d2a5f3d793f83d4c7b09ab39b5b687ab74c543985e521d0603b8f202c1'
+    0.18.7:
+      archives:
+        - name: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          url: 'https://github.com/cilium/cilium-cli/releases/download/v{{.VERSION}}/cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '7f5ff96f1793ee389ef77435a72debf122f5ec253d41418fca99d2c21472016a' # from https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-amd64.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'dbaa2ab4b1969f4402adf430d6a1bd914c5ab52475ec68f50b3af6fa7fe2fecc' # from https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-arm64.tar.gz.sha256sum
+      binaries:
+        - name: 'cilium'
+          archive: 'cilium-{{.OS}}-{{.ARCH}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'd107d46fd1fd6ebf0a8903be0373aa8f052e82be47ab0cf36a2c588b1cde0883'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '9bb6c7e85c3166ad698ee11042706b2ffbce4b9d017ef96bb1ced3962d88256a'
+
+- name: teleport
+  versions:
+    18.6.4:
+      archives:
+        - name: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          url: 'https://cdn.teleport.dev/teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '41232c53ba798946fba27b69496c6f0489bc38cc191b622e0728f7078011343f' # from https://cdn.teleport.dev/teleport-ent-v18.6.4-linux-amd64-bin.tar.gz.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'af6aa427990c9a832d16eab33a2c2f41f5f8ed138e43618be84992e9e5add03a' # from https://cdn.teleport.dev/teleport-ent-v18.6.4-linux-arm64-bin.tar.gz.sha256
+      binaries:
+        - name: 'teleport-ent/teleport'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'ec864b1f1a3a826ebb9ddecea76904df721ce60e21fdfb58fa6d4631aad1c3df'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '80dc7fc128794682405dd3bff02cd99e12015b6c22b05ec941ef3068db1bb915'
+        - name: 'teleport-ent/teleport-update'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'f692e1d70840807d53d417fc235eed8ba7a47fc7f607bfa1d1b2b94bfecc7559'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'e93ab32f25460ccbd581112bba753a2d0c7c0d71ecb41baee238441083db2e7c'
+        - name: 'teleport-ent/tctl'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '855f0000d933feac03ac224da16f9062a6b7b3745e826f3757af5622832d9023'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'b993c93a32e4b679d957bc047c65dee04a9d9cffe150d77b567d1e63919988d8'
+        - name: 'teleport-ent/tsh'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'ec368495e2084e2749303a67f336e6bddc504d6b64576051b8103ff25538cb76'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '855c5efaa483ac15022b4f809a5e8d2a4265bdfaa236d60feb271183a34c17fd'
+      configs:
+        - name: 'teleport-ent/examples/systemd/production/node/teleport.service'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          algorithm: 'sha256'
+          checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
+
+    18.11.3:
+      archives:
+        - name: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          url: 'https://cdn.teleport.dev/teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '0be29e66c71e00162d40bc41d62f62c595d76654315c4dadadd6414a1d385f14' # from https://cdn.teleport.dev/teleport-ent-v18.11.3-linux-amd64-bin.tar.gz.sha256
+            arm64:
+              algorithm: 'sha256'
+              checksum: '8631d9003bd0228ff80477e1dc8cd30eeff3144ae615edffe1bfd3eaf3d4c4c6' # from https://cdn.teleport.dev/teleport-ent-v18.11.3-linux-arm64-bin.tar.gz.sha256
+      binaries:
+        - name: 'teleport-ent/teleport'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '0c7d4f41fceb30e7968d68aa2f545bc9888a6b832d062f7b0e3a2b6f92014940'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'f3d27cfd213353725440a9ccee5f5278a249f249f5f56db50307d7ad976dff4d'
+        - name: 'teleport-ent/teleport-update'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'dc0f3a5d55d6e9714a16a9fbb8d4075d0b94253265364ca7e42d87d6c3a5b117'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '7bf8d1af2885de24812dd6408bb77f2c8dce9fc88e0aa3f80e0b2fad42c8d62d'
+        - name: 'teleport-ent/tctl'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'a5c50967f40493f158c715b5298baa8f950c46064934b24f2fa1685e856ec386'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'bc2b9fd05b97917ee112cfb5776f97fd62d48310e84e3be0d221d8119274446b'
+        - name: 'teleport-ent/tsh'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'eba0132268ee3140b14fc3b2691b8e2200bc1aa25058a104a122e28ed8e7f9bb'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'df329b6a344c323085ae3fb28372d9bcd20a80fed345595a7d81821605e7c2f3'
+      configs:
+        - name: 'teleport-ent/examples/systemd/production/node/teleport.service'
+          archive: 'teleport-ent-v{{.VERSION}}-{{.OS}}-{{.ARCH}}-bin.tar.gz'
+          algorithm: 'sha256'
+          checksum: 'd3a4773d2402b72a257ab187b8a2771d45747876320679fe8eaf267ed1a40c41'
+
+# solo-provisioner-daemon is built and released from this repo, alongside the CLI,
+# under the same release tag (vX.Y.Z). Unlike the third-party tools above, no
+# per-version SHA map can be pinned here: this catalog is embedded into the very
+# binary being released, so a build cannot know the checksum of a daemon artifact
+# published after it. It does know the checksum of the daemon it was released
+# alongside, which `task build:cli` stamps into the CLI at link time — that digest
+# is what the default `--daemon-version` (the running CLI's own version) is checked
+# against. Any other version an operator names explicitly is checked against the
+# release's own published `.sha256` asset instead. Either way no versions map is
+# enumerated, and the default always resolves to a real artifact because the CLI
+# and daemon ship together at the same version.
+- name: solo-provisioner-daemon
+  selfRelease:
+    url: 'https://github.com/hashgraph/solo-weaver/releases/download/v{{.VERSION}}/solo-provisioner-daemon-{{.OS}}-{{.ARCH}}'
+    binaryName: 'solo-provisioner-daemon'
