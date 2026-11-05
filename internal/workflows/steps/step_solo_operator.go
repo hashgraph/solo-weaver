@@ -95,7 +95,7 @@ func InstallSoloOperator(imagePullSecret string, allowUpgrade bool) automa.Build
 						err,
 						reasons.PreconditionNotMet,
 						"Confirm the chart is pulled from the official registry over a trusted network — a proxy rewriting responses can change the digest",
-						"If it persists the pinned checksum is stale (the chart was re-published at the same version) — regenerate it with `task chart-checksums` and update pkg/software/infrastructure-catalog.yaml, or report it to the solo-weaver maintainers")))
+						"If it persists the pinned checksum is stale (the chart was re-published at the same version) — regenerate it with `task chart-checksums` and update pkg/software/catalog/cluster.yaml, or report it to the solo-weaver maintainers")))
 				}
 				// A pull failure on a private registry surfaces as an opaque auth/pull
 				// error; point the operator at the login step (public charts need none).
