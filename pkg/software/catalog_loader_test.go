@@ -138,6 +138,30 @@ func TestLoadCatalog_Errors(t *testing.T) {
 			wantErr: "host[tool] declares a default",
 		},
 		{
+			name: "empty default in a component file",
+			mutate: func(f map[string]string) {
+				f["host-tools.yaml"] = strings.Replace(testHostTool, "- name: tool\n", "- name: tool\n  default: \"\"\n", 1)
+			},
+			wantErr: "host[tool] declares a default",
+		},
+		{
+			name: "null default in a component file",
+			mutate: func(f map[string]string) {
+				f["cluster.yaml"] = strings.Replace(testCluster, "  release: 'metallb'\n", "  release: 'metallb'\n  default: null\n", 1)
+			},
+			wantErr: "cluster[metallb] declares a default",
+		},
+		{
+			name:    "second YAML document in a component file",
+			mutate:  func(f map[string]string) { f["cluster.yaml"] = testCluster + "---\n" + testCluster },
+			wantErr: "cluster.yaml, cause: common.illegal_format: more than one YAML document",
+		},
+		{
+			name:    "second YAML document in defaults.yaml",
+			mutate:  func(f map[string]string) { f["defaults.yaml"] = testDefaults + "---\n" + testDefaults },
+			wantErr: "defaults.yaml, cause: common.illegal_format: more than one YAML document",
+		},
+		{
 			name:    "unknown key",
 			mutate:  func(f map[string]string) { f["cluster.yaml"] = testCluster + "  url: 'x'\n" },
 			wantErr: "field url not found",
@@ -186,6 +210,13 @@ func TestLoadCatalog_Errors(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestLoadCatalog_AllowsLeadingDocumentMarker(t *testing.T) {
+	files := validCatalogFiles()
+	files["cluster.yaml"] = "---\n" + testCluster
+	_, err := loadCatalog(catalogFiles(files))
+	require.NoError(t, err)
 }
 
 func TestLoadCatalog_InjectsSoloOperatorDefault(t *testing.T) {

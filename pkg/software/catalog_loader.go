@@ -4,6 +4,8 @@ package software
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"io/fs"
 	"reflect"
 
@@ -61,6 +63,9 @@ func loadCatalog(fsys fs.FS) (*InfrastructureCatalog, error) {
 		if err := decodeStrict(data, &part); err != nil {
 			return nil, errorx.IllegalFormat.Wrap(err, "%s", file)
 		}
+		if err := rejectDefaultKeys(file, data); err != nil {
+			return nil, err
+		}
 		if err := m.merge(file, part); err != nil {
 			return nil, err
 		}
@@ -92,28 +97,75 @@ func loadCatalog(fsys fs.FS) (*InfrastructureCatalog, error) {
 	return &catalog, nil
 }
 
-// decodeStrict decodes data into out, rejecting keys out has no field for.
+// decodeStrict decodes data into out, rejecting keys out has no field for and
+// any YAML document after the first.
 func decodeStrict(data []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	return dec.Decode(out)
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return errorx.IllegalFormat.New("more than one YAML document")
+	}
+	return nil
 }
 
-// merge adds file's components to the catalog. A default declared in a
-// component file is rejected: defaults live only in defaults.yaml.
+// rejectDefaultKeys fails when a host or cluster entry in a component file has
+// a default key. It reads the YAML nodes rather than the decoded struct, because
+// `default: ""` and `default: null` both decode to an empty Default.
+func rejectDefaultKeys(file string, data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return errorx.IllegalFormat.Wrap(err, "%s", file)
+	}
+	if len(doc.Content) == 0 {
+		return nil
+	}
+	sections := mappingValues(doc.Content[0])
+	for _, section := range []string{"host", "cluster"} {
+		list, ok := sections[section]
+		if !ok || list.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, entry := range list.Content {
+			fields := mappingValues(entry)
+			if _, ok := fields["default"]; ok {
+				name := ""
+				if n, ok := fields["name"]; ok {
+					name = n.Value
+				}
+				return errorx.IllegalFormat.New("%s: %s[%s] declares a default; defaults belong in %s", file, section, name, defaultsFile)
+			}
+		}
+	}
+	return nil
+}
+
+// mappingValues returns a mapping node's values by key, or nil for any other node.
+func mappingValues(n *yaml.Node) map[string]*yaml.Node {
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	values := make(map[string]*yaml.Node, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		values[n.Content[i].Value] = n.Content[i+1]
+	}
+	return values
+}
+
+// merge adds file's components to the catalog.
 func (m *catalogMerger) merge(file string, part InfrastructureCatalog) error {
 	for _, host := range part.Host {
-		if host.Default != "" {
-			return errorx.IllegalFormat.New("%s: host[%s] declares a default; defaults belong in %s", file, host.Name, defaultsFile)
-		}
 		if err := m.mergeHost(file, host); err != nil {
 			return err
 		}
 	}
 	for _, chart := range part.Cluster {
-		if chart.Default != "" {
-			return errorx.IllegalFormat.New("%s: cluster[%s] declares a default; defaults belong in %s", file, chart.Name, defaultsFile)
-		}
 		if err := m.mergeChart(file, chart); err != nil {
 			return err
 		}
