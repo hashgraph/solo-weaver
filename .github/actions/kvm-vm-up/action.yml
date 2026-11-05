@@ -263,6 +263,16 @@ runs:
           exit 1
         fi
 
+    - name: Report host health
+      shell: bash
+      run: |
+        # Findings show as annotations and in the job summary. Never fails the job:
+        # the sweep above already stops it if the disk is too full to run a VM.
+        HEALTH="${GITHUB_WORKSPACE}/scripts/kvm-runner/health-check.sh"
+        if [ -x "${HEALTH}" ]; then
+          "${HEALTH}" --annotations --summary || true
+        fi
+
     - name: Create VM working directory
       id: vm-dir
       shell: bash

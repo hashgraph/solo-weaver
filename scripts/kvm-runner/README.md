@@ -12,12 +12,13 @@ The QEMU process, started with `nohup`, keeps its disk overlay open and holds th
 the action runs. A full disk can also leave runner files empty (for example `runsvc.sh`, which
 makes systemd fail with `Exec format error`).
 
-Three layers handle this:
+These layers handle this:
 
 | Layer | Where | What it does |
 |---|---|---|
 | VM slots | `kvm-vm-up` action | At most `max-concurrent-vms` (default 4) VMs run at once on the host, so the disk cannot fill from live jobs. The slot is an `flock` that QEMU itself holds, so it is freed whenever QEMU exits. |
 | Job-started hook | `job-started.sh` on the host | Runs before checkout and stops/removes orphaned VMs, so a full disk cannot block cleanup. |
+| Health check | `health-check.sh` | Reports disk, memory, load, runner services, empty runner files and orphaned or stale VMs. Runs as a step in the KVM actions and from cron on the host. |
 | Restart script | `restart.sh` on the host | Manual recovery: stops runners, kills VMs, removes their directories, repairs empty `runsvc.sh`, starts runners with retries. |
 
 Size the slots so `max-concurrent-vms * vm-disk-gb` plus the host's own usage fits the disk.
@@ -47,3 +48,23 @@ sudo install -m 755 scripts/kvm-runner/restart.sh /home/github-runner/actions-ru
 ```
 
 `restart.sh` stops running jobs. Use it for recovery, not routinely.
+
+## Health check
+
+`health-check.sh` prints one line per check (`OK`, `WARN` or `CRIT`) and exits 0, 1 or 2.
+
+In the workflows it runs as a non-failing "Report host health" step at the start of `kvm-vm-up` and
+the end of `kvm-vm-down`. Findings appear as annotations on the run and as a table in the job summary,
+so a run that shows a warning there points at a host problem rather than a test failure. `kvm-vm-down`
+also logs the size of the VM's working directory at teardown, which is the peak size of that VM's disk.
+
+Jobs only report while runners are alive, so also run it from cron on the host. It can post to a
+webhook (Slack-style `{"text": ...}`) when the status changes, and stays quiet otherwise:
+
+```bash
+sudo install -m 755 scripts/kvm-runner/health-check.sh /usr/local/sbin/weaver-health-check.sh
+echo '*/10 * * * * github-runner WEBHOOK_URL=<webhook-url> /usr/local/sbin/weaver-health-check.sh --notify >/dev/null 2>&1' | sudo tee /etc/cron.d/weaver-health-check
+```
+
+Thresholds are environment variables: `DISK_WARN_PCT` (80), `DISK_CRIT_PCT` (90), `MEM_AVAIL_WARN_GB` (3),
+`LOAD_WARN_FACTOR` (1.5 per vCPU), `VM_STALE_MINUTES` (240), `MAX_VMS` (4).
