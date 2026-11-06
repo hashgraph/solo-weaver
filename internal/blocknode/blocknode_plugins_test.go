@@ -136,11 +136,11 @@ func TestPluginListForPreset_BN0371_ExactLists(t *testing.T) {
 
 // TestPluginListForPreset_BN0391_ExactLists pins the 0.39.1 preset strings to the
 // verbatim upstream plugin-profile-{lfh,rfh}.yaml. The bracket runs up to
-// every 0.45.x and includes the default BLOCK_NODE_VERSION in pkg/deps.
+// 0.45.0-rc1 and includes the default BLOCK_NODE_VERSION in pkg/deps.
 func TestPluginListForPreset_BN0391_ExactLists(t *testing.T) {
 	const wantLFH = "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber"
 	const wantRFH = "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status"
-	for _, ver := range []string{"0.39.1", "0.40.0", "0.41.0", "0.44.3", "0.45.0-rc2", "0.45.0", "0.45.9", deps.BLOCK_NODE_VERSION} {
+	for _, ver := range []string{"0.39.1", "0.40.0", "0.41.0", "0.44.3", "0.45.0-rc1", deps.BLOCK_NODE_VERSION} {
 		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
 		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
 	}
@@ -181,26 +181,26 @@ func TestPluginsForVersion_BN0391Boundary(t *testing.T) {
 	}
 }
 
-// ── BN 0.46.0 facility-app-state boundary ────────────────────────────────────
+// ── BN 0.45.0-rc2 facility-app-state boundary ────────────────────────────────
 
-// TestPluginListForPreset_BN046_ExactLists pins the 0.46.0 preset strings to the
+// TestPluginListForPreset_BN045_ExactLists pins the 0.45.0-rc2+ preset strings to the
 // verbatim upstream plugin-profile-{lfh,rfh}.yaml. "" resolves to the latest entry.
-func TestPluginListForPreset_BN046_ExactLists(t *testing.T) {
+func TestPluginListForPreset_BN045_ExactLists(t *testing.T) {
 	const wantLFH = "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber"
 	const wantRFH = "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status"
-	for _, ver := range []string{"", "0.46.0-SNAPSHOT", "0.46.0-alpha1", "0.46.0-rc1", "0.46.0", "1.0.0"} {
+	for _, ver := range []string{"", "0.45.0-rc2", "0.45.0-rc5", "0.45.0", "0.45.1", "0.46.0-SNAPSHOT", "0.46.0-alpha1", "0.46.0-rc1", "0.46.0", "1.0.0"} {
 		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
 		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
 	}
 }
 
-// TestPluginsForVersion_BN046Boundary verifies the TUI custom multi-select offers
-// facility-app-state only from 0.46.0 prereleases on, never on 0.45.x.
-func TestPluginsForVersion_BN046Boundary(t *testing.T) {
-	for _, ver := range []string{"", "0.46.0-alpha1", "0.46.0", "1.0.0"} {
+// TestPluginsForVersion_BN045Boundary verifies the TUI custom multi-select offers
+// facility-app-state from 0.45.0-rc2 on, and not on 0.45.0-rc1, which has no such plugin.
+func TestPluginsForVersion_BN045Boundary(t *testing.T) {
+	for _, ver := range []string{"", "0.45.0-rc2", "0.45.0", "0.45.1", "0.46.0-alpha1", "0.46.0", "1.0.0"} {
 		assert.Contains(t, PluginsForVersion(ver), "facility-app-state", "version=%q", ver)
 	}
-	for _, ver := range []string{"0.44.3", "0.45.0-rc2", "0.45.0"} {
+	for _, ver := range []string{"0.44.3", "0.45.0-rc1"} {
 		assert.NotContains(t, PluginsForVersion(ver), "facility-app-state", "version=%q", ver)
 	}
 }
@@ -380,9 +380,16 @@ func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
 			wantAbsent:      []string{"s3-archive"},
 		},
 		{
-			name:            "LFH target 0.45.0 stays pre-0.46 (no facility-app-state)",
+			name:            "LFH upgrade to 0.45.1 adds facility-app-state",
 			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.45.0",
+			targetVersion:   "0.45.1",
+			wantContains:    []string{"facility-app-state", "block-verification", "blocks-file-historic"},
+			wantAbsent:      []string{"verification"},
+		},
+		{
+			name:            "LFH target 0.45.0-rc1 stays pre-0.45.0-rc2 (no facility-app-state)",
+			installedPreset: PresetTier1LFH,
+			targetVersion:   "0.45.0-rc1",
 			wantContains:    []string{"block-verification"},
 			wantAbsent:      []string{"facility-app-state"},
 		},
