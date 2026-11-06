@@ -4,7 +4,6 @@ package policy
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -370,13 +369,8 @@ func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
 		// No registry means no table and no artifact, so nothing to persist.
 		return err
 	}
-	if r.readErr == nil && sha256.Sum256([]byte(r.doc)) == sha256.Sum256(r.existing) {
-		return nil
-	}
-	if err := atomicWriteFile(m.weaverNftPath, r.doc, 0o644); err != nil {
-		return errorx.Decorate(err, "persisting %s failed", m.weaverNftPath)
-	}
-	return nil
+	_, err = writeIfChanged(m.weaverNftPath, r.doc, r.existing, r.readErr)
+	return err
 }
 
 // ExpectedDocument renders the table the live table should match, with the
@@ -408,11 +402,18 @@ func (m *Manager) ReloadTable(ctx context.Context, doc string) error {
 // SaveIfStale writes doc as the boot artifact when the file on disk differs, so a
 // write that failed after an earlier reload is retried. The caller must hold the apply lock.
 func (m *Manager) SaveIfStale(doc string) (saved bool, err error) {
-	if existing, readErr := os.ReadFile(m.weaverNftPath); readErr == nil && string(existing) == doc {
+	existing, readErr := os.ReadFile(m.weaverNftPath)
+	return writeIfChanged(m.weaverNftPath, doc, existing, readErr)
+}
+
+// writeIfChanged writes doc to path unless existing, read with readErr, already
+// holds it. It reports whether it wrote.
+func writeIfChanged(path, doc string, existing []byte, readErr error) (bool, error) {
+	if readErr == nil && string(existing) == doc {
 		return false, nil
 	}
-	if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
-		return false, errorx.Decorate(err, "persisting %s failed", m.weaverNftPath)
+	if err := atomicWriteFile(path, doc, 0o644); err != nil {
+		return false, errorx.Decorate(err, "persisting %s failed", path)
 	}
 	return true, nil
 }
