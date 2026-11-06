@@ -9,10 +9,10 @@ import (
 )
 
 // TestConsensusGroupIsGated pins the production-safety contract: the consensus
-// stack is not production-ready, so the whole group must stay hidden and behind
-// the experimental gate. solo-provisioner ships to production block-node
-// operators, so dropping the gate would expose an unfinished feature. The gate
-// mechanism itself is covered by common.GateExperimental's tests.
+// stack is not production-ready, so the whole group is gated on the
+// ConsensusNodeOperatorManaged feature (alpha) — hidden from --help and refused
+// unless the operator opts in. The gate mechanism itself is covered by
+// common.GateFeature's tests.
 func TestConsensusGroupIsGated(t *testing.T) {
 	cmd := GetCmd()
 	require.True(t, cmd.Hidden, "consensus group must be hidden — it is not production-ready")
