@@ -31,7 +31,7 @@ func TestRender_DenyNonMembersDropsOutsidersInBothFamilies(t *testing.T) {
 	require.Contains(t, doc,
 		"\t\tip6 daddr 2001:db8:c0de::/64 ip6 saddr != @bn-publisher6 tcp dport @bn-publisher_ports ct direction original drop")
 	require.Contains(t, doc,
-		"\t\tip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept",
+		"\t\tip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports counter meta priority set 0x10010 accept comment \"weaver:class=publisher\"",
 		"members are still classified into the publisher class")
 }
 
@@ -51,7 +51,7 @@ func TestRender_DenyNonMembersPrecedesFallthroughOnSharedPort(t *testing.T) {
 	require.NoError(t, err)
 
 	guard := strings.Index(doc, "ip saddr != @bn-publisher tcp dport @bn-publisher_ports ct direction original drop")
-	fallthr := strings.Index(doc, "tcp dport @bn-subscriber-in_ports meta priority set")
+	fallthr := strings.Index(doc, "tcp dport @bn-subscriber-in_ports counter meta priority set")
 	require.NotEqual(t, -1, guard)
 	require.NotEqual(t, -1, fallthr)
 	require.Less(t, guard, fallthr, "the guard must be evaluated before any accept that shares its port")

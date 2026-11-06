@@ -191,7 +191,7 @@ func resetFlags() {
 func TestCreateCmd_StampIngress(t *testing.T) {
 	doc, err := runCreate(t, "--name", "bn-publisher", "--stamp", "publisher", "--ports", "40840", "--cidrs", "10.1.0.1/32")
 	require.NoError(t, err)
-	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports meta priority set 0x10010 accept")
+	require.Contains(t, doc, "ip daddr 10.4.0.0/24 ip saddr @bn-publisher tcp dport @bn-publisher_ports counter meta priority set 0x10010 accept comment \"weaver:class=publisher\"")
 	// Membership is persisted as set elements so it survives a reboot, in the
 	// collapsed form nft prints for a /32.
 	require.Contains(t, doc, "set bn-publisher { type ipv4_addr; flags interval; elements = { 10.1.0.1 }; }")

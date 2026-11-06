@@ -4,7 +4,6 @@ package policy
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
+	"golang.org/x/sys/unix"
 )
 
 // Manager implements `network policy create` against the `inet weaver-workload-policy` table.
@@ -364,24 +364,100 @@ func (m *Manager) persistMembership(ctx context.Context) error {
 // renderAndWriteArtifact is persistMembership's fallible half, split out so the
 // error can be logged in one place and so tests can assert on it directly.
 func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
+	r, err := m.renderFromLive(ctx, nil)
+	if err != nil || r == nil {
+		// No registry means no table and no artifact, so nothing to persist.
+		return err
+	}
+	_, err = writeIfChanged(m.weaverNftPath, r.doc, r.existing, r.readErr)
+	return err
+}
+
+// ExpectedDocument renders the table the live table should match, with the
+// daemon-owned sets taken from live, the listing just read. The caller must
+// hold the apply lock, so an operator change cannot land half way through.
+func (m *Manager) ExpectedDocument(ctx context.Context, live *Listing) (string, error) {
+	r, err := m.renderFromLive(ctx, live)
+	if err != nil {
+		return "", err
+	}
+	if r == nil {
+		return "", errorx.IllegalState.New("the policy registry %s is empty", m.registryDir)
+	}
+	return r.doc, nil
+}
+
+// ReloadTable loads doc (from ExpectedDocument) into the kernel and persists it
+// as the boot artifact. The caller must hold the apply lock.
+func (m *Manager) ReloadTable(ctx context.Context, doc string) error {
+	if err := m.runner.Apply(ctx, doc); err != nil {
+		return err
+	}
+	if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
+		return errorx.Decorate(err, "the live table was reloaded but persisting %s failed", m.weaverNftPath)
+	}
+	return nil
+}
+
+// SaveIfStale writes doc as the boot artifact when the file on disk differs, so a
+// write that failed after an earlier reload is retried. The caller must hold the apply lock.
+func (m *Manager) SaveIfStale(doc string) (saved bool, err error) {
+	existing, readErr := os.ReadFile(m.weaverNftPath)
+	return writeIfChanged(m.weaverNftPath, doc, existing, readErr)
+}
+
+// writeIfChanged writes doc to path unless existing, read with readErr, already
+// holds it. It reports whether it wrote.
+func writeIfChanged(path, doc string, existing []byte, readErr error) (bool, error) {
+	if readErr == nil && string(existing) == doc {
+		return false, nil
+	}
+	if err := atomicWriteFile(path, doc, 0o644); err != nil {
+		return false, errorx.Decorate(err, "persisting %s failed", path)
+	}
+	return true, nil
+}
+
+// CanPersist errors when the boot artifact cannot be written, e.g. a read-only
+// directory under the daemon's sandbox.
+func (m *Manager) CanPersist() error {
+	dir := filepath.Dir(m.weaverNftPath)
+	if err := unix.Access(dir, unix.W_OK); err != nil {
+		return errorx.ExternalError.Wrap(err, "%s is not writable", dir)
+	}
+	return nil
+}
+
+// liveRender is one render from the registry and the live sets, plus the
+// artifact as read for it (readErr set when it could not be read).
+type liveRender struct {
+	doc      string
+	existing []byte
+	readErr  error
+}
+
+// renderFromLive renders from the registry and the live daemon-owned sets; nil
+// when the registry is empty. The sets come from listing when it can supply
+// them, which saves one `nft list set` per set.
+func (m *Manager) renderFromLive(ctx context.Context, listing *Listing) (*liveRender, error) {
 	policies, err := loadAll(m.registryDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(policies) == 0 {
-		// No registry means no table and no artifact (see Delete's last-policy
-		// teardown); there is nothing to persist into.
-		return nil
+		return nil, nil
 	}
 
-	membership, err := m.snapshotMembership(ctx, policies)
-	if err != nil {
-		return err
+	membership, ok := listing.membership(policies)
+	if !ok {
+		if membership, err = m.snapshotMembership(ctx, policies); err != nil {
+			return nil, err
+		}
 	}
 
 	// A stamp policy needs the pod CIDR to render, and this layer is never handed
 	// one — it has to be recovered. Read the artifact once and reuse it for the
-	// unchanged-content check below.
+	// unchanged-content check in renderAndWriteArtifact.
 	existing, readErr := os.ReadFile(m.weaverNftPath)
 	var podCIDRs []string
 	if readErr == nil {
@@ -405,18 +481,12 @@ func (m *Manager) renderAndWriteArtifact(ctx context.Context) error {
 		// otherwise the wrapped error reads as a pod-CIDR problem and sends the
 		// operator looking in the wrong place.
 		if readErr != nil {
-			return errorx.Decorate(err, "re-rendering %s failed (it could not be read: %v, and the live table yielded no pod CIDR)",
+			return nil, errorx.Decorate(err, "re-rendering %s failed (it could not be read: %v, and the live table yielded no pod CIDR)",
 				m.weaverNftPath, readErr)
 		}
-		return errorx.Decorate(err, "re-rendering %s failed", m.weaverNftPath)
+		return nil, errorx.Decorate(err, "re-rendering %s failed", m.weaverNftPath)
 	}
-	if readErr == nil && sha256.Sum256([]byte(doc)) == sha256.Sum256(existing) {
-		return nil
-	}
-	if err := atomicWriteFile(m.weaverNftPath, doc, 0o644); err != nil {
-		return errorx.Decorate(err, "persisting %s failed", m.weaverNftPath)
-	}
-	return nil
+	return &liveRender{doc: doc, existing: existing, readErr: readErr}, nil
 }
 
 // findByName returns the policy with the given name, or nil.
