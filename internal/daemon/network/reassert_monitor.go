@@ -373,7 +373,7 @@ func raisedLevel(reason string) zerolog.Level {
 	switch reason {
 	case reasonRulesOlderFormat:
 		return zerolog.InfoLevel
-	case reasonCheckUnknown:
+	case reasonCheckUnknown, reasonRulesUnsaved:
 		return zerolog.WarnLevel
 	default:
 		return zerolog.ErrorLevel
@@ -387,6 +387,8 @@ func checkMessage(reason string) string {
 		return "weaver's live traffic rules differ from the policy registry"
 	case reasonRulesOlderFormat:
 		return "weaver's live traffic rules were written by an older version"
+	case reasonRulesUnsaved:
+		return "weaver's live traffic rules are right, but their boot copy could not be saved"
 	case reasonStrayTcFilter:
 		return "a tc filter weaver did not install sits on a lane tree"
 	case reasonLaneBroken:

@@ -213,7 +213,11 @@ from the minute after that. Each reload logs at INFO with reason `NetworkRulesRe
 worker writes it to the CLI log, and the daemon, from the `reloaded_from` field of the report,
 to its own log. If the `.nft` write fails after the kernel load, the next full run sees `ok`
 live rules and rewrites the `.nft` (`policy.Manager.SaveIfStale`), so a reboot cannot restore
-the older format.
+the older format. On the reload run and on each later run where the write still fails, the
+worker reports `boot_copy_error` (rules `older-format` on the reload run, `ok` after), and the
+daemon raises `NetworkRulesUnsaved` at WARN, so `last_verified_good_at` does not move. A worker
+that cannot write the folder (`policy.Manager.CanPersist`; the sandbox grants it only with the
+traffic-shaper monitor) does not try the save and raises nothing; such a host never reloads either.
 
 This lives in the reassert worker, not in a startup migration: the daemon's execs skip the
 global pre-run hook where migrations run (`common.RunPersistentPreRun`), and nothing on disk

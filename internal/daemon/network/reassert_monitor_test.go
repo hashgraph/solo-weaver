@@ -384,6 +384,12 @@ func TestFailureLevel_ErrorOnceThenDebug(t *testing.T) {
 	assert.Equal(t, zerolog.DebugLevel, failureLevel(60))
 }
 
+// TestRaisedLevel_UnsavedBootCopyIsAWarning: live rules are right and a reboot self-heals, so not ERROR.
+func TestRaisedLevel_UnsavedBootCopyIsAWarning(t *testing.T) {
+	assert.Equal(t, zerolog.WarnLevel, raisedLevel(reasonRulesUnsaved))
+	assert.Equal(t, zerolog.ErrorLevel, raisedLevel(reasonRulesDrifted))
+}
+
 func TestName(t *testing.T) {
 	assert.Equal(t, MonitorName, NewReassertMonitor().Name())
 }

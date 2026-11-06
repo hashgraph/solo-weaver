@@ -260,6 +260,7 @@ func TestVerify_ReloadedButUnsavedIsNeverReportedOK(t *testing.T) {
 	assert.Equal(t, 2, c.Rules.LiveFormat)
 	assert.Zero(t, c.Rules.ReloadedFrom)
 	assert.Contains(t, c.Rules.Detail, "no space left on device")
+	assert.Contains(t, c.Rules.BootCopyError, "no space left on device", "the daemon must not count this run as good")
 	require.NotNil(t, c.Counters)
 	assert.Equal(t, "8", c.Counters.RulesEpoch)
 }
@@ -276,6 +277,7 @@ func TestVerify_FullRunSavesAStaleBootCopy(t *testing.T) {
 	assert.Equal(t, []string{"doc"}, saved)
 	assert.Equal(t, CheckOK, rc.Status)
 	assert.Equal(t, "saved the live rules to the boot copy, which was out of date", rc.Detail)
+	assert.Empty(t, rc.BootCopyError)
 }
 
 func TestVerify_FailedSaveKeepsLiveRulesOK(t *testing.T) {
@@ -286,6 +288,20 @@ func TestVerify_FailedSaveKeepsLiveRulesOK(t *testing.T) {
 
 	assert.Equal(t, CheckOK, rc.Status, "the live rules are right; only the boot copy is behind")
 	assert.Contains(t, rc.Detail, "no space left on device")
+	assert.Equal(t, "no space left on device", rc.BootCopyError, "the daemon raises a problem from this")
+}
+
+// TestVerify_ReadOnlyBootDirIsNoFault: the daemon sandbox cannot write there unless the shaper runs.
+func TestVerify_ReadOnlyBootDirIsNoFault(t *testing.T) {
+	v := fakeVerifier()
+	v.canPersist = func() error { return errors.New("/etc/solo-provisioner is not writable") }
+	v.saveRules = func(string) (bool, error) { t.Fatal("must not try to save"); return false, nil }
+
+	rc := v.verify(context.Background(), refreshScope).Rules
+
+	assert.Equal(t, CheckOK, rc.Status)
+	assert.Empty(t, rc.BootCopyError)
+	assert.Empty(t, rc.Detail)
 }
 
 func TestVerify_CheckNeverSaves(t *testing.T) {

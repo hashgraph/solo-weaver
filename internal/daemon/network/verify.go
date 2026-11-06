@@ -5,12 +5,14 @@ package network
 import (
 	"cmp"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/daemon/privexec"
+	"github.com/hashgraph/solo-weaver/internal/network/policy"
 )
 
 // Reason codes for the checks; a stable code per log line lets operators alert on it.
@@ -18,6 +20,7 @@ const (
 	reasonRulesDrifted     = "NetworkRulesDrifted"
 	reasonRulesOlderFormat = "NetworkRulesOlderFormat"
 	reasonRulesReloaded    = "NetworkRulesReloaded"
+	reasonRulesUnsaved     = "NetworkRulesUnsaved"
 	reasonStrayTcFilter    = "NetworkStrayTcFilter"
 	reasonLaneBroken       = "NetworkLaneBroken"
 	reasonLaneSuspicious   = "NetworkLaneSuspicious"
@@ -156,7 +159,8 @@ func (j *judge) observe(c *privexec.NetworkChecks, now time.Time) []event {
 		return nil
 	}
 
-	findings := append(rulesFindings(c.Rules), filtersFindings(c.Filters)...)
+	findings := append(rulesFindings(c.Rules), unsavedFinding(c.Rules)...)
+	findings = append(findings, filtersFindings(c.Filters)...)
 	lanes, laneFindings, lanesJudged := j.judgeLanes(c.Counters)
 	findings = append(findings, laneFindings...)
 	// With no policy table there are no lanes to verify, so earlier lane problems clear.
@@ -355,6 +359,17 @@ func rulesFindings(rc privexec.NetworkRulesCheck) []finding {
 		}}}
 	}
 	return nil
+}
+
+// unsavedFinding: right live rules with an old boot copy revert on reboot, so they are not good.
+func unsavedFinding(rc privexec.NetworkRulesCheck) []finding {
+	if rc.BootCopyError == "" {
+		return nil
+	}
+	return []finding{{confirmRuns: 1, Problem: Problem{
+		Reason: reasonRulesUnsaved, Check: checkRules, Detail: rc.Detail,
+		Hint: "ls -l " + policy.WeaverNftPath + " ; df -h " + path.Dir(policy.WeaverNftPath),
+	}}}
 }
 
 // filtersFindings turns the filters check into one finding per stray device.

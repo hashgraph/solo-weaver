@@ -487,6 +487,43 @@ func TestJudge_MissingPolicyTableKeepsEarlierProblems(t *testing.T) {
 	assert.Equal(t, good, *j.lastGood, "last good must not move")
 }
 
+// TestJudge_UnsavedBootCopyIsAProblem: right live rules that a reboot would revert are not good.
+func TestJudge_UnsavedBootCopyIsAProblem(t *testing.T) {
+	j := newJudge()
+	j.observe(okChecks(nil), t0)
+	good := *j.lastGood
+
+	unsaved := okChecks(nil)
+	unsaved.Rules.BootCopyError = "no space left on device"
+	unsaved.Rules.Detail = "the boot copy of the rules is out of date and saving it failed: no space left on device"
+	ev := j.observe(unsaved, t0.Add(time.Minute))
+
+	assert.Equal(t, []string{reasonRulesUnsaved}, reasons(ev, eventRaised))
+	require.Len(t, j.state.Problems, 1)
+	assert.Contains(t, j.state.Problems[0].Hint, "df -h")
+	assert.Equal(t, good, *j.lastGood, "last good must not move while the boot copy is old")
+
+	ev = j.observe(okChecks(nil), t0.Add(2*time.Minute))
+
+	assert.Equal(t, []string{reasonRulesUnsaved}, reasons(ev, eventCleared))
+	assert.Equal(t, t0.Add(2*time.Minute), *j.lastGood)
+}
+
+// TestJudge_ReloadedButUnsavedIsAProblem: the reload run itself must not count as good.
+func TestJudge_ReloadedButUnsavedIsAProblem(t *testing.T) {
+	j := newJudge()
+	j.observe(okChecks(nil), t0)
+	good := *j.lastGood
+
+	c := okChecks(nil)
+	c.Rules = privexec.NetworkRulesCheck{Status: privexec.NetworkCheckOlderFormat, LiveFormat: 2,
+		BootCopyError: "persisting the boot copy failed: no space left on device"}
+	ev := j.observe(c, t0.Add(time.Minute))
+
+	assert.ElementsMatch(t, []string{reasonRulesOlderFormat, reasonRulesUnsaved}, reasons(ev, eventRaised))
+	assert.Equal(t, good, *j.lastGood)
+}
+
 func TestJudge_StrayFilterNamesItsDevice(t *testing.T) {
 	j := newJudge()
 	c := okChecks(nil)

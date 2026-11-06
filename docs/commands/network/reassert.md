@@ -269,16 +269,21 @@ reload, a recreated veth, or a counter going backwards restarts the comparison, 
 minute, and restarts the two-minute count. Lanes are not judged at all while the live rules are `older-format`, since they carry
 no counters yet; on an upgraded host that lasts until the daemon's first run reloads them.
 
-Every result has a fixed reason — `NetworkRulesDrifted`, `NetworkRulesOlderFormat`,
+Every result has a fixed reason — `NetworkRulesDrifted`, `NetworkRulesOlderFormat`, `NetworkRulesUnsaved`,
 `NetworkStrayTcFilter`, `NetworkLaneBroken`, `NetworkLaneSuspicious`, `NetworkRulesBypassed`,
 `NetworkCheckUnknown`, `NetworkLaneIdle`, `NetworkCheckHealthyAgain` — and every line carries
 the same fields: `check`, `interface`, `category`, `detail`, `consecutive`, and a `hint` with a
 command to run. A problem logs at ERROR when it appears, again about once an hour while it
 lasts, and at INFO when it clears. Drift also logs the differing lines (`- expected`,
 `+ live`). An older format logs at INFO and a check that could not run at WARN.
+`NetworkRulesUnsaved` means the live rules are right but saving their boot copy
+(`/etc/solo-provisioner/network-weaver-workload-policy.nft`) failed, so a reboot would
+restore the old copy. It logs at WARN, holds back `last_verified_good_at`, and clears on the
+first run that saves the copy. The save is not tried when the daemon's sandbox cannot write the
+folder (the traffic-shaper monitor is off), so that host raises nothing.
 
 ```bash
-grep -E 'NetworkRulesDrifted|NetworkStrayTcFilter|NetworkLane|NetworkRulesBypassed' \
+grep -E 'NetworkRulesDrifted|NetworkRulesUnsaved|NetworkStrayTcFilter|NetworkLane|NetworkRulesBypassed' \
   /opt/solo/weaver/logs/solo-provisioner-daemon.log
 ```
 

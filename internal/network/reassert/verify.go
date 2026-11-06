@@ -56,6 +56,8 @@ type RulesCheck struct {
 	LiveFormat int `json:"live_format,omitempty"`
 	// ReloadedFrom is the older render format this run reloaded, 0 when none.
 	ReloadedFrom int `json:"reloaded_from,omitempty"`
+	// BootCopyError is set when the live rules are right but the boot copy could not be saved.
+	BootCopyError string `json:"boot_copy_error,omitempty"`
 	// Missing are expected lines the live table lacks; Unexpected the reverse.
 	Missing    []string `json:"missing,omitempty"`
 	Unexpected []string `json:"unexpected,omitempty"`
@@ -248,6 +250,7 @@ func (v *verifier) refreshRules(ctx context.Context, doc string, expected *polic
 		// The kernel has the new format but the boot copy is still old, so a reboot would revert it.
 		if rc.Status == CheckOK {
 			rc.Status = CheckOlderFormat
+			rc.BootCopyError = reloadErr.Error()
 		}
 		rc.Detail = withDetail(rc.Detail, "reloading them in render format "+strconv.Itoa(policy.FormatVersion)+": "+reloadErr.Error())
 	case rc.Status == CheckOK:
@@ -258,11 +261,16 @@ func (v *verifier) refreshRules(ctx context.Context, doc string, expected *polic
 }
 
 // saveIfStale brings the boot copy in line with live rules that are right. The
-// live rules stay ok if this fails; the next full run tries again.
+// live rules stay ok if this fails, BootCopyError tells the daemon, and the next full run tries again.
 func (v *verifier) saveIfStale(doc string, rc *RulesCheck) {
+	// A sandbox that cannot write here by design is no fault; such a host never reloads either.
+	if v.canPersist() != nil {
+		return
+	}
 	saved, err := v.saveRules(doc)
 	switch {
 	case err != nil:
+		rc.BootCopyError = err.Error()
 		rc.Detail = "the boot copy of the rules is out of date and saving it failed: " + err.Error()
 	case saved:
 		rc.Detail = "saved the live rules to the boot copy, which was out of date"
