@@ -21,11 +21,13 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/daemon"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/diagnose"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/eso"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/feature"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/kube"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/network"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/teleport"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/proxy"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -114,7 +116,8 @@ func init() {
 	// usage string directly) show it once too. Appending to both would duplicate
 	// the footer on `--help`.
 	buildInfo := version.Get()
-	buildFooter := fmt.Sprintf("\nBuild:  %s (commit %s)\n", buildInfo.Version, buildInfo.ShortCommit(12))
+	buildFooter := fmt.Sprintf("\nBuild:               %s (commit %s)\nActivation version:  %d\n",
+		buildInfo.Version, buildInfo.ShortCommit(12), featuregate.CurrentActivationVersion)
 	rootCmd.SetUsageTemplate(rootCmd.UsageTemplate() + buildFooter)
 
 	// disable command sorting to keep the order of commands as added
@@ -128,6 +131,11 @@ func init() {
 	versionCmd := newVersionCmd()
 	common.SkipGlobalChecks(versionCmd)
 
+	// `feature` is a read-only listing of the feature catalog; it changes nothing
+	// and must run on an uninstalled host. GetCmd skips the global checks on the
+	// group and every subcommand itself.
+	featureCmd := feature.GetCmd()
+
 	// add subcommands
 	rootCmd.AddCommand(selfInstallCmd)
 	rootCmd.AddCommand(selfUninstallCmd)
@@ -139,6 +147,7 @@ func init() {
 	rootCmd.AddCommand(alloy.GetCmd())
 	rootCmd.AddCommand(eso.GetCmd())
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(featureCmd)
 	rootCmd.AddCommand(tuiDemoCmd)
 	rootCmd.AddCommand(daemon.GetCmd())
 	rootCmd.AddCommand(diagnose.GetCmd())
@@ -355,8 +364,20 @@ func initConfig(ctx context.Context) {
 	activateProxy(ctx)
 }
 
+// privilegeExemptCommands are the top-level subcommands that run without
+// superuser privileges because they are read-only and touch no root-owned state
+// (no state file, no install check). Add a command here when it is safe to run
+// unprivileged; `reconcile-shaper --check` is handled separately below because
+// it is exempt only with the --check flag.
+var privilegeExemptCommands = map[string]bool{
+	"version": true,
+	"help":    true,
+	"feature": true,
+}
+
 // isPrivilegeExemptInvocation reports whether args represents an invocation
-// that does not require superuser privileges: version output, help text, or
+// that does not require superuser privileges: a command in
+// privilegeExemptCommands, the version/help flags, or
 // `block node reconcile-shaper --check`. The latter's entire design point (see
 // #893) is running unprivileged so the daemon scheduler can cheaply detect a
 // real change before ever escalating to sudo for the apply path.
@@ -379,7 +400,7 @@ func isPrivilegeExemptInvocation(args []string) bool {
 	// Only the leading subcommand word can be exempt; flag values and nested
 	// subcommands after it are not checked because they may follow a
 	// flag=value pair whose value looks like a word (e.g. --log-level debug).
-	if args[0] == "version" || args[0] == "help" {
+	if privilegeExemptCommands[args[0]] {
 		return true
 	}
 
