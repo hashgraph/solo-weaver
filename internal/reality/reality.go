@@ -136,7 +136,7 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		o(cc)
 	}
 
-	cluster, err := NewClusterChecker(cc.sm, cc.probe)
+	cluster, err := NewClusterChecker(cc.sm, cc.newHelm, cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create cluster checker")
 	}
