@@ -91,11 +91,11 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
 		}
 
-		// Setting up Kubernetes installs host binaries, so this command owns the
-		// system record: it holds that lock for the whole run, then records what
-		// the host now has. Only the system file is written, so only the machine
-		// runtime is refreshed.
-		owned := []state.ComponentID{state.ComponentSystem}
+		// Setting up Kubernetes installs host binaries and the cluster charts,
+		// so this command owns the system and cluster records: it holds their
+		// locks for the whole run, then records what the host and cluster now
+		// have.
+		owned := []state.ComponentID{state.ComponentSystem, state.ComponentCluster}
 		release, err := state.AcquireComponentLocks(sr.Runtime.StateDir(), owned, 0)
 		if err != nil {
 			return err
@@ -133,15 +133,15 @@ var installCmd = &cobra.Command{
 // clusterRecorder is what recordClusterInstall needs of the runtime;
 // *rsl.RuntimeResolver satisfies it.
 type clusterRecorder interface {
-	RefreshMachine(ctx context.Context, force bool) (state.State, error)
+	RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error)
 	Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error
 	Record(entry state.ActionHistory, cause error) error
 }
 
 // recordClusterInstall records the install once its workflow ran. A failed
-// install (failure is the workflow's error) leaves the system record as it
-// was, records only that it failed, and returns failure; otherwise the live
-// state's owned files are written with the entry.
+// install (failure is the workflow's error) leaves the system and cluster
+// records as they were, records only that it failed, and returns failure;
+// otherwise the live state's owned files are written with the entry.
 func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.ActionHistory, failure error, owned []state.ComponentID) error {
 	record := func(err error) error {
 		_ = rt.Record(entry, err) // with a cause, a lost entry is a state warning
@@ -150,16 +150,16 @@ func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.A
 	if failure != nil {
 		return record(failure)
 	}
-	live, err := rt.RefreshMachine(ctx, true)
+	live, err := rt.RefreshMachineAndCluster(ctx, true)
 	if err != nil {
 		entry.NotPersisted = true
 		return record(errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install"))
 	}
 	if err := rt.Commit(live, entry, owned...); err != nil {
 		if errorx.IsOfType(err, fsx.FileSyncError) {
-			return err // the system record landed; rsl says what to check
+			return err // the records landed; rsl says what to check
 		}
-		return errorx.IllegalState.Wrap(err, "failed to persist the system record")
+		return errorx.IllegalState.Wrap(err, "failed to persist the system and cluster records")
 	}
 	return nil
 }

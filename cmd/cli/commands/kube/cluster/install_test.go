@@ -24,9 +24,22 @@ type funcChecker[T any] func() (T, error)
 
 func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 
+// liveCluster is the cluster the install runtime reads: created, with MetalLB
+// deployed.
+var liveCluster = state.ClusterState{
+	Created:  true,
+	Releases: map[string]state.HelmReleaseInfo{"metallb": {Name: "metallb", Namespace: "metallb-system", ChartVersion: "0.16.1", Status: "deployed"}},
+}
+
 // newInstallRuntime is a runtime over a fresh state dir whose live host has
 // kubeadm installed, or whose machine read fails with machineErr.
 func newInstallRuntime(t *testing.T, machineErr error) (*rsl.RuntimeResolver, string) {
+	return newInstallRuntimeWithCluster(t, machineErr, nil)
+}
+
+// newInstallRuntimeWithCluster is newInstallRuntime whose cluster read fails
+// with clusterErr.
+func newInstallRuntimeWithCluster(t *testing.T, machineErr, clusterErr error) (*rsl.RuntimeResolver, string) {
 	t.Helper()
 	dir := t.TempDir()
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
@@ -35,7 +48,7 @@ func newInstallRuntime(t *testing.T, machineErr error) (*rsl.RuntimeResolver, st
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
 	checkers := reality.Checkers{
-		Cluster: funcChecker[state.ClusterState](func() (state.ClusterState, error) { return state.ClusterState{Created: true}, nil }),
+		Cluster: funcChecker[state.ClusterState](func() (state.ClusterState, error) { return liveCluster, clusterErr }),
 		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
 			return state.MachineState{Software: map[string]state.SoftwareState{"kubeadm": {Name: "kubeadm", Installed: true}}}, machineErr
 		}),
@@ -62,7 +75,7 @@ func readHistory(t *testing.T, dir string) []state.ActionHistory {
 	return entries
 }
 
-var systemOnly = []state.ComponentID{state.ComponentSystem}
+var owned = []state.ComponentID{state.ComponentSystem, state.ComponentCluster}
 
 // TestRecordClusterInstall_FailedInstallRecordsAFailedEntry: a failed install
 // returns its own error, writes no system record, and records that it failed.
@@ -70,7 +83,7 @@ func TestRecordClusterInstall_FailedInstallRecordsAFailedEntry(t *testing.T) {
 	rt, dir := newInstallRuntime(t, nil)
 	failed := errors.New("kubeadm init failed")
 
-	err := recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeFailed), failed, systemOnly)
+	err := recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeFailed), failed, owned)
 
 	require.Same(t, failed, err)
 	require.NoFileExists(t, state.ComponentFilePath(dir, state.ComponentSystem))
@@ -86,7 +99,7 @@ func TestRecordClusterInstall_FailedInstallRecordsAFailedEntry(t *testing.T) {
 func TestRecordClusterInstall_FailedRefreshIsNotPersisted(t *testing.T) {
 	rt, dir := newInstallRuntime(t, errors.New("cannot read the host"))
 
-	err := recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, systemOnly)
+	err := recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, owned)
 
 	require.ErrorContains(t, err, "failed to refresh state after cluster install")
 	entries := readHistory(t, dir)
@@ -104,7 +117,7 @@ func TestRecordClusterInstall_LandedRecordWithALostEntryIsAWarning(t *testing.T)
 	rt, dir := newInstallRuntime(t, nil)
 	require.NoError(t, os.Mkdir(state.ActionHistoryFilePath(dir), 0o755)) // appending to a directory fails
 
-	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, systemOnly))
+	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, owned))
 
 	require.FileExists(t, state.ComponentFilePath(dir, state.ComponentSystem))
 	warnings := state.TakeWarnings()
@@ -113,14 +126,37 @@ func TestRecordClusterInstall_LandedRecordWithALostEntryIsAWarning(t *testing.T)
 }
 
 // TestRecordClusterInstall_SuccessRecordsOneEntry: a successful install writes
-// the system record and one entry naming it.
+// the system and cluster records, the cluster one with its chart releases, and
+// one entry naming both.
 func TestRecordClusterInstall_SuccessRecordsOneEntry(t *testing.T) {
 	rt, dir := newInstallRuntime(t, nil)
 
-	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, systemOnly))
+	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, owned))
 
 	entries := readHistory(t, dir)
 	require.Len(t, entries, 1)
 	require.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
-	require.Equal(t, []state.ChangedFile{state.ChangedFile(state.ComponentSystem)}, entries[0].Components)
+	require.ElementsMatch(t, []state.ChangedFile{state.ComponentSystem.File(), state.ComponentCluster.File()}, entries[0].Components)
+	require.Equal(t, liveCluster.Releases, readCluster(t, dir).Releases)
+}
+
+// TestRecordClusterInstall_UnreadableClusterStillRecordsTheHost: a cluster that
+// cannot be read right after the install keeps its recorded state; the system
+// record still lands.
+func TestRecordClusterInstall_UnreadableClusterStillRecordsTheHost(t *testing.T) {
+	rt, dir := newInstallRuntimeWithCluster(t, nil, errors.New("connection refused"))
+
+	require.NoError(t, recordClusterInstall(context.Background(), rt, installEntry(state.OutcomeSucceeded), nil, owned))
+
+	require.FileExists(t, state.ComponentFilePath(dir, state.ComponentSystem))
+	require.Empty(t, readCluster(t, dir).Releases)
+}
+
+// readCluster loads dir's persisted cluster record.
+func readCluster(t *testing.T, dir string) state.ClusterState {
+	t.Helper()
+	sm, err := state.NewStateManager(state.WithStateFile(filepath.Join(dir, state.StateFileName)))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+	return sm.State().ClusterState
 }

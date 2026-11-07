@@ -33,7 +33,7 @@ const (
 	configMapName      = "cilium-config"
 	daemonSetName      = "cilium"
 	operatorName       = "cilium-operator"
-	releaseName        = "cilium"
+	ReleaseName        = "cilium" // the Helm release `cilium install` creates in Namespace
 	agentContainerName = "cilium-agent"
 )
 
@@ -84,7 +84,7 @@ func DetectInstallation(ctx context.Context, dyn dynamic.Interface) (Installatio
 	releases, err := releaseSecrets(ctx, dyn, "")
 	switch {
 	case err == nil && len(releases) > 0:
-		found.Resources = append(found.Resources, "helm-release/"+releaseName)
+		found.Resources = append(found.Resources, "helm-release/"+ReleaseName)
 	case err != nil && lookupErr == nil:
 		lookupErr = err
 	}
@@ -185,7 +185,7 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 	}
 	if len(releases) != 1 {
 		return "", versionError(errorx.IllegalState.New(
-			"expected one deployed Helm release %q in %s, found %d", releaseName, Namespace, len(releases)))
+			"expected one deployed Helm release %q in %s, found %d", ReleaseName, Namespace, len(releases)))
 	}
 
 	encoded, _, _ := unstructured.NestedString(releases[0].Object, "data", "release")
@@ -196,7 +196,7 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 
 	version, ok := normalizeVersion(chart)
 	if !ok {
-		return "", versionError(errorx.IllegalState.New("deployed Helm release %q has invalid chart version %q", releaseName, chart))
+		return "", versionError(errorx.IllegalState.New("deployed Helm release %q has invalid chart version %q", ReleaseName, chart))
 	}
 	return version, nil
 }
@@ -204,13 +204,13 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 // releaseSecrets lists the Helm storage secrets of the cilium release, filtered
 // by Helm status when status is not empty.
 func releaseSecrets(ctx context.Context, dyn dynamic.Interface, status string) ([]unstructured.Unstructured, error) {
-	selector := "owner=helm,name=" + releaseName
+	selector := "owner=helm,name=" + ReleaseName
 	if status != "" {
 		selector += ",status=" + status
 	}
 	list, err := dyn.Resource(secretsGVR).Namespace(Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return nil, apiError(err, "failed to list Helm release secrets for %q in %s", releaseName, Namespace)
+		return nil, apiError(err, "failed to list Helm release secrets for %q in %s", ReleaseName, Namespace)
 	}
 	return list.Items, nil
 }

@@ -53,8 +53,8 @@ func newTestHandlers(t *testing.T) *Handlers {
 }
 
 // TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites: an intent locks and
-// flushes exactly the components it writes. Install owns the system record
-// only when it will stand up Kubernetes, so on a host that already has it,
+// flushes exactly the components it writes. Install owns the system and
+// cluster records only when it will stand up Kubernetes, so on a host that already has it,
 // install runs alongside a teleport node command.
 func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 	h := newTestHandlers(t)
@@ -72,7 +72,7 @@ func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 		owns                []string
 	}{
 		{"install on a cluster", models.ActionInstall, true, []string{"blocknode", "profile", "firewall"}},
-		{"install that creates the cluster", models.ActionInstall, false, []string{"blocknode", "profile", "firewall", "system"}},
+		{"install that creates the cluster", models.ActionInstall, false, []string{"blocknode", "profile", "firewall", "system", "cluster"}},
 		{"reconfigure", models.ActionReconfigure, true, []string{"blocknode", "profile", "firewall"}},
 		{"upgrade", models.ActionUpgrade, true, []string{"blocknode", "profile", "firewall"}},
 		{"reset", models.ActionReset, true, []string{"blocknode"}},

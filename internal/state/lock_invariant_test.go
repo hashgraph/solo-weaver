@@ -84,12 +84,17 @@ var stateWriters = map[string]writerRow{
 		history: "TestFirewallVerbs_RecordAnEntry",
 	},
 	"cmd/cli/commands/kube/cluster/install.go:installCmd": {
-		lock: "no unit test runs installCmd: it locks ComponentSystem for the " +
-			"whole command, then flushes only that; shown by the manual UAT's kube cluster install step",
+		lock: "no unit test runs installCmd: it locks ComponentSystem and ComponentCluster for the " +
+			"whole command, then flushes only those; shown by the manual UAT's kube cluster install step",
 		history: "takes no history call: recordClusterInstall records the entry once the workflow started",
 	},
+	"cmd/cli/commands/common/cluster_record.go:runRecordingCluster": {
+		lock: "RunOwning over ComponentCluster: TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked",
+		history: "TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry, " +
+			"TestRunRecordingCluster_UnreadableClusterIsNotPersisted",
+	},
 	"cmd/cli/commands/kube/cluster/install.go:recordClusterInstall": {
-		lock: "its caller, installCmd, holds ComponentSystem's lock for the whole command",
+		lock: "its caller, installCmd, holds ComponentSystem's and ComponentCluster's locks for the whole command",
 		history: "TestRecordClusterInstall_SuccessRecordsOneEntry, TestRecordClusterInstall_FailedInstallRecordsAFailedEntry, " +
 			"TestRecordClusterInstall_FailedRefreshIsNotPersisted",
 	},

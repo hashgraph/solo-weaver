@@ -38,8 +38,8 @@ func NewHandlerFactory(
 ) (*Handlers, error) {
 	// Each intent owns only the files it writes. Install, reconfigure and
 	// upgrade take --profile and re-assert the host firewall, so they own both
-	// records (install also owns the system record when it stands up
-	// Kubernetes); reset and uninstall touch the block node alone.
+	// records (install also owns the system and cluster records when it stands
+	// up Kubernetes); reset and uninstall touch the block node alone.
 	profile := bll.WithProfileExtractor(func(i models.BlockNodeInputs) string { return i.Profile })
 	managed := bll.WithManagedComponents[models.BlockNodeInputs]
 
@@ -49,7 +49,7 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("failed to create install BaseHandler: %v", err)
 	}
 	clusterInstallBase, err := bll.NewBaseHandler(runtime, models.TargetBlockNode, profile,
-		managed(bll.BlockNode, bll.Profile, bll.Firewall, bll.System))
+		managed(bll.BlockNode, bll.Profile, bll.Firewall, bll.System, bll.Cluster))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create cluster install BaseHandler: %v", err)
 	}

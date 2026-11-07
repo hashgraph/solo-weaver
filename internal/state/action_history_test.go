@@ -67,6 +67,7 @@ func TestTargetFiles_EveryWriterTargetHasARow(t *testing.T) {
 	for _, target := range []models.TargetType{
 		models.TargetBlockNode, models.TargetConsensusNode, models.TargetCluster,
 		models.TargetTeleportNode, models.TargetTeleportCluster, models.TargetFirewall, models.TargetSystem,
+		models.TargetAlloy, models.TargetESO,
 	} {
 		require.NotEmpty(t, TargetFiles(target), target)
 	}
