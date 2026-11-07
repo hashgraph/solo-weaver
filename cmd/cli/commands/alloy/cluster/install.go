@@ -144,7 +144,12 @@ Examples:
 
 		wb := workflows.WithWorkflowExecutionMode(workflows.NewAlloyInstallWorkflow(), opts)
 
-		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
+		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetAlloy}
+		inputs := map[string]any{
+			"profile": flagProfile, "clusterName": alloyCfg.ClusterName, "environment": alloyCfg.Environment,
+			"monitorBlockNode": alloyCfg.MonitorBlockNode,
+		}
+		if err := common.RunWorkflowRecordingCluster(cmd.Context(), wb, intent, inputs); err != nil {
 			return err
 		}
 

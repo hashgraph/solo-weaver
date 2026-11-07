@@ -62,7 +62,7 @@ func agentDaemonSet(agentImage string, initImage string) *unstructured.Unstructu
 // releaseSecret encodes a release the way Helm's secret driver stores it.
 func releaseSecret(revision int, status, chartVersion string) *unstructured.Unstructured {
 	payload, _ := json.Marshal(map[string]any{
-		"name":    releaseName,
+		"name":    ReleaseName,
 		"version": revision,
 		"chart":   map[string]any{"metadata": map[string]any{"name": "cilium", "version": chartVersion}},
 	})
@@ -72,8 +72,8 @@ func releaseSecret(revision int, status, chartVersion string) *unstructured.Unst
 	_ = zw.Close()
 	helmEncoded := base64.StdEncoding.EncodeToString(gz.Bytes())
 
-	s := object("v1", "Secret", fmt.Sprintf("sh.helm.release.v1.%s.v%d", releaseName, revision))
-	s.SetLabels(map[string]string{"owner": "helm", "name": releaseName, "status": status, "version": fmt.Sprint(revision)})
+	s := object("v1", "Secret", fmt.Sprintf("sh.helm.release.v1.%s.v%d", ReleaseName, revision))
+	s.SetLabels(map[string]string{"owner": "helm", "name": ReleaseName, "status": status, "version": fmt.Sprint(revision)})
 	_ = unstructured.SetNestedField(s.Object, base64.StdEncoding.EncodeToString([]byte(helmEncoded)), "data", "release")
 	return s
 }

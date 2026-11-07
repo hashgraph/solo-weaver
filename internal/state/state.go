@@ -489,8 +489,15 @@ func (r HelmReleaseInfo) Absent() bool {
 // ClusterState represents the persisted state of a Kubernetes cluster.
 type ClusterState struct {
 	models.ClusterInfo
-	Created  bool       `yaml:"created" json:"created"`                       // whether the cluster was created by the provisioner
-	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Created bool `yaml:"created" json:"created"` // whether the cluster was created by the provisioner
+	// Releases records the Helm release of each cluster chart the provisioner
+	// manages, keyed by its catalog name, plus the Cilium agent under "cilium".
+	// The block node, the Teleport cluster agent and the solo-operator are
+	// recorded elsewhere. A chart with no release has no key. A state file
+	// written before this field existed reads as nothing recorded; the next
+	// refresh of a reachable cluster fills it.
+	Releases map[string]HelmReleaseInfo `yaml:"releases,omitempty" json:"releases,omitempty"`
+	LastSync htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
 }
 
 // TeleportState represents the persisted state of Teleport agents.

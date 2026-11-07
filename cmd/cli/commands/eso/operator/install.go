@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 var installCmd = &cobra.Command{
@@ -42,7 +43,9 @@ Examples:
 
 		wb := workflows.WithWorkflowExecutionMode(workflows.NewESOInstallWorkflow(flagESONamespace), opts)
 
-		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
+		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetESO}
+		inputs := map[string]any{"namespace": flagESONamespace}
+		if err := common.RunWorkflowRecordingCluster(cmd.Context(), wb, intent, inputs); err != nil {
 			return err
 		}
 
