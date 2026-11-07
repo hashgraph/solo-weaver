@@ -2,7 +2,11 @@
 
 package state
 
-import "github.com/hashgraph/solo-weaver/pkg/models"
+import (
+	"maps"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
+)
 
 // Equal returns true if two SoftwareState values are equal, ignoring LastSync.
 func (s *SoftwareState) Equal(other SoftwareState) bool {
@@ -86,7 +90,8 @@ func (h *HelmReleaseInfo) Equal(other HelmReleaseInfo) bool {
 
 // Equal returns true if two ClusterState values are equal, ignoring LastSync.
 func (cs *ClusterState) Equal(other ClusterState) bool {
-	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo)
+	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo) &&
+		maps.EqualFunc(cs.Releases, other.Releases, func(a, b HelmReleaseInfo) bool { return a.Equal(b) })
 }
 
 // Equal returns true if two BlockNodeState values are equal, ignoring LastSync.
