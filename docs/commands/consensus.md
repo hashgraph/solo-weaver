@@ -34,19 +34,16 @@ gossip certificate CN is the machine UUID and the gRPC certificate CN is
 during a DAB join.
 
 For a DAB join you need three public values: the gossip certificate
-(`s-public.pem`), the SHA-384 hash of the gRPC certificate, and the admin public
+(`s-public.der`), the SHA-384 hash of the gRPC certificate, and the admin public
 key from your wallet. The hash is taken over the certificate in PEM form, as
 `nodeCreate` requires. The command prints it to stdout (it is the one value not
 otherwise on disk; recompute it any time with `openssl dgst -sha384` over
 `hedera.crt`). solo-provisioner does **not** generate the admin key and does
 **not** submit the transaction — your wallet or SDK does both.
 
-`nodeCreate` requires the gossip certificate in DER form, not PEM. Convert
-`s-public.pem` before you give it to your wallet or SDK:
-
-```bash
-openssl x509 -in s-public.pem -outform der -out s-public.der
-```
+`nodeCreate` requires the gossip certificate in DER form, not PEM. The command
+writes it as `s-public.der` next to `s-public.pem`; give `s-public.der` to your
+wallet or SDK.
 
 ```bash
 # All key types, node-id-free (typical for a DAB join):
@@ -123,6 +120,7 @@ so `keys import` maps a generated folder to secrets one-to-one:
 |---|---|
 | `s-private.pem` | gossip signing private key (PKCS#8) |
 | `s-public.pem` | gossip signing certificate |
+| `s-public.der` | gossip signing certificate in DER form, for `nodeCreate` (not stored in a secret) |
 | `hedera.key` | gRPC TLS private key |
 | `hedera.crt` | gRPC TLS certificate |
 
@@ -236,7 +234,7 @@ more than one generation of a key type, pass `--fingerprint` or `--secret-suffix
 choose one; otherwise the command lists the candidates and stops.
 
 Export writes only the expected files for each key type: `s-private.pem` (0600)
-and `s-public.pem` for gossip, `hedera.key` (0600) and `hedera.crt` for gRPC TLS,
+and `s-public.pem` for gossip (plus `s-public.der`, made from `s-public.pem`), `hedera.key` (0600) and `hedera.crt` for gRPC TLS,
 and `admin.pub` for admin. Any other entry is logged and skipped; it stays only in
 the cluster secret, not in the backup. A secret that lacks one of its expected
 entries is refused.

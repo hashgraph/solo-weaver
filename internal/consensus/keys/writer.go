@@ -23,7 +23,7 @@ const (
 // tight permissions (0600 on private material).
 //
 // It does not write a combined artifacts file: the values an operator needs for
-// the DAB nodeCreate transaction are the gossip certificate s-public.pem plus
+// the DAB nodeCreate transaction are the gossip certificate (s-public.der) plus
 // the SHA-384 hash of the gRPC certificate, which the caller surfaces from the
 // key set (CertKeyPair.CertHashSHA384) rather than persisting redundantly. The
 // admin key is created in an external wallet and is never generated here.
@@ -41,6 +41,9 @@ func (ks *NodeKeySet) WriteToDir(dir string) error {
 			return err
 		}
 		if err := writeFile(dir, FileGossipCert, ks.Gossip.CertificatePEM(), publicPerm); err != nil {
+			return err
+		}
+		if err := writeFile(dir, FileGossipCertDER, ks.Gossip.Certificate.Raw, publicPerm); err != nil {
 			return err
 		}
 	}

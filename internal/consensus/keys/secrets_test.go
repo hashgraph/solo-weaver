@@ -356,6 +356,13 @@ func TestExport_RoundTrip(t *testing.T) {
 	fi, err := os.Stat(filepath.Join(out, FileGossipPrivate))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+
+	// The exported DER file is the same as the one generate wrote.
+	want, err := os.ReadFile(filepath.Join(dir, FileGossipCertDER))
+	require.NoError(t, err)
+	got, err := os.ReadFile(filepath.Join(out, FileGossipCertDER))
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func TestExport_Idempotent(t *testing.T) {
@@ -404,7 +411,7 @@ func TestExport_WritesOnlyExpectedFiles(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	assert.ElementsMatch(t, []string{FileGossipPrivate, FileGossipCert}, names)
+	assert.ElementsMatch(t, []string{FileGossipPrivate, FileGossipCert, FileGossipCertDER}, names)
 	assert.NoFileExists(t, filepath.Join(filepath.Dir(out), "escape"))
 }
 

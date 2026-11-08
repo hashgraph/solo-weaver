@@ -40,7 +40,8 @@ var generateCmd = &cobra.Command{
 		"--keys-dir is one node's folder — make it node-specific. For a genesis network, run generate " +
 		"once per node into its own --keys-dir.\n\n" +
 		"The command prints the gRPC certificate hash (the one join input not written as a file) to " +
-		"stdout; the gossip certificate is a file. The node admin key is not generated here: create it in " +
+		"stdout. The gossip certificate is written as PEM and as DER (" + cnkeys.FileGossipCertDER + ", the form " +
+		"nodeCreate takes). The node admin key is not generated here: create it in " +
 		"an external wallet and provide only its public key. To also create the Kubernetes " +
 		"secrets in one step, use `consensus keys init`.",
 	RunE: runGenerate,
@@ -192,7 +193,7 @@ func printSummary(cmd *cobra.Command, dir string, set *cnkeys.NodeKeySet) {
 	cmd.Printf("Generated key material in %s\n", dir)
 
 	if set.Gossip != nil {
-		cmd.Printf("  gossip signing key: %s, %s\n", cnkeys.FileGossipPrivate, cnkeys.FileGossipCert)
+		cmd.Printf("  gossip signing key: %s, %s, %s\n", cnkeys.FileGossipPrivate, cnkeys.FileGossipCert, cnkeys.FileGossipCertDER)
 	}
 	if set.Grpc != nil {
 		cmd.Printf("  gRPC TLS key:       %s, %s\n", cnkeys.FileGrpcKey, cnkeys.FileGrpcCert)
@@ -202,7 +203,7 @@ func printSummary(cmd *cobra.Command, dir string, set *cnkeys.NodeKeySet) {
 	cmd.Println()
 	cmd.Println("Next steps:")
 	cmd.Println("  - Genesis / known id:  consensus keys import --node-id <N> --keys-dir " + dir)
-	cmd.Println("  - DAB join:            submit nodeCreate off-cluster using the gossip cert (" + cnkeys.FileGossipCert + "),")
+	cmd.Println("  - DAB join:            submit nodeCreate off-cluster using the gossip cert (" + cnkeys.FileGossipCertDER + "),")
 	cmd.Println("                         the gRPC cert hash above, and the admin public key from your wallet,")
 	cmd.Println("                         then import with the assigned id")
 }

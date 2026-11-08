@@ -13,6 +13,7 @@ import (
 
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
 	"github.com/joomcode/errorx"
 )
 
@@ -43,7 +44,7 @@ type secretFile struct {
 }
 
 // exportFiles are the only entries export writes for each key type; any other
-// entry in the secret is ignored.
+// entry in the secret is ignored. Export also writes FileGossipCertDER.
 var exportFiles = map[KeyType][]secretFile{
 	KeyTypeGossip: {{FileGossipPrivate, privatePerm}, {FileGossipCert, publicPerm}},
 	KeyTypeGrpc:   {{FileGrpcKey, privatePerm}, {FileGrpcCert, publicPerm}},
@@ -279,6 +280,17 @@ func Export(ctx context.Context, client SecretClient, opts ExportOptions) (*Expo
 				}
 			}
 			changed, err := writeFileGuarded(opts.OutDir, f.name, value, f.perm, opts.Overwrite)
+			if err != nil {
+				return nil, err
+			}
+			wrote = wrote || changed
+		}
+		if t.typ == KeyTypeGossip {
+			cert, err := corekeys.ParseCertificatePEM(secret.Data[FileGossipCert])
+			if err != nil {
+				return nil, errorx.Decorate(err, "secret %q", secret.Name)
+			}
+			changed, err := writeFileGuarded(opts.OutDir, FileGossipCertDER, cert.Raw, publicPerm, opts.Overwrite)
 			if err != nil {
 				return nil, err
 			}
