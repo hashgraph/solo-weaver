@@ -12,6 +12,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
 	"github.com/joomcode/errorx"
@@ -48,7 +49,7 @@ var generateCmd = &cobra.Command{
 }
 
 func init() {
-	generateCmd.Flags().StringVar(&flagKeysDir, "keys-dir", "", "Directory for this node's key material (required); make it node-specific")
+	generateCmd.Flags().StringVar(&flagKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Directory for this node's key material; make it node-specific")
 	generateCmd.Flags().StringVar(&flagIdentity, "identity", "", "Optional human-readable label recorded in the gossip certificate OU/SAN (e.g. operator or host name)")
 	generateCmd.Flags().StringVar(&flagMachineID, "machine-id", "", "Override the gossip certificate CN; defaults to the host machine UUID (/etc/machine-id)")
 	generateCmd.Flags().BoolVar(&flagGossip, "gossip", false, "Generate the gossip signing key (default: generate all types when no selector is given)")
@@ -60,7 +61,7 @@ func init() {
 func runGenerate(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(flagKeysDir) == "" {
 		return errx.Decorate(
-			errorx.IllegalArgument.New("--keys-dir is required"),
+			errorx.IllegalArgument.New("--keys-dir must not be empty"),
 			reasons.InvalidArgument,
 			"pass --keys-dir <dir> (a node-specific directory) for the key material")
 	}

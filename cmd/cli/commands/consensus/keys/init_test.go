@@ -59,10 +59,10 @@ func TestInitCmd_ImportsSuppliedAdminPublicKey(t *testing.T) {
 	}
 }
 
-func TestInitCmd_RequiresKeysDir(t *testing.T) {
+func TestInitCmd_RejectsEmptyKeysDir(t *testing.T) {
 	stubSecretClient(t, &fakeSecretClient{store: map[string]map[string][]byte{}})
-	_, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0")
-	require.Error(t, err)
+	_, err := runUnderNode(t, initCmd, "--namespace", "ns", "--node-id", "0", "--keys-dir", "")
+	require.ErrorContains(t, err, "--keys-dir must not be empty")
 }
 
 func TestInitCmd_RequiresNodeId(t *testing.T) {

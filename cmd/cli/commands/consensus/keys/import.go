@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -44,7 +45,7 @@ var (
 
 func init() {
 	importSelectors = addSelectorFlags(importCmd)
-	importCmd.Flags().StringVar(&flagImportKeysDir, "keys-dir", "", "Node key folder to import from (required for --source folder)")
+	importCmd.Flags().StringVar(&flagImportKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Node key folder to import from (used with --source folder)")
 	importCmd.Flags().StringVar(&flagImportSource, "source", sourceFolder, "Key material source: folder (vault support is tracked separately)")
 	importCmd.Flags().BoolVar(&flagImportOverwrite, "overwrite", false, "Replace a same-named secret whose content differs (e.g. one edited by hand); re-importing identical material is idempotent without this")
 	importCmd.Flags().StringArrayVar(&flagImportLabels, "label", nil, "Extra label to put on every secret, as key=value, e.g. example.com/external-ref=ticket-42 (repeatable). On a secret whose content is already up to date only labels are changed")
@@ -61,7 +62,7 @@ func runImport(cmd *cobra.Command, _ []string) error {
 	}
 	if strings.TrimSpace(flagImportKeysDir) == "" {
 		return errx.Decorate(
-			errorx.IllegalArgument.New("--keys-dir is required for --source folder"),
+			errorx.IllegalArgument.New("--keys-dir must not be empty"),
 			reasons.InvalidArgument,
 			"pass --keys-dir <dir> pointing at the node key folder (e.g. the output of `keys generate`)")
 	}

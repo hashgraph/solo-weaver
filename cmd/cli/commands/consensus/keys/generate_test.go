@@ -12,6 +12,7 @@ import (
 
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -47,9 +48,17 @@ func TestGenerateCmd_NodeIdFree(t *testing.T) {
 	assert.Contains(t, out, "gRPC cert hash (SHA-384):")
 }
 
-func TestGenerateCmd_RequiresKeysDir(t *testing.T) {
-	_, err := runGenerateCmd(t)
-	require.Error(t, err)
+func TestGenerateCmd_RejectsEmptyKeysDir(t *testing.T) {
+	_, err := runGenerateCmd(t, "--keys-dir", " ")
+	require.ErrorContains(t, err, "--keys-dir must not be empty")
+}
+
+func TestKeysDirDefault(t *testing.T) {
+	want := "/opt/solo/weaver/consensus/keys"
+	require.Equal(t, want, models.Paths().ConsensusKeysDir)
+	for _, c := range []*cobra.Command{generateCmd, initCmd, importCmd, exportCmd, verifyCmd, inspectCmd} {
+		assert.Equal(t, want, c.Flags().Lookup("keys-dir").DefValue, c.Name())
+	}
 }
 
 func TestGenerateCmd_SelectorSubset(t *testing.T) {

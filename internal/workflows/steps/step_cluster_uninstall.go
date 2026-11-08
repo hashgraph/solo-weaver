@@ -157,12 +157,13 @@ func CleanupWeaverFiles() *automa.StepBuilder {
 			}
 
 			cleanupWeaverHome(fsManager, "/opt/solo/weaver")
+
 			return automa.SuccessReport(stp)
 		})
 }
 
 // cleanupWeaverHome removes every top-level entry of weaverHome except the
-// downloads, bin and logs folders, and empties the state directory except its
+// downloads, bin, logs and consensus folders, and empties the state directory except its
 // action history and lock files. It is best-effort: a failure is logged and
 // teardown goes on.
 func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
@@ -186,6 +187,7 @@ func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
 		models.Paths().DownloadsDir: true,
 		models.Paths().BinDir:       true,
 		models.Paths().LogsDir:      true,
+		models.Paths().ConsensusDir: true,
 	}
 
 	// Remove every top-level entry except the preserved folders.
@@ -194,7 +196,7 @@ func cleanupWeaverHome(fsManager fsx.Manager, weaverHome string) {
 		for _, entry := range entries {
 			entryPath := filepath.Join(weaverHome, entry.Name())
 
-			// Skip the downloads, bin, and logs folders
+			// Skip the preserved folders (downloads, bin, logs, consensus)
 			if skipDirs[entryPath] {
 				logx.As().Debug().Str("path", entryPath).Msg("Preserving directory during cleanup")
 				continue

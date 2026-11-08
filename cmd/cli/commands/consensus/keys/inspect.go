@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -35,7 +36,7 @@ var (
 
 func init() {
 	inspectSelectors = addSelectorFlags(inspectCmd)
-	inspectCmd.Flags().StringVar(&flagInspectKeysDir, "keys-dir", "", "Node key folder to inspect")
+	inspectCmd.Flags().StringVar(&flagInspectKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Node key folder to inspect")
 	inspectCmd.Flags().StringVar(&flagInspectFile, "file", "", "Inspect a single certificate (PEM) or admin public key (hex, named *.pub) file")
 	inspectCmd.MarkFlagsMutuallyExclusive("keys-dir", "file")
 }

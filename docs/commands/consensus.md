@@ -46,7 +46,10 @@ writes it as `s-public.der` next to `s-public.pem`; give `s-public.der` to your
 wallet or SDK.
 
 ```bash
-# All key types, node-id-free (typical for a DAB join):
+# All key types into the default folder, /opt/solo/weaver/consensus/keys:
+sudo solo-provisioner consensus keys generate --experimental --identity my-operator
+
+# All key types, node-id-free, into another folder:
 sudo solo-provisioner consensus keys generate --experimental \
   --keys-dir ./node-keys --identity my-operator
 
@@ -55,7 +58,10 @@ sudo solo-provisioner consensus keys generate --experimental \
   --keys-dir ./node-keys --gossip
 ```
 
-`--keys-dir` is one node's folder. For a genesis network with multiple nodes,
+`--keys-dir` is one node's folder. All `consensus keys` commands use
+`/opt/solo/weaver/consensus/keys` when you omit it, which fits one node per host.
+`kube cluster uninstall` keeps `/opt/solo/weaver/consensus`, so the keys stay on
+disk. For a genesis network with multiple nodes,
 run `generate` once per node into its own `--keys-dir`. When several nodes share
 one machine (testing), also give each a distinct `--machine-id` so their gossip
 certificate CNs differ:
@@ -77,7 +83,7 @@ To also create the Kubernetes secrets in one step (known node-id), use
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Directory for this node's key material (required); make it node-specific | — |
+| `--keys-dir` | Directory for this node's key material; make it node-specific | `/opt/solo/weaver/consensus/keys` |
 | `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN (e.g. operator or host name) | — |
 | `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
 | `--gossip` | Generate the gossip signing key | all types when no selector is given |
@@ -180,7 +186,7 @@ sudo solo-provisioner consensus keys import --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to import from (required for `--source folder`) | — |
+| `--keys-dir` | Node key folder to import from (used with `--source folder`) | `/opt/solo/weaver/consensus/keys` |
 | `--source` | Key material source: `folder` (vault-backed import is tracked separately) | `folder` |
 | `--secret-suffix` | Replace the certificate date in the secret names (for example `v0.75.6`); lowercase letters, digits, `-` and `.` | certificate date |
 | `--label` | Extra label for every secret, as `key=value` (repeatable), for example `example.com/external-ref=ticket-42` or `app.kubernetes.io/version=v0.75.6`. Kubernetes label syntax applies, and weaver's own labels cannot be used | — |
@@ -222,7 +228,7 @@ sudo solo-provisioner consensus keys export --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to export into (required) | — |
+| `--keys-dir` | Node key folder to export into | `/opt/solo/weaver/consensus/keys` |
 | `--fingerprint` | Pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
 | `--secret-suffix` | Pick the secrets imported with this suffix or date | — |
 | `--overwrite` | Replace existing files whose content differs (identical files are left as-is) | `false` |
@@ -269,13 +275,14 @@ sudo solo-provisioner consensus keys verify --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to validate | — |
+| `--keys-dir` | Node key folder to validate | `/opt/solo/weaver/consensus/keys` |
 | `--from-cluster` | Validate the in-cluster per-node secrets instead of a folder (requires `--node-id`) | `false` |
 | `--fingerprint` | With `--from-cluster`, pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
 | `--secret-suffix` | With `--from-cluster`, pick the secrets imported with this suffix or date | — |
 | `--gossip` / `--tls` / `--admin` | Select which key types to check | all when none given |
 
-`--keys-dir` and `--from-cluster` are mutually exclusive; `--from-cluster` requires
+`--keys-dir` and `--from-cluster` are mutually exclusive; with neither, verify reads
+the default `--keys-dir`. `--from-cluster` requires
 the inherited `--namespace` and `--node-id`. In the cluster, each secret is checked
 against its name and fingerprint label (a renamed or edited secret fails), and when a
 node has several generations of a key type the failing line lists them so you can
@@ -319,11 +326,12 @@ sudo solo-provisioner consensus keys inspect --experimental --file ./keys/node0/
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to inspect | — |
+| `--keys-dir` | Node key folder to inspect | `/opt/solo/weaver/consensus/keys` |
 | `--file` | Inspect a single certificate (PEM) or admin public key (hex, named *.pub) file | — |
 | `--gossip` / `--tls` / `--admin` | Select which key types to show | all when none given |
 
-`--keys-dir` and `--file` are mutually exclusive. Inspect works on disk only, so
+`--keys-dir` and `--file` are mutually exclusive; with neither, inspect reads the
+default `--keys-dir`. Inspect works on disk only, so
 it never reads secrets from the cluster.
 
 With `--file`, a hex admin public key file must be named `*.pub` (for example
@@ -347,7 +355,7 @@ sudo solo-provisioner consensus keys init --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Directory for this node's generated key material (required); make it node-specific | — |
+| `--keys-dir` | Directory for this node's generated key material; make it node-specific | `/opt/solo/weaver/consensus/keys` |
 | `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN | — |
 | `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
 | `--grpc-cn` | Common name (subject and issuer) of the gRPC TLS certificate | `localhost` |

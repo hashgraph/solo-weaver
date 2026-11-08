@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/logx"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -43,7 +44,7 @@ var (
 
 func init() {
 	initSelectors = addSelectorFlags(initCmd)
-	initCmd.Flags().StringVar(&flagInitKeysDir, "keys-dir", "", "Directory for this node's generated key material (required); make it node-specific")
+	initCmd.Flags().StringVar(&flagInitKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Directory for this node's generated key material; make it node-specific")
 	initCmd.Flags().StringVar(&flagInitIdentity, "identity", "", "Optional human-readable label recorded in the gossip certificate OU/SAN")
 	initCmd.Flags().StringVar(&flagInitMachineID, "machine-id", "", "Override the gossip certificate CN; defaults to the host machine UUID (/etc/machine-id)")
 	readInitGrpcFlags = addGrpcFlags(initCmd)
@@ -53,7 +54,7 @@ func init() {
 func runInit(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(flagInitKeysDir) == "" {
 		return errx.Decorate(
-			errorx.IllegalArgument.New("--keys-dir is required"),
+			errorx.IllegalArgument.New("--keys-dir must not be empty"),
 			reasons.InvalidArgument,
 			"pass --keys-dir <dir> (a node-specific directory) for the generated key material")
 	}
