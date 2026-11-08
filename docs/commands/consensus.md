@@ -198,15 +198,29 @@ node`; `--node-id` is **required** here.
 
 #### The admin key at genesis
 
-The admin secret has one consumer: the genesis of a new network. Consensus node
-v0.74.2 and later set the admin key of each genesis node from
+Consensus node v0.74.2 and later set the admin key of each genesis node from
 `data/config/node-admin-keys.json`, which accepts Ed25519 keys only. The node ignores
-the `adminKey` field of `genesis-network.json`. If the solo-operator does not write
-`node-admin-keys.json`, each genesis node gets the genesis key as its admin key.
+the `adminKey` field of `genesis-network.json`, which is where the solo-operator puts
+the key from the admin secret. If `node-admin-keys.json` is missing, each genesis node
+gets the genesis key as its admin key.
 
-To set your admin key after genesis, send a `NodeUpdate` with the new `adminKey`.
-The current admin key (the genesis key) and the new admin key must both sign it.
-The change applies immediately, and the new key can be Ed25519 or secp256k1.
+You cannot change the admin key after genesis yet. A `NodeUpdate` (a DAB transaction)
+applies only after a freeze upgrade, and the solo-operator does not support that yet.
+Set the right admin keys before genesis.
+
+For this reason, `consensus node install --deployment-package-dir <pkg>` requires
+`data/config/node-admin-keys.json` in the package. If the file is missing:
+
+- in an interactive run, the command asks you to confirm the genesis key as the admin
+  key (the default answer is No);
+- with `--force`, `--non-interactive` or no terminal, the command stops with an error;
+- with `--allow-genesis-admin-key`, the command continues and logs a warning.
+
+Use the genesis key as the admin key for local dev/test networks only.
+
+> **Note:** solo-provisioner checks only that the file is in the package. It does not
+> send `node-admin-keys.json` to the node yet: no solo-operator config CR carries it.
+> Until the solo-operator supports it, genesis nodes still get the genesis key.
 
 A node that joins with DAB does not need the admin secret: its admin key goes into
 the `NodeCreate` transaction, which your wallet or SDK sends. There, a secp256k1

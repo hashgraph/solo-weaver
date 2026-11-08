@@ -5,6 +5,7 @@ package node
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,10 @@ var installCmd = &cobra.Command{
 		// "default" namespace with an unset orbit. Runs after the interactive
 		// prompt so a prompted namespace is still honoured.
 		if err := common.ValidateNamespaceFlag(flagNamespace); err != nil {
+			return err
+		}
+
+		if err := checkNodeAdminKeys(flagDeploymentPkgDir, flagAllowGenesisAdminKey, prompt.ShouldPrompt(force), confirmGenesisAdminKey); err != nil {
 			return err
 		}
 
@@ -245,6 +250,7 @@ func init() {
 
 	// flagProfile is a binding target for Cobra; install reads it after the prompts.
 	common.FlagProfile().SetVarP(installCmd, &flagProfile, false)
+	installCmd.Flags().BoolVar(&flagAllowGenesisAdminKey, "allow-genesis-admin-key", false, "Install even when the deployment package has no data/config/node-admin-keys.json; the node then uses the genesis key as its admin key (local dev/test only)")
 }
 
 // resolveVolumeConfig builds the merged volume configuration: the --volumes-file
@@ -300,6 +306,53 @@ func resolveVolumeConfig() (models.ConsensusVolumeConfig, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// nodeAdminKeysPath is where a deployment package sets each genesis node's admin
+// key. Without it, consensus node v0.74.2+ uses the genesis key as admin key.
+var nodeAdminKeysPath = filepath.Join("data", "config", "node-admin-keys.json")
+
+// checkNodeAdminKeys requires node-admin-keys.json in the deployment package. When
+// it is missing, it continues only if allow is set or the operator confirms.
+// The admin key cannot be changed after genesis yet (NodeUpdate needs a freeze upgrade).
+func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (bool, error)) error {
+	pkgDir = strings.TrimSpace(pkgDir)
+	if pkgDir == "" {
+		return nil
+	}
+	path := filepath.Join(pkgDir, nodeAdminKeysPath)
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
+		return nil
+	}
+
+	if !allow {
+		if !interactive {
+			return errx.Decorate(
+				errorx.IllegalState.New("deployment package has no %s", nodeAdminKeysPath),
+				reasons.FileMissing,
+				fmt.Sprintf("Add %s with the node admin public keys (Ed25519) to the deployment package", path),
+				"For local dev/test only, pass --allow-genesis-admin-key to use the genesis key as the admin key")
+		}
+		ok, err := confirm()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errorx.IllegalState.New("aborted: consensus node not installed")
+		}
+	}
+
+	logx.As().Warn().Str("path", path).
+		Msg("node-admin-keys.json is missing; the node will use the genesis key as its admin key (local dev/test only)")
+	return nil
+}
+
+func confirmGenesisAdminKey() (bool, error) {
+	return prompt.RunConfirm(
+		"Use the genesis key as the node admin key?",
+		"The deployment package has no "+nodeAdminKeysPath+", so the node gets the genesis key as its admin key. "+
+			"The admin key cannot be changed after genesis yet. Use this for local dev/test only.",
+		false)
 }
 
 // printConsensusInstallNextSteps writes the post-install guidance to stdout after

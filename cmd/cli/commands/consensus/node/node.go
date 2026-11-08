@@ -36,6 +36,8 @@ var (
 	flagMemoryRequest     string
 	flagProvisionerDaemon bool
 
+	flagAllowGenesisAdminKey bool
+
 	// Volume backing configuration.
 	flagDefaultVolumeType      string
 	flagDefaultPVCSize         string

@@ -459,7 +459,8 @@ sudo solo-provisioner consensus node install \
   --experimental \
   --namespace "${NS}" \
   --profile local \
-  --deployment-package-dir "${PKG}"
+  --deployment-package-dir "${PKG}" \
+  --allow-genesis-admin-key
 
 # 7. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
 sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
@@ -699,6 +700,7 @@ Same package (manifest says `Random`), override on install:
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
   --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key \
   --registry-selection-strategy Sequential
 ```
 
@@ -748,7 +750,8 @@ task -d docs/dev/daemon sync
 # Inside the VM:
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
-  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0
+  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key
 ```
 
 Expected: install fails at manifest parse with
@@ -882,6 +885,7 @@ Install, routing the private registry's secret by host and keeping the default
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
   --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key \
   --image-pull-secret private-registry-creds \
   --image-pull-secret 10.96.100.100:5000=patch-registry-creds
 ```

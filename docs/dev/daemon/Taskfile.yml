@@ -370,7 +370,8 @@ tasks:
           --namespace {{.NS}} --node-id {{.NODE_ID}} --account-id {{.ACCOUNT_ID}} --profile local \
           --provisioner-daemon \
           --default-volume-type hostpath \
-          --deployment-package-dir {{.PKG}}
+          --deployment-package-dir {{.PKG}} \
+          --allow-genesis-admin-key
         # No --signing-secret/--grpc-tls-secret/--admin-key-secret: install resolves the
         # labelled secrets that `keys` created (pass them explicitly to override).
 
