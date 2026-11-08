@@ -429,10 +429,8 @@ task uat:registry:login:ghcr
 sudo solo-provisioner kube cluster install --profile local --node-type consensus
 
 # 3. Create the ghcr pull secret in both the operator and consensus namespaces.
-#    SAMPLE_KEYS=false skips the sample gossip/gRPC secrets: they have no
-#    solo.hiero.org labels, so `consensus node install` cannot find them.
-#    F1/F2 create the node keys with `consensus keys init` instead.
-task uat:secrets NS="${NS}" SAMPLE_KEYS=false
+#    F1/F2 create the node keys with `consensus keys init`.
+task uat:secrets NS="${NS}"
 
 # 4. Install the solo-operator (pulls private images via --image-pull-secret, default private-registry-creds).
 sudo solo-provisioner kube operator install
@@ -588,9 +586,6 @@ Expected:
 - In discovery mode the gossip keys come from the K8s secrets that `keys init`
   creates (not the package's `data/keys/*.pem`). There is no fixed node limit: run
   `keys init` for each node id.
-- Do not use the sample secrets from `task uat:secrets SAMPLE_KEYS=true` with
-  these steps. They have no `solo.hiero.org` labels, so
-  install fails with "no gossip key secret found".
 - `keys init` creates no admin key secret unless `admin.pub` is in `--keys-dir`.
   The admin key is optional for these steps.
 - Identity flags (`--ledger-id`, `--chain-id`, `--image-repo`/`--image-tag`) are

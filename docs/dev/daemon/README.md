@@ -78,9 +78,7 @@ on daemon self-upgrade, #500). Keep the upgrade package **config-only** for a cl
   secret (reuses `uat:secrets`); the `keys` task generates real keys with
   `consensus keys init` and creates the dated, labelled node secrets
   (`node<N>-gossip-keys-<date>-<fp8>`, …), which `consensus node install` finds by label.
-  Do not use the sample secrets (`SAMPLE_KEYS=true`) with this harness: they have no
-  `solo.hiero.org` labels, and the `consensus` task passes no secret flags, so install
-  fails with "no gossip key secret found".
+  Back up the generated keys if you need them again (`consensus keys export`).
 - **A solo-operator checkout at v0.10.0+ on the host** (`SOLO_OPERATOR_DIR`, defaults
   to a sibling of solo-weaver) for `beacon` and the deployment zips — the `prep` task
   git-clones it there if it is missing (needs `GITHUB_USER`/`GITHUB_ACCESS_TOKEN` in
@@ -171,7 +169,7 @@ Each task wraps a real command; the notable ones:
 | `sync` (host) | runs the root `vm:sync` — rsyncs the weaver checkout (incl. staged zips/package/beacon) into `/mnt/solo-weaver` |
 | `rebuild` | `uat:rebuild` — `task build:cli` (builds daemon too, stamps its digest) + self-install |
 | `cluster` | `uat:registry:login:ghcr` + `kube cluster install --non-interactive` + create orbit ns + `hedera` user/group + upgrade staging dir (owned `hedera:hedera`, mode `0775`, `weaver` in the `hedera` group) |
-| `secrets` | `uat:secrets NS=<orbit> NODE=node<id> SAMPLE_KEYS=false` — pull secret in operator + orbit ns (node keys come from `keys`) |
+| `secrets` | `uat:secrets NS=<orbit>` — pull secret in operator + orbit ns (node keys come from `keys`) |
 | `keys` | `consensus keys init --experimental --namespace <orbit> --node-id <id> --keys-dir $KEYS_DIR` (default `/opt/solo/cn-keys/node<id>`), then `keys verify --from-cluster`; creates the labelled `node<id>-gossip-keys-…` / `-grpc-tls-keys-…` / `-admin-pubkey-…` secrets |
 | `operator` | `kube operator install --non-interactive`; checks the `networkupgradeexecutes` CRD is registered |
 | `consensus` | `consensus node install --experimental --provisioner-daemon --deployment-package-dir <pkg> --allow-genesis-admin-key …` (creates the Orbit in mainnet/daemon-delegated mode), then `consensus network genesis --experimental` |
