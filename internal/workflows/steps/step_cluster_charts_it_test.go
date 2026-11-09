@@ -158,6 +158,66 @@ func Test_MetricsServerChart_RendersInsecureKubeletTLS_Integration(t *testing.T)
 	}
 }
 
+// The systemd collector reaches the host's D-Bus socket through the chart's
+// mount of the host's /, still as the non-root user with a read-only root
+// filesystem and without a mount of its own.
+func Test_NodeExporterChart_SystemdCollectorReachesHostBus_Integration(t *testing.T) {
+	objs := renderCatalogChartWith(t, chartSpec("node-exporter"), alloy.NodeExporterHelmValues())
+
+	var daemonSets []unstructured.Unstructured
+	for _, o := range objs {
+		if o.GetKind() == "DaemonSet" {
+			daemonSets = append(daemonSets, o)
+		}
+	}
+	require.Len(t, daemonSets, 1)
+	pod, _, _ := unstructured.NestedMap(daemonSets[0].Object, "spec", "template", "spec")
+	containers, _, _ := unstructured.NestedSlice(pod, "containers")
+	require.Len(t, containers, 1)
+	container := containers[0].(map[string]interface{})
+
+	hostRootVolume := ""
+	volumes, _, _ := unstructured.NestedSlice(pod, "volumes")
+	for _, v := range volumes {
+		vol := v.(map[string]interface{})
+		hostPath, _, _ := unstructured.NestedString(vol, "hostPath", "path")
+		assert.False(t, strings.HasPrefix(hostPath, "/run/dbus"), "unexpected host mount of %s", hostPath)
+		if hostPath == "/" {
+			hostRootVolume, _, _ = unstructured.NestedString(vol, "name")
+		}
+	}
+	require.NotEmpty(t, hostRootVolume, "no volume mounts the host's /")
+
+	hostRoot := ""
+	mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+	for _, m := range mounts {
+		mount := m.(map[string]interface{})
+		if name, _, _ := unstructured.NestedString(mount, "name"); name == hostRootVolume {
+			hostRoot, _, _ = unstructured.NestedString(mount, "mountPath")
+		}
+	}
+	require.NotEmpty(t, hostRoot, "the host's / is not mounted into the container")
+
+	busAddress := ""
+	env, _, _ := unstructured.NestedSlice(container, "env")
+	for _, e := range env {
+		ev := e.(map[string]interface{})
+		if name, _, _ := unstructured.NestedString(ev, "name"); name == "DBUS_SYSTEM_BUS_ADDRESS" {
+			busAddress, _, _ = unstructured.NestedString(ev, "value")
+		}
+	}
+	assert.Equal(t, "unix:path="+hostRoot+"/run/dbus/system_bus_socket", busAddress)
+
+	args, _, _ := unstructured.NestedStringSlice(container, "args")
+	assert.Contains(t, args, "--collector.systemd")
+	assert.Contains(t, args, `--collector.systemd.unit-include=(kubelet|crio|teleport|nftables|solo-provisioner-.+)\.(service|timer)`)
+
+	runAsUser, _, _ := unstructured.NestedInt64(pod, "securityContext", "runAsUser")
+	assert.EqualValues(t, 65534, runAsUser)
+	readOnlyRoot, _, _ := unstructured.NestedBool(container, "securityContext", "readOnlyRootFilesystem")
+	assert.True(t, readOnlyRoot)
+}
+
 func clusterRoleRules(t *testing.T, objs []unstructured.Unstructured) []interface{} {
 	t.Helper()
 	for _, o := range objs {
