@@ -174,6 +174,12 @@ func commonInputs() models.CommonInputs {
 // handler's options chosen.
 func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[struct{}], common models.CommonInputs, opts ...BaseHandlerOption[struct{}]) (*automa.Report, error) {
 	t.Helper()
+	return handleIntentWithCallback(t, stateFile, h, intent, common, nil, opts...)
+}
+
+// handleIntentWithCallback is handleIntent with a state callback.
+func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent IntentHandler[struct{}], common models.CommonInputs, callback StateCallback[struct{}], opts ...BaseHandlerOption[struct{}]) (*automa.Report, error) {
+	t.Helper()
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(handlerFileManager(newFileManager(t))))
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
@@ -216,7 +222,7 @@ func handleIntent(t *testing.T, stateFile string, h *host, intent IntentHandler[
 
 	inputs := models.UserInputs[struct{}]{Common: common}
 	return base.HandleIntent(context.Background(),
-		models.Intent{Action: models.ActionInstall, Target: target}, inputs, intent, nil)
+		models.Intent{Action: models.ActionInstall, Target: target}, inputs, intent, callback)
 }
 
 func managedIDs(managed []Component) []state.ComponentID { return componentIDsOf(managed) }
@@ -230,6 +236,41 @@ func fixtureTarget(ids []state.ComponentID) models.TargetType {
 		}
 	}
 	return models.TargetCluster
+}
+
+// captureCallbackReport runs one intent and returns the report that the state callback got.
+func captureCallbackReport(t *testing.T, intent noopIntent) (returned, got *automa.Report) {
+	t.Helper()
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, configuredNodeAgent())
+
+	called := false
+	returned, err := handleIntentWithCallback(t, stateFile, &host{teleport: configuredNodeAgent()}, intent, commonInputs(),
+		func(_ *state.State, _ models.UserInputs[struct{}], report *automa.Report) error {
+			called = true
+			got = report
+			return nil
+		}, owns(Teleport))
+	require.NoError(t, err)
+	require.True(t, called, "the state callback must run")
+	return returned, got
+}
+
+// The state callback gets the workflow report, so it can skip changes after a failure.
+func TestHandleIntent_CallbackGetsSuccessReport(t *testing.T) {
+	returned, got := captureCallbackReport(t, noopIntent{})
+
+	require.NotNil(t, got)
+	require.Same(t, returned, got)
+	require.True(t, got.IsSuccess())
+}
+
+func TestHandleIntent_CallbackGetsFailedReport(t *testing.T) {
+	returned, got := captureCallbackReport(t, noopIntent{stepErr: errors.New("step failed")})
+
+	require.NotNil(t, got)
+	require.Same(t, returned, got)
+	require.True(t, got.IsFailed())
 }
 
 func configuredNodeAgent() state.TeleportState {
@@ -511,7 +552,7 @@ func handleBlockNodeIntentWithCallback(
 	stateFile string,
 	h *host,
 	intent noopIntent,
-	callback func(full *state.State, effInputs models.UserInputs[struct{}]) error,
+	callback StateCallback[struct{}],
 	managed ...Component,
 ) (*automa.Report, error) {
 	t.Helper()
@@ -575,7 +616,7 @@ func TestHandleIntent_DisjointHandlersNeverContend(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_, aErr = handleBlockNodeIntentWithCallback(t, stateFile, &host{}, noopIntent{},
-			func(_ *state.State, _ models.UserInputs[struct{}]) error {
+			func(_ *state.State, _ models.UserInputs[struct{}], _ *automa.Report) error {
 				close(aRefreshed)
 				<-bDone
 				return nil
@@ -754,7 +795,9 @@ func TestFlushState_FailedCallbackIsRecordedAsNotPersisted(t *testing.T) {
 	writeState(t, stateFile, configuredNodeAgent())
 
 	_, err := handleBlockNodeIntentWithCallback(t, stateFile, &host{teleport: configuredNodeAgent()}, noopIntent{},
-		func(*state.State, models.UserInputs[struct{}]) error { return errors.New("cannot patch") })
+		func(*state.State, models.UserInputs[struct{}], *automa.Report) error {
+			return errors.New("cannot patch")
+		})
 
 	require.ErrorContains(t, err, "cannot patch")
 	entries := readActionHistory(t, filepath.Dir(stateFile))

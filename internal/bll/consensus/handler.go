@@ -41,7 +41,15 @@ func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create InstallHandler")
 	}
 
-	uninstallHandler, err := NewUninstallHandler(base)
+	// Uninstall writes only the consensus state, so it does not lock or rewrite profile.yaml.
+	uninstallBase, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
+		bll.WithManagedComponents[models.ConsensusNodeInputs](bll.ConsensusNode),
+	)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create uninstall BaseHandler")
+	}
+
+	uninstallHandler, err := NewUninstallHandler(uninstallBase)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create UninstallHandler")
 	}

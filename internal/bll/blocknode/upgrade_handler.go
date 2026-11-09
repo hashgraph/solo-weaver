@@ -165,11 +165,11 @@ func (h *UpgradeHandler) HandleIntent(
 ) (*automa.Report, error) {
 	base := patchBlockNodeState()
 	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h,
-		func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+		func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
 			if h.shapingCleanupDone {
 				st.BlockNodeState.TrafficShapingCleanupPending = false
 			}
-			return base(st, effectiveInputs)
+			return base(st, effectiveInputs, report)
 		})
 }
 

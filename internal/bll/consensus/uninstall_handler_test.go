@@ -118,12 +118,17 @@ func stateWithNodes() *state.State {
 
 func runPrune(t *testing.T, provider steps.CapsuleKubeProvider) *state.State {
 	t.Helper()
+	return runPruneWithReport(t, provider, automa.StepSuccessReport("consensus-node-uninstall"))
+}
+
+func runPruneWithReport(t *testing.T, provider steps.CapsuleKubeProvider, report *automa.Report) *state.State {
+	t.Helper()
 	h := newMinimalUninstallHandler()
 	eff, err := h.PrepareEffectiveInputs(models.Intent{}, uninstallInputs())
 	require.NoError(t, err)
 
 	full := stateWithNodes()
-	require.NoError(t, pruneUninstalledConsensusState(context.Background(), provider)(full, *eff))
+	require.NoError(t, pruneUninstalledConsensusState(context.Background(), provider)(full, *eff, report))
 	return full
 }
 
@@ -154,6 +159,21 @@ func TestPrune_CapsuleStillLive_KeepsNode(t *testing.T) {
 
 	assert.Contains(t, full.ConsensusNodes, node2Key)
 	assert.Contains(t, full.ConsensusOrbits, "hiero-network-1")
+}
+
+// The capsule is gone, but a later step failed: the node and Orbit must stay in state.
+func TestPrune_WorkflowFailed_KeepsStateEvenIfCapsuleGone(t *testing.T) {
+	failed := automa.StepFailureReport("consensus-node-uninstall", automa.WithError(errors.New("delete config CRs")))
+	full := runPruneWithReport(t, providerFor(&fakeExistsClient{existing: map[string]bool{}}), failed)
+
+	assert.Contains(t, full.ConsensusNodes, node2Key)
+	assert.Contains(t, full.ConsensusOrbits, "hiero-network-1")
+}
+
+func TestPrune_NilReport_KeepsState(t *testing.T) {
+	full := runPruneWithReport(t, providerFor(&fakeExistsClient{existing: map[string]bool{}}), nil)
+
+	assert.Contains(t, full.ConsensusNodes, node2Key)
 }
 
 func TestPrune_ClusterError_KeepsState(t *testing.T) {

@@ -62,16 +62,23 @@ func (h *UninstallHandler) HandleIntent(
 }
 
 // pruneUninstalledConsensusState returns a callback that drops the node, and its Orbit
-// baseline, from state only when the cluster confirms they are gone. On any doubt it keeps state.
+// baseline, from state only when the workflow succeeded and the cluster confirms they are gone.
+// On any doubt it keeps state.
 func pruneUninstalledConsensusState(
 	ctx context.Context,
 	provider steps.CapsuleKubeProvider,
-) func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
-	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
+) bll.StateCallback[models.ConsensusNodeInputs] {
+	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs], report *automa.Report) error {
 		ins := effInputs.Custom
 		stateKey := models.ConsensusNodeStateKey(ins.Namespace, ins.NodeId)
 		capsuleName := models.ConsensusCapsuleName(ins.OrbitName, ins.NodeId)
 		l := logx.As().With().Str("stateKey", stateKey).Logger()
+
+		// A partial uninstall can delete the capsule but leave config CRs behind.
+		if report == nil || !report.IsSuccess() {
+			l.Warn().Msg("Uninstall workflow did not succeed; keeping consensus node in state")
+			return nil
+		}
 
 		kc, err := provider(ctx)
 		if err != nil {

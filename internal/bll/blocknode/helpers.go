@@ -5,7 +5,9 @@ package blocknode
 import (
 	"fmt"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -76,8 +78,8 @@ func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
 //     operator-chosen base path.
 //
 // Profile persistence is handled centrally by BaseHandler.flushState via ProfileExtractor.
-func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
-	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], _ *automa.Report) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil
 		}
@@ -116,9 +118,9 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 // Upgrade in particular reads the persisted decision (via
 // currentState.BlockNodeState) to drive its silent convergence and therefore keeps
 // the plain patchBlockNodeState, which leaves this field untouched.
-func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+func patchBlockNodeStateWithTrafficShaping() bll.StateCallback[models.BlockNodeInputs] {
 	base := patchBlockNodeState()
-	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
 		st.BlockNodeState.TrafficShapingEnabled = effectiveInputs.Custom.TrafficShapingEnabled
 		st.BlockNodeState.TrafficShapingCleanupPending = false
 		logx.As().Debug().Bool("trafficShapingEnabled", st.BlockNodeState.TrafficShapingEnabled).
@@ -138,7 +140,7 @@ func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInpu
 		if effectiveInputs.Custom.TrafficShapingEnabled {
 			patchBlockNodeShaping(st, effectiveInputs.Custom)
 		}
-		return base(st, effectiveInputs)
+		return base(st, effectiveInputs, report)
 	}
 }
 

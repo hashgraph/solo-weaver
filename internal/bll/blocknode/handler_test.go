@@ -105,7 +105,7 @@ func TestStateCallbacks_PatchOnlyOwnedSections(t *testing.T) {
 
 	for _, tt := range []struct {
 		name         string
-		callback     func(*state.State, models.UserInputs[models.BlockNodeInputs]) error
+		callback     bll.StateCallback[models.BlockNodeInputs]
 		ownsFirewall bool
 	}{
 		{"install, reconfigure", patchBlockNodeStateWithTrafficShaping(), true},
@@ -114,7 +114,7 @@ func TestStateCallbacks_PatchOnlyOwnedSections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			before, st := populatedState(), populatedState()
 
-			require.NoError(t, tt.callback(&st, inputs))
+			require.NoError(t, tt.callback(&st, inputs, nil))
 
 			require.Equal(t, before.MachineState.Profile, st.MachineState.Profile)
 			require.Equal(t, before.MachineState.Software, st.MachineState.Software)

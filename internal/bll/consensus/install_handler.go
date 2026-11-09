@@ -263,8 +263,8 @@ func (h *InstallHandler) HandleIntent(
 
 // patchConsensusNodeState returns a callback that persists the consensus node
 // state into the full state map after workflow execution.
-func patchConsensusNodeState() func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
-	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
+func patchConsensusNodeState() bll.StateCallback[models.ConsensusNodeInputs] {
+	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs], _ *automa.Report) error {
 		ins := effInputs.Custom
 		stateKey := models.ConsensusNodeStateKey(ins.Namespace, ins.NodeId)
 
