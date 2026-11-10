@@ -491,6 +491,16 @@ func (r HelmReleaseInfo) Absent() bool {
 type ClusterState struct {
 	models.ClusterInfo
 	Created bool `yaml:"created" json:"created"` // whether the cluster was created by the provisioner
+	// KubeletVersion and ContainerRuntimeVersion are what the node reports it
+	// runs, which can differ from the binaries on the host until the kubelet
+	// restarts. NodeCount is how many nodes the API server lists; the
+	// provisioner only creates single-node clusters.
+	KubeletVersion          string `yaml:"kubeletVersion,omitempty" json:"kubeletVersion,omitempty"`
+	ContainerRuntimeVersion string `yaml:"containerRuntimeVersion,omitempty" json:"containerRuntimeVersion,omitempty"`
+	NodeCount               int    `yaml:"nodeCount,omitempty" json:"nodeCount,omitempty"`
+	// CiliumAgentVersion is the release version of the running cilium-agent
+	// image; Releases["cilium"] holds the chart version.
+	CiliumAgentVersion string `yaml:"ciliumAgentVersion,omitempty" json:"ciliumAgentVersion,omitempty"`
 	// Releases records the Helm release of each cluster chart the provisioner
 	// manages, keyed by its catalog name, plus the Cilium agent under "cilium".
 	// The block node, the Teleport cluster agent and the solo-operator are
@@ -499,8 +509,9 @@ type ClusterState struct {
 	// refresh of a reachable cluster fills it.
 	Releases map[string]HelmReleaseInfo `yaml:"releases,omitempty" json:"releases,omitempty"`
 	LastSync htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
-	// Unobserved is set by a refresh that could not read the live cluster, so
-	// its values are not a reading to record. Never written or hashed.
+	// Unobserved is set by a refresh that could not read all of the live
+	// cluster and kept the recorded values it missed; a writer then keeps the
+	// recorded cluster. Never written or hashed.
 	Unobserved bool `yaml:"-" json:"-"`
 }
 
