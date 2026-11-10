@@ -98,6 +98,11 @@ func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 				Msg("Persisted block node plugin preset into runtime state")
 			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
 		}
+		// Persist the plugin list only when non-empty, which is the custom case: the
+		// explicit --plugins list is the operator's bespoke choice and cannot be
+		// re-derived from a preset. Chart-backed presets (tier1-lfh/tier1-rfh) leave
+		// PluginList empty here — they are re-resolved from the chart at each deploy,
+		// so no name snapshot is stored for them.
 		if effectiveInputs.Custom.PluginList != "" {
 			logx.As().Debug().Str("pluginList", effectiveInputs.Custom.PluginList).
 				Msg("Persisted block node plugin list into runtime state")

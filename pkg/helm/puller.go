@@ -81,7 +81,7 @@ func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version 
 		return "", errorx.IllegalArgument.New("destDir is empty for chart %q version %q", chartRef, version)
 	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return "", errorx.InternalError.Wrap(err, "failed to create chart downloads dir %q", destDir)
+		return "", errorx.ExternalError.Wrap(err, "failed to create chart downloads dir %q", destDir)
 	}
 
 	settings := h.WithNamespace("")
@@ -111,9 +111,22 @@ func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version 
 		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
 	}
 
-	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir.
-	tgz := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", path.Base(chartRef), version))
-	return tgz, nil
+	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir. Prefer that
+	// path, but fall back to a chart-scoped glob rather than trust the reconstruction,
+	// so a change to Helm's on-disk naming (e.g. for OCI refs) can't make us return a
+	// non-existent path. The glob is scoped to this chart's base name so a shared
+	// downloads directory can't match a different chart's archive.
+	base := path.Base(chartRef)
+	expected := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", base, version))
+	if _, statErr := os.Stat(expected); statErr == nil {
+		return expected, nil
+	}
+	matches, globErr := filepath.Glob(filepath.Join(destDir, base+"-*.tgz"))
+	if globErr == nil && len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", ErrChartLoadFailed.New(
+		"helm pull for chart %q version %q did not yield a unique .tgz in %q", chartRef, version, destDir)
 }
 
 // pullAndVerifyClassic uses action.Pull (the SDK equivalent of `helm pull`)

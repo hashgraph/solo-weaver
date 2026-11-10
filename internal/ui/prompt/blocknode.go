@@ -654,13 +654,14 @@ func BlockNodeReconfigureInputPrompts(
 	}
 }
 
-// AddPluginPresetPrompts appends a single plugin wizard page: a preset-select page
-// offering the chart-backed presets (tier1-lfh/tier1-rfh) and "no override". There is
-// no interactive custom multi-select — a bespoke plugin list is supplied
-// non-interactively via --plugins, which short-circuits prompting entirely. The
-// chart-backed presets are resolved to concrete plugin names at deploy time from the
-// chart's own plugin-profile overrides (blocknode.resolvePluginList), so no plugin
-// names are gathered or stored here.
+// AddPluginPresetPrompts appends two plugin wizard pages: a preset-select page
+// offering the chart-backed presets (tier1-lfh/tier1-rfh), "custom", and "no override";
+// and a conditional free-text page (shown via huh.Group.WithHideFunc only when Custom is
+// selected) where the operator types a comma-/space-separated plugin list. There is no
+// enumerated multi-select — community plugins are unknown to weaver. The chart-backed
+// presets carry no names here; they are resolved from the chart's own plugin-profile
+// overrides at deploy time (blocknode.resolvePluginList). Only the custom free-text list
+// is captured into *flagPlugins; a non-empty value short-circuits prompting entirely.
 //
 // The preset-select page pre-selects the last used preset read from the on-disk
 // state file. When the operator's --values file defines plugins.names, the

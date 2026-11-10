@@ -214,11 +214,11 @@ Choosing `custom` interactively opens a free-text prompt where you type the plug
 (comma- or space-separated); there is no enumerated picker, since community plugins are not
 known to solo-provisioner. Non-interactively, pass `--plugins` (which implies `custom`).
 
-> **facility-app-state.** From chart **0.46.0** (including its alpha and rc builds), the block node does not start without
-> the `facility-app-state` plugin (`No ApplicationStateFacility provided`). The `tier1-lfh`
-> and `tier1-rfh` presets include it automatically because they are read from the chart,
-> which lists it from that version on. A custom `--plugins` list, or `plugins.names` in your
-> `--values` file, must include it yourself.
+> **facility-app-state.** Recent block-node charts do not start without the
+> `facility-app-state` plugin (`No ApplicationStateFacility provided`). The `tier1-lfh` and
+> `tier1-rfh` presets include it automatically because they are read from the chart (which
+> is the source of truth for the exact version it became required). A custom `--plugins`
+> list, or `plugins.names` in your `--values` file, must include it yourself.
 
 ### Retention flags
 

@@ -20,6 +20,11 @@ import (
 // holds the plugin-profile override files weaver reads to resolve a preset.
 const chartProfilesSubDir = "values-overrides"
 
+// chartDownloadsSubdir mirrors the workflow steps' convention: pulled chart archives
+// live under <WeaverPaths.DownloadsDir>/charts so operators find them beside the other
+// host artifacts rather than in a temp directory.
+const chartDownloadsSubdir = "charts"
+
 // resolvePluginList fills m.blockNodeInputs.PluginList for a chart-backed preset by
 // pulling the target chart and reading the plugin-profile override that matches the
 // selected preset. It is a no-op — leaving PluginList untouched and performing no
@@ -71,7 +76,7 @@ func (m *Manager) resolvePluginList(ctx context.Context, valuesFile string) erro
 // pluginNamesFromChartProfile pulls the block-node chart and returns the
 // comma-separated plugins.names from its values-overrides/<profileFile>.
 func (m *Manager) pluginNamesFromChartProfile(ctx context.Context, profileFile string) (string, error) {
-	destDir := path.Join(models.Paths().TempDir, "bn-chart-profiles")
+	destDir := path.Join(models.Paths().DownloadsDir, chartDownloadsSubdir)
 
 	tgz, err := m.helmManager.PullChart(ctx, destDir, m.blockNodeInputs.Chart, m.blockNodeInputs.ChartVersion)
 	if err != nil {
