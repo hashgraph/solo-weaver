@@ -91,6 +91,8 @@ func (h *HelmReleaseInfo) Equal(other HelmReleaseInfo) bool {
 // Equal returns true if two ClusterState values are equal, ignoring LastSync.
 func (cs *ClusterState) Equal(other ClusterState) bool {
 	return cs.Created == other.Created && cs.ClusterInfo.Equal(other.ClusterInfo) &&
+		cs.KubeletVersion == other.KubeletVersion && cs.ContainerRuntimeVersion == other.ContainerRuntimeVersion &&
+		cs.NodeCount == other.NodeCount && cs.CiliumAgentVersion == other.CiliumAgentVersion &&
 		maps.EqualFunc(cs.Releases, other.Releases, func(a, b HelmReleaseInfo) bool { return a.Equal(b) })
 }
 

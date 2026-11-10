@@ -207,6 +207,7 @@ func TestRunRecordingCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
 	newClusterChecker = func(sm state.Manager) reality.Checker[state.ClusterState] {
 		c, err := reality.NewClusterChecker(sm,
 			func() (reality.HelmManager, error) { return nil, errors.New("not called") },
+			func() (reality.ClusterReader, error) { return nil, errors.New("not called") },
 			func() reality.ClusterReachability { return reality.Unobservable })
 		require.NoError(t, err)
 		return c

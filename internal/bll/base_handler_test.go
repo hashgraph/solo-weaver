@@ -213,7 +213,9 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 	}
 	if h.clusterProbe != nil {
 		checkers.Cluster, err = reality.NewClusterChecker(sm,
-			func() (reality.HelmManager, error) { return noReleases{}, nil }, h.clusterProbe)
+			func() (reality.HelmManager, error) { return noReleases{}, nil },
+			func() (reality.ClusterReader, error) { return nil, errors.New("not called") },
+			h.clusterProbe)
 		require.NoError(t, err)
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
