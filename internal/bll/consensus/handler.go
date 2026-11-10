@@ -13,7 +13,8 @@ import (
 
 // Handlers holds per-action handlers for consensus node intents.
 type Handlers struct {
-	install *InstallHandler
+	install   *InstallHandler
+	uninstall *UninstallHandler
 }
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
@@ -40,7 +41,20 @@ func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create InstallHandler")
 	}
 
-	return &Handlers{install: installHandler}, nil
+	// Uninstall writes only the consensus state, so it does not lock or rewrite profile.yaml.
+	uninstallBase, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
+		bll.WithManagedComponents[models.ConsensusNodeInputs](bll.ConsensusNode),
+	)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create uninstall BaseHandler")
+	}
+
+	uninstallHandler, err := NewUninstallHandler(uninstallBase)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create UninstallHandler")
+	}
+
+	return &Handlers{install: installHandler, uninstall: uninstallHandler}, nil
 }
 
 // ForAction returns the appropriate IntentHandler for the given action.
@@ -48,10 +62,12 @@ func (h *Handlers) ForAction(action models.ActionType) (bll.IntentHandler[models
 	switch action {
 	case models.ActionInstall:
 		return h.install, nil
+	case models.ActionUninstall:
+		return h.uninstall, nil
 	default:
 		return nil, errx.Decorate(
 			errorx.IllegalArgument.New("unsupported action %q for consensus node", action),
 			reasons.InvalidArgument,
-			"Supported actions for consensus node: install")
+			"Supported actions for consensus node: install, uninstall")
 	}
 }

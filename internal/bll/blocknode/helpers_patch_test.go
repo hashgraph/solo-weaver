@@ -50,7 +50,7 @@ func TestPatch_PersistsFirewallAndShapingWhenEnabled(t *testing.T) {
 			LinkRate:              "1gbit",
 		},
 	}
-	require.NoError(t, patch(st, inputs))
+	require.NoError(t, patch(st, inputs, nil))
 
 	fw := st.MachineState.Firewall
 	require.NotNil(t, fw, "firewall must be persisted when enabled with an allowlist")
@@ -76,7 +76,7 @@ func TestPatch_TrafficShapingDisableRecordsOff(t *testing.T) {
 	patch := patchBlockNodeStateWithTrafficShaping()
 	require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{TrafficShapingEnabled: false},
-	}))
+	}, nil))
 
 	assert.False(t, st.BlockNodeState.TrafficShapingEnabled)
 }
@@ -93,7 +93,7 @@ func TestPatch_ExplicitDecisionClearsCleanupMark(t *testing.T) {
 		patch := patchBlockNodeStateWithTrafficShaping()
 		require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
 			Custom: models.BlockNodeInputs{TrafficShapingEnabled: enabled},
-		}))
+		}, nil))
 
 		assert.False(t, st.BlockNodeState.TrafficShapingCleanupPending, "enabled=%v", enabled)
 	}
@@ -114,7 +114,7 @@ func TestPatch_DisablePreservesAllowlist(t *testing.T) {
 	patch := patchBlockNodeStateWithTrafficShaping()
 	require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{TrafficShapingEnabled: false},
-	}))
+	}, nil))
 
 	fw := st.MachineState.Firewall
 	require.NotNil(t, fw)
@@ -135,7 +135,7 @@ func TestPatch_EnableWithEmptyAllowlistPreservesContent(t *testing.T) {
 	patch := patchBlockNodeStateWithTrafficShaping()
 	require.NoError(t, patch(st, models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{TrafficShapingEnabled: false},
-	}))
+	}, nil))
 
 	fw := st.MachineState.Firewall
 	require.NotNil(t, fw)
@@ -170,7 +170,7 @@ func TestPatch_BareReconfigureKeepsRecordedShapeOverrides(t *testing.T) {
 			// No --shape on this run.
 		},
 	}
-	require.NoError(t, patch(st, inputs))
+	require.NoError(t, patch(st, inputs, nil))
 
 	require.NotNil(t, st.BlockNodeState.Shaping)
 	require.Contains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",
@@ -204,7 +204,7 @@ func TestPatch_ExplicitShapeOverridesReplaceRecord(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, patch(st, inputs))
+	require.NoError(t, patch(st, inputs, nil))
 
 	require.NotNil(t, st.BlockNodeState.Shaping)
 	assert.NotContains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",

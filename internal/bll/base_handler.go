@@ -153,12 +153,16 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 		return errorx.IllegalArgument.New("intent target mismatch: expected %s, got %s", target, intent.Target)
 	}
 
-	if err := inputs.Validate(); err != nil {
+	if err := inputs.ValidateFor(intent.Action); err != nil {
 		return errorx.IllegalArgument.New("invalid user inputs: %v", err)
 	}
 
 	return nil
 }
+
+// StateCallback applies per-action mutations to the full state before flush.
+// It gets the workflow report, so it can skip changes when the workflow failed.
+type StateCallback[T any] func(full *state.State, effInputs models.UserInputs[T], report *automa.Report) error
 
 // HandleIntent is the shared generic handler.
 // It performs the following steps:
@@ -178,7 +182,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[T],
 	ac IntentHandler[T],
-	callback func(full *state.State, effInputs models.UserInputs[T]) error, // optional callback for applying additional mutations to the full state
+	callback StateCallback[T], // optional callback for applying additional mutations to the full state
 ) (*automa.Report, error) {
 	// ── 1. Validate intent and inputs ───────────────────────────────────────────────
 	err := h.ValidateIntent(intent, inputs, h.Target)
@@ -282,7 +286,7 @@ func (h *BaseHandler[T]) flushState(
 	intent models.Intent,
 	effectiveInputs *models.UserInputs[T],
 	owned ownedDriftRun,
-	callback func(full *state.State, effInputs models.UserInputs[T]) error,
+	callback StateCallback[T],
 ) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
@@ -318,7 +322,7 @@ func (h *BaseHandler[T]) flushState(
 
 	if callback != nil {
 		logx.As().Debug().Msg("Applying callback mutations to full state before flush")
-		if err := callback(&fullState, *effectiveInputs); err != nil {
+		if err := callback(&fullState, *effectiveInputs, report); err != nil {
 			return nil, notPersisted(errorx.IllegalState.New("failed to patch state after workflow execution: %v", err))
 		}
 		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")

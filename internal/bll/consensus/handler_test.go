@@ -27,8 +27,8 @@ type funcChecker[T any] func() (T, error)
 func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 
 // TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites: an intent locks and
-// flushes exactly the components it writes. Consensus has only install, which
-// records the profile. A new intent fails here until it gets its own row: one
+// flushes exactly the components it writes. Install records the profile;
+// uninstall writes only the consensus state. A new intent fails here until it gets its own row: one
 // that reused the install base would also lock and rewrite profile.yaml.
 func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 	h := newTestHandlers(t)
@@ -38,7 +38,8 @@ func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 		"cluster": bll.Cluster, "consensus": bll.ConsensusNode, "teleport": bll.Teleport,
 	}
 	owns := map[models.ActionType][]string{
-		models.ActionInstall: {"consensus", "profile"},
+		models.ActionInstall:   {"consensus", "profile"},
+		models.ActionUninstall: {"consensus"},
 	}
 
 	for _, action := range []models.ActionType{
