@@ -16,6 +16,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/registry"
 )
 
@@ -84,6 +85,24 @@ func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version 
 		return "", errorx.ExternalError.Wrap(err, "failed to create chart downloads dir %q", destDir)
 	}
 
+	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir.
+	base := path.Base(chartRef)
+	expected := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", base, version))
+
+	// Local cache: if an archive for this exact version is already present and loads as a
+	// valid chart of that version, reuse it instead of pulling again, so repeated commands
+	// (e.g. check then install) don't re-download. PullChart carries no pinned checksum, so
+	// a released (immutable) version is the trust anchor; a missing, partial, corrupt, or
+	// version-mismatched file falls through to a fresh pull that overwrites it.
+	if ch, loadErr := loader.Load(expected); loadErr == nil && ch.Metadata != nil && ch.Metadata.Version == version {
+		h.log.Debug().
+			Str("chart", chartRef).
+			Str("version", version).
+			Str("path", expected).
+			Msg("Reusing cached Helm chart archive")
+		return expected, nil
+	}
+
 	settings := h.WithNamespace("")
 
 	registryClient, err := newRegistryClient(settings)
@@ -111,13 +130,10 @@ func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version 
 		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
 	}
 
-	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir. Prefer that
-	// path, but fall back to a chart-scoped glob rather than trust the reconstruction,
-	// so a change to Helm's on-disk naming (e.g. for OCI refs) can't make us return a
-	// non-existent path. The glob is scoped to this chart's base name so a shared
-	// downloads directory can't match a different chart's archive.
-	base := path.Base(chartRef)
-	expected := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", base, version))
+	// Prefer the expected path, but fall back to a chart-scoped glob rather than trust the
+	// reconstruction, so a change to Helm's on-disk naming (e.g. for OCI refs) can't make
+	// us return a non-existent path. The glob is scoped to this chart's base name so a
+	// shared downloads directory can't match a different chart's archive.
 	if _, statErr := os.Stat(expected); statErr == nil {
 		return expected, nil
 	}
