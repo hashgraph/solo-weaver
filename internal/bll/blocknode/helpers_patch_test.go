@@ -7,6 +7,7 @@ package blocknode
 import (
 	"testing"
 
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -27,6 +28,54 @@ func deployedState() *state.State {
 	st := &state.State{}
 	st.BlockNodeState.ReleaseInfo.Status = release.StatusDeployed
 	return st
+}
+
+// TestPatch_ClearsStaleCustomPluginListOnSwitch covers the custom→preset switch: when
+// the operator moves from a custom plugin list to a chart-backed preset (or "none"), the
+// stale custom list must be cleared from state so it never sits beside the new preset.
+func TestPatch_ClearsStaleCustomPluginListOnSwitch(t *testing.T) {
+	patch := patchBlockNodeState()
+
+	for _, preset := range []string{bnpkg.PresetTier1LFH, bnpkg.PresetTier1RFH, bnpkg.PresetNone} {
+		t.Run(preset, func(t *testing.T) {
+			st := deployedState()
+			st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
+			st.BlockNodeState.PluginList = "facility-messaging,health"
+
+			inputs := models.UserInputs[models.BlockNodeInputs]{
+				Custom: models.BlockNodeInputs{PluginPreset: preset},
+			}
+			require.NoError(t, patch(st, inputs))
+
+			assert.Equal(t, preset, st.BlockNodeState.PluginPreset)
+			assert.Empty(t, st.BlockNodeState.PluginList, "stale custom list must be cleared on switch")
+		})
+	}
+}
+
+// TestPatch_PreservesStoredPluginsWhenPresetUnset ensures a reconfigure that does not touch
+// plugins (empty preset and list) leaves the stored custom selection intact.
+func TestPatch_PreservesStoredPluginsWhenPresetUnset(t *testing.T) {
+	st := deployedState()
+	st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
+	st.BlockNodeState.PluginList = "facility-messaging,health"
+
+	require.NoError(t, patchBlockNodeState()(st, models.UserInputs[models.BlockNodeInputs]{}))
+
+	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
+	assert.Equal(t, "facility-messaging,health", st.BlockNodeState.PluginList)
+}
+
+// TestPatch_PersistsCustomPluginList ensures an explicit custom list is stored.
+func TestPatch_PersistsCustomPluginList(t *testing.T) {
+	st := deployedState()
+	inputs := models.UserInputs[models.BlockNodeInputs]{
+		Custom: models.BlockNodeInputs{PluginPreset: bnpkg.PresetCustom, PluginList: "a,b,c"},
+	}
+	require.NoError(t, patchBlockNodeState()(st, inputs))
+
+	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
+	assert.Equal(t, "a,b,c", st.BlockNodeState.PluginList)
 }
 
 // TestPatch_PersistsFirewallAndShapingWhenEnabled covers AC1: an enabled firewall
