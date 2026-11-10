@@ -3,7 +3,6 @@
 package prompt
 
 import (
-	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -25,18 +24,6 @@ import (
 const (
 	storagePathModeBasePath   = "Single base path"
 	storagePathModeIndividual = "Individual paths"
-)
-
-// Custom plugin multi-select sizing. huh sets the option viewport to
-// (fieldHeight − title − description), so the field height is sized to the option
-// count plus chrome for the title and (up to three-line) description, letting the
-// whole menu render without paging. It is capped so an unexpectedly large menu — or a
-// mis-sized terminal — can't produce an unwieldy field; huh scrolls past the cap and
-// the field stays filterable ("/") by huh's default. Without an explicit height,
-// huh's OptionsFunc path forces a default of 10 (only ~8 plugins visible).
-const (
-	pluginMultiSelectMaxHeight = 50
-	pluginMultiSelectChrome    = 4
 )
 
 // validateRetentionThreshold validates that a retention threshold is a non-negative integer.
@@ -667,21 +654,18 @@ func BlockNodeReconfigureInputPrompts(
 	}
 }
 
-// AddPluginPresetPrompts appends the plugin wizard pages: a preset-select page
-// and a conditional custom-plugin multi-select page shown via
-// huh.Group.WithHideFunc only when the Custom preset is selected. Because both
-// pages live in the same wizard form, the operator can navigate back to the preset
-// page and switch away from Custom — the multi-select page hides again and
-// --plugins is left empty (normalised in afterRun).
+// AddPluginPresetPrompts appends a single plugin wizard page: a preset-select page
+// offering the chart-backed presets (tier1-lfh/tier1-rfh) and "no override". There is
+// no interactive custom multi-select — a bespoke plugin list is supplied
+// non-interactively via --plugins, which short-circuits prompting entirely. The
+// chart-backed presets are resolved to concrete plugin names at deploy time from the
+// chart's own plugin-profile overrides (blocknode.resolvePluginList), so no plugin
+// names are gathered or stored here.
 //
 // The preset-select page pre-selects the last used preset read from the on-disk
 // state file. When the operator's --values file defines plugins.names, the
 // "no override" preset (PresetNone) is pre-selected instead so the values file
 // wins unless the operator actively picks a preset.
-//
-// The custom multi-select page lists all known block-node plugins for the live
-// chartVersion; the operator's selection is joined as a comma-separated string
-// and written to *flagPlugins.
 //
 // The function is a no-op when either flag was already supplied on the command
 // line — the caller's values are respected as-is.
@@ -692,16 +676,11 @@ func BlockNodeReconfigureInputPrompts(
 //   - defaults:        prompt defaults read from the on-disk state file
 //   - flagPluginPreset: pointer to the --plugin-preset flag variable
 //   - flagPlugins:     pointer to the --plugins flag variable
-//   - chartVersion:   pointer to the target chart version (used to filter available plugins)
+//   - chartVersion:   pointer to the target chart version (retained for signature
+//     stability; preset→names resolution now happens at deploy time, not here)
 //   - valuesFile:     path to the operator's --values file (empty when not supplied);
 //     used to smart-default the preset to "no override" when it defines plugins.names
 //   - cv:              chosen-values collector for summary printing
-//
-// The custom multi-select's option list and warning are rebuilt via OptionsFunc /
-// DescriptionFunc bound to *chartVersion, so editing the chart-version input earlier
-// in the same wizard re-shapes the available plugins; huh reconciles the current
-// selection against the new option set (dropping plugins that no longer apply).
-// chartVersion is taken by pointer so those bindings observe later edits.
 func AddPluginPresetPrompts(
 	w *Wizard,
 	cmd *cobra.Command,
@@ -746,109 +725,42 @@ func AddPluginPresetPrompts(
 			Value(flagPluginPreset),
 	)
 
-	// ── Page: custom multi-select (shown only when Custom is selected) ────────
-	// The available plugins depend on the live chart version, so validForVersion
-	// re-reads *chartVersion on every call. The last-used custom list (from state)
-	// is pre-selected but filtered to the plugins that still apply.
-	savedPlugins := make([]string, 0)
-	for plugin := range strings.SplitSeq(defaults.BlockNode.PluginList, ",") {
-		if plugin = strings.TrimSpace(plugin); plugin != "" {
-			savedPlugins = append(savedPlugins, plugin)
-		}
-	}
-	validForVersion := func() map[string]struct{} {
-		vp := blocknode.PluginsForVersion(*chartVersion)
-		set := make(map[string]struct{}, len(vp))
-		for _, p := range vp {
-			set[p] = struct{}{}
-		}
-		return set
-	}
-	pluginOptionsFn := func() []huh.Option[string] {
-		var opts []huh.Option[string]
-		for _, p := range blocknode.PluginsForVersion(*chartVersion) {
-			opts = append(opts, huh.NewOption(p, p))
-		}
-		return opts
-	}
-	descriptionFn := func() string {
-		valid := validForVersion()
-		var unknown []string
-		for _, p := range savedPlugins {
-			if _, ok := valid[p]; !ok {
-				unknown = append(unknown, p)
-			}
-		}
-		desc := "Choose the individual plugins to install"
-		if len(unknown) > 0 {
-			desc = fmt.Sprintf(
-				"%s\nWarning: previously saved plugins are not available for chart version %s and were not pre-selected: %s",
-				desc, *chartVersion, strings.Join(unknown, ", "))
-		}
-		return desc
-	}
-
-	// Pre-select the saved plugins that apply to the version at construction time;
-	// huh reconciles this selection against the option set whenever it is rebuilt.
-	initialValid := validForVersion()
-	var selectedPlugins []string
-	for _, p := range savedPlugins {
-		if _, ok := initialValid[p]; ok {
-			selectedPlugins = append(selectedPlugins, p)
-		}
-	}
-
+	// ── Page: custom plugin list (free text, shown only when Custom is selected) ──
+	// There is no enumerated multi-select — community plugins are unknown to weaver —
+	// so Custom opens a free-text input where the operator types the plugin names,
+	// comma- or space-separated. Chart-backed presets (tier1-lfh/tier1-rfh) are
+	// resolved to concrete names at deploy time from the chart's own plugin-profile
+	// overrides (blocknode.resolvePluginList), so no name list is gathered for them.
 	isCustom := func() bool { return *flagPluginPreset == blocknode.PresetCustom }
-	// Size the field to the current plugin count (plus chrome) so every option shows
-	// without paging, capped at pluginMultiSelectMaxHeight. Computed from the chart
-	// version at construction; huh keeps this height across OptionsFunc rebuilds, so a
-	// mid-wizard version change to a larger menu falls back to scrolling — acceptable
-	// since real menus are far below the cap.
-	pluginFieldHeight := min(len(blocknode.PluginsForVersion(*chartVersion))+pluginMultiSelectChrome, pluginMultiSelectMaxHeight)
 	customGroup := huh.NewGroup(
-		huh.NewMultiSelect[string]().
+		huh.NewInput().
 			Key("plugins").
-			Title("Select Plugins").
-			DescriptionFunc(descriptionFn, chartVersion).
-			OptionsFunc(pluginOptionsFn, chartVersion).
-			Value(&selectedPlugins).
-			// Show the whole plugin menu at once instead of huh's OptionsFunc-forced
-			// default of ~8 visible rows. Type-to-filter ("/") is already available
-			// via huh's default Filterable state; do NOT call Filtering(true) — that
-			// boots the field into active filter-input mode, which hijacks space
-			// (typed into the filter, clearing the list) and shift+tab.
-			Height(pluginFieldHeight).
-			Validate(func(selected []string) error {
-				// Only enforce a selection while the Custom preset is active; when
-				// the group is hidden this validator must not block submission.
+			Title("Custom Plugins").
+			Description("Type the plugin names to install, comma- or space-separated").
+			Value(flagPlugins).
+			Validate(func(s string) error {
+				// Only enforce while Custom is active; when the group is hidden this
+				// validator must not block submission.
 				if !isCustom() {
 					return nil
 				}
-				if len(selected) == 0 {
-					return errorx.IllegalArgument.New("at least one plugin must be selected for the Custom preset")
+				normalized := blocknode.NormalizePluginList(s)
+				if normalized == "" {
+					return errorx.IllegalArgument.New("at least one plugin is required for the Custom preset")
 				}
-				return nil
+				return models.ValidatePluginList(normalized)
 			}),
 	).WithHideFunc(func() bool { return !isCustom() })
 
 	after := func() {
 		cv.add("Plugin Preset", blocknode.PresetLabel(*flagPluginPreset))
 		if !isCustom() {
-			// Ensure a pre-selected-but-hidden multi-select never contaminates a
-			// non-custom preset.
+			// A pre-filled-but-hidden input must never contaminate a non-custom preset.
 			*flagPlugins = ""
 			return
 		}
-		// Drop any selection that does not apply to the final chart version, in case
-		// the version changed after the multi-select was last reconciled.
-		valid := validForVersion()
-		var final []string
-		for _, p := range selectedPlugins {
-			if _, ok := valid[p]; ok {
-				final = append(final, p)
-			}
-		}
-		*flagPlugins = strings.Join(final, ",")
+		// Normalise whatever the operator typed into a clean comma-separated list.
+		*flagPlugins = blocknode.NormalizePluginList(*flagPlugins)
 		cv.add("Custom Plugins", *flagPlugins)
 	}
 

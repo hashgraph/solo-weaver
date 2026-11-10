@@ -70,6 +70,52 @@ func (h *helmManager) PullAndVerify(ctx context.Context, destDir, chartRef, vers
 	return h.pullAndVerifyClassic(destDir, chartRef, version, expectedChecksum)
 }
 
+// PullChart implements Manager.PullChart. It pulls the chart archive into destDir
+// using action.Pull (which handles both OCI and classic refs once the registry
+// client is wired) and returns the local .tgz path, performing no checksum
+// comparison. Transient upstream failures are retried on the same backoff as the
+// verified pull path.
+func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version string) (string, error) {
+	_ = ctx // not propagated into the pull; see PullAndVerify's context note.
+	if destDir == "" {
+		return "", errorx.IllegalArgument.New("destDir is empty for chart %q version %q", chartRef, version)
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to create chart downloads dir %q", destDir)
+	}
+
+	settings := h.WithNamespace("")
+
+	registryClient, err := newRegistryClient(settings)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to create registry client")
+	}
+
+	actionConfig, err := initActionConfig(settings, h.log.Printf)
+	if err != nil {
+		return "", errorx.IllegalArgument.Wrap(err, "failed to init action config")
+	}
+	actionConfig.RegistryClient = registryClient
+
+	pull := action.NewPullWithOpts(action.WithConfig(actionConfig))
+	pull.Settings = settings
+	pull.DestDir = destDir
+	pull.Untar = false
+	pull.Version = version
+	pull.SetRegistryClient(registryClient)
+
+	if err := h.retryTransientFetch(chartRef, version, func() error {
+		_, err := pull.Run(chartRef)
+		return err
+	}); err != nil {
+		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
+	}
+
+	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir.
+	tgz := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", path.Base(chartRef), version))
+	return tgz, nil
+}
+
 // pullAndVerifyClassic uses action.Pull (the SDK equivalent of `helm pull`)
 // to fetch a chart from a classic repo into destDir and compares the SHA256
 // of the resulting .tgz to the catalog-recorded value. The repository alias

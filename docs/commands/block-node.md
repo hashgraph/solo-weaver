@@ -197,10 +197,28 @@ Set `--base-path` and the rest default under it, or set each path yourself.
 | `--plugins-size` | PV/PVC size for plugin storage (`5Gi`, `10Gi`) |
 | `--plugins-path` | Path for plugin storage |
 
+**How a preset resolves.** The `tier1-lfh` and `tier1-rfh` presets are not a list baked
+into solo-provisioner. At deploy time it pulls the target chart and reads the plugin set
+from the chart's own `values-overrides/plugin-profile-lfh.yaml` / `plugin-profile-rfh.yaml`,
+so the list is always correct for the chart version you install and a block-node release
+that changes a profile needs no solo-provisioner release. Resolution precedence
+(first match wins):
+
+1. `--plugins` — your explicit list is used verbatim; no chart profile is read.
+2. a `--values` file that sets `plugins.names` — your file wins; no chart profile is read.
+3. `--plugin-preset=tier1-lfh|tier1-rfh` (including the default) — read from the chart profile.
+4. `--plugin-preset=none` with no `--values` names — `plugins.names` is left unset, so the
+   chart's own default applies.
+
+Choosing `custom` interactively opens a free-text prompt where you type the plugin names
+(comma- or space-separated); there is no enumerated picker, since community plugins are not
+known to solo-provisioner. Non-interactively, pass `--plugins` (which implies `custom`).
+
 > **facility-app-state.** From chart **0.46.0** (including its alpha and rc builds), the block node does not start without
-> the `facility-app-state` plugin (`No ApplicationStateFacility provided`). The
-> `tier1-lfh` and `tier1-rfh` presets include it. A custom `--plugins` list, or
-> `plugins.names` in your `--values` file, must include it too.
+> the `facility-app-state` plugin (`No ApplicationStateFacility provided`). The `tier1-lfh`
+> and `tier1-rfh` presets include it automatically because they are read from the chart,
+> which lists it from that version on. A custom `--plugins` list, or `plugins.names` in your
+> `--values` file, must include it yourself.
 
 ### Retention flags
 

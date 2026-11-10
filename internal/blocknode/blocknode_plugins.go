@@ -2,258 +2,83 @@
 
 package blocknode
 
-import "github.com/hashgraph/solo-weaver/pkg/semver"
+import (
+	"strings"
+	"unicode"
+)
 
 // Plugin preset IDs used by the --plugin-preset flag and TUI prompt.
 //
-// Each preset maps to a fixed, ordered plugin list maintained here in lockstep
-// with block-node chart releases. When the block-node team changes a preset's
-// contents or adds/removes presets, this file must be updated in the same
-// release cycle.
+// Presets no longer carry hardcoded plugin lists. The canonical per-version
+// plugin set lives in the block-node chart itself, under
+// values-overrides/plugin-profile-{lfh,rfh}.yaml. At deploy time weaver pulls the
+// target chart and reads the profile that matches the selected preset, so the
+// plugin list is always correct for the chart version being installed and a BN
+// release that changes a profile needs no solo-provisioner release.
 //
-// Adding a new BN version that changes plugin lists:
-//  1. Add a new blockNodePluginConfig entry to blockNodePluginHistory (in
-//     ascending MinVersion order).
-//  2. Populate Presets with ALL preset IDs (copy unchanged ones from the
-//     previous entry; update only the ones that changed).
-//  3. Populate AllPlugins with the full list for that version.
-//  4. Add tests in blocknode_plugins_test.go for the new version boundary.
-//  5. No changes to PluginListForPreset, PluginsForVersion, or any caller.
+// Resolution precedence (first match wins) is implemented in resolvePluginList:
+//  1. --plugins (explicit list) — use it, no chart pull.
+//  2. --values file that defines plugins.names — use it, no chart pull.
+//  3. --plugin-preset=tier1-lfh|tier1-rfh (incl. the default) — pull the chart and
+//     read plugin-profile-<profile>.yaml.
+//  4. --plugin-preset=none with no --values names — omit plugins.names; the chart's
+//     own default applies.
 const (
 	// PresetTier1LFH selects Local Full History storage (blocks stored on disk).
+	// Resolves against the chart's values-overrides/plugin-profile-lfh.yaml.
 	PresetTier1LFH = "tier1-lfh"
 
 	// PresetTier1RFH selects Remote Full History storage (blocks stored in cloud storage).
+	// Resolves against the chart's values-overrides/plugin-profile-rfh.yaml.
 	PresetTier1RFH = "tier1-rfh"
 
-	// PresetCustom indicates the operator selected a custom set of plugins.
+	// PresetCustom indicates the operator supplied an explicit plugin list, either via
+	// --plugins or by typing a comma-/space-separated list at the interactive prompt.
+	// The list is used verbatim; weaver does not read a chart profile for it.
 	PresetCustom = "custom"
 
 	// PresetNone means "do not override": the plugin list is left to the operator's
 	// --values file (if it sets plugins.names) or the chart's built-in default.
-	// It resolves to an empty plugin list, so injectPluginsConfig is a no-op.
-	// It is deliberately absent from every Presets map, so IsKnownPreset reports
-	// false and PluginListForPreset returns "".
+	// It resolves to an empty plugin list and triggers no chart pull.
 	PresetNone = "none"
 )
 
-// blockNodePluginConfig holds the canonical plugin configuration for a range of
-// chart versions starting at MinVersion. Entries in blockNodePluginHistory must
-// be in ascending MinVersion order; the first entry uses an empty MinVersion
-// (baseline, applies to all versions below the next entry's MinVersion).
-type blockNodePluginConfig struct {
-	// MinVersion is the minimum chart version (inclusive) for this config.
-	// Empty string means "from the very beginning" (baseline).
-	MinVersion string
-	// Presets maps each preset ID to its canonical comma-separated plugin list.
-	// Source of truth: hiero-block-node chart values-overrides/plugin-profile-*.yaml.
-	Presets map[string]string
-	// AllPlugins is the ordered list of all available plugins for this version,
-	// shown in the TUI custom multi-select.
-	// Source of truth: hiero-block-node block-node/app/build.gradle.kts.
-	AllPlugins []string
+// chartProfileForPreset maps a chart-backed preset to the override filename (under
+// the chart's values-overrides/ directory) that holds its canonical plugins.names.
+// Presets absent from this map (custom, none) are not resolved from the chart.
+var chartProfileForPreset = map[string]string{
+	PresetTier1LFH: "plugin-profile-lfh.yaml",
+	PresetTier1RFH: "plugin-profile-rfh.yaml",
 }
-
-// blockNodePluginHistory is the version-ordered registry of plugin configurations.
-// Add a new entry here (in ascending MinVersion order) whenever a BN release
-// changes the plugin list. See the package comment above for the procedure.
-var blockNodePluginHistory = []blockNodePluginConfig{
-	{
-		// Baseline: BN < 0.35.0. s3-archive was the cloud-storage plugin.
-		MinVersion: "",
-		Presets: map[string]string{
-			PresetTier1LFH: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill",
-			PresetTier1RFH: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-recent,backfill,s3-archive",
-		},
-		AllPlugins: []string{
-			"facility-messaging",
-			"block-access-service",
-			"health",
-			"server-status",
-			"stream-publisher",
-			"stream-subscriber",
-			"verification",
-			"blocks-file-historic",
-			"blocks-file-recent",
-			"backfill",
-			"s3-archive",
-		},
-	},
-	{
-		// BN 0.35.0: s3-archive replaced by cloud-storage-archive + cloud-storage-expanded.
-		MinVersion: "0.35.0",
-		Presets: map[string]string{
-			PresetTier1LFH: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-historic,blocks-file-recent,backfill",
-			PresetTier1RFH: "facility-messaging,block-access-service,health,server-status,stream-publisher,stream-subscriber,verification,blocks-file-recent,backfill,cloud-storage-archive,cloud-storage-expanded",
-		},
-		AllPlugins: []string{
-			"facility-messaging",
-			"block-access-service",
-			"health",
-			"server-status",
-			"stream-publisher",
-			"stream-subscriber",
-			"verification",
-			"blocks-file-historic",
-			"blocks-file-recent",
-			"backfill",
-			"cloud-storage-archive",
-			"cloud-storage-expanded",
-		},
-	},
-	{
-		// BN 0.37.1: roster-bootstrap-rsa + roster-bootstrap-tss added to both presets.
-		// The RFH preset was also trimmed upstream: block-access-service, stream-publisher,
-		// stream-subscriber, and blocks-file-recent were dropped (recent blocks now flow to
-		// cloud storage rather than the local live volume). Strings copied verbatim from the
-		// chart's values-overrides/plugin-profile-{lfh,rfh,all}.yaml at tag v0.37.1.
-		MinVersion: "0.37.1",
-		Presets: map[string]string{
-			PresetTier1LFH: "backfill,block-access-service,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber,verification",
-			PresetTier1RFH: "backfill,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,verification",
-		},
-		AllPlugins: []string{
-			"backfill",
-			"block-access-service",
-			"blocks-file-historic",
-			"blocks-file-recent",
-			"cloud-storage-archive",
-			"cloud-storage-expanded",
-			"facility-messaging",
-			"health",
-			"roster-bootstrap-rsa",
-			"roster-bootstrap-tss",
-			"server-status",
-			"stream-publisher",
-			"stream-subscriber",
-			"verification",
-		},
-	},
-	{
-		// BN 0.39.1: verification renamed to block-verification. The old plugin is
-		// unpublished from 0.39.1 and deleted from the block-node repo in 0.41.0, so
-		// charts at or above this bound must not be offered the old name — the image
-		// no longer registers it. Boundary is 0.39.1 (the version the block-node team
-		// states the replacement is available from) rather than 0.41.0 (removal): the
-		// 0.39.x and 0.40.x images already register only block-verification.
-		// Otherwise identical to the 0.37.1 entry. Strings copied verbatim from the
-		// chart's values-overrides/plugin-profile-{lfh,rfh,all}.yaml.
-		MinVersion: "0.39.1",
-		Presets: map[string]string{
-			PresetTier1LFH: "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber",
-			PresetTier1RFH: "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status",
-		},
-		AllPlugins: []string{
-			"backfill",
-			"block-access-service",
-			"block-verification",
-			"blocks-file-historic",
-			"blocks-file-recent",
-			"cloud-storage-archive",
-			"cloud-storage-expanded",
-			"facility-messaging",
-			"health",
-			"roster-bootstrap-rsa",
-			"roster-bootstrap-tss",
-			"server-status",
-			"stream-publisher",
-			"stream-subscriber",
-		},
-	},
-	{
-		// BN 0.46.0: facility-app-state added; the node fails to start without it.
-		// The "-0" floor covers every 0.46.0 prerelease. Otherwise identical to 0.39.1.
-		MinVersion: "0.46.0-0",
-		Presets: map[string]string{
-			PresetTier1LFH: "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber",
-			PresetTier1RFH: "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status",
-		},
-		AllPlugins: []string{
-			"backfill",
-			"block-access-service",
-			"block-verification",
-			"blocks-file-historic",
-			"blocks-file-recent",
-			"cloud-storage-archive",
-			"cloud-storage-expanded",
-			"facility-app-state",
-			"facility-messaging",
-			"health",
-			"roster-bootstrap-rsa",
-			"roster-bootstrap-tss",
-			"server-status",
-			"stream-publisher",
-			"stream-subscriber",
-		},
-	},
-}
-
-// AllBlockNodePlugins is the ordered list of available plugins for the current
-// (latest) chart release. Use PluginsForVersion when the target chart version
-// may be older.
-var AllBlockNodePlugins = blockNodePluginHistory[len(blockNodePluginHistory)-1].AllPlugins
 
 // presetLabels maps preset IDs to human-readable labels for TUI display.
 var presetLabels = map[string]string{
 	PresetTier1LFH: "Tier 1 — Local Full History  (blocks stored on local disk)",
 	PresetTier1RFH: "Tier 1 — Remote Full History  (blocks stored in cloud storage)",
-	PresetCustom:   "Custom  (select individual plugins)",
+	PresetCustom:   "Custom  (type a comma- or space-separated plugin list)",
 	PresetNone:     "Use Values File / Chart Default  (no override)",
 }
 
-// orderedPresets is the display order for the TUI select prompt.
+// orderedPresets is the display order for the TUI select prompt. Selecting Custom
+// opens a free-text prompt for the plugin names (there is no enumerated multi-select,
+// since community plugins are not known to weaver).
 var orderedPresets = []string{PresetTier1LFH, PresetTier1RFH, PresetCustom, PresetNone}
 
-// configForVersion returns the plugin configuration applicable to the given
-// chart version. Empty or unparseable versions return the latest config.
-func configForVersion(chartVersion string) blockNodePluginConfig {
-	latest := blockNodePluginHistory[len(blockNodePluginHistory)-1]
-	if chartVersion == "" {
-		return latest
-	}
-	target, err := semver.NewSemver(chartVersion)
-	if err != nil {
-		return latest
-	}
-	for i := len(blockNodePluginHistory) - 1; i >= 0; i-- {
-		cfg := blockNodePluginHistory[i]
-		if cfg.MinVersion == "" {
-			return cfg
-		}
-		minVer, err := semver.NewSemver(cfg.MinVersion)
-		if err != nil {
-			continue
-		}
-		if !target.LessThan(minVer) {
-			return cfg
-		}
-	}
-	return blockNodePluginHistory[0]
+// NormalizePluginList accepts a plugin list that is comma- or space-separated (or a
+// mix) and returns a clean, comma-separated list: entries are trimmed and empty
+// entries dropped. It is the single normaliser for both the --plugins flag and the
+// interactive custom prompt, so an operator may type "a,b c" or "a  b,c".
+func NormalizePluginList(s string) string {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	return strings.Join(fields, ",")
 }
 
 // AvailablePresets returns the ordered preset IDs for TUI display.
 func AvailablePresets() []string {
 	result := make([]string, len(orderedPresets))
 	copy(result, orderedPresets)
-	return result
-}
-
-// PluginListForPreset returns the canonical comma-separated plugin list for a
-// named preset at the given chart version, or an empty string when the preset
-// ID is not recognised. When chartVersion is empty, the current-default
-// (latest) list is returned.
-func PluginListForPreset(presetID, chartVersion string) string {
-	return configForVersion(chartVersion).Presets[presetID]
-}
-
-// PluginsForVersion returns the ordered list of available plugins for the given
-// chart version, for use in the TUI custom multi-select. When chartVersion is
-// empty, the current-default (latest) list is returned. Always returns an
-// independent copy.
-func PluginsForVersion(chartVersion string) []string {
-	src := configForVersion(chartVersion).AllPlugins
-	result := make([]string, len(src))
-	copy(result, src)
 	return result
 }
 
@@ -266,9 +91,9 @@ func PresetLabel(presetID string) string {
 	return presetID
 }
 
-// IsKnownPreset returns true when presetID is a recognised non-custom preset.
+// IsKnownPreset returns true when presetID is a recognised chart-backed preset
+// (one weaver resolves from the chart's values-overrides). custom and none are not.
 func IsKnownPreset(presetID string) bool {
-	// A preset is known if it appears in at least the latest config's Presets map.
-	_, ok := blockNodePluginHistory[len(blockNodePluginHistory)-1].Presets[presetID]
+	_, ok := chartProfileForPreset[presetID]
 	return ok
 }

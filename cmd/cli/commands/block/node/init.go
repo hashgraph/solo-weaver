@@ -269,9 +269,11 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	execOpts := workflows.DefaultWorkflowExecutionOptions()
 	execOpts.ExecutionMode = execMode
 
-	// Resolve the effective plugin list.
-	// --plugins overrides --plugin-preset when both are set.
-	// When only --plugin-preset is set, look up its canonical list.
+	// Resolve the effective plugin selection. The actual plugin names for a
+	// chart-backed preset (tier1-lfh/tier1-rfh) are read from the chart at deploy
+	// time (blocknode.resolvePluginList); here we only settle which preset or
+	// explicit list applies.
+	// Precedence: --plugins (explicit list) overrides --plugin-preset.
 	pluginPreset := flagPluginPreset
 	pluginList := flagPlugins
 	if f := cmd.Flag("plugins"); f != nil && f.Changed {
@@ -279,21 +281,16 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 			return nil, nil, errorx.IllegalArgument.Wrap(err, "invalid --plugins value")
 		}
 	}
-	if pluginList == "" && bnpkg.IsKnownPreset(pluginPreset) {
-		pluginList = bnpkg.PluginListForPreset(pluginPreset, flagChartVersion)
-	}
 	// For non-interactive upgrades (scripted runs where the TUI is skipped),
-	// --plugin-preset is not prompted, so flagPluginPreset stays empty. Re-resolve
-	// from the stored preset to ensure plugin names are updated when crossing chart
-	// version boundaries (e.g. the 0.35 s3-archive → cloud-storage-* rename).
-	// Skip this when the operator manages plugins via their --values file (it defines
-	// plugins.names): re-resolving from the saved preset would clobber the values file.
+	// --plugin-preset is not prompted, so flagPluginPreset stays empty. Recover the
+	// stored preset so the deploy-time resolver reads the right chart profile. Skip
+	// this when the operator manages plugins via their --values file (it defines
+	// plugins.names): that override wins over a preset.
 	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" &&
 		!bnpkg.ValuesFileDefinesPlugins(validatedValuesFile) {
 		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
 			if bnpkg.IsKnownPreset(stateDefaults.BlockNode.PluginPreset) {
 				pluginPreset = stateDefaults.BlockNode.PluginPreset
-				pluginList = bnpkg.PluginListForPreset(pluginPreset, flagChartVersion)
 			}
 		}
 	}
