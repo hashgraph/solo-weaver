@@ -267,9 +267,10 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrInstallFailed.Wrap(err, "failed to install chart")
 	}
 
-	err = h.waitFor(settings, rel, StatusReady, installClient.Timeout)
-	if err != nil {
-		return rel, err
+	if o.Wait {
+		if err := h.waitFor(settings, rel, StatusReady, installClient.Timeout); err != nil {
+			return rel, err
+		}
 	}
 
 	l.Info().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
