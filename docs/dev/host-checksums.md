@@ -1,7 +1,6 @@
 # Host checksums
 
-Every host artifact version under `host:` in `pkg/software/catalog/host-*.yaml` lists a
-checksum per platform for each archive, each binary and each config. They are checked when
+Every host artifact version under `host:` in `pkg/software/catalog/host-*.yaml` lists a checksum per platform for each archive and binary, and one checksum for each config. They are checked when
 the file is downloaded, when an archive is unpacked, and again right before the provisioner
 runs an installed binary (`software.VerifyExecutables`). A binary that came out of an archive
 has no published checksum upstream, so its value has to be computed by unpacking the archive.
