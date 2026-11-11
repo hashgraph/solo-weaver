@@ -117,6 +117,7 @@ func TestClusterChecker_KeepsRecordedReleasesWhenNotObserved(t *testing.T) {
 			cs := refreshCluster(t, smWithReleases(t, recorded), tc.helm, tc.probe)
 
 			require.Equal(t, recorded, cs.Releases)
+			require.True(t, cs.Unobserved)
 		})
 	}
 }

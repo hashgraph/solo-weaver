@@ -176,6 +176,10 @@ func (r *RuntimeResolver) RefreshMachineAndCluster(ctx context.Context, force bo
 		logx.As().Warn().Err(err).Msg("Failed to read cluster state; keeping the recorded cluster")
 		return current, nil
 	}
+	if clusterState.Unobserved {
+		logx.As().Warn().Msg("Could not read the cluster; keeping the recorded cluster")
+		return current, nil
+	}
 	current.ClusterState = clusterState
 	return current, nil
 }

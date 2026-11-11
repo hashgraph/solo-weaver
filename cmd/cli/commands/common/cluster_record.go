@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -64,6 +65,10 @@ func runRecordingCluster(ctx context.Context, sm state.Manager, entry state.Acti
 			cs, err := newClusterChecker(sm).RefreshState(ctx)
 			if err != nil {
 				return errorx.IllegalState.Wrap(err, "failed to read the cluster after the run")
+			}
+			if cs.Unobserved {
+				logx.As().Warn().Msg("Could not read the cluster after the run; keeping its recorded state")
+				return nil
 			}
 			st.ClusterState = cs
 			return nil
