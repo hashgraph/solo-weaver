@@ -50,6 +50,8 @@ in `pkg/software` merges them into one catalog at load time.
   To make it the default for new installs, also update `defaults.yaml`.
 - **A new version of any other component:** add it under the component's
   `versions:`. A new version does not change the default.
+- **Host checksums:** write the new block with empty checksums and run
+  `task host-checksums -- -write`. See `docs/dev/host-checksums.md`.
 - **Dropping a version:** delete its entry, or the whole `host-k8s-<minor>.yaml`
   file for a minor. Hosts installed with that version can no longer verify their
   binaries against the catalog, so drop a version only once no supported host
