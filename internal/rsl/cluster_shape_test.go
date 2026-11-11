@@ -117,6 +117,24 @@ func TestResolveClusterShape_RecordedVersusLive(t *testing.T) {
 	require.True(t, charts["node-exporter"].Changed)
 }
 
+// Helm keeps the record of an uninstalled release; the chart is missing, and
+// its status is kept for diagnostics.
+func TestResolveClusterShape_UninstalledReleaseIsMissing(t *testing.T) {
+	recorded := liveCluster()
+	live := liveCluster()
+	uninstalled := rel("metallb", "0.16.1")
+	uninstalled.Status = release.StatusUninstalled
+	live.ClusterState.Releases["metallb"] = uninstalled
+
+	metallb := ResolveClusterShape(live, &recorded, shapeManaged).Charts["metallb"]
+
+	require.True(t, metallb.Missing)
+	require.Empty(t, metallb.Live)
+	require.Empty(t, metallb.Identity)
+	require.Equal(t, release.StatusUninstalled, metallb.Status)
+	require.True(t, metallb.Changed)
+}
+
 // With no state on disk nothing is marked changed.
 func TestResolveClusterShape_NoRecord(t *testing.T) {
 	charts := ResolveClusterShape(liveCluster(), nil, shapeManaged).Charts
