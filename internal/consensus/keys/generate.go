@@ -22,6 +22,9 @@ import (
 const (
 	FileGossipPrivate = "s-private.pem"
 	FileGossipCert    = "s-public.pem"
+	// FileGossipCertDER is s-public.pem in DER form, the form nodeCreate takes.
+	// It is written to the folder only, never stored in a secret.
+	FileGossipCertDER = "s-public.der"
 	FileGrpcKey       = "hedera.key"
 	FileGrpcCert      = "hedera.crt"
 	// FileAdminPublic is the node admin public key (hex). It is never generated

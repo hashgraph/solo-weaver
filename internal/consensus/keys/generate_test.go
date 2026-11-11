@@ -49,11 +49,16 @@ func TestWriteToDir(t *testing.T) {
 
 	// All neutral-named files exist; no combined artifacts file is written.
 	for _, name := range []string{
-		FileGossipPrivate, FileGossipCert, FileGrpcKey, FileGrpcCert,
+		FileGossipPrivate, FileGossipCert, FileGossipCertDER, FileGrpcKey, FileGrpcCert,
 	} {
 		assert.FileExists(t, filepath.Join(dir, name), "expected %s", name)
 	}
 	assert.NoFileExists(t, filepath.Join(dir, "nodeCreate.json"))
+
+	// The DER file is the same certificate as the PEM file.
+	der, err := os.ReadFile(filepath.Join(dir, FileGossipCertDER))
+	require.NoError(t, err)
+	assert.Equal(t, set.Gossip.Certificate.Raw, der)
 
 	// Private key material is 0600; public files are 0644 (skip perm assert on
 	// non-unix where mode bits differ).
@@ -61,7 +66,33 @@ func TestWriteToDir(t *testing.T) {
 		assertPerm(t, filepath.Join(dir, FileGossipPrivate), 0o600)
 		assertPerm(t, filepath.Join(dir, FileGrpcKey), 0o600)
 		assertPerm(t, filepath.Join(dir, FileGossipCert), 0o644)
+		assertPerm(t, filepath.Join(dir, FileGossipCertDER), 0o644)
 	}
+}
+
+func TestWriteToDir_TightensExistingPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits differ on windows")
+	}
+	dir := filepath.Join(t.TempDir(), "keys")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	stale := filepath.Join(dir, FileGossipPrivate)
+	require.NoError(t, os.WriteFile(stale, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(stale, 0o644))
+
+	set, err := Generate(GenerateOptions{MachineID: "m"})
+	require.NoError(t, err)
+	require.NoError(t, set.WriteToDir(dir))
+
+	assertPerm(t, stale, 0o600)
+	got, err := os.ReadFile(stale)
+	require.NoError(t, err)
+	assert.NotEqual(t, []byte("old"), got)
+
+	// No temp files remain after the rename.
+	tmps, err := filepath.Glob(filepath.Join(dir, ".*.tmp.*"))
+	require.NoError(t, err)
+	assert.Empty(t, tmps)
 }
 
 func TestWriteToDir_SubsetOmitsFiles(t *testing.T) {
@@ -72,7 +103,14 @@ func TestWriteToDir_SubsetOmitsFiles(t *testing.T) {
 	require.NoError(t, set.WriteToDir(dir))
 
 	assert.FileExists(t, filepath.Join(dir, FileGossipPrivate))
+	assert.FileExists(t, filepath.Join(dir, FileGossipCertDER))
 	assert.NoFileExists(t, filepath.Join(dir, FileGrpcKey))
+
+	tlsDir := filepath.Join(t.TempDir(), "tls-only")
+	set, err = Generate(GenerateOptions{Selectors: Selectors{Grpc: true}, MachineID: "m"})
+	require.NoError(t, err)
+	require.NoError(t, set.WriteToDir(tlsDir))
+	assert.NoFileExists(t, filepath.Join(tlsDir, FileGossipCertDER))
 }
 
 func TestSelectorsHelpers(t *testing.T) {

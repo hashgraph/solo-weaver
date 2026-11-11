@@ -4,6 +4,7 @@ package models
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -401,22 +402,22 @@ func ConsensusNodeScope(nodeId int64) string {
 	return fmt.Sprintf("node%d", nodeId)
 }
 
-// ConsensusNodeName returns the name the consensus node itself uses for node id,
-// which appears in CN-native file names such as s-private-node<N>.pem. The CN
-// numbers its nodes from 1 unless zeroBased is set, so id 0 is "node1" by
-// default. Use it only at that CN boundary; secret and Kubernetes resource names
-// stay 0-based through ConsensusNodeScope.
-func ConsensusNodeName(nodeId int64, zeroBased bool) string {
-	if zeroBased {
-		return ConsensusNodeScope(nodeId)
-	}
-	return ConsensusNodeScope(nodeId + 1)
-}
-
 // ConsensusDefaultAccountId returns the node account id the operator's genesis
 // assigns by default: 0.0.(3 + nodeId).
 func ConsensusDefaultAccountId(nodeId int64) string {
 	return fmt.Sprintf("0.0.%d", 3+nodeId)
+}
+
+// consensusAccountIdPattern matches a Hedera account id: shard.realm.num.
+var consensusAccountIdPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidateConsensusAccountId rejects an account id that is not shard.realm.num
+// (e.g. 0.0.3), such as a bare node number.
+func ValidateConsensusAccountId(s string) error {
+	if !consensusAccountIdPattern.MatchString(s) {
+		return errorx.IllegalArgument.New("invalid account ID %q: expected shard.realm.num, e.g. 0.0.3", s)
+	}
+	return nil
 }
 
 // ConsensusNodeStateKey returns the orbit-qualified key for solo-weaver's local
@@ -452,6 +453,9 @@ func (c *ConsensusNodeInputs) ValidateFor(action ActionType) error {
 	}
 	if c.AccountId == "" {
 		return errorx.IllegalArgument.New("--account-id is required")
+	}
+	if err := ValidateConsensusAccountId(c.AccountId); err != nil {
+		return err
 	}
 	if c.Weight <= 0 {
 		return errorx.IllegalArgument.New("--weight must be positive")

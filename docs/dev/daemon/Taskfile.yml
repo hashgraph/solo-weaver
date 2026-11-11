@@ -101,8 +101,8 @@ vars:
   # The consensus node account id (0.0.3) — the v0.74.0 genesis has node0 account 0.0.3, which is the default payer for beacon's config.yaml.
   ACCOUNT_ID: '{{.ACCOUNT_ID | default "0.0.3"}}'  # node0 account in the v0.74.0 genesis
 
-  # Where `keys init` writes node<N>'s key material.
-  KEYS_DIR: '{{.KEYS_DIR | default (printf "/tmp/cn-keys/node%s" .NODE_ID)}}'
+  # Where `keys init` writes node<N>'s key material (not /tmp: a VM reboot clears it).
+  KEYS_DIR: '{{.KEYS_DIR | default (printf "/opt/solo/cn-keys/node%s" .NODE_ID)}}'
 
   # Daemon upgrade staging dir — daemon reads the extracted package here; the CN pod
   # extracts special file 0.0.150 into the same path (shared on a single host).
@@ -266,14 +266,10 @@ tasks:
   secrets:
     desc: "Inside VM: create the private-registry pull secret (operator + orbit ns); node keys come from `keys` (reuses uat:secrets)"
     cmds:
-      # SAMPLE_KEYS=false: skip the fixed sample node secrets; `keys` creates real ones.
-      # Pass SAMPLE_KEYS=true to use the sample secrets instead.
       - task: uat:secrets
         vars:
           NS: "{{.NS}}"
           OPERATOR_NS: "{{.OPERATOR_NS}}"
-          NODE: "node{{.NODE_ID}}"
-          SAMPLE_KEYS: "{{.SAMPLE_KEYS | default \"false\"}}"
 
   # ── 3b. keys: generate node keys + create their labelled secrets ─────────────
   keys:
@@ -369,7 +365,8 @@ tasks:
           --namespace {{.NS}} --node-id {{.NODE_ID}} --account-id {{.ACCOUNT_ID}} --profile local \
           --provisioner-daemon \
           --default-volume-type hostpath \
-          --deployment-package-dir {{.PKG}}
+          --deployment-package-dir {{.PKG}} \
+          --allow-genesis-admin-key
         # No --signing-secret/--grpc-tls-secret/--admin-key-secret: install resolves the
         # labelled secrets that `keys` created (pass them explicitly to override).
 
@@ -563,6 +560,9 @@ tasks:
         mkdir -p "{{.WEAVER_ROOT}}/test/data" "{{.PKG_SRC}}"
         # Base package UNZIPPED — `consensus node install` reads a directory.
         unzip -o "$BASE_ZIP" -d "{{.PKG_SRC}}"
+        # Discovery genesis writes cluster-DNS gossip endpoints; the network must allow them.
+        APP_PROPS="{{.PKG_SRC}}/data/config/application.properties"
+        grep -q '^nodes.gossipFqdnRestricted' "$APP_PROPS" || printf '\nnodes.gossipFqdnRestricted=false\n' >> "$APP_PROPS"
         # Upgrade package as a ZIP — beacon uploads the .zip.
         cp -f "{{.ZIP_SRC}}" "{{.WEAVER_ROOT}}/test/data/build-v{{.UPGRADE_VERSION}}.zip"
         echo "✓ staged base package -> {{.PKG_SRC}} and upgrade zip -> test/data/"

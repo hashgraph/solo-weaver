@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -27,15 +28,16 @@ var (
 		Long: "Print the details of the certificates and public keys in a key folder: subject, issuer, validity, signature algorithm, key type and size, SANs, key usage, " +
 			"fingerprints, and the gRPC certificate hash. It replaces `openssl x509 -text -noout`.\n\n" +
 			"Private key files are never read. To check that keys match their certificates, use " +
-			"`consensus keys verify`. Use --file to inspect a single certificate or admin public key file.",
+			"`consensus keys verify`. Use --file to inspect a single certificate or admin public key file. " +
+			"A hex admin public key file must be named *.pub: a raw hex key with another name can be a private key, so it is not printed.",
 		RunE: runInspect,
 	}
 )
 
 func init() {
 	inspectSelectors = addSelectorFlags(inspectCmd)
-	inspectCmd.Flags().StringVar(&flagInspectKeysDir, "keys-dir", "", "Node key folder to inspect")
-	inspectCmd.Flags().StringVar(&flagInspectFile, "file", "", "Inspect a single certificate (PEM) or admin public key (hex) file")
+	inspectCmd.Flags().StringVar(&flagInspectKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Node key folder to inspect")
+	inspectCmd.Flags().StringVar(&flagInspectFile, "file", "", "Inspect a single certificate (PEM) or admin public key (hex, named *.pub) file")
 	inspectCmd.MarkFlagsMutuallyExclusive("keys-dir", "file")
 }
 

@@ -34,15 +34,22 @@ gossip certificate CN is the machine UUID and the gRPC certificate CN is
 during a DAB join.
 
 For a DAB join you need three public values: the gossip certificate
-(`s-public.pem`), the SHA-384 hash of the gRPC certificate, and the admin public
+(`s-public.der`), the SHA-384 hash of the gRPC certificate, and the admin public
 key from your wallet. The hash is taken over the certificate in PEM form, as
 `nodeCreate` requires. The command prints it to stdout (it is the one value not
 otherwise on disk; recompute it any time with `openssl dgst -sha384` over
 `hedera.crt`). solo-provisioner does **not** generate the admin key and does
 **not** submit the transaction — your wallet or SDK does both.
 
+`nodeCreate` requires the gossip certificate in DER form, not PEM. The command
+writes it as `s-public.der` next to `s-public.pem`; give `s-public.der` to your
+wallet or SDK.
+
 ```bash
-# All key types, node-id-free (typical for a DAB join):
+# All key types into the default folder, /opt/solo/weaver/consensus/keys:
+sudo solo-provisioner consensus keys generate --experimental --identity my-operator
+
+# All key types, node-id-free, into another folder:
 sudo solo-provisioner consensus keys generate --experimental \
   --keys-dir ./node-keys --identity my-operator
 
@@ -51,7 +58,10 @@ sudo solo-provisioner consensus keys generate --experimental \
   --keys-dir ./node-keys --gossip
 ```
 
-`--keys-dir` is one node's folder. For a genesis network with multiple nodes,
+`--keys-dir` is one node's folder. All `consensus keys` commands use
+`/opt/solo/weaver/consensus/keys` when you omit it, which fits one node per host.
+`kube cluster uninstall` keeps `/opt/solo/weaver/consensus`, so the keys stay on
+disk. For a genesis network with multiple nodes,
 run `generate` once per node into its own `--keys-dir`. When several nodes share
 one machine (testing), also give each a distinct `--machine-id` so their gossip
 certificate CNs differ:
@@ -73,7 +83,7 @@ To also create the Kubernetes secrets in one step (known node-id), use
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Directory for this node's key material (required); make it node-specific | — |
+| `--keys-dir` | Directory for this node's key material; make it node-specific | `/opt/solo/weaver/consensus/keys` |
 | `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN (e.g. operator or host name) | — |
 | `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
 | `--gossip` | Generate the gossip signing key | all types when no selector is given |
@@ -83,7 +93,7 @@ To also create the Kubernetes secrets in one step (known node-id), use
 | `--grpc-dns` | Extra fully qualified DNS SAN for the gRPC TLS certificate, added to `localhost` (repeatable) | — |
 | `--grpc-ip` | Extra IP SAN for the gRPC TLS certificate, added to `127.0.0.1` and `::1` (repeatable) | — |
 | `--grpc-validity-days` | gRPC TLS certificate lifetime in days (1-36500) | 100 years |
-| `--force` | Regenerate even if key material already exists in `--keys-dir` (overwrites it) | `false` |
+| `--overwrite` | Replace existing key files in `--keys-dir` with new keys. This gives the node a new network identity and a new gRPC certificate hash | `false` |
 
 The gRPC TLS certificate always keeps the `localhost`, `127.0.0.1`, and `::1`
 SANs; `--grpc-dns` and `--grpc-ip` only add to them. `--grpc-dns` takes a fully
@@ -93,15 +103,19 @@ this self-signed certificate (free text, up to 64 characters each). Shell-quote 
 spaces, e.g. `--grpc-org "Example Org"`. The
 gossip certificate lifetime is fixed at 100 years because it is the node's network
 identity. If the gRPC key already exists in `--keys-dir`, the `--grpc-*` flags have
-no effect unless you pass `--force`.
+no effect unless you pass `--overwrite`.
 
 `generate` is node-id-free — it takes no `--node-id`. The node-id enters later,
 at `import`/`init`.
 
 Generation is **idempotent**: re-running with the same `--keys-dir` keeps any key
 type that already exists (it logs a warning and only fills in missing types), so
-it never silently overwrites a node's gossip identity. Pass `--force` to
-regenerate.
+it never silently overwrites a node's gossip identity. Pass `--overwrite` to
+regenerate. The root `--force`/`-y` flag (skip prompts) does not replace keys.
+
+> **Caution:** Do not use `--overwrite` on a node that is already in a network.
+> It replaces the node's gossip identity and its gRPC certificate hash, so the
+> node no longer matches the roster until you register the new keys.
 
 #### Output layout
 
@@ -112,6 +126,7 @@ so `keys import` maps a generated folder to secrets one-to-one:
 |---|---|
 | `s-private.pem` | gossip signing private key (PKCS#8) |
 | `s-public.pem` | gossip signing certificate |
+| `s-public.der` | gossip signing certificate in DER form, for `nodeCreate` (not stored in a secret) |
 | `hedera.key` | gRPC TLS private key |
 | `hedera.crt` | gRPC TLS certificate |
 
@@ -148,14 +163,15 @@ labels; the key data is never sent again, so it cannot be overwritten.
 
 The admin key is **not generated** by solo-provisioner. Create it in an external
 wallet, then save its **public** key as hex in `admin.pub` inside `--keys-dir`
-(32 bytes for Ed25519, or the 33-byte compressed form for secp256k1). Only that
+(32 bytes; Ed25519 only, see [The admin key at genesis](#the-admin-key-at-genesis)). Only that
 public key is imported; the private key never reaches the provisioner or the
 cluster. With no selector flag, the admin secret is created only when `admin.pub`
 exists; pass `--admin` to make it required. The admin secret holds the public key
 as **raw bytes**, which is what the solo-operator reads; `admin.pub` itself is hex
-text, so `import` decodes it and `export` writes it back as hex. The gossip signing secret
+text, so `import` decodes it and `export` writes it back as hex.
+
 Re-importing identical material is idempotent. A secret of the same name whose
-content was edited by hand is refused unless `--force` is passed.
+content was edited by hand is refused unless `--overwrite` is passed.
 
 ```bash
 # Create the secrets for node 0 from a generated folder (add admin.pub first
@@ -170,15 +186,47 @@ sudo solo-provisioner consensus keys import --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to import from (required for `--source folder`) | — |
+| `--keys-dir` | Node key folder to import from (used with `--source folder`) | `/opt/solo/weaver/consensus/keys` |
 | `--source` | Key material source: `folder` (vault-backed import is tracked separately) | `folder` |
 | `--secret-suffix` | Replace the certificate date in the secret names (for example `v0.75.6`); lowercase letters, digits, `-` and `.` | certificate date |
 | `--label` | Extra label for every secret, as `key=value` (repeatable), for example `example.com/external-ref=ticket-42` or `app.kubernetes.io/version=v0.75.6`. Kubernetes label syntax applies, and weaver's own labels cannot be used | — |
-| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand); re-importing identical material is idempotent without it | `false` |
+| `--overwrite` | Replace a same-named secret whose content differs (for example one edited by hand); re-importing identical material is idempotent without it | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which secrets to create | gossip and gRPC, plus admin when `admin.pub` exists |
 
 `--namespace` (the orbit name) and `--node-id` are inherited from `consensus
 node`; `--node-id` is **required** here.
+
+#### The admin key at genesis
+
+Consensus node v0.74.2 and later set the admin key of each genesis node from
+`data/config/node-admin-keys.json`, which accepts Ed25519 keys only. The node ignores
+the `adminKey` field of `genesis-network.json`, which is where the solo-operator puts
+the key from the admin secret. If `node-admin-keys.json` is missing, each genesis node
+gets the genesis key as its admin key.
+
+You cannot change the admin key after genesis yet. A `NodeUpdate` (a DAB transaction)
+applies only after a freeze upgrade, and the solo-operator does not support that yet.
+Set the right admin keys before genesis.
+
+For this reason, `consensus node install --deployment-package-dir <pkg>` requires
+`data/config/node-admin-keys.json` in the package. If the file is missing:
+
+- in an interactive run, the command asks you to confirm the genesis key as the admin
+  key (the default answer is No);
+- with `--force`, `--non-interactive` or no terminal, the command stops with an error;
+- with `--allow-genesis-admin-key`, the command continues and logs a warning.
+
+Use the genesis key as the admin key for local dev/test networks only.
+
+> **Note:** solo-provisioner checks only that the file is in the package. It does not
+> send `node-admin-keys.json` to the node yet: no solo-operator config CR carries it.
+> Until the solo-operator supports it, genesis nodes still get the genesis key.
+
+A node that joins with DAB does not need the admin secret: its admin key goes into
+the `NodeCreate` transaction, which your wallet or SDK sends. There, a secp256k1
+key is also permitted. Do not put a secp256k1 `admin.pub` in `--keys-dir`: with no
+selector flag, `import`, `init` and `verify` read it and stop with an error before
+they write a secret.
 
 ### `consensus keys export`
 
@@ -194,10 +242,10 @@ sudo solo-provisioner consensus keys export --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to export into (required) | — |
+| `--keys-dir` | Node key folder to export into | `/opt/solo/weaver/consensus/keys` |
 | `--fingerprint` | Pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
 | `--secret-suffix` | Pick the secrets imported with this suffix or date | — |
-| `--force` | Overwrite existing files whose content differs (identical files are left as-is) | `false` |
+| `--overwrite` | Replace existing files whose content differs (identical files are left as-is) | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which secrets to export | all when none given |
 
 Export reads the secret's data and checks it against the secret's name and
@@ -205,8 +253,14 @@ fingerprint label; a secret that was renamed or edited is refused. When a node h
 more than one generation of a key type, pass `--fingerprint` or `--secret-suffix` to
 choose one; otherwise the command lists the candidates and stops.
 
+Export writes only the expected files for each key type: `s-private.pem` (0600)
+and `s-public.pem` for gossip (plus `s-public.der`, made from `s-public.pem`), `hedera.key` (0600) and `hedera.crt` for gRPC TLS,
+and `admin.pub` for admin. Any other entry is logged and skipped; it stays only in
+the cluster secret, not in the backup. A secret that lacks one of its expected
+entries is refused.
+
 Export is idempotent: identical files are left untouched, and a file that holds
-different content is refused unless `--force` is passed.
+different content is refused unless `--overwrite` is passed.
 
 `--namespace` and `--node-id` are inherited from `consensus node`; `--node-id` is
 **required** here.
@@ -218,8 +272,8 @@ Validate that the selected key material is well-formed. Verify a folder with `--
 - private keys and certificates parse as enhanced PEM;
 - each certificate's public key matches its private key;
 - the gossip signing key is RSA-3072;
-- the admin public key is a valid Ed25519 (32-byte) or secp256k1 (33-byte
-  compressed) key. In a folder with no selector flag, `admin.pub` is checked only
+- the admin public key is a valid Ed25519 (32-byte) key. A secp256k1 key fails
+  this check. In a folder with no selector flag, `admin.pub` is checked only
   when it exists; the admin private key stays in your wallet and is never read.
 
 The command prints a per-key report and exits non-zero if any check fails.
@@ -235,13 +289,14 @@ sudo solo-provisioner consensus keys verify --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to validate | — |
+| `--keys-dir` | Node key folder to validate | `/opt/solo/weaver/consensus/keys` |
 | `--from-cluster` | Validate the in-cluster per-node secrets instead of a folder (requires `--node-id`) | `false` |
 | `--fingerprint` | With `--from-cluster`, pick the secret whose SHA-384 fingerprint starts with this (4+ hex characters); needs exactly one of `--gossip`/`--tls`/`--admin` | — |
 | `--secret-suffix` | With `--from-cluster`, pick the secrets imported with this suffix or date | — |
 | `--gossip` / `--tls` / `--admin` | Select which key types to check | all when none given |
 
-`--keys-dir` and `--from-cluster` are mutually exclusive; `--from-cluster` requires
+`--keys-dir` and `--from-cluster` are mutually exclusive; with neither, verify reads
+the default `--keys-dir`. `--from-cluster` requires
 the inherited `--namespace` and `--node-id`. In the cluster, each secret is checked
 against its name and fingerprint label (a renamed or edited secret fails), and when a
 node has several generations of a key type the failing line lists them so you can
@@ -285,12 +340,17 @@ sudo solo-provisioner consensus keys inspect --experimental --file ./keys/node0/
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Node key folder to inspect | — |
-| `--file` | Inspect a single certificate (PEM) or admin public key (hex) file | — |
+| `--keys-dir` | Node key folder to inspect | `/opt/solo/weaver/consensus/keys` |
+| `--file` | Inspect a single certificate (PEM) or admin public key (hex, named *.pub) file | — |
 | `--gossip` / `--tls` / `--admin` | Select which key types to show | all when none given |
 
-`--keys-dir` and `--file` are mutually exclusive. Inspect works on disk only, so
+`--keys-dir` and `--file` are mutually exclusive; with neither, inspect reads the
+default `--keys-dir`. Inspect works on disk only, so
 it never reads secrets from the cluster.
+
+With `--file`, a hex admin public key file must be named `*.pub` (for example
+`admin.pub`). A raw hex key with another name can be a private key, so inspect
+reports an error and does not print the key.
 
 ### `consensus keys init`
 
@@ -309,7 +369,7 @@ sudo solo-provisioner consensus keys init --experimental \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--keys-dir` | Directory for this node's generated key material (required); make it node-specific | — |
+| `--keys-dir` | Directory for this node's generated key material; make it node-specific | `/opt/solo/weaver/consensus/keys` |
 | `--identity` | Optional human-readable label recorded in the gossip certificate OU/SAN | — |
 | `--machine-id` | Override the gossip certificate CN; defaults to the host machine UUID (`/etc/machine-id`) | host machine UUID |
 | `--grpc-cn` | Common name (subject and issuer) of the gRPC TLS certificate | `localhost` |
@@ -317,7 +377,7 @@ sudo solo-provisioner consensus keys init --experimental \
 | `--grpc-dns` | Extra fully qualified DNS SAN for the gRPC TLS certificate, added to `localhost` (repeatable) | — |
 | `--grpc-ip` | Extra IP SAN for the gRPC TLS certificate, added to `127.0.0.1` and `::1` (repeatable) | — |
 | `--grpc-validity-days` | gRPC TLS certificate lifetime in days (1-36500) | 100 years |
-| `--force` | Overwrite a same-named secret whose content differs (for example one edited by hand) | `false` |
+| `--overwrite` | Replace existing key files in `--keys-dir` with new keys, and any same-named secret whose content differs. This gives the node a new network identity and a new gRPC certificate hash | `false` |
 | `--gossip` / `--tls` / `--admin` | Select which key types to create | gossip and gRPC, plus admin when `admin.pub` exists |
 
 `--namespace` and `--node-id` are inherited from `consensus keys`; `--node-id` is
@@ -325,6 +385,17 @@ sudo solo-provisioner consensus keys init --experimental \
 wallet and save its public key (hex) as `admin.pub` in `--keys-dir` before running
 `init`. Without that file, no admin secret is created and `init` says so; import it
 later with `keys import --admin`.
+
+Re-running `init` keeps the key files that already exist in `--keys-dir`. The
+root `--force`/`-y` flag (skip prompts) does not change this.
+
+> **Caution:** Do not use `--overwrite` on a node that is already in a network.
+> It generates new keys, so the node gets a new gossip identity and a new gRPC
+> certificate hash. The new keys get new secrets (the secret name carries the
+> key fingerprint); the old secrets stay in the cluster. When a node has more
+> than one generation of a key, `consensus node install` keeps the secrets of the
+> running node; for a new install, pick one with `--signing-secret` and
+> `--grpc-tls-secret`.
 
 ### Try it: end-to-end walkthrough
 

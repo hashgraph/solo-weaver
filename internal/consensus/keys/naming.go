@@ -224,7 +224,7 @@ func ResolveSecret(ctx context.Context, client SecretClient, namespace string, n
 
 	switch len(matches) {
 	case 0:
-		return nil, errorx.IllegalState.New("no %s key secret found for node%d in namespace %q%s; import one with `consensus keys import`",
+		return nil, ErrNoKeySecret.New("no %s key secret found for node%d in namespace %q%s; import one with `consensus keys import`",
 			t, nodeId, namespace, describeFilter(fp, opts.Suffix))
 	case 1:
 	default:

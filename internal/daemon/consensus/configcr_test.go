@@ -104,10 +104,10 @@ func TestConfigFileKinds_MatchModels(t *testing.T) {
 
 func TestScanConfigFiles_RecognisedRootAndIgnored(t *testing.T) {
 	root := t.TempDir()
-	// genesis-network.json is ignored (skipped), throttles is recognised, log4j2.xml
+	// genesis-network.json and node-admin-keys.json are ignored (skipped), throttles is recognised, log4j2.xml
 	// is a recognised package-root file.
 	writePackage(t, root,
-		map[string]string{"throttles.json": "{}", "genesis-network.json": "{}"},
+		map[string]string{"throttles.json": "{}", "genesis-network.json": "{}", "node-admin-keys.json": "{}"},
 		map[string]string{"log4j2.xml": "<Configuration/>"})
 
 	files, err := scanConfigFiles(root)
@@ -119,7 +119,7 @@ func TestScanConfigFiles_RecognisedRootAndIgnored(t *testing.T) {
 	}
 	assert.True(t, kinds["ThrottlesConfig"], "throttles.json recognised")
 	assert.True(t, kinds["Log4j2Config"], "log4j2.xml recognised at root")
-	assert.Len(t, files, 2, "genesis-network.json is skipped, not counted")
+	assert.Len(t, files, 2, "genesis-network.json and node-admin-keys.json are skipped, not counted")
 }
 
 func TestScanConfigFiles_UnrecognisedIsFatal(t *testing.T) {

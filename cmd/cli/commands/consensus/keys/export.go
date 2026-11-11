@@ -9,14 +9,15 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
 
 var (
-	flagExportKeysDir string
-	flagExportForce   bool
+	flagExportKeysDir   string
+	flagExportOverwrite bool
 
 	exportSelectors func() cnkeys.Selectors
 	exportResolve   func(cnkeys.Selectors) (cnkeys.ResolveOptions, error)
@@ -35,14 +36,14 @@ var (
 func init() {
 	exportSelectors = addSelectorFlags(exportCmd)
 	exportResolve = addResolveFlags(exportCmd)
-	exportCmd.Flags().StringVar(&flagExportKeysDir, "keys-dir", "", "Node key folder to export into (required)")
-	exportCmd.Flags().BoolVar(&flagExportForce, "force", false, "Overwrite existing files whose content differs (identical files are left as-is)")
+	exportCmd.Flags().StringVar(&flagExportKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Node key folder to export into")
+	exportCmd.Flags().BoolVar(&flagExportOverwrite, "overwrite", false, "Replace existing files whose content differs (identical files are left as-is)")
 }
 
 func runExport(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(flagExportKeysDir) == "" {
 		return errx.Decorate(
-			errorx.IllegalArgument.New("--keys-dir is required"),
+			errorx.IllegalArgument.New("--keys-dir must not be empty"),
 			reasons.InvalidArgument,
 			"pass --keys-dir <dir> to choose where the exported material is written")
 	}
@@ -75,7 +76,7 @@ func runExport(cmd *cobra.Command, _ []string) error {
 		OutDir:    flagExportKeysDir,
 		Selectors: exportSelectors(),
 		Resolve:   resolve,
-		Force:     flagExportForce,
+		Overwrite: flagExportOverwrite,
 	})
 	if err != nil {
 		return errx.Decorate(err, reasons.Internal,

@@ -12,6 +12,7 @@ import (
 
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ func runGenerateCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	flagKeysDir, flagIdentity, flagMachineID = "", "", ""
 	flagGossip, flagTLS = false, false
-	flagGenerateForce = false
+	flagGenerateOverwrite = false
 	resetGrpcFlags(t, generateCmd)
 
 	root := GetCmd()
@@ -47,9 +48,17 @@ func TestGenerateCmd_NodeIdFree(t *testing.T) {
 	assert.Contains(t, out, "gRPC cert hash (SHA-384):")
 }
 
-func TestGenerateCmd_RequiresKeysDir(t *testing.T) {
-	_, err := runGenerateCmd(t)
-	require.Error(t, err)
+func TestGenerateCmd_RejectsEmptyKeysDir(t *testing.T) {
+	_, err := runGenerateCmd(t, "--keys-dir", " ")
+	require.ErrorContains(t, err, "--keys-dir must not be empty")
+}
+
+func TestKeysDirDefault(t *testing.T) {
+	want := "/opt/solo/weaver/consensus/keys"
+	require.Equal(t, want, models.Paths().ConsensusKeysDir)
+	for _, c := range []*cobra.Command{generateCmd, initCmd, importCmd, exportCmd, verifyCmd, inspectCmd} {
+		assert.Equal(t, want, c.Flags().Lookup("keys-dir").DefValue, c.Name())
+	}
 }
 
 func TestGenerateCmd_SelectorSubset(t *testing.T) {
@@ -76,12 +85,12 @@ func TestGenerateCmd_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(first), string(again), "existing key must be preserved")
 
-	// --force regenerates (overwrites).
-	_, err = runGenerateCmd(t, "--keys-dir", dir, "--machine-id", "m", "--gossip", "--force")
+	// --overwrite regenerates.
+	_, err = runGenerateCmd(t, "--keys-dir", dir, "--machine-id", "m", "--gossip", "--overwrite")
 	require.NoError(t, err)
 	forced, err := os.ReadFile(filepath.Join(dir, cnkeys.FileGossipPrivate))
 	require.NoError(t, err)
-	assert.NotEqual(t, string(first), string(forced), "--force must regenerate")
+	assert.NotEqual(t, string(first), string(forced), "--overwrite must regenerate")
 }
 
 func TestGenerateCmd_DistinctPerRun(t *testing.T) {

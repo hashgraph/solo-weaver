@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 )
 
@@ -22,7 +23,7 @@ const (
 // tight permissions (0600 on private material).
 //
 // It does not write a combined artifacts file: the values an operator needs for
-// the DAB nodeCreate transaction are the gossip certificate s-public.pem plus
+// the DAB nodeCreate transaction are the gossip certificate (s-public.der) plus
 // the SHA-384 hash of the gRPC certificate, which the caller surfaces from the
 // key set (CertKeyPair.CertHashSHA384) rather than persisting redundantly. The
 // admin key is created in an external wallet and is never generated here.
@@ -40,6 +41,9 @@ func (ks *NodeKeySet) WriteToDir(dir string) error {
 			return err
 		}
 		if err := writeFile(dir, FileGossipCert, ks.Gossip.CertificatePEM(), publicPerm); err != nil {
+			return err
+		}
+		if err := writeFile(dir, FileGossipCertDER, ks.Gossip.Certificate.Raw, publicPerm); err != nil {
 			return err
 		}
 	}
@@ -60,15 +64,12 @@ func (ks *NodeKeySet) WriteToDir(dir string) error {
 	return nil
 }
 
-// writeFile writes payload to dir/name and enforces perm even if the file
-// pre-existed with looser bits (os.WriteFile only applies perm on creation).
+// writeFile atomically writes payload to dir/name with perm (temp file + rename),
+// so a pre-existing file never holds the new payload under its old mode.
 func writeFile(dir, name string, payload []byte, perm os.FileMode) error {
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, payload, perm); err != nil {
-		return errorx.ExternalError.Wrap(err, "write %q", path)
-	}
-	if err := os.Chmod(path, perm); err != nil {
-		return errorx.ExternalError.Wrap(err, "set permissions on %q", path)
+	if err := fsx.AtomicWriteFile(path, payload, perm); err != nil {
+		return errorx.Decorate(err, "write %q", path)
 	}
 	return nil
 }

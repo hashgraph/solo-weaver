@@ -78,15 +78,16 @@ func ConsensusNodeInputPrompts(flagNamespace, nodeIdTarget, flagAccountId, flagP
 		{
 			FlagName:       "account-id",
 			Title:          "Node Account ID",
-			Description:    "Hedera account ID for this node, e.g. 0.0.3",
-			Placeholder:    *flagAccountId,
+			Description:    "Hedera account ID for this node (shard.realm.num); leave empty for 0.0.(3 + node-id)",
+			Placeholder:    "0.0.(3 + node-id)",
 			EffectiveValue: *flagAccountId,
 			Target:         flagAccountId,
 			Validate: func(s string) error {
+				// Empty is applied as the default by the caller after the wizard.
 				if s == "" {
-					return errorx.IllegalArgument.New("account ID cannot be empty")
+					return nil
 				}
-				return nil
+				return models.ValidateConsensusAccountId(s)
 			},
 		},
 		{

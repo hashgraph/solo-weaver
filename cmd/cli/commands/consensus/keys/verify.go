@@ -7,6 +7,7 @@ import (
 
 	"github.com/automa-saga/errx"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -25,7 +26,7 @@ var (
 		Short: "Validate consensus node key material in a folder or in the cluster",
 		Long: "Check that the selected key material is well-formed: private keys and certificates parse, " +
 			"each certificate's public key matches its private key, the gossip key is RSA-3072, and the admin " +
-			"public key is a valid Ed25519 or secp256k1 key. Verify a folder with --keys-dir, or the in-cluster " +
+			"public key is a valid Ed25519 key. Verify a folder with --keys-dir, or the in-cluster " +
 			"secrets with --from-cluster --node-id N.\n\n" +
 			"With no selector flag, a folder's admin public key (admin.pub) is checked only when the file exists.",
 		RunE: runVerify,
@@ -35,7 +36,7 @@ var (
 func init() {
 	verifySelectors = addSelectorFlags(verifyCmd)
 	verifyResolve = addResolveFlags(verifyCmd)
-	verifyCmd.Flags().StringVar(&flagVerifyKeysDir, "keys-dir", "", "Node key folder to validate")
+	verifyCmd.Flags().StringVar(&flagVerifyKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Node key folder to validate")
 	verifyCmd.Flags().BoolVar(&flagVerifyFromCluster, "from-cluster", false, "Validate the in-cluster per-node secrets instead of a folder (requires --node-id)")
 	verifyCmd.MarkFlagsMutuallyExclusive("keys-dir", "from-cluster")
 }

@@ -18,6 +18,8 @@ type WeaverPaths struct {
 	DiagnosticsDir         string
 	StateDir               string
 	DaemonDir              string
+	ConsensusDir           string // $home/consensus
+	ConsensusKeysDir       string // $home/consensus/keys: default --keys-dir of `consensus keys`
 	DaemonSockPath         string
 	DaemonConfigPath       string
 	DaemonKubeconfigPath   string // /opt/solo/weaver/config/daemon.kubeconfig — legacy; prefer per-component paths
@@ -76,7 +78,10 @@ func NewWeaverPaths(home string) *WeaverPaths {
 		DiagnosticsDir: path.Join(home, "tmp", "diagnostics"),
 		StateDir:       path.Join(home, "state"),
 		DaemonDir:      path.Join(home, "daemon"),
+		ConsensusDir:   path.Join(home, "consensus"),
 	}
+
+	pp.ConsensusKeysDir = path.Join(pp.ConsensusDir, "keys")
 
 	pp.DaemonSockPath = path.Join(pp.DaemonDir, "daemon.sock")
 	pp.DaemonConfigPath = path.Join(pp.ConfigDir, "daemon.yaml")
