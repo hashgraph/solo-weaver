@@ -4,10 +4,14 @@
 // in the catalog files under pkg/software/catalog/, by downloading and
 // unpacking each version for every platform it lists.
 //
-// To add a version, write its block with URLs, algorithms and empty
-// checksums (checksum: ''), then run:
+// To add a version, write its block with URLs, algorithms and an empty
+// checksum for every platform, then run:
 //
 //	task host-checksums -- -write
+//
+// An empty checksum is written as:
+//
+//	checksum: ''
 //
 // By default only version blocks with an empty checksum are processed; -all
 // processes every block. Without -write nothing is changed. A non-empty value
@@ -179,6 +183,9 @@ func computeBlock(opts options, b *block) (map[key]string, error) {
 	for _, p := range platforms {
 		dir := filepath.Join(opts.workDir, b.component+"-"+b.version+"-"+p[0]+"-"+p[1])
 		sums, err := opts.compute(b.component, b.version, p[0], p[1], dir)
+		// Unpacked archives can be large (teleport is about 1 GB per platform)
+		// and the work dir is often a small tmpfs, so free it before the next one.
+		_ = os.RemoveAll(dir)
 		if err != nil {
 			return nil, errorx.ExternalError.Wrap(err, "%s %s %s/%s", b.component, b.version, p[0], p[1])
 		}

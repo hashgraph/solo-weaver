@@ -1,9 +1,13 @@
 # Host checksums
 
-Every host artifact version under `host:` in `pkg/software/catalog/host-*.yaml` lists a checksum per platform for each archive and binary, and one checksum for each config. They are checked when
-the file is downloaded, when an archive is unpacked, and again right before the provisioner
-runs an installed binary (`software.VerifyExecutables`). A binary that came out of an archive
-has no published checksum upstream, so its value has to be computed by unpacking the archive.
+Every host artifact version under `host:` in `pkg/software/catalog/host-*.yaml` lists a
+checksum per platform for each archive and each binary. Each config has one checksum, shared by
+every platform, and the tool requires every platform to produce the same value.
+
+Checksums are checked when the file is downloaded, when an archive is unpacked, and again right
+before the provisioner runs an installed binary (`software.VerifyExecutables`). A binary that
+came out of an archive has no published checksum upstream, so its value has to be computed by
+unpacking the archive.
 
 `task host-checksums` computes them.
 
@@ -86,6 +90,10 @@ task host-checksums -- -all -name helm
 
 `-all` downloads every listed version for every platform, which is several GB for the whole
 catalog. Narrow it with `-name` and `-version`.
+
+Downloads and unpacked files go under `$TMPDIR` (default `/tmp`), one platform at a time. A
+large artifact such as teleport needs about 1 GB there; if `/tmp` is a small tmpfs, set
+`TMPDIR` to a directory on disk.
 
 Source: `scripts/host-checksums/`. The download and hashing code is
 `software.ComputeChecksums` in `pkg/software/checksum_generator.go`.

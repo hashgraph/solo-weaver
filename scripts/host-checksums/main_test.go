@@ -71,11 +71,16 @@ host:
 // (unless perArchConfig), and records its calls.
 type fakeCompute struct {
 	calls         []string
+	dirs          []string
 	perArchConfig bool
 }
 
-func (f *fakeCompute) compute(name, version, goos, goarch, _ string) ([]software.ComputedChecksum, error) {
+func (f *fakeCompute) compute(name, version, goos, goarch, workDir string) ([]software.ComputedChecksum, error) {
 	f.calls = append(f.calls, name+" "+version+" "+goos+"/"+goarch)
+	f.dirs = append(f.dirs, workDir)
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return nil, err
+	}
 	switch name {
 	case "tool":
 		cfg := "svc"
@@ -149,6 +154,18 @@ func TestRun_WriteFillsEmptyChecksumsAndKeepsTheRest(t *testing.T) {
 	require.NoError(t, run(opts))
 	require.Empty(t, f.calls)
 	require.Equal(t, want, readHost(t, dir))
+}
+
+func TestRun_FreesEachPlatformWorkDir(t *testing.T) {
+	dir := writeCatalog(t, testHost)
+	f := &fakeCompute{}
+	opts, _ := testOptions(t, dir, f)
+
+	require.NoError(t, run(opts))
+	require.Len(t, f.dirs, 2)
+	for _, d := range f.dirs {
+		require.NoDirExists(t, d)
+	}
 }
 
 func TestRun_CheckOnlyWritesNothing(t *testing.T) {
