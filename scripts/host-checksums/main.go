@@ -5,7 +5,7 @@
 // unpacking each version for every platform it lists.
 //
 // To add a version, write its block with URLs, algorithms and empty
-// checksums (checksum: ”), then run:
+// checksums (checksum: ''), then run:
 //
 //	task host-checksums -- -write
 //
