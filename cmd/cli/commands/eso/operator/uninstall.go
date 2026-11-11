@@ -24,9 +24,17 @@ The command is idempotent: when the namespace holds no ESO, it exits cleanly wit
 a skip message. A different chart holding the "external-secrets" release name is
 left untouched, with a warning naming it.
 
-Warning: uninstalling ESO removes its cluster-scoped CRDs, which deletes every
-ExternalSecret and SecretStore resource in the cluster (and the Kubernetes Secrets
-they sync). Do not run this while other components still rely on synced secrets.
+The uninstall refuses, before changing anything, while ExternalSecrets,
+ClusterExternalSecrets, GeneratorStates or PushSecrets with deletionPolicy Delete
+exist anywhere in the cluster. ESO puts a finalizer on each that only its
+controller clears, and the chart removes the controller and the CRDs together,
+so uninstalling over them would leave the CRDs stuck deleting. Delete them first
+(eso secret delete for ExternalSecrets). --force and --non-interactive do not
+skip this check. A release left failed, pending or uninstalling whose objects are
+all already being deleted is uninstalled anyway; recover with install --force.
+
+When it runs, the uninstall removes ESO's cluster-scoped CRDs, which deletes every
+SecretStore and ClusterSecretStore in the cluster.
 
 Examples:
   # Uninstall ESO from the default namespace (external-secrets)

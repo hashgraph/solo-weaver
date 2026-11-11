@@ -20,6 +20,11 @@ Flags on this page work on every `solo-provisioner` command.
 > `teleport node uninstall` and `teleport cluster uninstall`: see
 > [Drift guard](../commands/README.md#drift-guard).
 
+> `eso operator uninstall` is the exception: `--force` and `--non-interactive` do not get it
+> past External Secrets Operator objects that still hold finalizers, because going ahead could
+> only leave a partial uninstall. See
+> [`eso operator uninstall`](../commands/alloy.md#eso-operator-uninstall).
+
 > `--profile` is **not** a global flag. It lives on the command stacks that need it —
 > `block node …` and `alloy cluster install`. `kube cluster install` does not take one.
 > See [Deployment profiles](deployment-profiles.md).

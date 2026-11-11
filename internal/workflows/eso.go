@@ -9,9 +9,10 @@ import (
 
 // NewESOInstallWorkflow creates a workflow to install the External Secrets
 // Operator (ESO) Helm chart at the catalog default version. An empty namespace
-// selects the catalog default.
-func NewESOInstallWorkflow(namespace string) *automa.WorkflowBuilder {
-	return steps.SetupExternalSecrets(namespace)
+// selects the catalog default. force lets the install recover from a partial
+// uninstall.
+func NewESOInstallWorkflow(namespace string, force bool) *automa.WorkflowBuilder {
+	return steps.SetupExternalSecrets(namespace, force)
 }
 
 // NewESOUninstallWorkflow creates a workflow to uninstall the External Secrets

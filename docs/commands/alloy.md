@@ -242,7 +242,8 @@ is skipped with a clear message.
 > * ESO already exists elsewhere in the cluster, in another namespace or under another release name;
 > * the release in the target namespace is left in a failed, pending or uninstalled state;
 > * the `external-secrets` release name in the target namespace belongs to a different chart.
-> * ESO CRDs already exist but no ESO Helm release does — ESO managed by another tool, or one whose release record was lost. Installing would take that ESO over, so the install stops and names the CRDs.
+> * ESO CRDs already exist but no ESO Helm release does — ESO managed by another tool, or one whose release record was lost. Installing would take that ESO over, so the install stops and names the CRDs. When every one of those CRDs is being deleted, a previous uninstall stopped partway: see [Recover from a partial uninstall](#recover-from-a-partial-uninstall).
+> * the ESO release exists but a CRD every install creates is missing, or one is still being deleted — a recovery from a partial uninstall that failed or was interrupted. The message names the CRDs and the command that finishes the recovery.
 >
 > Each message names the release and namespace that are in the way, and the command to clear it. For the
 > first two cases that is `sudo solo-provisioner eso operator uninstall --namespace <namespace>`,
@@ -262,6 +263,7 @@ sudo solo-provisioner eso operator install --namespace my-eso
 | Flag | What it does | Default |
 |---|---|---|
 | `--namespace` | Namespace for the operator | `external-secrets` |
+| `--force` / `-y` | Force override or skip prompts where applicable. Here it reinstalls over a [partial uninstall](#recover-from-a-partial-uninstall), and is refused while a Secret is still owned by an ExternalSecret or a PushSecret has `deletionPolicy: Delete` | `false` |
 | `--stop-on-error` | Stop at the first failing step (default) | — |
 | `--rollback-on-error` | Undo completed steps on failure | — |
 | `--continue-on-error` | Keep going past failures | — |
@@ -280,25 +282,29 @@ sudo solo-provisioner eso operator uninstall --namespace my-eso
 | `--rollback-on-error` | Undo completed steps on failure | — |
 | `--continue-on-error` | Keep going past failures | — |
 
-> **This deletes secrets across the whole cluster.** Uninstalling ESO removes its
-> cluster-scoped CRDs. When that completes, every `ExternalSecret` and `SecretStore` in the
-> cluster is deleted, and with them the Kubernetes Secrets they own. Do not run it while anything
-> still depends on a synced secret.
+> **The uninstall refuses while ESO objects hold finalizers.** ESO puts a cleanup finalizer on
+> every `ExternalSecret`, `ClusterExternalSecret` and `GeneratorState`, and on each `PushSecret`
+> with `deletionPolicy: Delete`; only the ESO controller removes it. The chart deletes the controller and the CRDs together, so an
+> uninstall over such objects would leave a **partial uninstall**: the Helm release gone, the
+> `ExternalSecret` CRD stuck `Terminating`, and a reinstall refused. So before changing anything
+> the uninstall lists those objects across the cluster, names up to ten of them, and stops.
+> `--force` and `--non-interactive` do not skip this check.
+>
+> 1. See what still uses them: `kubectl get externalsecrets.external-secrets.io -A`, and the
+>    other kinds the message names.
+> 2. Delete each `ExternalSecret` you no longer need with `eso secret delete`. That also deletes
+>    the Kubernetes Secret it synced. Delete the other kinds with `kubectl delete`.
+> 3. When none are left, run `eso operator uninstall` again.
+>
+> If the message marks objects as `deleting`, they are waiting for the controller. Check
+> `kubectl get pods -n <namespace>`: while it runs they clear within a minute. If the release is
+> not `deployed` and some objects are not yet deleting, there is no supported way yet to repair
+> it from the CLI; do not uninstall over them. When every object is already deleting, the
+> uninstall goes ahead on a `failed`, `pending` or `uninstalling` release, because those objects
+> go anyway: then [recover from the partial uninstall](#recover-from-a-partial-uninstall).
 
-> **Remove ExternalSecrets first, while ESO is healthy.** ESO puts a cleanup finalizer on each
-> `ExternalSecret`, and only the ESO controller removes it. The uninstall deletes the controller
-> and the CRDs together, so with ExternalSecrets still present it can time out after 5 minutes.
-> The Helm release record is gone by then, but the `ExternalSecret` CRD stays `Terminating` and
-> the synced Secrets remain; `eso operator install` refuses to run until that CRD is gone.
->
-> 1. List the ExternalSecrets and find the workloads that use their Secrets:
->    `kubectl get externalsecrets -A`
-> 2. Delete the ones you no longer need with `eso secret delete`, and wait until
->    `kubectl get externalsecrets -A` lists none.
-> 3. Then run `eso operator uninstall`.
->
-> Do not remove finalizers or delete the CRDs by hand to get past a stuck uninstall on a
-> production cluster. That skips ESO's cleanup and deletes every resource of those kinds.
+> **When it runs, the uninstall deletes every store.** Removing ESO's cluster-scoped CRDs
+> deletes every `SecretStore` and `ClusterSecretStore` in the cluster.
 
 The target is the ESO release **in `--namespace`**, found by chart name — so this clears an ESO
 installed under a different release name (a hand-run `helm install my-eso`, or a controller such
@@ -309,7 +315,79 @@ cannot see it. It never reaches outside the namespace you name.
 
 Idempotent: if that namespace holds no ESO, the uninstall is skipped and the command exits 0.
 That includes the case where a *different* chart holds the `external-secrets` release name — it
-is left untouched, with a warning naming it; remove that one with `helm uninstall`.
+is left untouched, with a warning naming it; remove that one with `helm uninstall`. If no ESO
+release exists but the `ExternalSecret` CRD is still being deleted, the run summary warns that a
+previous uninstall stopped partway.
+
+### Recover from a partial uninstall
+
+Uninstalls by earlier releases did not check for finalized objects, so a cluster can be left with
+no ESO release, the `externalsecrets.external-secrets.io` CRD stuck `Terminating`, its
+`ExternalSecret`s waiting on finalizers, and the synced Secrets still in place. Most other ESO
+objects are already gone, because their CRDs finished deleting. A `PushSecret` with
+`deletionPolicy: Delete` and the store it pushes to survive, and their CRDs stay `Terminating`
+too. `eso operator install` refuses in this state, names the CRDs, and points here.
+
+The way out is to bring a controller back so it clears the finalizers itself. That lets the
+`ExternalSecret`s finish deleting, and Kubernetes then deletes every Secret they still own, so
+detach the Secrets you need first.
+
+1. Confirm the state. `helm list -a -n external-secrets` shows no ESO release, and this prints
+   a time. If it shows the release as `uninstalling` or `failed` (an interrupted uninstall, or a
+   failed recovery), run `eso operator uninstall` first to remove the record.
+
+   ```bash
+   kubectl get crd externalsecrets.external-secrets.io -o jsonpath='{.metadata.deletionTimestamp}'
+   ```
+
+2. List the stuck `ExternalSecret`s. Each one's Secret has the name in its
+   `spec.target.name`, or the `ExternalSecret`'s own name when that is empty.
+
+   ```bash
+   kubectl get externalsecrets.external-secrets.io -A
+   ```
+
+3. Detach each Secret you need to keep. Its data stays as it is.
+
+   ```bash
+   kubectl patch secret <secret> -n <namespace> --type=json \
+     -p '[{"op":"remove","path":"/metadata/ownerReferences"}]'
+   ```
+
+   A `PushSecret` with `deletionPolicy: Delete` would delete its pushed secret in the remote
+   store once a controller is back, so set each one to `None` first. A `GeneratorState` has no
+   such setting: the controller cleans up what its generator created, and the install warns
+   which ones.
+
+   ```bash
+   kubectl get pushsecrets.external-secrets.io -A
+   kubectl patch pushsecrets.external-secrets.io <name> -n <namespace> --type=merge \
+     -p '{"spec":{"deletionPolicy":"None"}}'
+   ```
+
+4. Reinstall over the partial uninstall. The install refuses, naming each one, while any Secret
+   is still owned by an `ExternalSecret` or any `PushSecret` still has `deletionPolicy: Delete`.
+   It then waits up to 5 minutes for the old CRDs to finish deleting, and ends with an error
+   asking for a reinstall: the release has lost those CRDs.
+
+   ```bash
+   sudo solo-provisioner eso operator install --force
+   ```
+
+5. Reinstall to restore every CRD:
+
+   ```bash
+   sudo solo-provisioner eso operator uninstall
+   sudo solo-provisioner eso operator install
+   ```
+
+6. Recreate the stores that are gone, then each `ExternalSecret` with the same name, namespace and
+   target, for example with `eso secret create`. ESO takes the existing Secret back without changing its
+   data.
+
+Do not remove finalizers or delete the CRDs by hand to get past a partial uninstall. That skips
+ESO's cleanup, and on a production cluster deleting the CRDs deletes every resource of those
+kinds and the Secrets they own.
 
 The three error-handling flags are mutually exclusive and apply to both `eso operator
 install` and `eso operator uninstall`. See
