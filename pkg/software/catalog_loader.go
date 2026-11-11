@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"reflect"
 
 	"github.com/joomcode/errorx"
@@ -95,6 +96,12 @@ func loadCatalog(fsys fs.FS) (*InfrastructureCatalog, error) {
 		return nil, err
 	}
 	return &catalog, nil
+}
+
+// LoadCatalogDir loads and validates the catalog files in a directory on disk,
+// the way LoadInfrastructureCatalog loads the embedded ones.
+func LoadCatalogDir(dir string) (*InfrastructureCatalog, error) {
+	return loadCatalog(os.DirFS(dir))
 }
 
 // decodeStrict decodes data into out, rejecting keys out has no field for and
