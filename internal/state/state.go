@@ -499,6 +499,9 @@ type ClusterState struct {
 	// refresh of a reachable cluster fills it.
 	Releases map[string]HelmReleaseInfo `yaml:"releases,omitempty" json:"releases,omitempty"`
 	LastSync htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	// Unobserved is set by a refresh that could not read the live cluster, so
+	// its values are not a reading to record. Never written or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 // TeleportState represents the persisted state of Teleport agents.

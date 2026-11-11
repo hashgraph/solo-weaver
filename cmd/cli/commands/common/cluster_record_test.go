@@ -117,6 +117,33 @@ func TestRunRecordingCluster_UnreadableClusterIsNotPersisted(t *testing.T) {
 	require.True(t, entries[0].NotPersisted)
 }
 
+// A cluster the refresh could not read leaves the recorded cluster as it was,
+// and the run still records its entry.
+func TestRunRecordingCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
+	sm, dir := newRecordingManager(t)
+	st := sm.State()
+	st.ClusterState = state.ClusterState{Created: true, Releases: liveAlloy}
+	require.NoError(t, sm.Set(st).Commit(state.ActionHistory{}, state.ComponentCluster))
+
+	orig := newClusterChecker
+	t.Cleanup(func() { newClusterChecker = orig })
+	newClusterChecker = func(state.Manager) reality.Checker[state.ClusterState] {
+		return clusterFunc(func() (state.ClusterState, error) {
+			return state.ClusterState{Unobserved: true}, nil
+		})
+	}
+
+	_, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
+
+	require.NoError(t, err)
+	got := loadClusterRecord(t, dir)
+	require.True(t, got.Created)
+	require.Equal(t, liveAlloy, got.Releases)
+	entries, err := state.ReadActionHistory(dir)
+	require.NoError(t, err)
+	require.Equal(t, state.OutcomeSucceeded, entries[len(entries)-1].Outcome)
+}
+
 // A command that cannot take the cluster lock fails before its workflow runs
 // and records nothing.
 func TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked(t *testing.T) {

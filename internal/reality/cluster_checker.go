@@ -62,20 +62,22 @@ func NewLiveClusterChecker(sm state.Manager) Checker[state.ClusterState] {
 
 // RefreshState returns the live cluster. The chart releases are taken from Helm
 // only when the cluster answered and Helm listed its releases; otherwise the
-// recorded ones are kept, so a commit after an unobserved refresh never saves
-// them as gone.
+// recorded ones are kept. A cluster that could not be fully read is marked
+// Unobserved, and a writer then keeps the recorded cluster.
 func (c *clusterChecker) RefreshState(_ context.Context) (state.ClusterState, error) {
 	cs := state.NewClusterState()
 	cs.Releases = maps.Clone(c.sm.State().ClusterState.Releases)
 
 	if !c.probe().Observed() {
 		logx.As().Debug().Msg("Kubernetes cluster does not exist or is unreachable, returning empty ClusterState")
+		cs.Unobserved = true
 		return cs, nil
 	}
 
 	releases, err := c.listReleases()
 	if err != nil {
 		logx.As().Warn().Err(err).Msg("Failed to read the cluster chart releases; keeping the recorded ones")
+		cs.Unobserved = true
 	} else {
 		cs.Releases = releases
 	}
@@ -83,6 +85,7 @@ func (c *clusterChecker) RefreshState(_ context.Context) (state.ClusterState, er
 	clusterInfo, err := kube.RetrieveClusterInfo()
 	if err != nil {
 		logx.As().Error().Err(err).Msg("Failed to retrieve cluster info, returning empty ClusterState")
+		cs.Unobserved = true
 		return cs, nil
 	}
 
