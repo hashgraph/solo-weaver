@@ -12,6 +12,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -36,7 +37,8 @@ func NewGenesisHandler(base bll.BaseHandler[models.ConsensusNetworkInputs]) (*Ge
 // PrepareEffectiveInputs resolves the orbit name and the pre-built genesis
 // contents. A pre-built genesis is authoritative and skips the operator's
 // cluster roster discovery; an explicit --genesis-file overrides the deployment
-// package's genesis-network.json when both are provided.
+// package's genesis-network.json when both are provided. A pre-built genesis
+// must give every node its own admin key (see cnkeys.ValidateGenesisAdminKeys).
 func (h *GenesisHandler) PrepareEffectiveInputs(
 	_ models.Intent,
 	inputs models.UserInputs[models.ConsensusNetworkInputs],
@@ -47,9 +49,11 @@ func (h *GenesisHandler) PrepareEffectiveInputs(
 	// Namespace doubles as the Orbit name by convention.
 	custom.Orbit = custom.Namespace
 
+	var genesisPath string
 	switch {
 	case strings.TrimSpace(custom.GenesisFile) != "":
 		path := strings.TrimSpace(custom.GenesisFile)
+		genesisPath = path
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, errx.Decorate(
@@ -60,6 +64,7 @@ func (h *GenesisHandler) PrepareEffectiveInputs(
 		custom.GenesisNetworkJSON = string(data)
 	case strings.TrimSpace(custom.DeploymentPackageDir) != "":
 		path := filepath.Join(custom.DeploymentPackageDir, genesisNetworkFileName)
+		genesisPath = path
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, errx.Decorate(
@@ -70,7 +75,61 @@ func (h *GenesisHandler) PrepareEffectiveInputs(
 		custom.GenesisNetworkJSON = string(data)
 	}
 
+	keysPath, err := readNodeAdminKeys(custom)
+	if err != nil {
+		return nil, err
+	}
+
+	// Discovery mode has no genesis file; the operator checks the capsule keys there.
+	if custom.GenesisNetworkJSON != "" {
+		if err := cnkeys.ValidateGenesisAdminKeys(custom.GenesisNetworkJSON, custom.NodeAdminKeysJSON); err != nil {
+			hints := []string{fmt.Sprintf("Check the nodeMetadata entries and admin keys in %s", genesisPath)}
+			if keysPath != "" {
+				hints = append(hints, fmt.Sprintf("Check the node IDs and hex Ed25519 keys in %s", keysPath))
+			} else if strings.TrimSpace(custom.DeploymentPackageDir) != "" {
+				hints = append(hints, fmt.Sprintf("Or add %s with each node's hex Ed25519 admin key", filepath.Join(custom.DeploymentPackageDir, cnkeys.NodeAdminKeysPath)))
+			}
+			hints = append(hints, "Inspect a node's admin key with: solo-provisioner consensus keys inspect --experimental --file <admin.pub>")
+			return nil, errx.Decorate(err, reasons.InvalidArgument, hints...)
+		}
+	}
+
 	return &resolved, nil
+}
+
+// readNodeAdminKeys loads the package's node-admin-keys.json into custom and
+// returns its path. A missing file is not an error: genesis-network.json may hold the keys.
+func readNodeAdminKeys(custom *models.ConsensusNetworkInputs) (string, error) {
+	pkgDir := strings.TrimSpace(custom.DeploymentPackageDir)
+	if pkgDir == "" {
+		return "", nil
+	}
+	path := filepath.Join(pkgDir, cnkeys.NodeAdminKeysPath)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if os.IsPermission(err) {
+		return "", errx.Decorate(
+			errorx.ExternalError.Wrap(err, "reading %s", path),
+			reasons.PermissionDenied,
+			"Run with sudo, or check that the file is readable: ls -l "+path)
+	}
+	if err != nil {
+		return "", errx.Decorate(
+			errorx.ExternalError.Wrap(err, "reading %s", path),
+			reasons.InvalidArgument,
+			fmt.Sprintf("Ensure %s is a regular, readable file", path))
+	}
+	// The node ignores a file it cannot parse, so an empty file is an error, not "no file".
+	if strings.TrimSpace(string(data)) == "" {
+		return "", errx.Decorate(
+			errorx.IllegalFormat.New("%s is empty", path),
+			reasons.InvalidArgument,
+			fmt.Sprintf("Add each node's hex Ed25519 admin key to %s, e.g. {\"0\": \"<64 hex chars>\"}", path))
+	}
+	custom.NodeAdminKeysJSON = string(data)
+	return path, nil
 }
 
 // BuildWorkflow constructs the genesis workflow from resolved inputs. When
