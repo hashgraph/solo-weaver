@@ -90,8 +90,8 @@ func chartProfileFileName(preset string) string {
 
 // presetLabels maps canonical preset IDs to human-readable labels for TUI display.
 var presetLabels = map[string]string{
-	PresetLFH:    "Local Full History  (blocks stored on local disk)",
-	PresetRFH:    "Remote Full History  (blocks stored in cloud storage)",
+	PresetLFH:    "Tier 1 — Local Full History  (blocks stored on local disk)",
+	PresetRFH:    "Tier 1 — Remote Full History  (blocks stored in cloud storage)",
 	PresetCustom: "Custom  (type a comma- or space-separated plugin list)",
 	PresetNone:   "Use Values File / Chart Default  (no override)",
 }
