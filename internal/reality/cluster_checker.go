@@ -295,11 +295,30 @@ func (r kubeClusterReader) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	}
 	nodes := make([]NodeInfo, 0, len(list.Items))
 	for _, item := range list.Items {
-		kubelet, _, _ := unstructured.NestedString(item.Object, "status", "nodeInfo", "kubeletVersion")
-		runtime, _, _ := unstructured.NestedString(item.Object, "status", "nodeInfo", "containerRuntimeVersion")
+		kubelet, err := nodeInfoField(item.Object, "kubeletVersion")
+		if err != nil {
+			return nil, errorx.IllegalFormat.Wrap(err, "node %s", item.GetName())
+		}
+		runtime, err := nodeInfoField(item.Object, "containerRuntimeVersion")
+		if err != nil {
+			return nil, errorx.IllegalFormat.Wrap(err, "node %s", item.GetName())
+		}
 		nodes = append(nodes, NodeInfo{Name: item.GetName(), KubeletVersion: kubelet, ContainerRuntimeVersion: runtime})
 	}
 	return nodes, nil
+}
+
+// nodeInfoField reads status.nodeInfo.<field>, failing when it is missing or
+// empty so the caller keeps the recorded value.
+func nodeInfoField(obj map[string]any, field string) (string, error) {
+	v, found, err := unstructured.NestedString(obj, "status", "nodeInfo", field)
+	if err != nil {
+		return "", err
+	}
+	if !found || v == "" {
+		return "", errorx.IllegalFormat.New("status.nodeInfo.%s is not set", field)
+	}
+	return v, nil
 }
 
 func (r kubeClusterReader) CiliumAgentVersion(ctx context.Context) (string, bool, error) {

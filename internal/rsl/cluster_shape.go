@@ -70,7 +70,7 @@ type CiliumShape struct {
 type ChartShape struct {
 	Live      string // chart version, empty when Missing
 	ChartName string
-	Status    release.Status
+	Status    release.Status // kept when Missing, for an uninstalled release
 	Missing   bool
 	Identity  Identity // empty when Missing
 	Reason    string   // why the identity is not current
@@ -108,8 +108,8 @@ func ResolveClusterShape(live state.State, recorded *state.State, managed []real
 	}
 
 	for _, m := range managed {
-		liveRel, inLive := cs.Releases[m.Key]
-		recRel, inRec := rec[m.Key]
+		liveRel, inLive := present(cs.Releases, m.Key)
+		recRel, inRec := present(rec, m.Key)
 		changed := recorded != nil && (inLive != inRec ||
 			liveRel.ChartVersion != recRel.ChartVersion || liveRel.ChartName != recRel.ChartName)
 
@@ -124,16 +124,25 @@ func ResolveClusterShape(live state.State, recorded *state.State, managed []real
 			continue
 		}
 
-		chart := ChartShape{Recorded: recRel.ChartVersion, Changed: changed, Missing: !inLive}
+		chart := ChartShape{Recorded: recRel.ChartVersion, Changed: changed, Missing: !inLive, Status: cs.Releases[m.Key].Status}
 		if inLive {
 			chart.Live = liveRel.ChartVersion
 			chart.ChartName = liveRel.ChartName
-			chart.Status = liveRel.Status
 			chart.Identity, chart.Reason = identityOf(m, liveRel)
 		}
 		shape.Charts[m.Key] = chart
 	}
 	return shape
+}
+
+// present returns the release under key unless it is absent: Helm keeps an
+// uninstalled release's record, chart version included.
+func present(releases map[string]state.HelmReleaseInfo, key string) (state.HelmReleaseInfo, bool) {
+	rel, ok := releases[key]
+	if !ok || rel.Absent() {
+		return state.HelmReleaseInfo{}, false
+	}
+	return rel, true
 }
 
 // identityOf says whether rel runs the chart m manages.
