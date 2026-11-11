@@ -655,7 +655,8 @@ func BlockNodeReconfigureInputPrompts(
 }
 
 // AddPluginPresetPrompts appends two plugin wizard pages: a preset-select page
-// offering the chart-backed presets (tier1-lfh/tier1-rfh), "custom", and "no override";
+// offering the chart-backed presets (lfh/rfh; tier1-* are accepted as legacy aliases),
+// "custom", and "no override";
 // and a conditional free-text page (shown via huh.Group.WithHideFunc only when Custom is
 // selected) where the operator types a comma-/space-separated plugin list. There is no
 // enumerated multi-select — community plugins are unknown to weaver. The chart-backed

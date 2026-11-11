@@ -292,9 +292,18 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" &&
 		!bnpkg.ValuesFileDefinesPlugins(validatedValuesFile) {
 		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
-			if bnpkg.IsChartBackedPreset(stateDefaults.BlockNode.PluginPreset) {
+			storedPreset := stateDefaults.BlockNode.PluginPreset
+			switch {
+			case bnpkg.IsChartBackedPreset(storedPreset):
 				// Canonicalize in case the stored value predates the lfh/rfh rename.
-				pluginPreset = bnpkg.CanonicalPreset(stateDefaults.BlockNode.PluginPreset)
+				pluginPreset = bnpkg.CanonicalPreset(storedPreset)
+			case storedPreset == bnpkg.PresetCustom && stateDefaults.BlockNode.PluginList != "":
+				// Restore the stored custom list so a scripted upgrade keeps the operator's
+				// bespoke plugins instead of resolving to the chart default (which would
+				// silently drop them — the deploy-time resolver now sets the default
+				// explicitly, overriding Helm --reuse-values).
+				pluginPreset = bnpkg.PresetCustom
+				pluginList = stateDefaults.BlockNode.PluginList
 			}
 		}
 	}
