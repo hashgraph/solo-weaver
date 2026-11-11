@@ -19,17 +19,31 @@ import (
 // Resolution precedence (first match wins) is implemented in resolvePluginList:
 //  1. --plugins (explicit list) — use it, no chart pull.
 //  2. --values file that defines plugins.names — use it, no chart pull.
-//  3. --plugin-preset=tier1-lfh|tier1-rfh (incl. the default) — pull the chart and
-//     read plugin-profile-<profile>.yaml.
-//  4. --plugin-preset=none with no --values names — omit plugins.names; the chart's
-//     own default applies.
+//  3. --plugin-preset=lfh|rfh (incl. the default) — pull the chart and read
+//     plugin-profile-<profile>.yaml.
+//  4. --plugin-preset=none with no --values names — read the chart's own values.yaml
+//     default plugins.names.
+//
+// Preset values are the chart's own profile names (lfh, rfh), matching the block-node
+// chart's plugin-profile-<name>.yaml and the forthcoming chart plugins.profile selector.
+// The legacy tier1-lfh / tier1-rfh values are accepted as aliases for backward
+// compatibility (see presetAliases / CanonicalPreset); callers canonicalize at the
+// boundary so the rest of the code — and the hardware sizer — only sees canonical names.
 const (
-	// PresetTier1LFH selects Local Full History storage (blocks stored on disk).
+	// PresetLFH selects Local Full History storage (blocks stored on disk).
 	// Resolves against the chart's values-overrides/plugin-profile-lfh.yaml.
+	PresetLFH = "lfh"
+
+	// PresetRFH selects Remote Full History storage (blocks stored in cloud storage).
+	// Resolves against the chart's values-overrides/plugin-profile-rfh.yaml.
+	PresetRFH = "rfh"
+
+	// PresetTier1LFH is the deprecated alias for PresetLFH, accepted for backward
+	// compatibility and canonicalized to "lfh".
 	PresetTier1LFH = "tier1-lfh"
 
-	// PresetTier1RFH selects Remote Full History storage (blocks stored in cloud storage).
-	// Resolves against the chart's values-overrides/plugin-profile-rfh.yaml.
+	// PresetTier1RFH is the deprecated alias for PresetRFH, accepted for backward
+	// compatibility and canonicalized to "rfh".
 	PresetTier1RFH = "tier1-rfh"
 
 	// PresetCustom indicates the operator supplied an explicit plugin list, either via
@@ -39,30 +53,53 @@ const (
 
 	// PresetNone means "do not override": the plugin list is left to the operator's
 	// --values file (if it sets plugins.names) or the chart's built-in default.
-	// It resolves to an empty plugin list and triggers no chart pull.
 	PresetNone = "none"
 )
 
-// chartProfileForPreset maps a chart-backed preset to the override filename (under
-// the chart's values-overrides/ directory) that holds its canonical plugins.names.
-// Presets absent from this map (custom, none) are not resolved from the chart.
-var chartProfileForPreset = map[string]string{
-	PresetTier1LFH: "plugin-profile-lfh.yaml",
-	PresetTier1RFH: "plugin-profile-rfh.yaml",
+// presetAliases maps deprecated preset values to their canonical chart profile name.
+var presetAliases = map[string]string{
+	PresetTier1LFH: PresetLFH,
+	PresetTier1RFH: PresetRFH,
 }
 
-// presetLabels maps preset IDs to human-readable labels for TUI display.
+// CanonicalPreset returns the canonical preset value for presetID, resolving a legacy
+// tier1-* alias to its chart profile name (lfh/rfh) and leaving every other value
+// (lfh, rfh, custom, none, "") unchanged. Apply it at input boundaries so the rest of
+// the code and the hardware sizer only deal with canonical names.
+func CanonicalPreset(presetID string) string {
+	if canonical, ok := presetAliases[presetID]; ok {
+		return canonical
+	}
+	return presetID
+}
+
+// chartProfilePrefix / chartProfileSuffix bracket the override filename for a preset:
+// a chart-backed preset <name> resolves from values-overrides/plugin-profile-<name>.yaml.
+// Deriving the filename (rather than keeping a lookup table) means any plugin profile the
+// block-node chart ships is selectable by name with no solo-provisioner change — validity
+// is checked against the pulled chart at resolve time.
+const (
+	chartProfilePrefix = "plugin-profile-"
+	chartProfileSuffix = ".yaml"
+)
+
+// chartProfileFileName returns the override filename for a canonical chart-backed preset.
+func chartProfileFileName(preset string) string {
+	return chartProfilePrefix + preset + chartProfileSuffix
+}
+
+// presetLabels maps canonical preset IDs to human-readable labels for TUI display.
 var presetLabels = map[string]string{
-	PresetTier1LFH: "Tier 1 — Local Full History  (blocks stored on local disk)",
-	PresetTier1RFH: "Tier 1 — Remote Full History  (blocks stored in cloud storage)",
-	PresetCustom:   "Custom  (type a comma- or space-separated plugin list)",
-	PresetNone:     "Use Values File / Chart Default  (no override)",
+	PresetLFH:    "Local Full History  (blocks stored on local disk)",
+	PresetRFH:    "Remote Full History  (blocks stored in cloud storage)",
+	PresetCustom: "Custom  (type a comma- or space-separated plugin list)",
+	PresetNone:   "Use Values File / Chart Default  (no override)",
 }
 
 // orderedPresets is the display order for the TUI select prompt. Selecting Custom
 // opens a free-text prompt for the plugin names (there is no enumerated multi-select,
 // since community plugins are not known to weaver).
-var orderedPresets = []string{PresetTier1LFH, PresetTier1RFH, PresetCustom, PresetNone}
+var orderedPresets = []string{PresetLFH, PresetRFH, PresetCustom, PresetNone}
 
 // NormalizePluginList accepts a plugin list that is comma- or space-separated (or a
 // mix) and returns a clean, comma-separated list: entries are trimmed and empty
@@ -82,18 +119,25 @@ func AvailablePresets() []string {
 	return result
 }
 
-// PresetLabel returns the human-readable TUI label for a preset ID,
-// or the preset ID itself when no label is registered.
+// PresetLabel returns the human-readable TUI label for a preset ID (resolving a
+// legacy alias first), or the preset ID itself when no label is registered.
 func PresetLabel(presetID string) string {
-	if label, ok := presetLabels[presetID]; ok {
+	if label, ok := presetLabels[CanonicalPreset(presetID)]; ok {
 		return label
 	}
 	return presetID
 }
 
-// IsKnownPreset returns true when presetID is a recognised chart-backed preset
-// (one weaver resolves from the chart's values-overrides). custom and none are not.
-func IsKnownPreset(presetID string) bool {
-	_, ok := chartProfileForPreset[presetID]
-	return ok
+// IsChartBackedPreset reports whether presetID selects a chart plugin profile — i.e. it
+// is resolved at deploy time from values-overrides/plugin-profile-<name>.yaml — rather
+// than custom, none, or an unset value. Any such name qualifies (including ones this
+// binary has never heard of); whether the chart actually ships that profile is validated
+// at resolve time, so a new BN profile needs no change here.
+func IsChartBackedPreset(presetID string) bool {
+	switch CanonicalPreset(presetID) {
+	case "", PresetCustom, PresetNone:
+		return false
+	default:
+		return true
+	}
 }

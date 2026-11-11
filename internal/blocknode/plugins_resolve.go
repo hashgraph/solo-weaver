@@ -5,6 +5,7 @@ package blocknode
 import (
 	"context"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/automa-saga/errx"
@@ -55,15 +56,18 @@ func (m *Manager) resolvePluginList(ctx context.Context, valuesFile string) erro
 		return nil
 	}
 
-	// (3) A chart-backed preset resolves from the chart's profile override.
-	if profileFile, ok := chartProfileForPreset[m.blockNodeInputs.PluginPreset]; ok {
+	// (3) A chart-backed preset resolves from the chart's profile override, whose filename
+	// is derived from the (canonical) preset name — so any profile the chart ships works
+	// by name, and a tier1-* alias resolves to its canonical lfh/rfh name.
+	if preset := CanonicalPreset(m.blockNodeInputs.PluginPreset); IsChartBackedPreset(preset) {
+		profileFile := chartProfileFileName(preset)
 		names, err := m.pluginNamesFromChartProfile(ctx, profileFile)
 		if err != nil {
 			return err
 		}
 		m.blockNodeInputs.PluginList = names
 		logx.As().Info().
-			Str("preset", m.blockNodeInputs.PluginPreset).
+			Str("preset", preset).
 			Str("profile", profileFile).
 			Str("chartVersion", m.blockNodeInputs.ChartVersion).
 			Str("plugins_names", names).
@@ -193,7 +197,12 @@ func (m *Manager) pluginNamesFromChartProfile(ctx context.Context, profileFile s
 	}
 
 	wantName := path.Join(chartProfilesSubDir, profileFile)
+	var available []string
 	for _, f := range ch.Files {
+		// Collect the profiles the chart actually ships, for a helpful error on a miss.
+		if name, ok := profileNameFromFile(f.Name); ok {
+			available = append(available, name)
+		}
 		if f.Name != wantName {
 			continue
 		}
@@ -212,12 +221,26 @@ func (m *Manager) pluginNamesFromChartProfile(ctx context.Context, profileFile s
 		return names, nil
 	}
 
+	// The preset's profile file is not in this chart version: treat it as an invalid
+	// --plugin-preset and list the profiles the chart does ship.
+	sort.Strings(available)
+	wantPreset := strings.TrimSuffix(strings.TrimPrefix(profileFile, chartProfilePrefix), chartProfileSuffix)
 	return "", errx.Decorate(
-		errorx.IllegalState.New("block-node chart %q version %q does not contain %q",
-			m.blockNodeInputs.Chart, m.blockNodeInputs.ChartVersion, wantName),
-		reasons.FileMissing,
-		"The chart version may not ship this plugin profile; choose a different --plugin-preset or pass an explicit --plugins list.",
+		errorx.IllegalArgument.New("block-node chart %q version %q has no plugin profile %q (available: %s)",
+			m.blockNodeInputs.Chart, m.blockNodeInputs.ChartVersion, wantPreset, strings.Join(available, ", ")),
+		reasons.InvalidArgument,
+		"Pass a valid --plugin-preset (one of the available profiles), or an explicit --plugins list.",
 	)
+}
+
+// profileNameFromFile returns the preset name for a values-overrides/plugin-profile-*.yaml
+// file path, and false for any other file.
+func profileNameFromFile(filePath string) (string, bool) {
+	prefix := path.Join(chartProfilesSubDir, chartProfilePrefix)
+	if !strings.HasPrefix(filePath, prefix) || !strings.HasSuffix(filePath, chartProfileSuffix) {
+		return "", false
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(filePath, prefix), chartProfileSuffix), true
 }
 
 // pluginNamesFromProfileYAML extracts the trimmed plugins.names string from a

@@ -40,7 +40,16 @@ func writeFixtureChart(t *testing.T, version string, files map[string]string) st
 
 func TestAvailablePresets(t *testing.T) {
 	got := AvailablePresets()
-	assert.Equal(t, []string{PresetTier1LFH, PresetTier1RFH, PresetCustom, PresetNone}, got)
+	assert.Equal(t, []string{PresetLFH, PresetRFH, PresetCustom, PresetNone}, got)
+}
+
+func TestCanonicalPreset(t *testing.T) {
+	assert.Equal(t, PresetLFH, CanonicalPreset(PresetTier1LFH), "tier1-lfh alias -> lfh")
+	assert.Equal(t, PresetRFH, CanonicalPreset(PresetTier1RFH), "tier1-rfh alias -> rfh")
+	// Canonical and non-alias values pass through unchanged.
+	for _, p := range []string{PresetLFH, PresetRFH, PresetCustom, PresetNone, "", "bogus"} {
+		assert.Equal(t, p, CanonicalPreset(p))
+	}
 }
 
 func TestNormalizePluginList(t *testing.T) {
@@ -59,25 +68,27 @@ func TestNormalizePluginList(t *testing.T) {
 	}
 }
 
-func TestIsKnownPreset(t *testing.T) {
-	assert.True(t, IsKnownPreset(PresetTier1LFH))
-	assert.True(t, IsKnownPreset(PresetTier1RFH))
-	assert.False(t, IsKnownPreset(PresetCustom), "custom is not chart-resolved")
-	assert.False(t, IsKnownPreset(PresetNone), "none is not chart-resolved")
-	assert.False(t, IsKnownPreset("bogus"))
+func TestIsChartBackedPreset(t *testing.T) {
+	assert.True(t, IsChartBackedPreset(PresetLFH))
+	assert.True(t, IsChartBackedPreset(PresetRFH))
+	assert.True(t, IsChartBackedPreset(PresetTier1LFH), "legacy alias is chart-backed")
+	assert.True(t, IsChartBackedPreset(PresetTier1RFH), "legacy alias is chart-backed")
+	// Any profile name is chart-backed; the chart validates existence at resolve time.
+	assert.True(t, IsChartBackedPreset("archive"), "unknown-to-this-binary profiles are still chart-backed")
+	assert.False(t, IsChartBackedPreset(PresetCustom), "custom is not chart-resolved")
+	assert.False(t, IsChartBackedPreset(PresetNone), "none is not chart-resolved")
+	assert.False(t, IsChartBackedPreset(""), "empty is not chart-resolved")
 }
 
-func TestChartProfileForPreset(t *testing.T) {
-	assert.Equal(t, "plugin-profile-lfh.yaml", chartProfileForPreset[PresetTier1LFH])
-	assert.Equal(t, "plugin-profile-rfh.yaml", chartProfileForPreset[PresetTier1RFH])
-	_, ok := chartProfileForPreset[PresetNone]
-	assert.False(t, ok)
-	_, ok = chartProfileForPreset[PresetCustom]
-	assert.False(t, ok)
+func TestChartProfileFileName(t *testing.T) {
+	assert.Equal(t, "plugin-profile-lfh.yaml", chartProfileFileName(PresetLFH))
+	assert.Equal(t, "plugin-profile-rfh.yaml", chartProfileFileName(PresetRFH))
+	assert.Equal(t, "plugin-profile-archive.yaml", chartProfileFileName("archive"))
 }
 
 func TestPresetLabel(t *testing.T) {
-	assert.Contains(t, PresetLabel(PresetTier1LFH), "Local Full History")
+	assert.Contains(t, PresetLabel(PresetLFH), "Local Full History")
+	assert.Contains(t, PresetLabel(PresetTier1LFH), "Local Full History", "alias resolves to the canonical label")
 	assert.Equal(t, "unknown-preset", PresetLabel("unknown-preset"), "unknown IDs echo back")
 }
 
@@ -182,8 +193,13 @@ func TestResolvePluginList_PresetReadsChartProfile(t *testing.T) {
 		body     string
 		wantList string
 	}{
+		{PresetLFH, "values-overrides/plugin-profile-lfh.yaml", lfhProfileBody, "health,facility-app-state,stream-publisher"},
 		{PresetTier1LFH, "values-overrides/plugin-profile-lfh.yaml", lfhProfileBody, "health,facility-app-state,stream-publisher"},
+		{PresetRFH, "values-overrides/plugin-profile-rfh.yaml", rfhProfileBody, "health,facility-app-state,cloud-storage-archive"},
 		{PresetTier1RFH, "values-overrides/plugin-profile-rfh.yaml", rfhProfileBody, "health,facility-app-state,cloud-storage-archive"},
+		// Zero-touch: a profile name this binary has no const for still resolves,
+		// because the filename is derived and validated against the chart.
+		{"archive", "values-overrides/plugin-profile-archive.yaml", "plugins:\n  names: \"backfill,cloud-storage-archive\"\n", "backfill,cloud-storage-archive"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.preset, func(t *testing.T) {
@@ -217,19 +233,24 @@ func TestResolvePluginList_PullError(t *testing.T) {
 	assert.Empty(t, m.blockNodeInputs.PluginList)
 }
 
-func TestResolvePluginList_MissingProfileInChart(t *testing.T) {
-	// A chart that ships no lfh profile file.
+func TestResolvePluginList_UnknownPresetListsAvailable(t *testing.T) {
+	// A chart that ships rfh + minimal but not the requested profile.
 	tgz := writeFixtureChart(t, "0.46.0", map[string]string{
-		"values-overrides/plugin-profile-rfh.yaml": rfhProfileBody,
+		"values-overrides/plugin-profile-rfh.yaml":     rfhProfileBody,
+		"values-overrides/plugin-profile-minimal.yaml": "plugins:\n  names: \"health\"\n",
 	})
 	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
 		Chart:        "oci://example/block-node-server",
 		ChartVersion: "0.46.0",
-		PluginPreset: PresetTier1LFH,
+		PluginPreset: "bogus",
 	})
 	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
 
 	err := m.resolvePluginList(context.Background(), "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "plugin-profile-lfh.yaml")
+	// The error names the bad preset and lists the profiles the chart does ship.
+	assert.Contains(t, err.Error(), "bogus")
+	assert.Contains(t, err.Error(), "minimal")
+	assert.Contains(t, err.Error(), "rfh")
+	assert.Empty(t, m.blockNodeInputs.PluginList)
 }

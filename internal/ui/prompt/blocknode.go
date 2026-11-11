@@ -702,7 +702,7 @@ func AddPluginPresetPrompts(
 	}
 
 	// ── Page: preset selection ─────────────────────────────────────────────────
-	effectivePreset := resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetTier1LFH)
+	effectivePreset := blocknode.CanonicalPreset(resolveEffective(defaults.BlockNode.PluginPreset, "", blocknode.PresetLFH))
 	// Smart default: when the operator's --values file defines plugins.names, pre-select
 	// the "no override" option so their file wins unless they actively pick a preset.
 	// This overrides the tier1-lfh/state default (and is sticky when state already saved

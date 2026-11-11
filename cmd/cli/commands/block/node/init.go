@@ -274,7 +274,10 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	// time (blocknode.resolvePluginList); here we only settle which preset or
 	// explicit list applies.
 	// Precedence: --plugins (explicit list) overrides --plugin-preset.
-	pluginPreset := flagPluginPreset
+	// Canonicalize the preset at the boundary so a legacy tier1-lfh/tier1-rfh value
+	// resolves to the chart profile name (lfh/rfh) everywhere downstream, including
+	// what gets persisted to state and passed to the hardware sizer.
+	pluginPreset := bnpkg.CanonicalPreset(flagPluginPreset)
 	pluginList := flagPlugins
 	if f := cmd.Flag("plugins"); f != nil && f.Changed {
 		if err := models.ValidatePluginList(flagPlugins); err != nil {
@@ -289,8 +292,9 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 	if cmd.Name() == "upgrade" && pluginPreset == "" && pluginList == "" &&
 		!bnpkg.ValuesFileDefinesPlugins(validatedValuesFile) {
 		if stateDefaults, defErr := state.ReadPromptDefaultsFromDisk(); defErr == nil {
-			if bnpkg.IsKnownPreset(stateDefaults.BlockNode.PluginPreset) {
-				pluginPreset = stateDefaults.BlockNode.PluginPreset
+			if bnpkg.IsChartBackedPreset(stateDefaults.BlockNode.PluginPreset) {
+				// Canonicalize in case the stored value predates the lfh/rfh rename.
+				pluginPreset = bnpkg.CanonicalPreset(stateDefaults.BlockNode.PluginPreset)
 			}
 		}
 	}

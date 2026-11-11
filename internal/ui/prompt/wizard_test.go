@@ -300,7 +300,7 @@ func TestAddPluginPresetPrompts_SmartDefaultsToNoneWhenValuesFileDefinesPlugins(
 	}
 }
 
-func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T) {
+func TestAddPluginPresetPrompts_DefaultsToLFHWhenNoValuesFile(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
 
@@ -308,8 +308,8 @@ func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T)
 	w := NewWizard()
 	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
 
-	if preset != blocknode.PresetTier1LFH {
-		t.Fatalf("expected the default tier1-lfh preset when no --values file is given, got %q", preset)
+	if preset != blocknode.PresetLFH {
+		t.Fatalf("expected the default lfh preset when no --values file is given, got %q", preset)
 	}
 }
 
