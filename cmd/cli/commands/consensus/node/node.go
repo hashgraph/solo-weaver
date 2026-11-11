@@ -22,6 +22,7 @@ var (
 	flagDeploymentPkgDir  string
 	flagGrpcTlsSecret     string
 	flagSigningSecret     string
+	flagAdminKeySecret    string
 	flagImagePullSecret   []string
 	flagRegistryStrategy  string
 	flagProfile           string

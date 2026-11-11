@@ -93,6 +93,20 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		}
 	}
 
+	// Find the key secrets the operator did not name, by their labels.
+	ctx, cancel := lookupContext()
+	defer cancel()
+	cluster, err := newKeyCluster()
+	if err != nil {
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "cannot connect to the Kubernetes cluster"),
+			reasons.PreconditionNotMet,
+			"Verify your kubeconfig and that 'kubectl get nodes' works")
+	}
+	if err := resolveKeySecrets(ctx, cluster, custom); err != nil {
+		return nil, err
+	}
+
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
 
@@ -308,21 +322,22 @@ func patchConsensusNodeState() bll.StateCallback[models.ConsensusNodeInputs] {
 		managedSpec := buildConsensusNodeManagedSpec(ins)
 
 		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
-			Namespace:     ins.Namespace,
-			OrbitName:     ins.OrbitName,
-			NodeId:        ins.NodeId,
-			AccountId:     ins.AccountId,
-			Weight:        ins.Weight,
-			ImageRepo:     ins.ConsensusImageRepo,
-			ImageTag:      ins.ConsensusImageTag,
-			LedgerId:      ins.LedgerId,
-			ChainId:       ins.ChainId,
-			DeploymentPkg: ins.DeploymentPackageDir,
-			GrpcTlsSecret: ins.GrpcTlsSecret,
-			SigningSecret: ins.SigningSecret,
-			ConfigHashes:  configHashes,
-			ManagedSpec:   managedSpec,
-			LastSync:      now,
+			Namespace:      ins.Namespace,
+			OrbitName:      ins.OrbitName,
+			NodeId:         ins.NodeId,
+			AccountId:      ins.AccountId,
+			Weight:         ins.Weight,
+			ImageRepo:      ins.ConsensusImageRepo,
+			ImageTag:       ins.ConsensusImageTag,
+			LedgerId:       ins.LedgerId,
+			ChainId:        ins.ChainId,
+			DeploymentPkg:  ins.DeploymentPackageDir,
+			GrpcTlsSecret:  ins.GrpcTlsSecret,
+			SigningSecret:  ins.SigningSecret,
+			AdminKeySecret: ins.AdminKeySecret,
+			ConfigHashes:   configHashes,
+			ManagedSpec:    managedSpec,
+			LastSync:       now,
 		}
 
 		// The Orbit is shared; record its baseline once. EnsureOrbit has already
