@@ -45,7 +45,7 @@ func TestPatch_ClearsStaleCustomPluginListOnSwitch(t *testing.T) {
 			inputs := models.UserInputs[models.BlockNodeInputs]{
 				Custom: models.BlockNodeInputs{PluginPreset: preset},
 			}
-			require.NoError(t, patch(st, inputs))
+			require.NoError(t, patch(st, inputs, nil))
 
 			assert.Equal(t, preset, st.BlockNodeState.PluginPreset)
 			assert.Empty(t, st.BlockNodeState.PluginList, "stale custom list must be cleared on switch")
@@ -60,7 +60,7 @@ func TestPatch_PreservesStoredPluginsWhenPresetUnset(t *testing.T) {
 	st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
 	st.BlockNodeState.PluginList = "facility-messaging,health"
 
-	require.NoError(t, patchBlockNodeState()(st, models.UserInputs[models.BlockNodeInputs]{}))
+	require.NoError(t, patchBlockNodeState()(st, models.UserInputs[models.BlockNodeInputs]{}, nil))
 
 	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
 	assert.Equal(t, "facility-messaging,health", st.BlockNodeState.PluginList)
@@ -72,7 +72,7 @@ func TestPatch_PersistsCustomPluginList(t *testing.T) {
 	inputs := models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{PluginPreset: bnpkg.PresetCustom, PluginList: "a,b,c"},
 	}
-	require.NoError(t, patchBlockNodeState()(st, inputs))
+	require.NoError(t, patchBlockNodeState()(st, inputs, nil))
 
 	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
 	assert.Equal(t, "a,b,c", st.BlockNodeState.PluginList)
