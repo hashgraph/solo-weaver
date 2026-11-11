@@ -204,11 +204,15 @@ so the list is always correct for the chart version you install and a block-node
 that changes a profile needs no solo-provisioner release. Resolution precedence
 (first match wins):
 
-1. `--plugins` — your explicit list is used verbatim; no chart profile is read.
+1. `--plugins` — your explicit list is used verbatim. Names not in the chart's known set
+   (`plugin-profile-all.yaml`) are logged as a warning to catch typos early, but still applied,
+   so community plugins work.
 2. a `--values` file that sets `plugins.names` — your file wins; no chart profile is read.
 3. `--plugin-preset=tier1-lfh|tier1-rfh` (including the default) — read from the chart profile.
-4. `--plugin-preset=none` with no `--values` names — `plugins.names` is left unset, so the
-   chart's own default applies.
+4. `--plugin-preset=none` (or unset) with no `--values` names — weaver reads the chart's own
+   `values.yaml` default and sets `plugins.names` to it, so the **version-correct** default is
+   applied on install and on upgrade (rather than Helm `--reuse-values` keeping a stale list,
+   which could miss a newly-required plugin and crash-loop the node).
 
 Choosing `custom` interactively opens a free-text prompt where you type the plugin names
 (comma- or space-separated); there is no enumerated picker, since community plugins are not

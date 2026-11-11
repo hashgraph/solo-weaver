@@ -107,12 +107,19 @@ func TestPluginNamesFromProfileYAML(t *testing.T) {
 
 // ── resolvePluginList precedence ─────────────────────────────────────────────────
 
-func TestResolvePluginList_ExplicitListSkipsPull(t *testing.T) {
-	m, _ := managerWithHelmMock(t, models.BlockNodeInputs{
-		PluginPreset: PresetTier1LFH,
+func TestResolvePluginList_ExplicitListKept(t *testing.T) {
+	// A custom list triggers a best-effort pull to warn about unknown names, but the
+	// explicit list itself must be left intact.
+	tgz := writeFixtureChart(t, "0.46.0", map[string]string{
+		"values-overrides/plugin-profile-all.yaml": "plugins:\n  names: \"x,y\"\n",
+	})
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: PresetCustom,
 		PluginList:   "x,y,z",
 	})
-	// No PullChart expectation: calling it would fail the mock controller.
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
 	require.NoError(t, m.resolvePluginList(context.Background(), ""))
 	assert.Equal(t, "x,y,z", m.blockNodeInputs.PluginList, "explicit --plugins must be left intact")
 }
@@ -125,9 +132,46 @@ func TestResolvePluginList_ValuesFileOverrideSkipsPull(t *testing.T) {
 		"a --values plugins.names override wins over a preset; weaver injects nothing")
 }
 
-func TestResolvePluginList_NoneSkipsPull(t *testing.T) {
-	m, _ := managerWithHelmMock(t, models.BlockNodeInputs{PluginPreset: PresetNone})
-	require.NoError(t, m.resolvePluginList(context.Background(), ""))
+func TestResolvePluginList_NoneReadsChartDefault(t *testing.T) {
+	// none / unset injects the chart's own values.yaml default so an upgrade stays
+	// version-correct instead of Helm --reuse-values keeping a stale deployed list.
+	ch := &chart.Chart{
+		Metadata: &chart.Metadata{APIVersion: "v2", Name: "block-node-server", Version: "0.46.0"},
+		// Save writes values.yaml from Raw (not from Values), so seed the default there.
+		Raw: []*chart.File{{Name: "values.yaml", Data: []byte("plugins:\n  names: \"health,facility-app-state\"\n")}},
+	}
+	tgz, err := chartutil.Save(ch, t.TempDir())
+	require.NoError(t, err)
+
+	for _, preset := range []string{PresetNone, ""} {
+		name := preset
+		if name == "" {
+			name = "unset"
+		}
+		t.Run(name, func(t *testing.T) {
+			m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+				Chart:        "oci://example/block-node-server",
+				ChartVersion: "0.46.0",
+				PluginPreset: preset,
+			})
+			hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
+			require.NoError(t, m.resolvePluginList(context.Background(), ""))
+			assert.Equal(t, "health,facility-app-state", m.blockNodeInputs.PluginList)
+		})
+	}
+}
+
+// TestResolvePluginList_NoneFallsBackWhenDefaultUnreadable verifies none degrades to
+// leaving the list unset (Helm/chart default) when the chart pull fails.
+func TestResolvePluginList_NoneFallsBackWhenDefaultUnreadable(t *testing.T) {
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: PresetNone,
+	})
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", errorx.ExternalError.New("registry down"))
+	require.NoError(t, m.resolvePluginList(context.Background(), ""), "none must not hard-fail on a pull error")
 	assert.Equal(t, "", m.blockNodeInputs.PluginList)
 }
 
