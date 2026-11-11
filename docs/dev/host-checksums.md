@@ -13,6 +13,10 @@ unpacking the archive.
 
 ## Adding a version
 
+A maintainer runs the tool by hand on a development machine when adding or changing a host
+version, and commits the result. CI does not run it, and `solo-provisioner` never computes
+checksums: at install and run time it only verifies files against the committed values.
+
 1. Write the version block with its names, URLs and algorithms, and an empty `checksum: ''`
    for every platform. Copy the block of the previous version and blank its checksums. Use the
    algorithm upstream publishes (`sha512` for `dl.k8s.io`, `sha256` elsewhere).
