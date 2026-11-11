@@ -182,6 +182,11 @@ tasks:
     cmds:
       - "go run ./scripts/chart-checksums"
 
+  host-checksums:
+    desc: "Compute the checksums of the host binaries listed under host: in pkg/software/catalog/, by downloading and unpacking each version for every platform it lists. Checks only version blocks with an empty checksum by default. Pass '-- -write' to fill them in place, '-- -all' to verify every block, '-- -name cri-o -version 1.36.7' to narrow it. See docs/dev/host-checksums.md."
+    cmds:
+      - "go run ./scripts/host-checksums {{.CLI_ARGS}}"
+
   bump:solo-operator:
     desc: "Bump solo-operator to VERSION in ONE command: the Go API module (go.mod + vendor, the CRD types), the SOLO_OPERATOR_VERSION constant (single source of truth for the chart + operator image + UC sidecar), and the catalog checksum — then it re-compiles and verifies the invariants. Host-only; needs 'helm' on PATH and GITHUB_USER/GITHUB_ACCESS_TOKEN in the root .env (used for BOTH the private Go module and the private ghcr chart). A breaking CRD change in the new version surfaces here as a compile error — fix the code and re-run. After it succeeds, run 'task vm:sync' to push vendor/ into the VM. Accepts 0.6.1 or v0.6.1."
     cmds:
