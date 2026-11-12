@@ -217,11 +217,28 @@ No `InitMigrations()` to update. The migration runs automatically on the next CL
 4. Calls `migration.GetApplicableMigrations(migration.ScopeStartup, mctx)`.
 5. Executes the workflow with rollback on error.
 
-After a successful pass on a host with Kubernetes installed, `state.PersistProvisionerVersion()` records the running version in `provisioner.yaml`. Kubernetes setup records it too, when a command creates the cluster. Subsequent invocations of the same binary version then see no applicable CLI-version-gated migrations.
+After a successful pass in which no migration deferred, on a host with Kubernetes installed, `state.PersistProvisionerVersion()` records the running version in `provisioner.yaml`. Kubernetes setup records it too, but only when that command's `kubeadm init` created the cluster: on an existing cluster the startup pass owns the version. Subsequent invocations of the same binary version then see no applicable CLI-version-gated migrations.
 
 The pass, the version stamp included, runs inside `state.RecordStartupPass`, which records it as one `migrate` / `system` entry in the action history: what ran, how it ended, and the state files it changed. See [Action history](action-history.md#startup-migration-passes).
 
 **A startup migration that writes state belongs in `internal/state`** and declares every state file its `Execute` or `Rollback` can write, through an unexported `stateFiles(dir)` method. The pass compares only declared files (and the legacy ones), and credits `provisioner.yaml` to the version stamp only when the stamp changed it, so a running command's write is credited to the pass only during the one-time `per-component-state` split, which declares every component file. `TestStateMigrations_TouchOnlyTheirDeclaredFiles` runs each one and fails on an undeclared write, and `TestStartupMigrationsOutsideStateWriteNoState` fails if a host migration in `internal/workflows` writes state.
+
+### Deferring a startup migration
+
+A startup migration that cannot run yet, because something it needs is not available, returns `migration.ErrDeferred` instead of failing or skipping silently. The Cilium migrations do this when the Kubernetes API cannot be read.
+
+- **The pass goes on.** The deferred migration counts as neither applied nor failed, and the command still runs.
+- **The version is not recorded** while any migration in the pass deferred, so the next invocation applies it again. Retrying across a later upgrade comes free, because the recorded version stays below the boundary.
+- **The operator is warned on every command** until it runs, with the cause and the error's hints, whatever the pass's outcome. The pass's action history entry, when it writes one, lists it under `deferred`.
+- **It is never rolled back**, because it never ran.
+
+The contract:
+
+- Return it only before `Execute` changes anything.
+- Return it as the outermost error, wrapped only by `errx.Decorate`; under any other wrap it fails the pass.
+- It is honoured only in the startup scope. Anywhere else it fails like any other error: the block-node upgrade must not upgrade the chart without its storage.
+- A migration that must not act after an earlier one deferred checks `mctx.Deferred()`. The Cilium agent restart does. It only sees migrations that ran before it, so register every migration that can defer before it; otherwise a deferral rolls the agents on every command until it clears.
+- While a deferral lasts, the version-gated migrations around it run again on every command, so each must leave a host it already converged alone, as `sysctl-network-tuning` does.
 
 ## Block-Node Upgrade Workflow
 
@@ -240,6 +257,7 @@ The framework uses automa's `RollbackOnError` execution mode:
 2. If a migration fails, automa rolls back completed migrations in reverse order.
 3. Each migration's `Rollback()` is called — errors are logged but do not abort other rollbacks.
 4. Because `Applies()` is ground-truth-based, a successful rollback automatically re-enables the migration on the next invocation.
+5. A migration that deferred earlier in the pass is not rolled back: it changed nothing.
 
 ## Testing
 

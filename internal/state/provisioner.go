@@ -38,8 +38,9 @@ const provisionerStampLockWait = 3 * time.Second
 // PersistProvisionerVersion records the running CLI in provisioner.yaml so
 // version-boundary startup migrations are not re-evaluated — and
 // non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
-// invocation. Call only after a successful startup-migration pass and only on
-// a provisioned host, so a genuinely fresh machine keeps having no state file.
+// invocation. Call only after a successful startup-migration pass in which no
+// migration deferred, and only on a provisioned host, so a genuinely fresh
+// machine keeps having no state file.
 // changed is false when provisioner.yaml already describes the running binary,
 // which is then left as it is. An fsx.FileSyncError means the new record is on
 // disk but not synced, so changed is true.
