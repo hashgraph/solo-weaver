@@ -80,6 +80,12 @@ func CopyConfiguration() ([]string, error) {
 	return templates.CopyTemplateFiles(sysctlConfigSourceDir, sysctlConfigDestinationDir)
 }
 
+// ConfigurationTemplate returns the embedded contents CopyConfigurationFile
+// writes for name.
+func ConfigurationTemplate(name string) ([]byte, error) {
+	return templates.Read(path.Join(sysctlConfigSourceDir, name))
+}
+
 // ConfigurationTargets returns the paths CopyConfiguration writes in /etc/sysctl.d.
 func ConfigurationTargets() ([]string, error) {
 	files, err := templates.ReadDir(sysctlConfigSourceDir)

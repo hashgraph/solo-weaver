@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/sysctl"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -233,4 +234,48 @@ func TestSysctlNetworkTuningMigration_Rollback(t *testing.T) {
 		assert.True(t, os.IsNotExist(err), "rollback must not create a file that never existed")
 		assert.Equal(t, 0, *reloads)
 	})
+}
+
+// A deferred sibling keeps the version unrecorded, so this migration applies
+// again on every command until it clears. Once converged it must leave the host
+// alone: rewriting the file, reloading /etc/sysctl.d and restoring fs.file-max
+// on every pass would undo whatever the operator set since.
+func TestSysctlNetworkTuningMigration_ConvergedFileIsLeftAlone(t *testing.T) {
+	dst := stubDestPath(t)
+	want, err := sysctl.ConfigurationTemplate(networkPerformanceConfFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, want, models.DefaultFilePerm))
+	copies, reloads, sets, _ := stubSysctlSeams(t)
+
+	mctx := newMctx("0.20.0", "0.35.0")
+	require.NoError(t, NewSysctlNetworkTuningMigration().Execute(context.Background(), mctx))
+
+	assert.Zero(t, *copies)
+	assert.Zero(t, *reloads)
+	assert.Empty(t, *sets, "fs.file-max must not be restored again")
+	_, stashed := mctx.Data.Get(sysctlNetworkTuningPrevContentsKey)
+	assert.False(t, stashed, "nothing changed, so there is nothing to roll back")
+}
+
+// A pass that wrote the file but never reloaded it (killed, or its reload and
+// rollback both failed) leaves the file converged and the kernel not; the next
+// pass must finish the job rather than skip it.
+func TestSysctlNetworkTuningMigration_ConvergedFileWithAStaleKernelIsReloaded(t *testing.T) {
+	dst := stubDestPath(t)
+	want, err := sysctl.ConfigurationTemplate(networkPerformanceConfFile)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(dst, want, models.DefaultFilePerm))
+	copies, reloads, _, gets := stubSysctlSeams(t)
+	(*gets)[keepaliveProbesKey] = "9"
+	reloadAllSysctlConfiguration = func() ([]string, error) {
+		*reloads++
+		(*gets)[keepaliveProbesKey] = wantKeepaliveProbesValue
+		return nil, nil
+	}
+	t.Cleanup(models.SetPaths(t.TempDir()))
+
+	require.NoError(t, NewSysctlNetworkTuningMigration().Execute(context.Background(), newMctx("0.20.0", "0.35.0")))
+
+	assert.Equal(t, 1, *copies)
+	assert.Equal(t, 1, *reloads)
 }
