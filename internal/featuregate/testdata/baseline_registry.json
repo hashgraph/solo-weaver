@@ -1,0 +1,72 @@
+{
+  "BlockNodeProvisionerManaged": {
+    "description": "Manage block node lifecycle through solo-provisioner.",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  },
+  "ConsensusNodeOperatorManaged": {
+    "description": "Manage consensus node lifecycle through solo-operator.",
+    "specs": [
+      {
+        "activeFrom": 2,
+        "default": true,
+        "maturity": "ALPHA"
+      }
+    ]
+  },
+  "EsoSecretManagement": {
+    "description": "External-secrets operator and secret management (`eso`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  },
+  "KubeOperatorManagement": {
+    "description": "Manage the solo-operator lifecycle: install, uninstall, and upgrade (`kube operator`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  },
+  "NetworkFirewall": {
+    "description": "Declarative host firewall management (`network firewall`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  },
+  "NetworkPolicy": {
+    "description": "Cilium network-policy management (`network policy`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  },
+  "NetworkTrafficShaping": {
+    "description": "tc/HTB traffic shaping for the block-node network (`network shape`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "GA"
+      }
+    ]
+  }
+}

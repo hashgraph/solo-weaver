@@ -41,11 +41,17 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 		current = CurrentActivationVersion
 	}
 
+	// WithSupportWindow pins W (the N/N+1 window) to the one value the registry lints
+	// also use, so the gate enforces the same window the lints check.
+	//
 	// Per-feature opt-ins from SOLO_PROVISIONER_ENABLE_<FEATURE> env vars. Strict:
 	// an unknown or malformed <prefix>* variable fails New (and stops the binary).
 	// Safe now that every SOLO_PROVISIONER_ENABLE_* var maps to a feature — the
 	// experimental command gate was converged into the registry (#1392).
-	opts := []gatekit.Option{gatekit.WithEnvOverrides(envPrefix)}
+	opts := []gatekit.Option{
+		gatekit.WithSupportWindow(SupportWindow),
+		gatekit.WithEnvOverrides(envPrefix),
+	}
 
 	// Explicit overrides win over env (applied last — gatekit is last-writer). This is
 	// where the --experimental opt-in lands, as a per-feature override.
