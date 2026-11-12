@@ -458,6 +458,24 @@ func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
+// ResizePVC sets spec.resources.requests.storage of a PVC to size with a merge patch.
+// Kubernetes allows only a larger size on a bound PVC whose StorageClass allows expansion.
+func (c *Client) ResizePVC(ctx context.Context, namespace, name, size string) error {
+	patch, err := json.Marshal(map[string]interface{}{
+		"spec": map[string]interface{}{
+			"resources": map[string]interface{}{"requests": map[string]interface{}{"storage": size}},
+		},
+	})
+	if err != nil {
+		return errorx.InternalError.Wrap(err, "failed to build resize patch for PVC %s/%s", namespace, name)
+	}
+	gvr := kindToGVR[KindPVC]
+	if _, err := c.Dyn.Resource(gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return errorx.ExternalError.Wrap(err, "failed to resize PVC %s/%s to %s", namespace, name, size)
+	}
+	return nil
+}
+
 // DeleteStatefulSet deletes a StatefulSet by name and namespace using orphan cascading.
 // Orphan cascading removes the StatefulSet controller object but keeps the pods running.
 // This is required when upgrading a StatefulSet that needs volumeClaimTemplates changes,
@@ -680,6 +698,41 @@ func (c *Client) GetResourceNestedInt64(ctx context.Context, apiVersion, kind, n
 		return 0, false, nil
 	}
 
+	return value, true, nil
+}
+
+// GetResourceNestedBool retrieves a nested bool value from a Kubernetes resource.
+// For cluster-scoped resources, pass empty string for namespace.
+// Returns (false, false, nil) if the resource doesn't exist or the field is not found.
+func (c *Client) GetResourceNestedBool(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (bool, bool, error) {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return false, false, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			namespace = "default"
+		}
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	obj, err := dr.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, false, nil
+		}
+		return false, false, errorx.ExternalError.Wrap(err, "failed to get %s/%s", kind, name)
+	}
+
+	value, found, err := unstructured.NestedBool(obj.Object, fields...)
+	if err != nil || !found {
+		return false, false, nil
+	}
 	return value, true, nil
 }
 

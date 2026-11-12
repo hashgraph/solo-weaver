@@ -275,6 +275,11 @@ type ConsensusNodeInputs struct {
 	// default). Resolve a volume's effective backing with Volumes.EffectiveSpec.
 	Volumes ConsensusVolumeConfig `json:"volumes,omitempty"`
 
+	// ExpandPVCs grows a kept PVC that is smaller than requested (--expand-pvcs).
+	ExpandPVCs bool `json:"-"`
+	// RecreatePVCs deletes a kept PVC that differs or will not be mounted (--recreate-pvcs).
+	RecreatePVCs bool `json:"-"`
+
 	// HostPathUID/HostPathGID own the hostPath directories created for hostpath-backed
 	// volumes. Non-positive values fall back to the canonical hedera user/group
 	// (config.HederaUserId/GroupId, 2000:2000), resolved by the chown step.
