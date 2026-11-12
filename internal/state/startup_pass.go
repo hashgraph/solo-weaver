@@ -16,13 +16,17 @@ import (
 )
 
 // StartupPass is what one startup migration pass ran: its entry's inputs.
-// RecordStartupPass fills Migrations, RolledBack and Failed from the pass's run.
+// RecordStartupPass fills Migrations, RolledBack, Deferred and Failed from the
+// pass's run.
 type StartupPass struct {
 	FromVersion string   `yaml:"fromVersion" json:"fromVersion"`
 	ToVersion   string   `yaml:"toVersion" json:"toVersion"`
 	Migrations  []string `yaml:"migrations" json:"migrations"`
 	RolledBack  []string `yaml:"rolledBack,omitempty" json:"rolledBack,omitempty"`
-	Failed      string   `yaml:"failed,omitempty" json:"failed,omitempty"`
+	// Deferred is the migrations that could not run yet, in order. A pass
+	// with any of them did not record the provisioner version.
+	Deferred []string `yaml:"deferred,omitempty" json:"deferred,omitempty"`
+	Failed   string   `yaml:"failed,omitempty" json:"failed,omitempty"`
 	// Pending is the migrations the pass runs, re-checked under the
 	// startup-migrations lock. Those in this package declare the state files
 	// they can touch, which is all the pass compares.
@@ -36,6 +40,9 @@ type StartupPassRun struct {
 	Migrations []string // applied and still in effect, in order
 	RolledBack []string // applied, then rolled back after a later one failed
 	Failed     string   // the one that failed, if any
+	// Deferred is the migrations that could not run yet, in order. Any one
+	// withholds the stamp, so the next invocation retries them.
+	Deferred []migration.Deferral
 }
 
 // fileDeclarer is a startup migration that names every state file it can write.
@@ -43,7 +50,8 @@ type fileDeclarer interface{ stateFiles(dir string) []string }
 
 // RecordStartupPass runs fn, the pass's migrations, under the caller's
 // startup-migrations lock, then stamps the running version with stamp when it
-// is not nil and fn succeeded. It appends one migrate/system entry when the
+// is not nil, fn succeeded and no migration deferred. Each deferral warns the
+// operator, whatever the outcome. It appends one migrate/system entry when the
 // pass changed a state file: a pass that changed nothing, such as one rolled
 // back cleanly, a stamp that found the version current, or a stamp that failed
 // on its own, is no state update. The migrations' files are compared before
@@ -70,6 +78,7 @@ func RecordStartupPass(ctx context.Context, dir string, pass *StartupPass, stamp
 	before, snapErr := snapshotFiles(files)
 
 	run, err := fn()
+	warnDeferred(run.Deferred)
 	outcome := run.Outcome
 	if err != nil {
 		outcome = OutcomeFailed
@@ -77,12 +86,16 @@ func RecordStartupPass(ctx context.Context, dir string, pass *StartupPass, stamp
 		outcome = OutcomeSucceeded
 	}
 	pass.Migrations, pass.RolledBack, pass.Failed = run.Migrations, run.RolledBack, run.Failed
+	pass.Deferred = nil
+	for _, d := range run.Deferred {
+		pass.Deferred = append(pass.Deferred, d.ID)
+	}
 	entry := NewEntry(ctx, models.Intent{Action: models.ActionMigrate, Target: models.TargetSystem}, pass)
 	entry.Outcome = outcome
 	stamped := false
 	if err != nil {
 		entry = entry.WithError(err)
-	} else if stamp != nil {
+	} else if stamp != nil && len(run.Deferred) == 0 {
 		var stampErr error
 		stamped, stampErr = stamp()
 		switch {
@@ -150,4 +163,17 @@ func appendEntry(dir string, entry ActionHistory, cause error) error {
 		return err
 	}
 	return sm.Record(entry, cause)
+}
+
+// warnDeferred tells the operator about each deferred migration, its cause and
+// what to check.
+func warnDeferred(deferred []migration.Deferral) {
+	for _, d := range deferred {
+		w := "Startup migration " + d.ID + " was deferred and will run on a later command: " + d.Cause + "."
+		// Hints end in a command to run, so they get no punctuation of their own.
+		for _, h := range d.Hints {
+			w += " " + h
+		}
+		addWarning(w)
+	}
 }

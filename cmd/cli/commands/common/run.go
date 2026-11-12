@@ -339,7 +339,7 @@ func RunPersistentPreRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run any pending startup migrations before any command executes.
-	if err := RunStartupMigrations(cmd.Context()); err != nil {
+	if err := RunStartupMigrations(cmd.Context(), cmd.CommandPath()); err != nil {
 		return err
 	}
 
@@ -356,8 +356,11 @@ var persistProvisionerVersion = state.PersistProvisionerVersion
 const startupMigrationsLockWait = 5 * time.Minute
 
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
-// It is a no-op when no migrations apply and the recorded version is current.
-func RunStartupMigrations(ctx context.Context) error {
+// commandPath names the invoking command in the pass's log lines.
+// It is a no-op when no migrations apply and the recorded version is current. A
+// migration that defers does not fail the pass; it is retried on a later
+// invocation, so the recorded version stays where it was until then.
+func RunStartupMigrations(ctx context.Context, commandPath string) error {
 	onDiskCLIVersion, mctx, migrations, err := pendingStartupMigrations()
 	if err != nil {
 		return err
@@ -382,8 +385,9 @@ func RunStartupMigrations(ctx context.Context) error {
 	// Record the running version so boundary migrations aren't re-run next time and
 	// pre-state-tracking clusters get a provisioner.yaml. Persist regardless of whether a
 	// migration applied — coupling it to that would stop backfilling once nothing
-	// crosses the baseline. Gate on a version change and a provisioned host so a
-	// fresh machine keeps no state file. Best-effort.
+	// crosses the baseline — but not while one is deferred (RecordStartupPass).
+	// Gate on a version change and a provisioned host so a fresh machine keeps no
+	// state file. Best-effort.
 	var stamp func() (bool, error)
 	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
 		stamp = func() (bool, error) { return persistProvisionerVersion() }
@@ -406,11 +410,18 @@ func RunStartupMigrations(ctx context.Context) error {
 			logx.As().Debug().Msg("No startup migrations needed")
 			return state.StartupPassRun{}, nil
 		}
-		logx.As().Info().Msg("Running startup migrations...")
+		// systemd sets INVOCATION_ID for a service, such as the DNS-refresh timer's.
+		logx.As().Info().Str("command", commandPath).Bool("systemd", os.Getenv("INVOCATION_ID") != "").
+			Msg("Running startup migrations...")
+		start := time.Now()
 		report := wf.Execute(ctx)
+		elapsed := time.Since(start).Round(time.Millisecond).String()
 		run := state.StartupPassRun{Outcome: steps.OutcomeOf(report)}
 		run.Migrations, run.RolledBack, run.Failed = migration.RanIDs(report)
+		run.Deferred = mctx.Deferred()
 		if report.Error != nil {
+			logx.As().Error().Str("command", commandPath).Str("elapsed", elapsed).Str("failed", run.Failed).
+				Msg("Startup migrations failed")
 			// The workflow error only names the failed step; the migration's own
 			// error carries the reason and hints the operator needs.
 			if err := doctor.DeepestFailureError(report); err != nil {
@@ -418,7 +429,14 @@ func RunStartupMigrations(ctx context.Context) error {
 			}
 			return run, report.Error
 		}
-		logx.As().Info().Msg("Startup migrations completed successfully")
+		if len(run.Deferred) > 0 {
+			logx.As().Warn().Int("deferred", len(run.Deferred)).
+				Str("command", commandPath).Str("elapsed", elapsed).
+				Msg("Startup migrations completed; some were deferred to a later command")
+			return run, nil
+		}
+		logx.As().Info().Str("command", commandPath).Str("elapsed", elapsed).
+			Msg("Startup migrations completed successfully")
 		return run, nil
 	})
 }
