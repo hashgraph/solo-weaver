@@ -82,6 +82,10 @@ func chartsHop(step HopStep, bumps ...ChartBump) Hop {
 	return Hop{Kind: KindCharts, Step: step, Charts: bumps}
 }
 
+func coupledHop(kubernetes string, bumps ...ChartBump) Hop {
+	return Hop{Kind: KindCharts, Step: StepCoupled, Kubernetes: kubernetes, Charts: bumps}
+}
+
 func bump(chart, from, to string) ChartBump { return ChartBump{Chart: chart, From: from, To: to} }
 
 func resolve(t *testing.T, shape rsl.ClusterShape, opts Options) Plan {
@@ -103,7 +107,7 @@ func TestResolve_FullLadder(t *testing.T) {
 		kubeHop(StepMinor, "1.33.13", "1.34.13"),
 		ciliumHop(StepMinor, "1.19.10", "1.20.2"), // 1.19 stops at Kubernetes 1.34
 		kubeHop(StepMinor, "1.34.13", "1.35.10"),
-		chartsHop(StepCoupled, bump("metallb", "0.15.2", "0.16.1")),
+		coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")),
 		kubeHop(StepMinor, "1.35.10", "1.36.5"),
 		chartsHop(StepRefresh, bump("alloy", "1.4.0", "1.13.1"), bump("metrics-server", "3.13.0", "3.14.0")),
 	}, plan.Hops)
@@ -192,7 +196,7 @@ func TestResolve_StructuralBeforeLadder(t *testing.T) {
 func TestResolve_CoupledBumpForTheCurrentMinor(t *testing.T) {
 	plan := resolve(t, clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.15.2")), Options{})
 
-	assert.Equal(t, []Hop{chartsHop(StepCoupled, bump("metallb", "0.15.2", "0.16.1"))}, plan.Hops)
+	assert.Equal(t, []Hop{coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1"))}, plan.Hops)
 }
 
 func TestResolve_MissingChartIsNotBumped(t *testing.T) {
@@ -227,7 +231,7 @@ func TestResolve_CurrentMinorChartsBeforeTheLadder(t *testing.T) {
 	plan := resolve(t, clusterShape("1.36.5", "1.20.1", withChart("metallb", "0.15.2")), Options{})
 
 	assert.Equal(t, []Hop{
-		chartsHop(StepCoupled, bump("metallb", "0.15.2", "0.16.1")),
+		coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")),
 		ciliumHop(StepPatch, "1.20.1", "1.20.2"),
 	}, plan.Hops)
 }

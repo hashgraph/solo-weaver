@@ -45,6 +45,7 @@ sudo solo-provisioner block node tc-attach   --veth=<iface> [--detach]
 # KUBERNETES
 sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
+sudo solo-provisioner kube cluster upgrade --plan --experimental [--to=<minor>]   # experimental, read-only
 sudo solo-provisioner kube operator install     # solo-operator (private images: needs pull secret)
 sudo solo-provisioner kube operator uninstall
 
@@ -232,6 +233,50 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 > Run order: `kube cluster install` → create the `private-registry-creds` secret in `solo-operator` →
 > `kube operator install` → `consensus node install`. See
 > [acceptance-tests §F](../dev/acceptance-tests.md).
+
+### Upgrade plan (experimental)
+
+> **Experimental.** `kube cluster upgrade` is hidden and runs only with `--experimental` or
+> `SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE=1`. Under `sudo`, use the flag, because `sudo` drops the
+> environment.
+
+`kube cluster upgrade --plan` reads the live cluster and lists every step left to reach the
+Kubernetes and Cilium versions this binary installs. It changes nothing and takes no lock.
+Applying the steps is not available yet; without `--plan` the command refuses to run.
+
+```bash
+sudo solo-provisioner kube cluster upgrade --plan --experimental
+sudo solo-provisioner kube cluster upgrade --plan --experimental --to=1.35
+sudo solo-provisioner kube cluster upgrade --plan --experimental --output json
+```
+
+| Flag | Description |
+|---|---|
+| `--plan` (alias `--list`) | List every remaining upgrade step and change nothing |
+| `--to` | Stop at this Kubernetes minor (1.35) or its latest patch (1.35.10); defaults to the version this binary installs |
+
+Kubernetes moves one minor at a time, and each minor step lands on that minor's latest patch.
+Cilium moves first whenever it does not run on the next Kubernetes minor. Charts that a minor
+needs are upgraded in their own step just before it. Charts the catalog no longer manages under
+their release name, such as the Bitnami node-exporter, are migrated first. A cluster on Kubernetes
+1.33.4 with Cilium 1.18.1 and MetalLB 0.15.2 gets:
+
+```text
+Cluster upgrade plan: 8 steps remaining (target: Kubernetes 1.36.5, Cilium 1.20.2)
+
+  Version ladder:
+  [next]  1. Cilium      1.18.1  -> 1.18.16  (patch)
+          2. Cilium      1.18.16 -> 1.19.10  (minor)
+          3. Kubernetes  1.33.4  -> 1.33.13  (patch)
+          4. Kubernetes  1.33.13 -> 1.34.13  (minor)
+          5. Cilium      1.19.10 -> 1.20.2   (minor)
+          6. Kubernetes  1.34.13 -> 1.35.10  (minor)
+          7. metallb     0.15.2  -> 0.16.1   (needed by Kubernetes 1.36)
+          8. Kubernetes  1.35.10 -> 1.36.5   (minor)
+```
+
+When the cluster cannot be planned, for example because it has more than one node or its Cilium
+agent and chart differ, the command lists each reason and exits non-zero.
 
 ### Uninstall
 
