@@ -3,6 +3,12 @@
 # Host binaries for Kubernetes 1.33. Deleting this file drops support for
 # 1.33. See README.md.
 
+# Chart versions this minor needs. See README.md.
+kubernetes:
+
+- minor: '1.33'
+  charts: {}
+
 host:
 
 - name: cri-o

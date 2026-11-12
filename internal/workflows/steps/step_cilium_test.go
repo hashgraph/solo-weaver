@@ -115,14 +115,14 @@ func newCiliumCNIHarness(t *testing.T, verify func(string) error) *ciliumCNIHarn
 func TestInstallCiliumCNI_FreshClusterInstallsPinnedVersion(t *testing.T) {
 	h := newCiliumCNIHarness(t, func(string) error { return nil })
 
-	step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster())).Build()
+	step, err := installCiliumCNI(newClusterCilium(), clientFor(ciliumCluster())).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
 	require.NoError(t, report.Error)
 	assert.Equal(t, automa.StatusSuccess, report.Status)
 	assert.Equal(t, []string{"cilium"}, *h.verified)
-	assert.Equal(t, []ciliumRelease{newClusterCilium}, h.charts)
+	assert.Equal(t, []ciliumRelease{newClusterCilium()}, h.charts)
 	require.Len(t, h.scripts, 1)
 	assert.Contains(t, h.scripts[0], `cilium install --wait --version "1.20.2" --chart-directory '`+verifiedChartDir+`' --values `)
 	installed, _ := step.State().Local().Bool(InstalledByThisStep)
@@ -133,7 +133,7 @@ func TestInstallCiliumCNI_UnverifiedChartIsNotInstalled(t *testing.T) {
 	h := newCiliumCNIHarness(t, func(string) error { return nil })
 	h.chartErr = assert.AnError
 
-	step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster())).Build()
+	step, err := installCiliumCNI(newClusterCilium(), clientFor(ciliumCluster())).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
@@ -170,7 +170,7 @@ func TestInstallCiliumCNI_ExistingCiliumIsLeftAlone(t *testing.T) {
 			// A broken or missing CLI must not matter: nothing is executed.
 			h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
 
-			step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster(objs...))).Build()
+			step, err := installCiliumCNI(newClusterCilium(), clientFor(ciliumCluster(objs...))).Build()
 			require.NoError(t, err)
 			report := step.Execute(context.Background())
 
@@ -196,7 +196,7 @@ func TestInstallCiliumCNI_ExistingCiliumWinsOverFailedLookups(t *testing.T) {
 		return true, nil, kerrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", fmt.Errorf("rbac"))
 	})
 
-	step, err := installCiliumCNI(newClusterCilium, clientFor(dyn)).Build()
+	step, err := installCiliumCNI(newClusterCilium(), clientFor(dyn)).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 
@@ -240,7 +240,7 @@ func TestInstallCiliumCNI_DetectionFailureDoesNotInstall(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newCiliumCNIHarness(t, func(string) error { return nil })
 
-			step, err := installCiliumCNI(newClusterCilium, tc.provider()).Build()
+			step, err := installCiliumCNI(newClusterCilium(), tc.provider()).Build()
 			require.NoError(t, err)
 			report := step.Execute(context.Background())
 
@@ -272,7 +272,7 @@ func failing(verb, resource string, err error) *dynamicfake.FakeDynamicClient {
 func TestInstallCiliumCNI_FailsWhenCiliumVerificationFails(t *testing.T) {
 	h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
 
-	step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster())).Build()
+	step, err := installCiliumCNI(newClusterCilium(), clientFor(ciliumCluster())).Build()
 	require.NoError(t, err)
 
 	report := step.Execute(context.Background())
@@ -287,7 +287,7 @@ func TestInstallCiliumCNI_FailsWhenCiliumVerificationFails(t *testing.T) {
 func TestInstallCiliumCNI_RollbackFailsWhenCiliumVerificationFails(t *testing.T) {
 	h := newCiliumCNIHarness(t, func(string) error { return assert.AnError })
 
-	step, err := installCiliumCNI(newClusterCilium, clientFor(ciliumCluster())).Build()
+	step, err := installCiliumCNI(newClusterCilium(), clientFor(ciliumCluster())).Build()
 	require.NoError(t, err)
 
 	// Rollback is a no-op unless this step performed the install; mark it so
