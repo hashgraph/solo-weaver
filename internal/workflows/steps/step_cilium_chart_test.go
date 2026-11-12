@@ -211,7 +211,7 @@ func TestNewClusterCilium_PinsTheChart(t *testing.T) {
 		Version:     "1.20.2",
 		ChartRepo:   "https://helm.cilium.io",
 		ChartSHA256: "b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e",
-	}, newClusterCilium)
+	}, newClusterCilium())
 }
 
 func assertReason(t *testing.T, err error, want errx.Reason) {

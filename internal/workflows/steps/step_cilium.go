@@ -195,12 +195,16 @@ type ciliumRelease struct {
 	ChartSHA256 string
 }
 
-// newClusterCilium is the Cilium release a new cluster gets. Clusters that
-// already run Cilium keep their release: installCiliumCNI leaves them alone.
-var newClusterCilium = ciliumRelease{
-	Version:     "1.20.2",
-	ChartRepo:   "https://helm.cilium.io",
-	ChartSHA256: "b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e",
+// newClusterCilium is the Cilium release a new cluster gets: the catalog
+// default. Clusters that already run Cilium keep their release:
+// installCiliumCNI leaves them alone.
+func newClusterCilium() ciliumRelease {
+	chart := software.MustGetClusterComponent(software.CiliumComponentName)
+	return ciliumRelease{
+		Version:     string(chart.Default),
+		ChartRepo:   chart.Repo,
+		ChartSHA256: chart.Versions[chart.Default].Value,
+	}
 }
 
 const (
@@ -210,7 +214,7 @@ const (
 
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		installCiliumCNI(newClusterCilium, kube.NewClient),
+		installCiliumCNI(newClusterCilium(), kube.NewClient),
 		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# The Cilium agent chart. A Cilium minor supports several Kubernetes minors, so
+# its versions live here once, each with the Kubernetes minors it supports:
+# the tested list in Documentation/network/kubernetes/requirements.rst at the
+# release tag. See README.md.
+
+cluster:
+
+- name: cilium
+  type: classic
+  repo: 'https://helm.cilium.io'
+  chart: 'cilium/cilium'
+  namespace: 'kube-system'
+  release: 'cilium'
+  versions:
+    1.18.16:
+      algorithm: 'sha256'
+      checksum: 'a28a48ef4c5250684317ebeb8f55b7de422235a86eef3530b6288b4f23fd4dd5'
+      kubernetes: {min: '1.30', max: '1.33'}
+    1.19.10:
+      algorithm: 'sha256'
+      checksum: 'b7252afca3413a33e2b987c954e52441e96979e411e1495ecc6aefe8cd258863'
+      kubernetes: {min: '1.31', max: '1.34'}
+    1.20.2:
+      algorithm: 'sha256'
+      checksum: 'b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e'
+      kubernetes: {min: '1.33', max: '1.36'}

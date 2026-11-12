@@ -17,6 +17,7 @@ host:
   solo-provisioner-daemon: "0.0.0"
 
 cluster:
+  cilium: "1.20.2"
   alloy: "1.13.1"
   teleport-cluster-agent: "18.11.3"
   metallb: "0.16.1"

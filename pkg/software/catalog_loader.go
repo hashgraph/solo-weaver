@@ -177,6 +177,14 @@ func (m *catalogMerger) merge(file string, part InfrastructureCatalog) error {
 			return err
 		}
 	}
+	for _, k := range part.Kubernetes {
+		key := "kubernetes/" + k.Minor
+		if prev, ok := m.origin[key]; ok {
+			return errorx.IllegalFormat.New("kubernetes[%s] is listed in both %s and %s", k.Minor, prev, file)
+		}
+		m.catalog.Kubernetes = append(m.catalog.Kubernetes, k)
+		m.origin[key] = file
+	}
 	return nil
 }
 
@@ -246,7 +254,7 @@ func (m *catalogMerger) mergeChart(file string, chart ChartMetadata) error {
 			return errorx.IllegalFormat.New("cluster[%s]: version %s is listed in both %s and %s", chart.Name, v, prev, file)
 		}
 		if merged.Versions == nil {
-			merged.Versions = map[Version]Checksum{}
+			merged.Versions = map[Version]ChartVersion{}
 		}
 		merged.Versions[v] = checksum
 		m.origin[vkey] = file

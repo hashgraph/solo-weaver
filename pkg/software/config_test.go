@@ -1029,7 +1029,7 @@ func Test_Config_InfrastructureCatalog_GetClusterComponent(t *testing.T) {
 				Repo:    "https://grafana.github.io/helm-charts",
 				Chart:   "grafana/alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1038,7 +1038,7 @@ func Test_Config_InfrastructureCatalog_GetClusterComponent(t *testing.T) {
 				Type:    ChartTypeOCI,
 				Chart:   "oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter",
 				Default: "4.59.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
@@ -1101,7 +1101,7 @@ func Test_Config_ChartMetadata_GetDefaultVersion(t *testing.T) {
 				Repo:    "https://grafana.github.io/helm-charts",
 				Chart:   "grafana/alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1111,7 +1111,7 @@ func Test_Config_ChartMetadata_GetDefaultVersion(t *testing.T) {
 			name: "missing default returns error",
 			chart: ChartMetadata{
 				Name: "alloy",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1122,7 +1122,7 @@ func Test_Config_ChartMetadata_GetDefaultVersion(t *testing.T) {
 			chart: ChartMetadata{
 				Name:    "alloy",
 				Default: "9.9.9",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1160,7 +1160,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1174,7 +1174,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "monitoring",
 				Release:   "node-exporter",
 				Default:   "4.59.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
@@ -1186,7 +1186,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Repo:    "https://grafana.github.io/helm-charts",
 				Chart:   "grafana/alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1199,7 +1199,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Type:    ChartType("ftp"),
 				Chart:   "grafana/alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1212,7 +1212,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Type:    ChartTypeClassic,
 				Chart:   "grafana/alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1226,7 +1226,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Repo:    "https://example.com",
 				Chart:   "oci://ghcr.io/prometheus-community/charts/prometheus-node-exporter",
 				Default: "4.59.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"4.59.0": {Algorithm: "sha256", Value: "def"},
 				},
 			},
@@ -1239,7 +1239,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Type:    ChartTypeClassic,
 				Repo:    "https://grafana.github.io/helm-charts",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1254,7 +1254,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Chart:   "grafana/alloy",
 				Release: "alloy",
 				Default: "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1269,7 +1269,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Chart:     "grafana/alloy",
 				Namespace: "alloy",
 				Default:   "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1285,7 +1285,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "9.9.9",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1301,7 +1301,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 				},
 			},
@@ -1317,7 +1317,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: ""},
 				},
 			},
@@ -1329,7 +1329,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Name: "alloy",
 				Type: ChartTypeClassic,
 				Repo: "https://grafana.github.io/helm-charts",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "sha256", Value: "abc"},
 				},
 			},
@@ -1358,7 +1358,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "9.9.9", // also bogus, but checksum error wins
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 				},
 			},
@@ -1379,7 +1379,7 @@ func Test_Config_ChartMetadata_validate(t *testing.T) {
 				Namespace: "alloy",
 				Release:   "alloy",
 				Default:   "1.4.0",
-				Versions: map[Version]Checksum{
+				Versions: map[Version]ChartVersion{
 					"1.4.0": {Algorithm: "", Value: "abc"},
 					"2.0.0": {Algorithm: "", Value: "def"},
 				},
@@ -1428,7 +1428,7 @@ func Test_Config_InfrastructureCatalog_validate(t *testing.T) {
 						Namespace: "alloy",
 						Release:   "alloy",
 						Default:   "1.4.0",
-						Versions: map[Version]Checksum{
+						Versions: map[Version]ChartVersion{
 							"1.4.0": {Algorithm: "sha256", Value: "abc"},
 						},
 					},
@@ -1458,7 +1458,7 @@ func Test_Config_InfrastructureCatalog_validate(t *testing.T) {
 						Type:    ChartTypeClassic,
 						Chart:   "grafana/alloy",
 						Default: "1.4.0",
-						Versions: map[Version]Checksum{
+						Versions: map[Version]ChartVersion{
 							"1.4.0": {Algorithm: "sha256", Value: "abc"},
 						},
 					},

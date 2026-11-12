@@ -3,6 +3,14 @@
 # Host binaries for Kubernetes 1.36. Deleting this file drops support for
 # 1.36. See README.md.
 
+# Chart versions this minor needs. See README.md.
+kubernetes:
+
+- minor: '1.36'
+  charts:
+    # 0.15's CRD validation rejects its own ASN maximum on 1.36 (MetalLB PR 3035).
+    metallb: '0.16.1'
+
 host:
 
 - name: cri-o
