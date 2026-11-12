@@ -64,3 +64,31 @@ func TestGateFeatureFlag(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("thing", "x"))
 	require.Error(t, cmd.PreRunE(cmd, nil))
 }
+
+// A gated PERSISTENT flag declared on a parent is enforced even when it is used on
+// a subcommand: the check lives on PersistentPreRunE (cobra inherits it), not
+// PreRunE (which it does not), so the subcommand cannot use the inherited flag
+// unchecked.
+func TestGateFeatureFlag_PersistentFlagEnforcedOnSubcommand(t *testing.T) {
+	// A no-op parent pre-run so GateFeatureFlag chains onto it instead of the real
+	// root pre-run (global checks + startup migrations) during Execute.
+	parent := &cobra.Command{Use: "parent", PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	parent.PersistentFlags().String("thing", "", "do a thing")
+	ran := false
+	child := &cobra.Command{Use: "child", RunE: func(*cobra.Command, []string) error { ran = true; return nil }}
+	parent.AddCommand(child)
+
+	GateFeatureFlag(parent, "thing", featuregate.ConsensusNodeOperatorManaged) // alpha
+	parent.SilenceErrors, parent.SilenceUsage = true, true
+
+	// Using the inherited persistent flag on the child without opting in is refused,
+	// and the child's RunE never runs.
+	parent.SetArgs([]string{"child", "--thing", "x"})
+	require.Error(t, parent.Execute())
+	require.False(t, ran)
+
+	// With --experimental, the same invocation is allowed and the child runs.
+	parent.SetArgs([]string{"child", "--thing", "x", "--experimental"})
+	require.NoError(t, parent.Execute())
+	require.True(t, ran)
+}

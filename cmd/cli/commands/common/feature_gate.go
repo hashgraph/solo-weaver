@@ -71,12 +71,20 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 // be registered on cmd (local or persistent). Opt-in is the same as GateFeature:
 // --experimental, or the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> override.
 //
+// A persistent flag is inherited by cmd's subcommands, so the check is installed on
+// PersistentPreRunE (which cobra inherits), not PreRunE (which it does not) — a
+// subcommand that uses the inherited flag is gated too. A local flag is gated on
+// cmd's own PreRunE.
+//
 // Use this when a stable (GA) command gains an unproven flag — gate just the
 // flag, not the whole command.
 func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
-	flag := cmd.Flags().Lookup(flagName)
+	// A persistent flag is inherited by subcommands; a local flag is not. This
+	// decides where the gate check must live (see below).
+	persistent := cmd.PersistentFlags().Lookup(flagName)
+	flag := persistent
 	if flag == nil {
-		flag = cmd.PersistentFlags().Lookup(flagName)
+		flag = cmd.Flags().Lookup(flagName)
 	}
 	if flag == nil {
 		return
@@ -92,6 +100,37 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 		flag.Usage = strings.TrimSpace(flag.Usage) + " [beta]"
 	}
 
+	// enforce refuses the flag unless the operator opted in — but only when the flag
+	// was actually set.
+	enforce := func(c *cobra.Command, args []string) error {
+		if c.Flags().Changed(flagName) {
+			return requireFeatureEnabled(c, f)
+		}
+		return nil
+	}
+
+	if persistent != nil {
+		// A persistent flag can be set on cmd OR any subcommand that inherits it.
+		// cobra does NOT inherit PreRunE to subcommands, so a check installed there
+		// would let a subcommand use the flag unchecked. PersistentPreRunE IS
+		// inherited (cobra runs the nearest one up the chain), so install the check
+		// there, preserving the prior pre-run — a chained hook, or the root pre-run
+		// cobra would otherwise skip now that this hook is the closest.
+		prev := cmd.PersistentPreRunE
+		cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
+			if prev != nil {
+				if err := prev(c, args); err != nil {
+					return err
+				}
+			} else if err := RunPersistentPreRun(c, args); err != nil {
+				return err
+			}
+			return enforce(c, args)
+		}
+		return
+	}
+
+	// A local flag is usable only on cmd itself, so PreRunE is sufficient.
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(c *cobra.Command, args []string) error {
 		if prev != nil {
@@ -99,11 +138,7 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 				return err
 			}
 		}
-		// Only enforce the gate when the operator actually used the flag.
-		if c.Flags().Changed(flagName) {
-			return requireFeatureEnabled(c, f)
-		}
-		return nil
+		return enforce(c, args)
 	}
 }
 
