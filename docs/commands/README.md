@@ -452,6 +452,29 @@ Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus n
 other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
 `consensus node install --profile local`, not `consensus node --profile local install`.
 
+### Install over kept PVCs
+
+`consensus node uninstall` keeps the node's PVCs. A later install with the same namespace and node
+ID finds them by name (`<orbit>-consensus-<node-id>-<volume>`). The solo-operator uses an existing
+PVC as it is and never changes it. Before the install changes the cluster, the
+`precheck-consensus-pvcs` step compares each existing PVC with the requested volume settings:
+
+| Requested backing | Existing PVC | Result |
+|---|---|---|
+| any | none | The check passes (fresh install). |
+| `pvc`, same size, storage class and access mode | yes | The check passes. The node uses the PVC and its data. |
+| `pvc`, different size, storage class or access mode | yes | The install stops. `--force` uses the PVC as it is, and the requested settings have no effect. |
+| `emptydir` or `hostpath` | yes | The install stops, because the node will not mount the PVC data. `--force`, `--non-interactive` or `--output=json` install without the data and keep the PVC. |
+
+The check compares sizes as quantities, so `1Ti` and `1024Gi` are equal. If you do not set a
+storage class, the check accepts the class that the cluster gave the PVC. The error names each PVC
+and gives the commands to continue:
+
+- To keep a PVC, install again with its current values, for example `--volume name=saved,size=500Gi`.
+- To make a PVC larger, patch it with `kubectl patch pvc`. This works only if its StorageClass allows
+  volume expansion. A PVC cannot become smaller.
+- To start with an empty volume, delete the PVC with `kubectl delete pvc`. This deletes its data.
+
 ### Uninstall
 
 `consensus node uninstall` removes one node:
