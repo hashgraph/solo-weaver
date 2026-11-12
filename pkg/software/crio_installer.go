@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
@@ -248,7 +249,26 @@ func (ci *crioInstaller) Install() error {
 	//install $SELINUX -D -m 644 -t "$DESTDIR$ZSHINSTALLDIR" completions/zsh/_crio
 	//install $SELINUX -D -m 644 -t "$DESTDIR$SYSTEMDDIR" contrib/crio.service
 	//install $SELINUX -D -m 644 -t "$DESTDIR$CONTAINERS_REGISTRIES_CONFD_DIR" contrib/registries.conf
-	configs := map[string]string{
+	configs := crioReleaseConfigs(destDir)
+	for src, dst := range configs {
+		// if dst doesn't exist then copy the file
+		_, exists, _ := ci.fileManager.PathExists(dst)
+		if !exists {
+			if err = ci.installFile(filepath.Join(srcDir, src), dst, models.DefaultFilePerm); err != nil {
+				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
+			}
+		}
+	}
+
+	// Record installed state
+	return ci.recordInstalled()
+}
+
+// crioReleaseConfigs maps each config file of the release archive to where
+// Install puts it under destDir. Install copies one only when it is missing,
+// so an operator's or Configure's later changes survive a re-run.
+func crioReleaseConfigs(destDir string) map[string]string {
+	return map[string]string{
 		ContribDir + CrioConfDisabledFile:  filepath.Join(destDir, cniDir, CrioConfDisabledFile),
 		"etc/" + CrictlYamlFile:            filepath.Join(destDir, etcDir, CrictlYamlFile),
 		"etc/" + CrioUmountConfFile:        filepath.Join(destDir, ociDir, CrioUmountConfFile),
@@ -264,18 +284,28 @@ func (ci *crioInstaller) Install() error {
 		ContribDir + CrioServiceFile:       filepath.Join(destDir, userSystemdDir, CrioServiceFile),
 		ContribDir + RegistriesConfFile:    filepath.Join(destDir, containersRegistriesConfdDir, RegistriesConfFile),
 	}
-	for src, dst := range configs {
-		// if dst doesn't exist then copy the file
-		_, exists, _ := ci.fileManager.PathExists(dst)
-		if !exists {
-			if err = ci.installFile(filepath.Join(srcDir, src), dst, models.DefaultFilePerm); err != nil {
-				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
-			}
+}
+
+// RemoveCrioReleaseFiles deletes the cri-o binaries and release config files
+// from the sandbox, so the next Install lays down another release's copies.
+// Binaries are unlinked rather than overwritten because a running conmon holds
+// its file open. Configure re-applies our changes to the configs afterwards.
+func RemoveCrioReleaseFiles() error {
+	destDir := models.Paths().SandboxDir
+	var paths []string
+	for _, dst := range crioInstalledBinaryPaths(destDir) {
+		paths = append(paths, dst)
+	}
+	for _, dst := range crioReleaseConfigs(destDir) {
+		paths = append(paths, dst)
+	}
+	slices.Sort(paths)
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return errorx.IllegalState.Wrap(err, "failed to remove %s", p)
 		}
 	}
-
-	// Record installed state
-	return ci.recordInstalled()
+	return nil
 }
 
 // copyCNIPlugins copies all CNI plugin binaries from the cni-plugins directory
