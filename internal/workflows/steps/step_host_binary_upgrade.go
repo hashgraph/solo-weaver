@@ -33,6 +33,12 @@ func HostBinaryAt(name, version string) (bool, error) {
 // unpacked before install. A service that runs the binary must be stopped by
 // the caller first.
 func UpgradeHostBinary(name, version string, archived bool, provider func(opts ...software.InstallerOption) (software.Software, error)) automa.Builder {
+	return upgradeHostBinary(name, version, archived, provider, nil)
+}
+
+// upgradeHostBinary is UpgradeHostBinary with beforeInstall run between the
+// unpack and the install, once the new release is known to be on disk.
+func upgradeHostBinary(name, version string, archived bool, provider func(opts ...software.InstallerOption) (software.Software, error), beforeInstall func() error) automa.Builder {
 	return automa.NewStepBuilder().WithId("upgrade-" + name).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepDetail(ctx, stp, fmt.Sprintf("upgrading %s to %s...", name, version))
@@ -55,6 +61,9 @@ func UpgradeHostBinary(name, version string, archived bool, provider func(opts .
 			phases := []func() error{installer.Download}
 			if archived {
 				phases = append(phases, installer.Extract)
+			}
+			if beforeInstall != nil {
+				phases = append(phases, beforeInstall)
 			}
 			phases = append(phases, installer.Install, installer.Configure, installer.Cleanup)
 			for _, do := range phases {

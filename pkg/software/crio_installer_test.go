@@ -3,11 +3,15 @@
 package software
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
 // Test_generateExpectedCrioSocketDropIn pins the crio.service drop-in that bridges
@@ -60,4 +64,49 @@ func Test_crioSocketDropInPaths(t *testing.T) {
 		filepath.Join(getCrioServiceDropInDir(), CrioSocketDropInFile),
 		getCrioSocketDropInPath())
 	require.Equal(t, "/usr/lib/systemd/system/crio.service.d", getSystemCrioServiceDropInDir())
+}
+
+func TestRemoveCrioReleaseFiles(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	sandbox := models.Paths().SandboxDir
+
+	var release []string
+	for _, p := range crioInstalledBinaryPaths(sandbox) {
+		release = append(release, p)
+	}
+	for _, p := range crioReleaseConfigs(sandbox) {
+		release = append(release, p)
+	}
+	ours := []string{
+		filepath.Join(sandbox, crioConfdDir, "20-ours.conf"),
+		filepath.Join(sandbox, containersRegistriesConfdDir, "mirror.conf"),
+	}
+	for _, p := range append(append([]string{}, release...), ours...) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+	}
+
+	require.NoError(t, RemoveCrioReleaseFiles())
+
+	for _, p := range release {
+		assert.NoFileExists(t, p)
+	}
+	for _, p := range ours {
+		assert.FileExists(t, p)
+	}
+	require.NoError(t, RemoveCrioReleaseFiles(), "a second run finds nothing to remove")
+}
+
+func TestRemoveCrioReleaseFiles_FailsOnWhatItCannotRemove(t *testing.T) {
+	restore := models.SetPaths(t.TempDir())
+	defer restore()
+	blocked := crioInstalledBinaryPaths(models.Paths().SandboxDir)["conmon"]
+	require.NoError(t, os.MkdirAll(filepath.Join(blocked, "inside"), 0o755))
+
+	err := RemoveCrioReleaseFiles()
+
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalState), err.Error())
+	assert.Contains(t, err.Error(), blocked)
 }

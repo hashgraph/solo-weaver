@@ -119,6 +119,11 @@ var stateWriters = map[string]writerRow{
 			"TestApplyCiliumHop_FailedHopRecordsTheCLIItReplaced",
 	},
 
+	"internal/bll/clusterupgrade/apply_kubernetes.go:recordBinariesAfterFailure": {
+		lock:    "RunOwning over ComponentSystem, after the failed hop released its locks: TestRunOwning_FailsFastWhenLocked",
+		history: "its own entry beside the failed hop's: TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced",
+	},
+
 	"internal/state/lock.go:AcquireHeldLocks": {
 		lock:    "TestAcquireHeldLocks_FailsFastWhenHeldElsewhere",
 		history: "takes locks only",
