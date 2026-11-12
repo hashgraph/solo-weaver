@@ -64,6 +64,7 @@ const (
 	BlockerMultipleNodes       BlockerCode = "multiple-nodes"
 	BlockerKubernetesUnknown   BlockerCode = "kubernetes-unknown"
 	BlockerKubernetesNotLadder BlockerCode = "kubernetes-not-in-ladder"
+	BlockerKubeletSkew         BlockerCode = "kubelet-skew"
 	BlockerCiliumUnknown       BlockerCode = "cilium-unknown"
 	BlockerCiliumMismatch      BlockerCode = "cilium-mismatch"
 	BlockerCiliumNotLadder     BlockerCode = "cilium-not-in-ladder"

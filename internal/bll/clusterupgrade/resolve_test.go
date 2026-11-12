@@ -214,6 +214,24 @@ func TestResolve_ResumesAHalfDoneKubernetesHop(t *testing.T) {
 	}, plan.Hops)
 }
 
+func TestResolve_ResumesAPatchLag(t *testing.T) {
+	shape := clusterShape("1.36.5", "1.20.2")
+	shape.Kubernetes.Kubelet = "1.36.2"
+
+	plan := resolve(t, shape, Options{})
+	assert.Equal(t, []Hop{kubeHop(StepResume, "1.36.2", "1.36.5")}, plan.Hops)
+}
+
+// A chart the current minor needs is fixed before Cilium or Kubernetes move.
+func TestResolve_CurrentMinorChartsBeforeTheLadder(t *testing.T) {
+	plan := resolve(t, clusterShape("1.36.5", "1.20.1", withChart("metallb", "0.15.2")), Options{})
+
+	assert.Equal(t, []Hop{
+		chartsHop(StepCoupled, bump("metallb", "0.15.2", "0.16.1")),
+		ciliumHop(StepPatch, "1.20.1", "1.20.2"),
+	}, plan.Hops)
+}
+
 func TestResolve_NoDowngrade(t *testing.T) {
 	plan := resolve(t, clusterShape("1.36.6", "1.20.4", withChart("metallb", "0.16.2")), Options{})
 
@@ -279,12 +297,27 @@ func TestResolve_Blockers(t *testing.T) {
 			s.Kubernetes.Kubelet = "v1.36"
 			return s
 		}, BlockerKubernetesUnknown, `the kubelet version "v1.36"`},
+		{"kubelet two minors behind", func() rsl.ClusterShape {
+			s := clusterShape("1.35.10", "1.20.2")
+			s.Kubernetes.Kubelet = "1.33.13"
+			return s
+		}, BlockerKubeletSkew, "the kubelet runs 1.33.13 and the API server 1.35.10"},
+		{"kubelet ahead of the API server", func() rsl.ClusterShape {
+			s := clusterShape("1.35.10", "1.20.2")
+			s.Kubernetes.Kubelet = "1.36.5"
+			return s
+		}, BlockerKubeletSkew, "the kubelet runs 1.36.5 and the API server 1.35.10"},
 		{"Kubernetes below the ladder", func() rsl.ClusterShape { return clusterShape("1.32.9", "1.18.16") },
 			BlockerKubernetesNotLadder, "no upgrade path from minor 1.32"},
 		{"Kubernetes above the ladder", func() rsl.ClusterShape { return clusterShape("1.37.1", "1.20.2") },
 			BlockerKubernetesNotLadder, "no upgrade path from minor 1.37"},
 		{"no Cilium release", func() rsl.ClusterShape { return clusterShape("1.36.5", "") },
 			BlockerCiliumUnknown, "no Cilium release was found"},
+		{"Cilium chart with no agent", func() rsl.ClusterShape {
+			s := clusterShape("1.36.5", "1.20.2")
+			s.Cilium.Agent = ""
+			return s
+		}, BlockerCiliumUnknown, "the Cilium chart is 1.20.2 but no agent is running"},
 		{"Cilium chart and agent differ", func() rsl.ClusterShape {
 			s := clusterShape("1.36.5", "1.20.2")
 			s.Cilium.Agent, s.Cilium.Mismatch = "1.19.10", true
@@ -334,7 +367,7 @@ func TestResolve_ListsEveryBlocker(t *testing.T) {
 func TestResolve_InvalidMatrix(t *testing.T) {
 	_, err := Resolve(clusterShape("1.36.5", "1.20.2"), Matrix{}, Options{})
 	require.Error(t, err)
-	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err.Error())
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalFormat), err.Error())
 	assert.Contains(t, err.Error(), "invalid upgrade matrix")
 }
 

@@ -28,8 +28,9 @@ var structuralSteps = []struct {
 
 // Resolve returns the hops that take the cluster from shape to the target in
 // m, bounded by opts. The order is: finish a half-done Kubernetes hop, then
-// the structural migrations, then the version ladder, then one charts refresh
-// when the target is the default. On the ladder Kubernetes moves one minor at
+// the structural migrations, then any chart the current Kubernetes minor
+// already needs, then the version ladder, then one charts refresh when the
+// target is the default. On the ladder Kubernetes moves one minor at
 // a time, a minor hop lands on the next minor's latest patch, and Cilium moves
 // first whenever it does not run on the next Kubernetes minor, so the running
 // pair is always supported.
@@ -39,7 +40,7 @@ var structuralSteps = []struct {
 func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 	c, err := m.compile()
 	if err != nil {
-		return Plan{}, errorx.IllegalArgument.Wrap(err, "invalid upgrade matrix")
+		return Plan{}, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
 	}
 	target, err := c.target(opts.To)
 	if err != nil {
@@ -71,6 +72,8 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 	}
 
 	// A cluster can sit on a minor with charts older than that minor needs.
+	// That is a fault in the running cluster, so it is fixed before anything
+	// else moves.
 	if bumps := coupledBumps(c, kube.minorOf(), charts); len(bumps) > 0 {
 		add(Hop{Kind: KindCharts, Step: StepCoupled, Charts: bumps})
 	}
@@ -211,6 +214,8 @@ func readShape(shape rsl.ClusterShape, c compiled) (installed, []Blocker) {
 	if s := shape.Kubernetes.Kubelet; s != "" {
 		if v, err := parseVersion(s); err != nil {
 			block(BlockerKubernetesUnknown, componentKubernetes, "the kubelet version %q is not a release version", s)
+		} else if kubeOK && !resumable(v, in.kube) {
+			block(BlockerKubeletSkew, componentKubernetes, "the kubelet runs %s and the API server %s; only a kubelet one minor behind can be caught up", v, in.kube)
 		} else {
 			in.kubelet = &v
 		}
@@ -219,6 +224,8 @@ func readShape(shape rsl.ClusterShape, c compiled) (installed, []Blocker) {
 	switch ch := shape.Cilium; {
 	case ch.Chart == "":
 		block(BlockerCiliumUnknown, componentCilium, "no Cilium release was found")
+	case ch.Agent == "":
+		block(BlockerCiliumUnknown, componentCilium, "the Cilium chart is %s but no agent is running", ch.Chart)
 	case ch.Mismatch:
 		block(BlockerCiliumMismatch, componentCilium, "the Cilium chart is %s but the agent runs %s", ch.Chart, ch.Agent)
 	default:
@@ -263,6 +270,16 @@ func readShape(shape rsl.ClusterShape, c compiled) (installed, []Blocker) {
 		}
 	}
 	return in, out
+}
+
+// resumable reports whether a kubelet at k can be brought to the control plane
+// at cp in one step: it is not ahead, and at most one minor behind.
+func resumable(k, cp version) bool {
+	if cp.less(k) {
+		return false
+	}
+	km, cm := k.minorOf(), cp.minorOf()
+	return km == cm || km.next() == cm
 }
 
 func hasMigration(chart string) bool {
