@@ -24,8 +24,12 @@ package workflows
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"time"
 
 	"github.com/automa-saga/automa/automa_steps"
 	"github.com/automa-saga/errx"
@@ -37,6 +41,8 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 )
 
 // ciliumAccelerationMinVersion is the CLI release that ships the disabled-acceleration
@@ -48,8 +54,14 @@ const ciliumAccelerationMinVersion = "0.19.1"
 const disabledAcceleration = "disabled"
 
 // adminKubeconfigPath is the kubeadm-written admin kubeconfig; its presence is the
-// marker that Kubernetes has been provisioned on this host.
-const adminKubeconfigPath = "/etc/kubernetes/admin.conf"
+// marker that Kubernetes has been provisioned on this host. The Cilium
+// migrations read and change the cluster through it alone. A var so tests can
+// point it at a fake API server.
+var adminKubeconfigPath = "/etc/kubernetes/admin.conf"
+
+// ciliumAPITimeout bounds each request to the API server, so a hung one defers
+// the migration instead of stalling the command. A var so tests can shorten it.
+var ciliumAPITimeout = 5 * time.Second
 
 // Seams so tests can stub the install preconditions, the on-disk re-render, and
 // shell execution without touching a cluster or the filesystem.
@@ -83,10 +95,11 @@ func NewCiliumAccelerationMigration() *CiliumAccelerationMigration {
 // Execute re-renders cilium-config.yaml from the updated template and applies it
 // with `cilium upgrade --version <deployed> --values <config> --wait`.
 //
-// It is self-guarding and idempotent: it no-ops when no live cilium-config is
-// reachable (the node has no cluster) or when acceleration is already "disabled"
-// (the migration already ran). Applies() only gates on the CLI version boundary,
-// so these checks make repeated invocations within the upgrade window harmless.
+// It is self-guarding and idempotent: it no-ops when the host has no cluster or
+// no cilium-config, or when acceleration is already "disabled" (the migration
+// already ran), and it defers when the Kubernetes API cannot be read. Applies()
+// only gates on the CLI version boundary, so these checks make repeated
+// invocations within the upgrade window harmless.
 func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migration.Context) error {
 	// The provisioner can run before anything is deployed, so reconfigure only
 	// when both Kubernetes and Cilium are actually installed on this host.
@@ -97,9 +110,7 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 
 	installed, acc, err := readCiliumState(ctx)
 	if err != nil {
-		logx.As().Debug().Err(err).
-			Msg("cilium acceleration migration: Kubernetes API not reachable; skipping")
-		return nil
+		return deferIfAPIDown(err)
 	}
 	if !installed {
 		logx.As().Debug().Msg("cilium acceleration migration: Cilium not installed (no cilium-config); skipping")
@@ -113,7 +124,7 @@ func (m *CiliumAccelerationMigration) Execute(ctx context.Context, mctx *migrati
 
 	version, err := prepareCiliumUpgrade(ctx)
 	if err != nil {
-		return err
+		return deferIfAPIDown(err)
 	}
 
 	configPath, err := reconfigureCiliumConfig()
@@ -158,18 +169,17 @@ func defaultKubernetesInstalled() bool {
 }
 
 // defaultReadCiliumState reports whether Cilium is installed (its cilium-config
-// ConfigMap exists) and, if so, its bpf-lb-acceleration value. It uses the
-// provisioner's own Kubernetes client (resolving the in-cluster config or admin
-// kubeconfig). A non-nil error means the cluster/API is not reachable.
+// ConfigMap exists) and, if so, its bpf-lb-acceleration value, read through
+// adminKubeconfigPath. Any error reading the cluster is tagged K8sAPIFailed.
 func defaultReadCiliumState(ctx context.Context) (installed bool, acceleration string, err error) {
-	kc, err := kube.NewClient()
+	kc, err := adminClient()
 	if err != nil {
 		return false, "", err
 	}
 
 	exists, err := kc.ResourceExists(ctx, "v1", "ConfigMap", "kube-system", "cilium-config")
 	if err != nil {
-		return false, "", err
+		return false, "", clusterAPIError(err, "cannot read kube-system/cilium-config")
 	}
 	if !exists {
 		return false, "", nil
@@ -177,9 +187,98 @@ func defaultReadCiliumState(ctx context.Context) (installed bool, acceleration s
 
 	acc, err := kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", "bpf-lb-acceleration")
 	if err != nil {
-		return true, "", err
+		return true, "", clusterAPIError(err, "cannot read kube-system/cilium-config")
 	}
 	return true, acc, nil
+}
+
+// adminClient is a client for the cluster behind adminKubeconfigPath, with
+// every request bounded by ciliumAPITimeout.
+func adminClient() (*kube.Client, error) {
+	kc, err := kube.NewClient(kube.WithKubeconfig(adminKubeconfigPath), kube.WithRequestTimeout(ciliumAPITimeout))
+	if err != nil {
+		return nil, clusterAPIError(err, "cannot load %s", adminKubeconfigPath)
+	}
+	return kc, nil
+}
+
+// clusterAPIError tags an error from the API server behind adminKubeconfigPath
+// with what to check.
+func clusterAPIError(err error, format string, args ...any) error {
+	return errx.Decorate(errorx.ExternalError.Wrap(err, format, args...), reasons.K8sAPIFailed,
+		adminConfHints(err, "configmaps")...)
+}
+
+// adminConfHints is what to check when a request through adminKubeconfigPath
+// to read resource fails. A rejected credential or server certificate also
+// points at the kubeadm certificates, which expire after a year.
+func adminConfHints(err error, resource string) []string {
+	hints := []string{
+		apiServerHint(),
+		"Check the admin credentials: sudo kubectl --kubeconfig " + adminKubeconfigPath + " auth can-i get " + resource + " -n kube-system",
+	}
+	if certificateRejected(err) {
+		hints = append(hints, certificatesHint)
+	}
+	return hints
+}
+
+const certificatesHint = "Check the cluster certificates: sudo kubeadm certs check-expiration"
+
+// certificateRejected reports whether err, anywhere in its cause chain, is a
+// 401 or a server certificate that failed verification.
+func certificateRejected(err error) bool {
+	for e := err; e != nil; e = nextCause(e) {
+		var verify *tls.CertificateVerificationError
+		if kerrors.IsUnauthorized(e) || errors.As(e, &verify) {
+			return true
+		}
+	}
+	return false
+}
+
+// apiServerHint is how to check the API server behind adminKubeconfigPath.
+func apiServerHint() string {
+	return "Check the API server: sudo kubectl --kubeconfig " + adminKubeconfigPath + " get --raw /readyz"
+}
+
+// deferIfAPIDown defers a Cilium migration whose error, met before it changed
+// anything, means the Kubernetes API could not be reached; any other error,
+// such as a 403, a bad admin kubeconfig or a corrupt Helm release, still fails
+// it. Only an API error is checked: a local decode error can end in an EOF too.
+func deferIfAPIDown(err error) error {
+	if reason, _ := errx.ReasonOf(err); reason == reasons.K8sAPIFailed && apiUnreachable(err) {
+		return migration.ErrDeferred.Wrap(errx.WithHints(err, apiServerHint()), "the Kubernetes API is not available")
+	}
+	return err
+}
+
+// apiUnreachable reports whether err, anywhere in its cause chain, is a
+// connection error, a timeout, or a "try later" answer (503, 429) from the API
+// server or something in front of it.
+func apiUnreachable(err error) bool {
+	for e := err; e != nil; e = nextCause(e) {
+		var op *net.OpError
+		if errors.As(e, &op) && op.Op == "dial" {
+			return true
+		}
+		if utilnet.IsConnectionRefused(e) || utilnet.IsConnectionReset(e) || utilnet.IsProbableEOF(e) ||
+			utilnet.IsTimeout(e) || errors.Is(e, context.DeadlineExceeded) ||
+			kerrors.IsTimeout(e) || kerrors.IsServerTimeout(e) ||
+			kerrors.IsServiceUnavailable(e) || kerrors.IsTooManyRequests(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// nextCause steps down one link of an error chain, through errorx wraps that
+// errors.Unwrap does not follow.
+func nextCause(err error) error {
+	if e := errorx.Cast(err); e != nil {
+		return e.Cause()
+	}
+	return errors.Unwrap(err)
 }
 
 // prepareCiliumUpgrade checks what a Cilium migration needs before it touches
@@ -199,19 +298,24 @@ func prepareCiliumUpgrade(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-// ciliumUpgradeCommand pins the upgrade to version so it changes values only.
+// ciliumUpgradeCommand pins the upgrade to version so it changes values only,
+// and points the cilium CLI at the admin kubeconfig the reads used.
 func ciliumUpgradeCommand(version, configPath string) []string {
 	return []string{
-		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --version %q --values %s --wait",
-			models.Paths().SandboxBinDir, version, configPath),
+		fmt.Sprintf("/usr/bin/sudo %s/cilium upgrade --kubeconfig %s --version %q --values %s --wait",
+			models.Paths().SandboxBinDir, adminKubeconfigPath, version, configPath),
 	}
 }
 
 func defaultInstalledCiliumVersion(ctx context.Context) (string, error) {
-	kc, err := kube.NewClient()
+	kc, err := adminClient()
 	if err != nil {
-		return "", errx.Decorate(err, reasons.K8sAPIFailed,
-			"Check that the admin kubeconfig exists and is valid: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")
+		return "", err
 	}
-	return cilium.InstalledVersion(ctx, kc.Dyn)
+	version, err := cilium.InstalledVersion(ctx, kc.Dyn)
+	if reason, _ := errx.ReasonOf(err); reason == reasons.K8sAPIFailed {
+		// Its hints use the default kubeconfig; this read went through admin.conf.
+		return "", errx.WithHints(err, adminConfHints(err, "daemonsets")...)
+	}
+	return version, err
 }

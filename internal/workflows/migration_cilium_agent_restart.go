@@ -70,8 +70,9 @@ func NewCiliumAgentRestartMigration() *CiliumAgentRestartMigration {
 
 // Execute restarts the Cilium agents when Kubernetes and Cilium are installed and
 // acceleration is configured as "disabled" but may not yet be applied to the
-// running agents. It no-ops on undeployed/unreachable hosts and when acceleration
-// is not (yet) disabled — the acceleration migration owns flipping the config.
+// running agents. It no-ops on hosts without a cluster or Cilium and when
+// acceleration is not (yet) disabled — the acceleration migration owns flipping
+// the config — and defers when the Kubernetes API cannot be reached.
 func (m *CiliumAgentRestartMigration) Execute(ctx context.Context, mctx *migration.Context) error {
 	if !kubernetesInstalled() {
 		logx.As().Debug().Msg("cilium agent restart migration: Kubernetes not installed on this host; skipping")
@@ -80,9 +81,7 @@ func (m *CiliumAgentRestartMigration) Execute(ctx context.Context, mctx *migrati
 
 	installed, acc, err := readCiliumState(ctx)
 	if err != nil {
-		logx.As().Debug().Err(err).
-			Msg("cilium agent restart migration: Kubernetes API not reachable; skipping")
-		return nil
+		return deferIfAPIDown(err)
 	}
 	if !installed {
 		logx.As().Debug().Msg("cilium agent restart migration: Cilium not installed (no cilium-config); skipping")
@@ -111,7 +110,7 @@ func (m *CiliumAgentRestartMigration) Rollback(ctx context.Context, mctx *migrat
 // to finish, so the agents re-read bpf-lb-acceleration and detach XDP from the
 // NICs.
 func defaultRestartCiliumAgents(ctx context.Context) error {
-	kc, err := kube.NewClient()
+	kc, err := adminClient()
 	if err != nil {
 		return err
 	}

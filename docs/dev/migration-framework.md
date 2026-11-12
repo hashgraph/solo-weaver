@@ -209,7 +209,7 @@ No `InitMigrations()` to update. The migration runs automatically on the next CL
 
 ## Startup Migration Runner
 
-`RunStartupMigrations()` (called from `RunPersistentPreRun` before every command) drives a single ordered pass over all `"startup"`-scoped migrations:
+`RunStartupMigrations(ctx, commandPath)` (called from `RunPersistentPreRun` before every command, with the command's path for its log lines) drives a single ordered pass over all `"startup"`-scoped migrations:
 
 1. Reads the provisioner version last written to disk via `state.ReadProvisionerVersionFromDisk()`: the *installed* CLI version, from `provisioner.yaml` (or from `state.yaml` on a host the per-component split has not reached yet).
 2. Gets the *current* CLI version from `version.Number()`.
@@ -225,19 +225,20 @@ The pass, the version stamp included, runs inside `state.RecordStartupPass`, whi
 
 ### Deferring a startup migration
 
-A startup migration that cannot run yet, because something it needs is not available, returns `migration.ErrDeferred` instead of failing or skipping silently. The Cilium migrations do this when the Kubernetes API cannot be reached: a connection error or a timeout. A 403, a bad admin kubeconfig or a missing DaemonSet fails the pass.
+A startup migration that cannot run yet, because something it needs is not available, returns `migration.ErrDeferred` instead of failing or skipping silently. The Cilium migrations do this when the Kubernetes API cannot be reached: a connection error, a timeout, or a 503 or 429 ("try later"). A 403, a bad admin kubeconfig, a corrupt Helm release or a missing DaemonSet fails the pass.
 
 - **The pass goes on.** The deferred migration counts as neither applied nor failed, and the command still runs.
 - **The version is not recorded** while any migration in the pass deferred, so the next invocation applies it again. Retrying across a later upgrade comes free, because the recorded version stays below the boundary.
 - **The operator is warned on every command** until it runs, with the cause and the error's hints, whatever the pass's outcome. The pass's action history entry, when it writes one, lists it under `deferred`.
 - **It is never rolled back**, because it never ran.
+- **The log tells the passes apart.** Each deferral logs `reason: StartupMigrationDeferred` with its `migrationID`; the pass's start line carries `command` and `systemd` (true when a systemd unit, such as the DNS-refresh timer, ran it), and its end line `command` and `elapsed`. `solo-provisioner diagnose logs --field reason=StartupMigrationDeferred` finds the deferrals still in the log; nothing else records when one started.
 
 The contract:
 
 - Return it only before `Execute` changes anything.
 - Return it as the outermost error, wrapped only by `errx.Decorate`; under any other wrap it fails the pass.
 - It is honoured only in the startup scope. Anywhere else it fails like any other error: the block-node upgrade must not upgrade the chart without its storage.
-- While a deferral lasts, the version-gated migrations around it run again on every command, so each must be safe to re-run. The Cilium agent restart is the exception: a pass that defers host legacy routing after the restart rolled the agents rolls them again on the next command.
+- While a deferral lasts, the version-gated migrations around it run again on every command, so each must be safe to re-run. The Cilium agent restart is the exception: each pass that defers host legacy routing after the restart rolled the agents rolls them again, and the DNS-refresh timer runs a pass every 5 minutes. That needs the API to drop between the two, or a Helm release list slower than the 5 s request timeout while other requests answer.
 
 ## Block-Node Upgrade Workflow
 

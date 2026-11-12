@@ -76,11 +76,11 @@ func TestCiliumAgentRestartMigration_Execute(t *testing.T) {
 		assert.False(t, restarted)
 	})
 
-	t.Run("no-ops when the cluster is unreachable", func(t *testing.T) {
+	t.Run("defers when the cluster is unreachable", func(t *testing.T) {
 		var restarted bool
-		stateReturns(false, "", assert.AnError)
+		stateReturns(false, "", errAPIDown)
 		trackRestart(&restarted)
-		require.NoError(t, m.Execute(context.Background(), mctx))
+		requireDeferred(t, m.Execute(context.Background(), mctx))
 		assert.False(t, restarted)
 	})
 
