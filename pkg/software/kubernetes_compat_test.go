@@ -125,6 +125,18 @@ func TestLoadCatalog_KubernetesCompatibilityErrors(t *testing.T) {
 			wantErr: `"" is not a Kubernetes minor`,
 		},
 		{
+			name: "cilium version without a range",
+			mutate: func(f map[string]string) {
+				replaceIn(f, "cluster.yaml", "      kubernetes: {min: '1.33', max: '1.36'}\n", "")
+			},
+			wantErr: "cluster[cilium], cause: common.illegal_format: version 1.20.2: no kubernetes range",
+		},
+		{
+			name:    "default cilium does not support the default kubelet's minor",
+			mutate:  func(f map[string]string) { replaceIn(f, "cluster.yaml", "max: '1.36'", "max: '1.35'") },
+			wantErr: "the default cilium 1.20.2 supports Kubernetes 1.33 to 1.35, not the default kubelet's minor 1.36",
+		},
+		{
 			name:    "minor listed in two files",
 			mutate:  func(f map[string]string) { f["k8s-1.36-copy.yaml"] = f["k8s-1.36.yaml"] },
 			wantErr: "kubernetes[1.36] is listed in both k8s-1.36-copy.yaml and k8s-1.36.yaml",
