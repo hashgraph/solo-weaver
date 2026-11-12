@@ -207,6 +207,16 @@ func newClusterCilium() ciliumRelease {
 	}
 }
 
+// ciliumReleaseFor is the catalog release of a Cilium version.
+func ciliumReleaseFor(version string) (ciliumRelease, error) {
+	chart := software.MustGetClusterComponent(software.CiliumComponentName)
+	v, ok := chart.Versions[software.Version(version)]
+	if !ok {
+		return ciliumRelease{}, errorx.IllegalArgument.New("Cilium %s is not in the catalog", version)
+	}
+	return ciliumRelease{Version: version, ChartRepo: chart.Repo, ChartSHA256: v.Value}, nil
+}
+
 const (
 	ciliumChartRepoAlias = "cilium"
 	ciliumChartRef       = ciliumChartRepoAlias + "/cilium"
