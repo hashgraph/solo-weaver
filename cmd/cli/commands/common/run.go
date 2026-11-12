@@ -356,7 +356,9 @@ var persistProvisionerVersion = state.PersistProvisionerVersion
 const startupMigrationsLockWait = 5 * time.Minute
 
 // RunStartupMigrations runs a single ordered pass over all startup-scoped migrations.
-// It is a no-op when no migrations apply and the recorded version is current.
+// It is a no-op when no migrations apply and the recorded version is current. A
+// migration that defers does not fail the pass; it is retried on a later
+// invocation, so the recorded version stays where it was until then.
 func RunStartupMigrations(ctx context.Context) error {
 	onDiskCLIVersion, mctx, migrations, err := pendingStartupMigrations()
 	if err != nil {
@@ -382,8 +384,9 @@ func RunStartupMigrations(ctx context.Context) error {
 	// Record the running version so boundary migrations aren't re-run next time and
 	// pre-state-tracking clusters get a provisioner.yaml. Persist regardless of whether a
 	// migration applied — coupling it to that would stop backfilling once nothing
-	// crosses the baseline. Gate on a version change and a provisioned host so a
-	// fresh machine keeps no state file. Best-effort.
+	// crosses the baseline — but not while one is deferred (RecordStartupPass).
+	// Gate on a version change and a provisioned host so a fresh machine keeps no
+	// state file. Best-effort.
 	var stamp func() (bool, error)
 	if onDiskCLIVersion != currentCLIVersion && workflows.KubernetesInstalled() {
 		stamp = func() (bool, error) { return persistProvisionerVersion() }
@@ -410,6 +413,7 @@ func RunStartupMigrations(ctx context.Context) error {
 		report := wf.Execute(ctx)
 		run := state.StartupPassRun{Outcome: steps.OutcomeOf(report)}
 		run.Migrations, run.RolledBack, run.Failed = migration.RanIDs(report)
+		run.Deferred = mctx.Deferred()
 		if report.Error != nil {
 			// The workflow error only names the failed step; the migration's own
 			// error carries the reason and hints the operator needs.
@@ -417,6 +421,11 @@ func RunStartupMigrations(ctx context.Context) error {
 				return run, err
 			}
 			return run, report.Error
+		}
+		if len(run.Deferred) > 0 {
+			logx.As().Warn().Int("deferred", len(run.Deferred)).
+				Msg("Startup migrations completed; some were deferred to a later command")
+			return run, nil
 		}
 		logx.As().Info().Msg("Startup migrations completed successfully")
 		return run, nil
