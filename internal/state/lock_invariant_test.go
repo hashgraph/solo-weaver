@@ -100,9 +100,15 @@ var stateWriters = map[string]writerRow{
 	},
 
 	"internal/bll/clusterupgrade/apply.go:recordHop": {
-		lock: "RunOwning over the ids the hop part writes (system for the cilium CLI, cluster for the hop): " +
-			"TestApplyCiliumHop_FailsFastOnEachLock",
-		history: "TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_FailedHopRecordsTheFailure",
+		lock: "RunOwning over the ids the hop part writes (system for the cilium CLI, cluster for the Cilium hop, " +
+			"both for the Kubernetes hop): TestApplyCiliumHop_FailsFastOnEachLock, TestApplyKubernetesHop_FailsFastOnEachLock",
+		history: "TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_FailedHopRecordsTheFailure, " +
+			"TestApplyKubernetesHop_RunsTheHopAndRecords, TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced",
+	},
+
+	"internal/bll/clusterupgrade/apply_kubernetes.go:recordBinariesAfterFailure": {
+		lock:    "RunOwning over ComponentSystem, after the failed hop released its locks: TestRunOwning_FailsFastWhenLocked",
+		history: "its own entry beside the failed hop's: TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced",
 	},
 
 	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
