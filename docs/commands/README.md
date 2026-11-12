@@ -452,6 +452,67 @@ Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus n
 other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
 `consensus node install --profile local`, not `consensus node --profile local install`.
 
+### Install over kept PVCs
+
+`consensus node uninstall` keeps the node's PVCs. A later install with the same namespace and node
+ID finds them by name (`<orbit>-consensus-<node-id>-<volume>`). The solo-operator uses an existing
+PVC as it is and never changes it. Before the install changes the cluster, the
+`precheck-consensus-pvcs` step compares each existing PVC with the requested volume settings:
+
+| Requested backing | Existing PVC | Result |
+|---|---|---|
+| any | none | The check passes (fresh install). |
+| `pvc`, same size, storage class and access mode | yes | The check passes. The node uses the PVC and its data. |
+| `pvc`, different size, storage class or access mode | yes | The install stops. `--force` uses the PVC as it is, and the requested settings have no effect. |
+| `emptydir` or `hostpath` | yes | The install stops, because the node will not mount the PVC data. `--force`, `--non-interactive` or `--output=json` install without the data and keep the PVC. |
+
+The check compares sizes as quantities, so `1Ti` and `1024Gi` are equal. If you do not set a
+storage class, the check accepts the class that the cluster gave the PVC. The error names each PVC
+and gives the commands to continue:
+
+- To keep a PVC, install again with its current values, for example `--volume name=saved,size=500Gi`.
+- To make a PVC larger, pass `--expand-pvcs`.
+- To start with a new PVC, or to remove a PVC that the node will not mount, pass `--recreate-pvcs`.
+
+```bash
+# Grow the kept saved PVC from 500Gi to 1Ti; the data is kept
+sudo solo-provisioner consensus node install --experimental --namespace hiero-network-1 --node-id 0 \
+  --volume name=saved,type=pvc,size=1Ti --expand-pvcs
+
+# Delete the kept PVCs that differ or will not be mounted; their data is lost
+sudo solo-provisioner consensus node install --experimental --namespace hiero-network-1 --node-id 0 \
+  --volume name=saved,type=pvc,storageClass=fast-ssd --recreate-pvcs
+```
+
+| Flag | What it does |
+|---|---|
+| `--expand-pvcs` | Grow a kept PVC that is smaller than the requested size; size must be the only difference, the PVC must be Bound and its StorageClass must allow volume expansion. The data is kept |
+| `--recreate-pvcs` | Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled |
+
+The flags follow these rules:
+
+- `--expand-pvcs` covers only a larger size. A smaller size, or a different storage class or access
+  mode, needs `--recreate-pvcs`. If you pass both flags, `--expand-pvcs` takes the PVCs that it can
+  grow, and `--recreate-pvcs` takes the others.
+- If a PVC cannot grow (it is not Bound, it has no StorageClass, or its StorageClass does not allow
+  expansion), the install stops. It never deletes that PVC instead.
+- `--recreate-pvcs` deletes only the PVCs that differ or that the node will not mount. It keeps the
+  PVCs that match. For an `emptydir` or `hostpath` volume, it only deletes the PVC.
+- `--recreate-pvcs` stops if the node is still installed, because its pod uses the PVCs. Run
+  `consensus node uninstall` first.
+- `--recreate-pvcs` asks for confirmation. `--force`, `--non-interactive` and `--output=json` skip the
+  prompt.
+- A flag wins over `--force` for the PVCs that it covers.
+- The `precheck-consensus-pvcs` step only checks the PVCs. The `reconcile-consensus-pvcs` step
+  changes them, directly before the ConsensusCapsule is created.
+
+> **Data loss.** `--recreate-pvcs` deletes PVC data, and `--rollback-on-error` cannot restore it. An
+> expanded PVC cannot become smaller again. If the PersistentVolume reclaim policy is `Retain`, the
+> old PersistentVolume stays `Released` and the new PVC gets a new PersistentVolume.
+>
+> The new size of an expanded PVC can show in `status.capacity` only after the node pod mounts the
+> volume. The install does not wait for it.
+
 ### Uninstall
 
 `consensus node uninstall` removes one node:
