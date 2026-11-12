@@ -24,7 +24,6 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -71,8 +70,9 @@ func NewCiliumHostLegacyRoutingMigration() *CiliumHostLegacyRoutingMigration {
 // Execute re-renders cilium-config.yaml from the updated template and applies it
 // with `cilium upgrade --version <deployed> --values <config> --wait`.
 //
-// It is idempotent: it no-ops when the cluster is unreachable, when Cilium is not
-// yet installed, or when enable-host-legacy-routing is already "true". It fails
+// It is idempotent: it no-ops when Cilium is not yet installed or when
+// enable-host-legacy-routing is already "true", and defers when the Kubernetes
+// API cannot be read. It fails
 // fast if Bandwidth Manager is enabled — Bandwidth Manager is the only Cilium BPF
 // writer of skb->priority and its presence voids the traffic shaper's
 // egress-priority guarantee.
@@ -84,9 +84,7 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 
 	installed, hlr, bm, err := readHostLegacyRoutingState(ctx)
 	if err != nil {
-		logx.As().Debug().Err(err).
-			Msg("cilium host-legacy-routing migration: Kubernetes API not reachable; skipping")
-		return nil
+		return deferIfAPIDown(err)
 	}
 	if !installed {
 		logx.As().Debug().Msg("cilium host-legacy-routing migration: Cilium not installed (no cilium-config); skipping")
@@ -111,7 +109,7 @@ func (m *CiliumHostLegacyRoutingMigration) Execute(ctx context.Context, mctx *mi
 
 	version, err := prepareCiliumUpgrade(ctx)
 	if err != nil {
-		return err
+		return deferIfAPIDown(err)
 	}
 
 	configPath, err := reconfigureCiliumConfig()
@@ -143,17 +141,17 @@ func (m *CiliumHostLegacyRoutingMigration) Rollback(ctx context.Context, mctx *m
 
 // defaultReadHostLegacyRoutingState reports whether Cilium is installed (its
 // cilium-config ConfigMap exists) and, if so, the enable-host-legacy-routing and
-// enable-bandwidth-manager values from the ConfigMap. A non-nil error means the
-// cluster/API is not reachable.
+// enable-bandwidth-manager values from the ConfigMap, read through
+// adminKubeconfigPath. Any error reading the cluster is tagged K8sAPIFailed.
 func defaultReadHostLegacyRoutingState(ctx context.Context) (installed bool, hostLegacyRouting string, bandwidthManager string, err error) {
-	kc, err := kube.NewClient()
+	kc, err := adminClient()
 	if err != nil {
 		return false, "", "", err
 	}
 
 	exists, err := kc.ResourceExists(ctx, "v1", "ConfigMap", "kube-system", "cilium-config")
 	if err != nil {
-		return false, "", "", err
+		return false, "", "", clusterAPIError(err, "cannot read kube-system/cilium-config")
 	}
 	if !exists {
 		return false, "", "", nil
@@ -161,12 +159,12 @@ func defaultReadHostLegacyRoutingState(ctx context.Context) (installed bool, hos
 
 	hlr, err := kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", hostLegacyRoutingConfigKey)
 	if err != nil {
-		return true, "", "", err
+		return true, "", "", clusterAPIError(err, "cannot read kube-system/cilium-config")
 	}
 
 	bm, err := kc.GetResourceNestedString(ctx, "v1", "ConfigMap", "kube-system", "cilium-config", "data", ciliumBandwidthManagerKey)
 	if err != nil {
-		return true, hlr, "", err
+		return true, hlr, "", clusterAPIError(err, "cannot read kube-system/cilium-config")
 	}
 
 	return true, hlr, bm, nil

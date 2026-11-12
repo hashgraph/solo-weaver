@@ -91,7 +91,7 @@ func TestCiliumMigrations_PinUpgradeToDeployedVersion(t *testing.T) {
 			require.NoError(t, tc.m.Execute(context.Background(), tc.mctx))
 
 			require.Len(t, h.upgrades, 1)
-			assert.Contains(t, h.upgrades[0], `cilium upgrade --version "1.18.1" --values `)
+			assert.Contains(t, h.upgrades[0], ` --version "1.18.1" --values `)
 			assert.NotContains(t, h.upgrades[0], "1.20")
 			assert.Contains(t, h.upgrades[0], "--wait")
 		})

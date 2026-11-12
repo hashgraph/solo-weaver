@@ -24,12 +24,16 @@ package workflows
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/migration"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -70,19 +74,29 @@ func NewCiliumAgentRestartMigration() *CiliumAgentRestartMigration {
 
 // Execute restarts the Cilium agents when Kubernetes and Cilium are installed and
 // acceleration is configured as "disabled" but may not yet be applied to the
-// running agents. It no-ops on undeployed/unreachable hosts and when acceleration
-// is not (yet) disabled — the acceleration migration owns flipping the config.
+// running agents. It no-ops on hosts without a cluster or Cilium and when
+// acceleration is not (yet) disabled — the acceleration migration owns flipping
+// the config — and defers when the Kubernetes API cannot be read or an earlier
+// migration in the pass deferred.
 func (m *CiliumAgentRestartMigration) Execute(ctx context.Context, mctx *migration.Context) error {
 	if !kubernetesInstalled() {
 		logx.As().Debug().Msg("cilium agent restart migration: Kubernetes not installed on this host; skipping")
 		return nil
 	}
 
+	// A roll now would be repeated on every later pass until the deferral
+	// clears, and one roll after it applies every change at once.
+	if deferred := mctx.Deferred(); len(deferred) > 0 {
+		ids := make([]string, len(deferred))
+		for i, d := range deferred {
+			ids[i] = d.ID
+		}
+		return migration.ErrDeferred.New("waiting for %s to run first", strings.Join(ids, ", "))
+	}
+
 	installed, acc, err := readCiliumState(ctx)
 	if err != nil {
-		logx.As().Debug().Err(err).
-			Msg("cilium agent restart migration: Kubernetes API not reachable; skipping")
-		return nil
+		return deferIfAPIDown(err)
 	}
 	if !installed {
 		logx.As().Debug().Msg("cilium agent restart migration: Cilium not installed (no cilium-config); skipping")
@@ -96,6 +110,10 @@ func (m *CiliumAgentRestartMigration) Execute(ctx context.Context, mctx *migrati
 
 	logx.As().Info().Msg("Restarting Cilium agents to apply disabled acceleration (detach XDP)")
 	if err := restartCiliumAgents(ctx); err != nil {
+		if apiDown(err) {
+			// The patch may not have landed; a retry rolls the agents at most once more.
+			return deferIfAPIDown(err)
+		}
 		return errorx.IllegalState.Wrap(err, "failed to restart Cilium agents to apply disabled acceleration")
 	}
 
@@ -111,13 +129,25 @@ func (m *CiliumAgentRestartMigration) Rollback(ctx context.Context, mctx *migrat
 // to finish, so the agents re-read bpf-lb-acceleration and detach XDP from the
 // NICs.
 func defaultRestartCiliumAgents(ctx context.Context) error {
-	kc, err := kube.NewClient()
+	kc, err := adminClient()
 	if err != nil {
 		return err
 	}
 	if err := kc.RolloutRestart(ctx, kube.KindDaemonSet, ciliumNamespace, ciliumDaemonSet); err != nil {
-		return err
+		if c := errorx.Cast(err); c != nil {
+			// Waiting will not bring the DaemonSet back or make the patch valid.
+			if cause := c.Cause(); kerrors.IsNotFound(cause) || kerrors.IsInvalid(cause) {
+				return errx.Decorate(errorx.IllegalState.Wrap(err, "cannot restart daemonset %s/%s", ciliumNamespace, ciliumDaemonSet),
+					reasons.PreconditionNotMet,
+					"Check the Cilium agents: sudo kubectl --kubeconfig "+adminKubeconfigPath+" -n kube-system get daemonset cilium")
+			}
+		}
+		return errx.Decorate(errorx.ExternalError.Wrap(err, "cannot restart daemonset %s/%s", ciliumNamespace, ciliumDaemonSet),
+			reasons.K8sAPIFailed, apiServerHint(),
+			"Check the admin credentials: sudo kubectl --kubeconfig "+adminKubeconfigPath+" auth can-i patch daemonsets -n kube-system")
 	}
+	// The patch landed and the agents are rolling, so a failed wait is a
+	// failure, never a deferral: it carries no reason.
 	return kc.WaitForResource(ctx, kube.KindDaemonSet, ciliumNamespace, ciliumDaemonSet, daemonSetRolledOut, ciliumRolloutTimeout)
 }
 
