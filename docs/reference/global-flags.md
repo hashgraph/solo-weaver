@@ -20,6 +20,11 @@ Flags on this page work on every `solo-provisioner` command.
 > `teleport node uninstall` and `teleport cluster uninstall`: see
 > [Drift guard](../commands/README.md#drift-guard).
 
+> `consensus node install` stops when a kept PVC differs from the requested volume settings, or
+> when it will not mount a kept PVC. `--force` skips both stops. `--non-interactive` and
+> `--output=json` skip only the second one. See
+> [Install over kept PVCs](../commands/README.md#install-over-kept-pvcs).
+
 > `--profile` is **not** a global flag. It lives on the command stacks that need it —
 > `block node …` and `alloy cluster install`. `kube cluster install` does not take one.
 > See [Deployment profiles](deployment-profiles.md).

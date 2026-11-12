@@ -47,8 +47,8 @@ type CommonInputs struct {
 	// destroy (--override-drift).
 	OverrideDrift bool `yaml:",omitempty"`
 	// NonInteractive is set for --non-interactive and --output json by the
-	// commands that call ExtractDriftGuardFlags (the teleport uninstalls). A
-	// destructive action then runs over owned drift and records it.
+	// commands that call ExtractDriftGuardFlags (the teleport uninstalls) and by
+	// consensus node install. A destructive action then runs over owned drift and records it.
 	NonInteractive   bool `yaml:",omitempty"`
 	NodeType         string
 	ExecutionOptions WorkflowExecutionOptions

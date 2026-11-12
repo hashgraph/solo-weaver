@@ -219,6 +219,7 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.PrecheckConsensusSecrets(ins, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
+		steps.PrecheckConsensusPVCs(ins, inputs.Common.Force, inputs.Common.NonInteractive, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
 	)
