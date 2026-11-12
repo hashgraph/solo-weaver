@@ -100,7 +100,7 @@ func allESOCRDs(terminating bool) map[string]fakeCRD {
 func ownedSecretMeta() map[string]interface{} {
 	return map[string]interface{}{
 		"ownerReferences": []interface{}{
-			map[string]interface{}{"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret", "name": "x"},
+			map[string]interface{}{"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret", "name": "x", "uid": "es-uid"},
 		},
 	}
 }
@@ -117,6 +117,17 @@ func requireReason(t *testing.T, err error, want errx.Reason) []string {
 
 func deployedESO(spec *helmChartSpec) []*release.Release {
 	return []*release.Release{esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed)}
+}
+
+// deployedESOWithCRDs is deployedESO with a manifest that declares crds.
+func deployedESOWithCRDs(spec *helmChartSpec, crds ...string) []*release.Release {
+	rels := deployedESO(spec)
+	manifest := "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: external-secrets\n"
+	for _, name := range crds {
+		manifest += "---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: " + name + "\n"
+	}
+	rels[0].Manifest = manifest
+	return rels
 }
 
 // Each finalized kind blocks the uninstall before Helm is called: the mock has
@@ -284,60 +295,60 @@ func Test_checkOrphanedESOCRDs_PartialUninstall(t *testing.T) {
 	tests := []struct {
 		name      string
 		k         *fakeESOCluster
-		force     bool
+		recover   bool
 		wantErr   bool
 		wantReas  errx.Reason
 		wantHint  string
 		wantInMsg string
 	}{
 		{
-			name:      "without force refuses and names recovery",
+			name:      "without the flag refuses and names it",
 			k:         &fakeESOCluster{crds: terminating},
 			wantErr:   true,
 			wantReas:  reasons.PreconditionNotMet,
-			wantHint:  "  sudo solo-provisioner eso operator install --force --namespace external-secrets",
+			wantHint:  "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets",
 			wantInMsg: "stopped partway",
 		},
 		{
-			name: "force refuses while a Secret is still owned",
+			name: "recovery refuses while a Secret is still owned",
 			k: &fakeESOCluster{crds: terminating, objects: stuckES, secrets: map[string]map[string]interface{}{
 				"grafana-alloy/grafana-alloy-secrets": ownedSecretMeta(),
 			}},
-			force:     true,
+			recover:   true,
 			wantErr:   true,
 			wantReas:  reasons.PreconditionNotMet,
-			wantHint:  `  kubectl patch secret grafana-alloy-secrets -n grafana-alloy --type=json -p '[{"op":"remove","path":"/metadata/ownerReferences"}]'`,
+			wantHint:  `  kubectl patch secret grafana-alloy-secrets -n grafana-alloy --type=json -p '[{"op":"test","path":"/metadata/ownerReferences/0/uid","value":"es-uid"},{"op":"remove","path":"/metadata/ownerReferences/0"}]'`,
 			wantInMsg: "Secret grafana-alloy/grafana-alloy-secrets is still owned",
 		},
 		{
-			name: "force goes ahead once Secrets are detached",
+			name: "recovery goes ahead once Secrets are detached",
 			k: &fakeESOCluster{crds: terminating, objects: stuckES, secrets: map[string]map[string]interface{}{
 				"grafana-alloy/grafana-alloy-secrets": {"labels": map[string]interface{}{"reconcile.external-secrets.io/managed": "true"}},
 			}},
-			force: true,
+			recover: true,
 		},
 		{
-			name:  "force goes ahead when the target Secret is gone",
-			k:     &fakeESOCluster{crds: terminating, objects: stuckES},
-			force: true,
+			name:    "recovery goes ahead when the target Secret is gone",
+			k:       &fakeESOCluster{crds: terminating, objects: stuckES},
+			recover: true,
 		},
 		{
-			name:     "force with an unreadable Secret refuses",
+			name:     "recovery with an unreadable Secret refuses",
 			k:        &fakeESOCluster{crds: terminating, objects: stuckES, secretErr: errors.New("forbidden")},
-			force:    true,
+			recover:  true,
 			wantErr:  true,
 			wantReas: reasons.K8sAPIFailed,
 		},
 		{
-			name: "force does not apply to a healthy orphan",
+			name: "recovery does not apply to a healthy orphan",
 			k: &fakeESOCluster{crds: map[string]fakeCRD{
 				esoExternalSecretCRD:                         {terminating: true},
 				"clusterexternalsecrets.external-secrets.io": {},
 			}},
-			force:    true,
+			recover:  true,
 			wantErr:  true,
 			wantReas: reasons.PreconditionNotMet,
-			wantHint: "--force only applies after a partial uninstall, when every External Secrets Operator CRD is being deleted; see " + esoRecoveryDoc,
+			wantHint: "--recover-partial-uninstall only applies after a partial uninstall, when every External Secrets Operator CRD is being deleted; see " + esoRecoveryDoc,
 		},
 	}
 	for _, tt := range tests {
@@ -345,7 +356,7 @@ func Test_checkOrphanedESOCRDs_PartialUninstall(t *testing.T) {
 			hm := helm.NewMockManager(gomock.NewController(t))
 			hm.EXPECT().ListAll().Return(nil, nil)
 
-			_, err := checkOrphanedESOCRDs(context.Background(), hm, tt.k, spec, tt.force)
+			_, err := checkOrphanedESOCRDs(context.Background(), hm, tt.k, spec, tt.recover)
 			if !tt.wantErr {
 				require.NoError(t, err)
 				return
@@ -376,12 +387,27 @@ func Test_checkOrphanedESOCRDs_HintsNameOnlyFoundCRDs(t *testing.T) {
 	}
 }
 
-func Test_ownedByExternalSecret(t *testing.T) {
-	assert.True(t, ownedByExternalSecret(ownedSecretMeta()))
-	assert.False(t, ownedByExternalSecret(map[string]interface{}{}))
-	assert.False(t, ownedByExternalSecret(map[string]interface{}{
-		"ownerReferences": []interface{}{map[string]interface{}{"apiVersion": "apps/v1", "kind": "Deployment"}},
-	}))
+func Test_externalSecretOwnerRef(t *testing.T) {
+	index, uid, ok := externalSecretOwnerRef(ownedSecretMeta())
+	assert.True(t, ok)
+	assert.Equal(t, 0, index)
+	assert.Equal(t, "es-uid", uid)
+
+	_, _, ok = externalSecretOwnerRef(map[string]interface{}{})
+	assert.False(t, ok)
+
+	deployment := map[string]interface{}{"apiVersion": "apps/v1", "kind": "Deployment", "uid": "d-uid"}
+	_, _, ok = externalSecretOwnerRef(map[string]interface{}{"ownerReferences": []interface{}{deployment}})
+	assert.False(t, ok)
+
+	// Another owner first: the ExternalSecret's index is reported, so the patch
+	// removes only that entry.
+	both := ownedSecretMeta()
+	both["ownerReferences"] = append([]interface{}{deployment}, both["ownerReferences"].([]interface{})...)
+	index, uid, ok = externalSecretOwnerRef(both)
+	assert.True(t, ok)
+	assert.Equal(t, 1, index)
+	assert.Equal(t, "es-uid", uid)
 }
 
 // The target name defaults to the ExternalSecret's name; spec.target.name
@@ -396,85 +422,214 @@ func Test_ownedESOSecrets_TargetName(t *testing.T) {
 		secrets: map[string]map[string]interface{}{"ns/plain": ownedSecretMeta(), "ns/custom": ownedSecretMeta()},
 	}
 
-	owned, err := ownedESOSecrets(context.Background(), k)
+	owned, patches, err := ownedESOSecrets(context.Background(), k)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ns/plain", "ns/custom"}, owned)
+	require.Len(t, patches, 2)
+	assert.Contains(t, patches[1], "kubectl patch secret custom -n ns ")
 }
 
-func Test_finishPartialUninstall(t *testing.T) {
+// expectESOInstall expects one Helm install of the ESO chart, with Wait as given,
+// returning err.
+func expectESOInstall(t *testing.T, hm *helm.MockManager, spec *helmChartSpec, wait bool, err error) *gomock.Call {
+	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(false, nil)
+	hm.EXPECT().AddRepo(spec.RepoAlias, spec.Repo, gomock.Any()).Return(nil, nil)
+	hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum).
+		Return("/tmp/chart.tgz", nil)
+	return hm.EXPECT().InstallChart(gomock.Any(), spec.Release, "/tmp/chart.tgz", "", spec.Namespace, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _, _, _ string, opts helm.InstallChartOptions) (*release.Release, error) {
+			assert.Equal(t, wait, opts.Wait, "Wait")
+			assert.Equal(t, wait, opts.Atomic, "Atomic")
+			return nil, err
+		})
+}
+
+// A recovery installs without waiting, waits for the old CRDs to go, then
+// uninstalls and installs again with Helm's wait, and succeeds with a warning.
+func Test_recoverESOInstall_ReinstallsOnceTheOldCRDsAreGone(t *testing.T) {
 	spec, err := resolveCatalogChart("external-secrets")
 	require.NoError(t, err)
+	k := &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: 2}
+
+	hm := helm.NewMockManager(gomock.NewController(t))
+	gomock.InOrder(
+		expectESOInstall(t, hm, spec, false, nil),
+		hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+		expectESOInstall(t, hm, spec, true, nil),
+	)
+
+	warning, err := recoverESOInstall(context.Background(), hm, k, spec, []string{esoExternalSecretCRD}, nil, time.Second, time.Millisecond)
+	require.NoError(t, err)
+	assert.Contains(t, warning, "recreate them")
+	assert.Contains(t, warning, esoRecoveryDoc)
+}
+
+// A rerun over a release a failed recovery left installed skips the first
+// install and still reinstalls.
+func Test_recoverESOInstall_ReleaseAlreadyInstalled(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	k := &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: 1}
+
+	hm := helm.NewMockManager(gomock.NewController(t))
+	gomock.InOrder(
+		hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil),
+		hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+		expectESOInstall(t, hm, spec, true, nil),
+	)
+
+	_, err = recoverESOInstall(context.Background(), hm, k, spec, []string{esoExternalSecretCRD}, nil, time.Second, time.Millisecond)
+	require.NoError(t, err)
+}
+
+// A resumed recovery over a release that lost some CRDs while others still
+// delete re-applies the release first, without Helm's wait or atomic, so the
+// controller has every CRD it needs to drain the rest.
+func Test_recoverESOInstall_ResumeReappliesMissingCRDs(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	k := &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: 1}
+
+	hm := helm.NewMockManager(gomock.NewController(t))
+	gomock.InOrder(
+		hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil),
+		hm.EXPECT().AddRepo(spec.RepoAlias, spec.Repo, gomock.Any()).Return(nil, nil),
+		hm.EXPECT().PullAndVerify(gomock.Any(), gomock.Any(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum).
+			Return("/tmp/chart.tgz", nil),
+		hm.EXPECT().UpgradeChart(gomock.Any(), spec.Release, "/tmp/chart.tgz", "", spec.Namespace, gomock.Any()).
+			DoAndReturn(func(_ context.Context, _, _, _, _ string, opts helm.UpgradeChartOptions) (*release.Release, error) {
+				assert.False(t, opts.Wait)
+				assert.False(t, opts.Atomic)
+				return nil, nil
+			}),
+		hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+		expectESOInstall(t, hm, spec, true, nil),
+	)
+
+	_, err = recoverESOInstall(context.Background(), hm, k, spec, []string{esoExternalSecretCRD},
+		[]string{"pushsecrets.external-secrets.io"}, time.Second, time.Millisecond)
+	require.NoError(t, err)
+}
+
+func Test_recoverESOInstall_Failures(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	rerun := "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets"
+	deleting := func(goneAfter int) *fakeESOCluster {
+		return &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: goneAfter}
+	}
 
 	tests := []struct {
 		name     string
 		k        *fakeESOCluster
-		timeout  time.Duration
-		wantErr  bool
-		wantReas errx.Reason
+		expect   func(t *testing.T, hm *helm.MockManager)
 		wantHint string
 	}{
 		{
-			name: "every CRD present: nothing to finish",
-			k:    &fakeESOCluster{crds: allESOCRDs(false)},
+			name:     "recovery install fails: remove the release and rerun",
+			k:        deleting(1),
+			expect:   func(t *testing.T, hm *helm.MockManager) { expectESOInstall(t, hm, spec, false, errors.New("boom")) },
+			wantHint: rerun,
 		},
 		{
-			name:     "CRD drains: reinstall next",
-			k:        &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: 1},
-			timeout:  time.Second,
-			wantErr:  true,
-			wantReas: reasons.PreconditionNotMet,
+			name: "old CRDs never go: no uninstall, rerun",
+			k:    deleting(0),
+			expect: func(t *testing.T, hm *helm.MockManager) {
+				expectESOInstall(t, hm, spec, false, nil)
+			},
+			wantHint: rerun,
+		},
+		{
+			name: "final install fails: rerun the recovery",
+			k:    deleting(1),
+			expect: func(t *testing.T, hm *helm.MockManager) {
+				gomock.InOrder(
+					expectESOInstall(t, hm, spec, false, nil),
+					hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+					hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+					expectESOInstall(t, hm, spec, true, errors.New("boom")),
+				)
+			},
+			wantHint: rerun,
+		},
+		{
+			name: "uninstall refuses: the release stays, nothing installed again",
+			k: func() *fakeESOCluster {
+				k := deleting(1)
+				k.objects = map[schema.GroupKind][]unstructured.Unstructured{
+					externalSecretKind.groupKind(): {esoObj(externalSecretKind, "ns", "new", false)},
+				}
+				return k
+			}(),
+			expect: func(t *testing.T, hm *helm.MockManager) {
+				gomock.InOrder(
+					expectESOInstall(t, hm, spec, false, nil),
+					hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+				)
+			},
 			wantHint: "  sudo solo-provisioner eso operator uninstall --namespace external-secrets",
-		},
-		{
-			name:     "CRD already gone: reinstall next",
-			k:        &fakeESOCluster{},
-			wantErr:  true,
-			wantReas: reasons.PreconditionNotMet,
-			wantHint: "  sudo solo-provisioner eso operator install --namespace external-secrets",
-		},
-		{
-			name: "a CRD other than ExternalSecret still deleting",
-			k: &fakeESOCluster{crds: map[string]fakeCRD{
-				esoExternalSecretCRD:                             {},
-				"secretstores.external-secrets.io":               {terminating: true},
-				"clusterexternalsecrets.external-secrets.io":     {},
-				"clustersecretstores.external-secrets.io":        {},
-				"pushsecrets.external-secrets.io":                {},
-				"generatorstates.generators.external-secrets.io": {},
-			}},
-			timeout:  50 * time.Millisecond,
-			wantErr:  true,
-			wantReas: reasons.PreconditionNotMet,
-			wantHint: "  sudo solo-provisioner eso operator install --force --namespace external-secrets",
-		},
-		{
-			name:     "CRD never drains",
-			k:        &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}},
-			timeout:  50 * time.Millisecond,
-			wantErr:  true,
-			wantReas: reasons.PreconditionNotMet,
-			wantHint: "  sudo solo-provisioner eso operator install --force --namespace external-secrets",
-		},
-		{
-			name:     "CRD read fails",
-			k:        &fakeESOCluster{crdErr: errors.New("timeout")},
-			wantErr:  true,
-			wantReas: reasons.K8sAPIFailed,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := finishPartialUninstall(context.Background(), tt.k, spec, tt.timeout, time.Millisecond)
-			if !tt.wantErr {
-				require.NoError(t, err)
-				return
-			}
-			hints := requireReason(t, err, tt.wantReas)
-			if tt.wantHint != "" {
-				assert.Contains(t, hints, tt.wantHint)
-			}
+			hm := helm.NewMockManager(gomock.NewController(t))
+			tt.expect(t, hm)
+
+			_, err := recoverESOInstall(context.Background(), hm, tt.k, spec, []string{esoExternalSecretCRD}, nil, 20*time.Millisecond, time.Millisecond)
+			hints := requireReason(t, err, reasons.PreconditionNotMet)
+			assert.Contains(t, hints, tt.wantHint)
 		})
 	}
+}
+
+// The refusal without the flag shows what the recovery would refuse over and
+// what it would clean up, before the operator chooses the flag.
+func Test_checkPartialUninstallRecovery_RefusalPreviewsTheRecovery(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	k := &fakeESOCluster{
+		objects: map[schema.GroupKind][]unstructured.Unstructured{
+			externalSecretKind.groupKind(): {esoObj(externalSecretKind, "grafana-alloy", "grafana-alloy-secrets", true)},
+			pushSecretKind.groupKind():     {pushSecret("drop", "Delete")},
+			generatorStateKind.groupKind(): {esoObj(generatorStateKind, "team-a", "token", true)},
+		},
+		secrets: map[string]map[string]interface{}{"grafana-alloy/grafana-alloy-secrets": ownedSecretMeta()},
+	}
+
+	_, err = checkPartialUninstallRecovery(context.Background(), k, spec, []string{esoExternalSecretCRD}, false)
+	hints := requireReason(t, err, reasons.PreconditionNotMet)
+	assert.Contains(t, err.Error(), "stopped partway")
+	assert.Contains(t, err.Error(), "Secret grafana-alloy/grafana-alloy-secrets is still owned")
+	assert.Contains(t, err.Error(), "PushSecret team-a/drop has deletionPolicy Delete")
+	assert.Contains(t, err.Error(), "finish deleting GeneratorState team-a/token")
+	assert.Contains(t, hints, `  kubectl patch secret grafana-alloy-secrets -n grafana-alloy --type=json -p '[{"op":"test","path":"/metadata/ownerReferences/0/uid","value":"es-uid"},{"op":"remove","path":"/metadata/ownerReferences/0"}]'`)
+	assert.Contains(t, hints, "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets")
+
+	// Nothing to keep or clean up: the refusal only names the flag.
+	_, err = checkPartialUninstallRecovery(context.Background(), &fakeESOCluster{}, spec, []string{esoExternalSecretCRD}, false)
+	hints = requireReason(t, err, reasons.PreconditionNotMet)
+	assert.NotContains(t, err.Error(), "GeneratorState")
+	assert.NotContains(t, hints, "Detach each Secret you need to keep:")
+}
+
+// A PushSecret a ClusterPushSecret created is rewritten from it, so the
+// uninstall refusal points at the ClusterPushSecret.
+func Test_uninstallESOChart_PushSecretHintNamesClusterPushSecrets(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	ps := pushSecret("drop", "Delete")
+	ps.SetDeletionTimestamp(nil)
+
+	hm := helm.NewMockManager(gomock.NewController(t))
+	hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil)
+	k := &fakeESOCluster{objects: map[schema.GroupKind][]unstructured.Unstructured{pushSecretKind.groupKind(): {ps}}}
+
+	_, err = uninstallESOChart(context.Background(), hm, k, spec)
+	hints := requireReason(t, err, reasons.PreconditionNotMet)
+	assert.Contains(t, hints, "  kubectl get clusterpushsecrets.external-secrets.io")
 }
 
 func Test_waitESOCRDsGone(t *testing.T) {
@@ -595,26 +750,151 @@ func Test_installESOChart_RecoveryInstallsWithoutWaitOrAtomic(t *testing.T) {
 	assert.True(t, installed)
 }
 
-func Test_isESORecovery(t *testing.T) {
+func Test_esoRecoveryGaps(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
 	provider := func(k *fakeESOCluster) esoClusterReaderProvider {
 		return func(context.Context) (esoClusterReader, error) { return k, nil }
 	}
 	deleting := &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}}
 
-	got, err := isESORecovery(context.Background(), false, provider(deleting))
+	hm := helm.NewMockManager(gomock.NewController(t))
+	_, terminating, missing, err := esoRecoveryGaps(context.Background(), hm, spec, false, provider(deleting))
 	require.NoError(t, err)
-	assert.False(t, got, "only a forced install recovers")
+	assert.Empty(t, terminating, "only --recover-partial-uninstall recovers")
+	assert.Empty(t, missing)
+	assert.Empty(t, deleting.lookups, "a plain install reads nothing")
 
-	got, err = isESORecovery(context.Background(), true, provider(deleting))
+	hm.EXPECT().List(spec.Namespace, false).Return(nil, nil)
+	k, terminating, _, err := esoRecoveryGaps(context.Background(), hm, spec, true, provider(deleting))
 	require.NoError(t, err)
-	assert.True(t, got)
+	assert.Equal(t, []string{esoExternalSecretCRD}, terminating)
+	assert.Same(t, deleting, k)
 
-	got, err = isESORecovery(context.Background(), true, provider(&fakeESOCluster{crds: allESOCRDs(false)}))
+	// A drain that finished since the precheck: the release lacks a CRD its
+	// manifest declares.
+	drained := allESOCRDs(false)
+	delete(drained, "pushsecrets.external-secrets.io")
+	hm.EXPECT().List(spec.Namespace, false).Return(deployedESOWithCRDs(spec, esoCRDs...), nil)
+	_, terminating, missing, err = esoRecoveryGaps(context.Background(), hm, spec, true, provider(&fakeESOCluster{crds: drained}))
 	require.NoError(t, err)
-	assert.False(t, got, "a forced install on a healthy cluster is a normal install")
+	assert.Empty(t, terminating)
+	assert.Equal(t, []string{"pushsecrets.external-secrets.io"}, missing)
 
-	_, err = isESORecovery(context.Background(), true, provider(&fakeESOCluster{crdErr: errors.New("boom")}))
+	hm.EXPECT().List(spec.Namespace, false).Return(deployedESOWithCRDs(spec, esoCRDs...), nil)
+	_, terminating, missing, err = esoRecoveryGaps(context.Background(), hm, spec, true, provider(&fakeESOCluster{crds: allESOCRDs(false)}))
+	require.NoError(t, err)
+	assert.Empty(t, terminating, "the flag on a healthy cluster is a normal install")
+	assert.Empty(t, missing)
+
+	hm.EXPECT().List(spec.Namespace, false).Return(nil, nil)
+	_, _, _, err = esoRecoveryGaps(context.Background(), hm, spec, true, provider(&fakeESOCluster{crdErr: errors.New("boom")}))
 	requireReason(t, err, reasons.K8sAPIFailed)
+}
+
+// A custom install that left an optional CRD out lacks nothing: only the CRDs
+// the release's manifest declares count as missing.
+func Test_releaseCRDs(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	got, err := releaseCRDs(deployedESOWithCRDs(spec, esoExternalSecretCRD, "secretstores.external-secrets.io")[0])
+	require.NoError(t, err)
+	assert.Equal(t, []string{esoExternalSecretCRD, "secretstores.external-secrets.io"}, got)
+
+	got, err = releaseCRDs(nil)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	bad := deployedESO(spec)[0]
+	bad.Manifest = "kind: [unterminated"
+	_, err = releaseCRDs(bad)
+	requireReason(t, err, reasons.PreconditionNotMet)
+}
+
+// The install step's work: a plain install, an already-installed release, and a
+// recovery, by what the cluster shows when the step runs.
+func Test_installOrRecoverESO(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+	provider := func(k *fakeESOCluster) esoClusterReaderProvider {
+		return func(context.Context) (esoClusterReader, error) { return k, nil }
+	}
+	run := func(hm helm.Manager, recoverPartial bool, k *fakeESOCluster) (map[string]string, error) {
+		return installOrRecoverESO(context.Background(), hm, spec, recoverPartial, provider(k), time.Second, time.Millisecond)
+	}
+
+	t.Run("plain install", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		expectESOInstall(t, hm, spec, true, nil)
+		meta, err := run(hm, false, &fakeESOCluster{})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{InstalledByThisStep: "true"}, meta)
+	})
+
+	t.Run("already installed", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+		meta, err := run(hm, false, &fakeESOCluster{})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{AlreadyInstalled: "true"}, meta)
+	})
+
+	t.Run("flag on a healthy release is a plain install", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		hm.EXPECT().List(spec.Namespace, false).Return(deployedESOWithCRDs(spec, esoCRDs...), nil)
+		hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
+		meta, err := run(hm, true, &fakeESOCluster{crds: allESOCRDs(false)})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{AlreadyInstalled: "true"}, meta)
+	})
+
+	t.Run("recovery over a partial uninstall", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		gomock.InOrder(
+			hm.EXPECT().List(spec.Namespace, false).Return(nil, nil),
+			expectESOInstall(t, hm, spec, false, nil),
+			hm.EXPECT().List(spec.Namespace, false).Return(deployedESO(spec), nil),
+			hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+			expectESOInstall(t, hm, spec, true, nil),
+		)
+		k := &fakeESOCluster{crds: map[string]fakeCRD{esoExternalSecretCRD: {terminating: true}}, goneAfter: 2}
+		meta, err := run(hm, true, k)
+		require.NoError(t, err)
+		assert.Equal(t, "true", meta[InstalledByThisStep])
+		assert.Contains(t, meta[models.ReportMetaWarning], "recreate them")
+	})
+
+	// The rerun after a recovery whose wait timed out and whose drain then
+	// finished: nothing terminating, the release lacks a CRD. It reinstalls
+	// without a first install or a wait.
+	t.Run("rerun after the drain finished", func(t *testing.T) {
+		hm := helm.NewMockManager(gomock.NewController(t))
+		rels := deployedESOWithCRDs(spec, esoCRDs...)
+		gomock.InOrder(
+			hm.EXPECT().List(spec.Namespace, false).Return(rels, nil),
+			hm.EXPECT().List(spec.Namespace, false).Return(rels, nil),
+			hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil),
+			expectESOInstall(t, hm, spec, true, nil),
+		)
+		drained := allESOCRDs(false)
+		delete(drained, "pushsecrets.external-secrets.io")
+		meta, err := run(hm, true, &fakeESOCluster{crds: drained})
+		require.NoError(t, err)
+		assert.Contains(t, meta[models.ReportMetaWarning], "Recovered")
+	})
+}
+
+// A failed read while building the preview keeps the state in the message.
+func Test_recoveryNeededError_ReadFailureKeepsTheDiagnosis(t *testing.T) {
+	spec, err := resolveCatalogChart("external-secrets")
+	require.NoError(t, err)
+
+	err = recoveryNeededError(context.Background(), &fakeESOCluster{listErr: errors.New("forbidden")}, spec, "a previous uninstall stopped partway")
+	hints := requireReason(t, err, reasons.PreconditionNotMet)
+	assert.Contains(t, err.Error(), "a previous uninstall stopped partway")
+	assert.Contains(t, err.Error(), "forbidden")
+	assert.Contains(t, hints, "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets")
 }
 
 // Both blockers are named in one refusal, so the operator fixes them in one pass.
@@ -642,15 +922,20 @@ func Test_crdsPhrase(t *testing.T) {
 	assert.Equal(t, "CRDs a, b are", crdsPhrase([]string{"a", "b"}))
 }
 
-// An installed ESO release must still have its CRDs: a recovery that failed or
-// was interrupted leaves one whose old CRDs are deleting or gone.
+// An installed ESO release must still have the CRDs its manifest declares: a
+// recovery that failed or was interrupted leaves one whose old CRDs are
+// deleting or gone.
 func Test_checkOrphanedESOCRDs_InstalledReleaseCRDs(t *testing.T) {
 	spec, err := resolveCatalogChart("external-secrets")
 	require.NoError(t, err)
 	optionalMissing := allESOCRDs(false)
 	delete(optionalMissing, "pushsecrets.external-secrets.io")
-	requiredMissing := allESOCRDs(false)
-	delete(requiredMissing, esoExternalSecretCRD)
+	withoutPushSecrets := []string{}
+	for _, name := range esoCRDs {
+		if name != "pushsecrets.external-secrets.io" {
+			withoutPushSecrets = append(withoutPushSecrets, name)
+		}
+	}
 	stillDeleting := allESOCRDs(false)
 	stillDeleting[esoExternalSecretCRD] = fakeCRD{terminating: true}
 	stuckES := map[schema.GroupKind][]unstructured.Unstructured{
@@ -660,60 +945,67 @@ func Test_checkOrphanedESOCRDs_InstalledReleaseCRDs(t *testing.T) {
 	tests := []struct {
 		name     string
 		k        *fakeESOCluster
-		force    bool
+		crds     []string // the release manifest's; nil = every esoCRD
+		recover  bool
 		wantErr  bool
 		wantHint string
+		wantMsg  string
 	}{
 		{name: "every CRD present", k: &fakeESOCluster{crds: allESOCRDs(false)}},
-		{name: "only an optional CRD missing", k: &fakeESOCluster{crds: optionalMissing}},
+		{name: "a CRD the release never declared is absent", k: &fakeESOCluster{crds: optionalMissing}, crds: withoutPushSecrets},
 		{
-			name:     "a required CRD missing",
-			k:        &fakeESOCluster{crds: requiredMissing},
-			force:    true,
+			name:     "a CRD the release declares is missing, no flag",
+			k:        &fakeESOCluster{crds: optionalMissing},
 			wantErr:  true,
-			wantHint: "  sudo solo-provisioner eso operator uninstall --namespace external-secrets",
+			wantHint: "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets",
+			wantMsg:  "CRD pushsecrets.external-secrets.io is missing",
 		},
+		{name: "a CRD the release declares is missing, flag", k: &fakeESOCluster{crds: optionalMissing}, recover: true},
 		{
-			name:     "a CRD still deleting, no force",
-			k:        &fakeESOCluster{crds: stillDeleting},
-			wantErr:  true,
-			wantHint: "  sudo solo-provisioner eso operator install --force --namespace external-secrets",
-		},
-		{
-			name: "a CRD still deleting, force, Secret still owned",
-			k: &fakeESOCluster{crds: stillDeleting, objects: stuckES, secrets: map[string]map[string]interface{}{
+			name: "a CRD the release declares is missing, flag, Secret still owned",
+			k: &fakeESOCluster{crds: optionalMissing, objects: stuckES, secrets: map[string]map[string]interface{}{
 				"grafana-alloy/grafana-alloy-secrets": ownedSecretMeta(),
 			}},
-			force:    true,
+			recover:  true,
 			wantErr:  true,
 			wantHint: "Detach each Secret you need to keep:",
 		},
-		{name: "a CRD still deleting, force, data detached", k: &fakeESOCluster{crds: stillDeleting, objects: stuckES}, force: true},
+		{
+			name:     "a CRD still deleting, no flag",
+			k:        &fakeESOCluster{crds: stillDeleting},
+			wantErr:  true,
+			wantHint: "  sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace external-secrets",
+		},
+		{
+			name: "a CRD still deleting, flag, Secret still owned",
+			k: &fakeESOCluster{crds: stillDeleting, objects: stuckES, secrets: map[string]map[string]interface{}{
+				"grafana-alloy/grafana-alloy-secrets": ownedSecretMeta(),
+			}},
+			recover:  true,
+			wantErr:  true,
+			wantHint: "Detach each Secret you need to keep:",
+		},
+		{name: "a CRD still deleting, flag, data detached", k: &fakeESOCluster{crds: stillDeleting, objects: stuckES}, recover: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			crds := tt.crds
+			if crds == nil {
+				crds = esoCRDs
+			}
 			hm := helm.NewMockManager(gomock.NewController(t))
-			hm.EXPECT().ListAll().Return(deployedESO(spec), nil)
+			hm.EXPECT().ListAll().Return(deployedESOWithCRDs(spec, crds...), nil)
 
-			_, err := checkOrphanedESOCRDs(context.Background(), hm, tt.k, spec, tt.force)
+			_, err := checkOrphanedESOCRDs(context.Background(), hm, tt.k, spec, tt.recover)
 			if !tt.wantErr {
 				require.NoError(t, err)
 				return
 			}
 			hints := requireReason(t, err, reasons.PreconditionNotMet)
 			assert.Contains(t, hints, tt.wantHint)
+			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
-}
-
-// A forced install on a healthy ESO without an optional CRD has nothing to finish.
-func Test_finishPartialUninstall_OptionalCRDMissing(t *testing.T) {
-	spec, err := resolveCatalogChart("external-secrets")
-	require.NoError(t, err)
-	crds := allESOCRDs(false)
-	delete(crds, "clustersecretstores.external-secrets.io")
-
-	require.NoError(t, finishPartialUninstall(context.Background(), &fakeESOCluster{crds: crds}, spec, time.Second, time.Millisecond))
 }
 
 // A PushSecret with deletionPolicy None has no finalizer, so it does not block.
@@ -734,7 +1026,7 @@ func Test_uninstallESOChart_IgnoresObjectsWithoutFinalizers(t *testing.T) {
 }
 
 // A stalled record whose objects are all already deleting is uninstalled, so
-// install --force can recover; one with an object not yet deleting refuses.
+// install --recover-partial-uninstall can recover; one with an object not yet deleting refuses.
 func Test_uninstallESOChart_StalledReleaseWithDeletingObjects(t *testing.T) {
 	spec, err := resolveCatalogChart("external-secrets")
 	require.NoError(t, err)

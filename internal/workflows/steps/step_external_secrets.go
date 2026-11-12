@@ -37,25 +37,19 @@ const (
 
 // SetupExternalSecrets returns a workflow builder that installs the External
 // Secrets Operator at the catalog default version. An empty namespace selects
-// the catalog default namespace. force lets the install recover from a partial
-// uninstall, and adds a last step that finishes that recovery.
-func SetupExternalSecrets(namespace string, force bool) *automa.WorkflowBuilder {
+// the catalog default namespace. recoverPartial lets the install recover from a
+// partial uninstall.
+func SetupExternalSecrets(namespace string, recoverPartial bool) *automa.WorkflowBuilder {
 	spec := chartSpec("external-secrets")
 	if namespace != "" {
 		spec.Namespace = namespace
 	}
 
-	steps := []automa.Builder{
-		preCheckExternalSecrets(spec, true, force, defaultESOClusterReader),
-		installExternalSecrets(spec, force, defaultESOClusterReader),
-	}
-	if force {
-		// Before readiness: the controller may never be ready while CRDs are missing.
-		steps = append(steps, finishESORecovery(spec, defaultESOClusterReader, helm.DefaultTimeout))
-	}
-	steps = append(steps, isExternalSecretsReady(spec))
-
-	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(steps...).
+	return automa.NewWorkflowBuilder().WithId(SetupExternalSecretsStepId).Steps(
+		preCheckExternalSecrets(spec, true, recoverPartial, defaultESOClusterReader),
+		installExternalSecrets(spec, recoverPartial, defaultESOClusterReader),
+		isExternalSecretsReady(spec),
+	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Setting up External Secrets Operator")
 			return ctx, nil
@@ -182,8 +176,10 @@ func checkESOSingleton(hm helm.Manager, spec *helmChartSpec) error {
 	return nil
 }
 
-// esoCRDs are the CRDs every ESO install creates. All are checked, so an
-// install that left only some of them behind is still found. The finalized
+// esoCRDs are the CRDs an ESO install may create; clusterexternalsecrets,
+// clustersecretstores and pushsecrets are optional in the chart
+// (crds.createX). All are checked, so an install that left only some of them
+// behind is still found. The finalized
 // kinds' CRDs are among them, so any CRD a partial uninstall can leave
 // Terminating is seen.
 var esoCRDs = []string{
@@ -195,25 +191,16 @@ var esoCRDs = []string{
 	"generatorstates.generators.external-secrets.io",
 }
 
-// esoRequiredCRDs are the esoCRDs every install creates. The others are optional
-// in the chart (crds.createClusterExternalSecret, createClusterSecretStore,
-// createPushSecret), so a healthy ESO can lack them.
-var esoRequiredCRDs = []string{
-	"externalsecrets.external-secrets.io",
-	"secretstores.external-secrets.io",
-	"generatorstates.generators.external-secrets.io",
-}
-
 // checkOrphanedESOCRDs fails when ESO CRDs exist but no Helm release of the ESO
 // chart does. Helm adopts existing resources that carry its ownership labels for
 // the same release name and namespace, so an install over an ESO whose release
 // record was lost would replace its CRDs and workloads with the catalog default.
 // When every CRD found is terminating, a previous uninstall stopped partway, and
 // checkPartialUninstallRecovery decides. When an ESO release exists,
-// checkInstalledESOCRDs checks it still has its CRDs.
+// checkInstalledESOCRDs checks it still has the CRDs its manifest declares.
 //
-// The warning is for the operator, set only when a forced install goes ahead.
-func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterReader, spec *helmChartSpec, force bool) (warning string, err error) {
+// The warning is for the operator, set only when a recovery goes ahead.
+func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterReader, spec *helmChartSpec, recoverPartial bool) (warning string, err error) {
 	releases, err := hm.ListAll()
 	if err != nil {
 		return "", errx.Decorate(
@@ -224,7 +211,7 @@ func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterRead
 	}
 	for _, rel := range releases {
 		if rel != nil && isESORelease(rel, spec) {
-			return checkInstalledESOCRDs(ctx, k, spec, force)
+			return checkInstalledESOCRDs(ctx, k, rel, spec, recoverPartial)
 		}
 	}
 
@@ -249,7 +236,7 @@ func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterRead
 		return "", nil
 	}
 	if allTerminating {
-		return checkPartialUninstallRecovery(ctx, k, spec, found, force)
+		return checkPartialUninstallRecovery(ctx, k, spec, found, recoverPartial)
 	}
 
 	hints := []string{
@@ -258,8 +245,8 @@ func checkOrphanedESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterRead
 		// Only the CRDs found: kubectl fails on a kind whose CRD is gone.
 		"If they are left over from a removed installation, see what still uses them: kubectl get " + strings.Join(found, ",") + " -A",
 	}
-	if force {
-		hints = append(hints, "--force only applies after a partial uninstall, when every External Secrets Operator CRD is being deleted; see "+esoRecoveryDoc)
+	if recoverPartial {
+		hints = append(hints, "--recover-partial-uninstall only applies after a partial uninstall, when every External Secrets Operator CRD is being deleted; see "+esoRecoveryDoc)
 	}
 	return "", errx.Decorate(
 		errorx.IllegalState.New(
@@ -289,7 +276,7 @@ func releaseStatus(rel *release.Release) release.Status {
 // preCheckExternalSecrets gates both ESO workflows, failing before Helm installs anything
 // rather than deep inside one. The install guards are install-only: an uninstall
 // should remove ESO from whichever namespace it actually occupies.
-func preCheckExternalSecrets(spec *helmChartSpec, install, force bool, provider esoClusterReaderProvider) automa.Builder {
+func preCheckExternalSecrets(spec *helmChartSpec, install, recoverPartial bool, provider esoClusterReaderProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(PreCheckExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			_, reachable := kube.ProbeCluster()
@@ -312,7 +299,7 @@ func preCheckExternalSecrets(spec *helmChartSpec, install, force bool, provider 
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
-				warning, err := checkOrphanedESOCRDs(ctx, hm, k, spec, force)
+				warning, err := checkOrphanedESOCRDs(ctx, hm, k, spec, recoverPartial)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
@@ -337,12 +324,28 @@ func preCheckExternalSecrets(spec *helmChartSpec, install, force bool, provider 
 		})
 }
 
+// pullESOChart fetches the catalog's ESO chart and verifies its checksum.
+func pullESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) (string, error) {
+	if _, err := hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{}); err != nil {
+		return "", err
+	}
+	return hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+}
+
+// esoChartValues are the values every ESO install and upgrade uses.
+func esoChartValues() *values.Options {
+	return &values.Options{Values: []string{
+		"installCRDs=true",
+		"webhook.port=9443",
+	}}
+}
+
 // installESOChart runs the idempotent ESO Helm install and reports whether it
 // installed (false = already present). Extracted from the step so it can be
 // unit-tested with a mock helm.Manager. A recovery over a partial uninstall
 // installs without Helm's wait and atomic rollback: the adopted CRDs are meant
 // to finish deleting, which Helm's wait would read as a failure and roll back.
-// The readiness and recovery steps do the waiting instead.
+// recoverESOInstall does the waiting instead.
 func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, recovering bool) (bool, error) {
 	isInstalled, err := hm.IsInstalled(spec.Release, spec.Namespace)
 	if err != nil {
@@ -352,18 +355,9 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, 
 		return false, nil
 	}
 
-	if _, err := hm.AddRepo(spec.RepoAlias, spec.Repo, helm.RepoAddOptions{}); err != nil {
-		return false, err
-	}
-
-	localChart, err := hm.PullAndVerify(ctx, chartDownloadsDir(), spec.Chart, spec.Version, spec.Algorithm, spec.Checksum)
+	localChart, err := pullESOChart(ctx, hm, spec)
 	if err != nil {
 		return false, err
-	}
-
-	helmValues := []string{
-		"installCRDs=true",
-		"webhook.port=9443",
 	}
 
 	if _, err := hm.InstallChart(
@@ -373,9 +367,7 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, 
 		"",
 		spec.Namespace,
 		helm.InstallChartOptions{
-			ValueOpts: &values.Options{
-				Values: helmValues,
-			},
+			ValueOpts:       esoChartValues(),
 			CreateNamespace: true,
 			Atomic:          !recovering,
 			Wait:            !recovering,
@@ -388,7 +380,37 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, 
 	return true, nil
 }
 
-func installExternalSecrets(spec *helmChartSpec, force bool, provider esoClusterReaderProvider) automa.Builder {
+// installOrRecoverESO is the install step's work, extracted so it can be
+// unit-tested with a mock helm.Manager: a recovery when recoverPartial is set and
+// ESO CRDs are deleting or missing from the release, else the idempotent
+// install. The report metadata says which, and carries the recovery's warning.
+func installOrRecoverESO(ctx context.Context, hm helm.Manager, spec *helmChartSpec, recoverPartial bool, provider esoClusterReaderProvider, timeout, interval time.Duration) (map[string]string, error) {
+	k, terminating, missing, err := esoRecoveryGaps(ctx, hm, spec, recoverPartial, provider)
+	if err != nil {
+		return nil, err
+	}
+	if len(terminating) > 0 || len(missing) > 0 {
+		warning, err := recoverESOInstall(ctx, hm, k, spec, terminating, missing, timeout, interval)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{InstalledByThisStep: "true", models.ReportMetaWarning: warning}, nil
+	}
+
+	installed, err := installESOChart(ctx, hm, spec, false)
+	if err != nil {
+		return nil, err
+	}
+	if !installed {
+		return map[string]string{AlreadyInstalled: "true"}, nil
+	}
+	return map[string]string{InstalledByThisStep: "true"}, nil
+}
+
+// installExternalSecrets installs ESO, or with recoverPartial reinstalls it over
+// a partial uninstall. The recovery runs here, before readiness: the controller
+// may never be ready while the release lacks CRDs.
+func installExternalSecrets(spec *helmChartSpec, recoverPartial bool, provider esoClusterReaderProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(InstallExternalSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			l := logx.As()
@@ -397,33 +419,16 @@ func installExternalSecrets(spec *helmChartSpec, force bool, provider esoCluster
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			meta := map[string]string{}
-			recovering, err := isESORecovery(ctx, force, provider)
+			meta, err := installOrRecoverESO(ctx, hm, spec, recoverPartial, provider, helm.DefaultTimeout, esoCRDPollInterval)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-
-			installed, err := installESOChart(ctx, hm, spec, recovering)
-			if err != nil {
-				if recovering {
-					err = errx.Decorate(err, reasons.PreconditionNotMet,
-						"Check what is left: kubectl get crd | grep external-secrets",
-						"Remove the failed release, then run the recovery again:",
-						fmt.Sprintf("  sudo solo-provisioner eso operator uninstall --namespace %s", spec.Namespace),
-						fmt.Sprintf("  sudo solo-provisioner eso operator install --force --namespace %s", spec.Namespace))
-				}
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			if !installed {
-				meta[AlreadyInstalled] = "true"
+			if meta[AlreadyInstalled] == "true" {
 				l.Info().Msg("External Secrets Operator is already installed, skipping installation")
-				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 			}
-
-			meta[InstalledByThisStep] = "true"
-			stp.State().Local().Set(InstalledByThisStep, true)
-
+			if meta[InstalledByThisStep] == "true" {
+				stp.State().Local().Set(InstalledByThisStep, true)
+			}
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(meta))
 		}).
 		WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -436,8 +441,8 @@ func installExternalSecrets(spec *helmChartSpec, force bool, provider esoCluster
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			// The same refusal as eso operator uninstall: a recovery install's
-			// rollback would otherwise remove the controller the old objects wait on.
+			// The same refusal as eso operator uninstall: a rollback would otherwise
+			// remove the controller that finalized objects wait on.
 			k, err := resolveESOClusterReader(ctx, provider)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))

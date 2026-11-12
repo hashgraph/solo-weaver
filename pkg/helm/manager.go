@@ -406,9 +406,10 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrUpgradeFailed.Wrap(err, "failed to run upgrade action")
 	}
 
-	err = h.waitFor(settings, rel, StatusReady, upgradeClient.Timeout)
-	if err != nil {
-		return rel, err
+	if o.Wait {
+		if err := h.waitFor(settings, rel, StatusReady, upgradeClient.Timeout); err != nil {
+			return rel, err
+		}
 	}
 
 	l.Info().Any("info", rel.Info).Msg("Helm chart upgraded successfully")

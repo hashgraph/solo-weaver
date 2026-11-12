@@ -8,11 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
-	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -23,8 +21,6 @@ import (
 )
 
 const (
-	FinishExternalSecretsRecoveryStepId = "finish-external-secrets-recovery"
-
 	esoExternalSecretCRD = "externalsecrets.external-secrets.io"
 	esoRecoveryDoc       = `docs/commands/alloy.md, "Recover from a partial uninstall"`
 
@@ -182,11 +178,11 @@ func checkNoFinalizedESOObjects(ctx context.Context, k esoClusterReader, rel *re
 
 	// A release left failed, pending or uninstalling with every object already
 	// deleting is a partial uninstall in all but its record: the objects go
-	// whatever happens here, and removing the record lets install --force
-	// recover the cluster.
+	// whatever happens here, and removing the record lets
+	// install --recover-partial-uninstall recover the cluster.
 	if notDeployed && allDeleting {
 		logx.As().Warn().Strs("objects", all).Str("status", string(releaseStatus(rel))).
-			Msg("Uninstalling a stalled External Secrets Operator release whose objects are already being deleted; recover with eso operator install --force")
+			Msg("Uninstalling a stalled External Secrets Operator release whose objects are already being deleted; recover with eso operator install --recover-partial-uninstall")
 		return nil
 	}
 
@@ -231,6 +227,13 @@ func finalizedObjectHints(kinds map[esoFinalizedKind]bool, stuck bool, spec *hel
 		hints = append(hints,
 			"Delete the other objects; a PushSecret with deletionPolicy Delete also deletes its pushed secret in the remote store:",
 			"  kubectl delete <resource.group> <name> [-n <namespace>]")
+	}
+	if kinds[pushSecretKind] {
+		// The ClusterPushSecret controller rewrites its PushSecrets' spec and
+		// recreates deleted ones.
+		hints = append(hints,
+			"A PushSecret created by a ClusterPushSecret comes back from it: change or delete that ClusterPushSecret instead, listed by:",
+			"  kubectl get clusterpushsecrets.external-secrets.io")
 	}
 	return append(hints,
 		"When none are left, uninstall again:",
@@ -290,204 +293,6 @@ func terminatingESOCRDs(ctx context.Context, k esoClusterReader) ([]string, erro
 	return names, nil
 }
 
-// checkPartialUninstallRecovery decides an install over a partial uninstall:
-// every ESO CRD found is terminating and no ESO release exists. Only --force
-// goes ahead, and only once no Secret is still owned by an ExternalSecret, since
-// a reinstalled controller would let Kubernetes delete those Secrets.
-func checkPartialUninstallRecovery(ctx context.Context, k esoClusterReader, spec *helmChartSpec, terminating []string, force bool) (warning string, err error) {
-	if !force {
-		return "", errx.Decorate(
-			errorx.IllegalState.New(
-				"a previous External Secrets Operator uninstall stopped partway: no Helm release exists, and %s still being deleted, waiting on finalizers only its controller clears; nothing was changed",
-				crdsPhrase(terminating)),
-			reasons.PreconditionNotMet,
-			"Do not remove finalizers or delete the External Secrets Operator CRDs by hand",
-			"Follow "+esoRecoveryDoc+": detach the Secrets to keep, set PushSecrets to deletionPolicy None, then reinstall:",
-			fmt.Sprintf("  sudo solo-provisioner eso operator install --force --namespace %s", spec.Namespace),
-		)
-	}
-
-	return checkRecoveryKeepsData(ctx, k, terminating)
-}
-
-// checkRecoveryKeepsData lets a forced recovery go ahead only when the
-// controller it brings back destroys no data, and warns about GeneratorStates.
-func checkRecoveryKeepsData(ctx context.Context, k esoClusterReader, terminating []string) (warning string, err error) {
-	owned, err := ownedESOSecrets(ctx, k)
-	if err != nil {
-		return "", err
-	}
-	pushRefs, pushPatches, err := deletingPushSecrets(ctx, k)
-	if err != nil {
-		return "", err
-	}
-	if len(owned) > 0 || len(pushRefs) > 0 {
-		return "", recoveryBlockedError(owned, pushRefs, pushPatches)
-	}
-
-	logx.As().Warn().Strs("crds", terminating).
-		Msg("Recovering External Secrets Operator from a partial uninstall (--force)")
-	return generatorStateWarning(ctx, k)
-}
-
-// esoCRDGaps reports the esoCRDs being deleted and the esoRequiredCRDs missing.
-func esoCRDGaps(ctx context.Context, k esoClusterReader) (terminating, missing []string, err error) {
-	required := map[string]bool{}
-	for _, name := range esoRequiredCRDs {
-		required[name] = true
-	}
-	for _, name := range esoCRDs {
-		exists, term, err := k.CRDState(ctx, name)
-		if err != nil {
-			return nil, nil, errx.Decorate(
-				errorx.ExternalError.Wrap(err, "failed to check CRD %s", name),
-				reasons.K8sAPIFailed,
-				"Verify the cluster is reachable: kubectl cluster-info",
-				"Check the CRD: kubectl get crd "+name,
-			)
-		}
-		if term {
-			terminating = append(terminating, name)
-		}
-		if !exists && required[name] {
-			missing = append(missing, name)
-		}
-	}
-	return terminating, missing, nil
-}
-
-// checkInstalledESOCRDs checks that an existing ESO release still has its CRDs.
-// A recovery that failed or was interrupted leaves a release whose old CRDs are
-// still deleting, or already gone; installing over it would only time out.
-func checkInstalledESOCRDs(ctx context.Context, k esoClusterReader, spec *helmChartSpec, force bool) (warning string, err error) {
-	terminating, missing, err := esoCRDGaps(ctx, k)
-	if err != nil {
-		return "", err
-	}
-
-	if len(terminating) > 0 {
-		if force {
-			return checkRecoveryKeepsData(ctx, k, terminating)
-		}
-		return "", errx.Decorate(
-			errorx.IllegalState.New(
-				"External Secrets Operator release %q is installed, but %s still being deleted: a recovery from a partial uninstall has not finished; nothing was changed",
-				spec.Release, crdsPhrase(terminating)),
-			reasons.PreconditionNotMet,
-			"Finish the recovery:",
-			fmt.Sprintf("  sudo solo-provisioner eso operator install --force --namespace %s", spec.Namespace),
-			"See "+esoRecoveryDoc,
-		)
-	}
-
-	if len(missing) > 0 {
-		return "", errx.Decorate(
-			errorx.IllegalState.New(
-				"External Secrets Operator release %q is installed, but %s missing, so it cannot sync secrets; nothing was changed",
-				spec.Release, plural(len(missing), "CRD ", "CRDs ")+strings.Join(missing, ", ")+plural(len(missing), " is", " are")),
-			reasons.PreconditionNotMet,
-			"Reinstall to restore every CRD:",
-			fmt.Sprintf("  sudo solo-provisioner eso operator uninstall --namespace %s", spec.Namespace),
-			fmt.Sprintf("  sudo solo-provisioner eso operator install --namespace %s", spec.Namespace),
-			"Then recreate the stores and ExternalSecrets: see "+esoRecoveryDoc,
-		)
-	}
-	return "", nil
-}
-
-// recoveryBlockedError refuses a forced recovery while the reinstalled
-// controller would destroy data: Secrets still owned by an ExternalSecret,
-// which Kubernetes deletes once the ExternalSecret goes, and PushSecrets with
-// deletionPolicy Delete, which delete their pushed secret in the remote store.
-func recoveryBlockedError(owned, pushRefs, pushPatches []string) error {
-	var facts, hints []string
-	if len(owned) > 0 {
-		logx.As().Warn().Strs("secrets", owned).
-			Msg("Secrets are still owned by ExternalSecrets, refusing to reinstall over a partial uninstall")
-		facts = append(facts, plural(len(owned), "Secret ", "Secrets ")+strings.Join(capList(owned, ""), ", ")+
-			plural(len(owned), " is", " are")+" still owned by an ExternalSecret, and Kubernetes deletes "+
-			plural(len(owned), "it", "them")+" once the controller finishes deleting that ExternalSecret")
-		patches := make([]string, 0, len(owned))
-		for _, ref := range owned {
-			ns, name, _ := strings.Cut(ref, "/")
-			patches = append(patches, fmt.Sprintf(
-				`  kubectl patch secret %s -n %s --type=json -p '[{"op":"remove","path":"/metadata/ownerReferences"}]'`, name, ns))
-		}
-		hints = append(hints, "Detach each Secret you need to keep:")
-		hints = append(hints, capList(patches, "  ")...)
-	}
-	if len(pushRefs) > 0 {
-		logx.As().Warn().Strs("pushSecrets", pushRefs).
-			Msg("PushSecrets would delete their remote secrets, refusing to reinstall over a partial uninstall")
-		facts = append(facts, plural(len(pushRefs), "PushSecret ", "PushSecrets ")+strings.Join(capList(pushRefs, ""), ", ")+
-			plural(len(pushRefs), " has", " have")+" deletionPolicy Delete, and the controller deletes each pushed secret in its remote store as it finishes deleting "+
-			plural(len(pushRefs), "it", "them"))
-		hints = append(hints, "Keep each remote secret by setting its deletionPolicy to None:")
-		hints = append(hints, capList(pushPatches, "  ")...)
-	}
-	hints = append(hints, "Then run the install again; see "+esoRecoveryDoc)
-
-	return errx.Decorate(
-		errorx.IllegalState.New("reinstalling External Secrets Operator would destroy data: %s; nothing was changed",
-			strings.Join(facts, "; ")),
-		reasons.PreconditionNotMet,
-		hints...,
-	)
-}
-
-// deletingPushSecrets lists the PushSecrets with deletionPolicy Delete, as
-// namespace/name, with the patch that sets each to None. With None the
-// controller drops the finalizer without touching the remote store.
-func deletingPushSecrets(ctx context.Context, k esoClusterReader) (refs, patches []string, err error) {
-	items, err := k.ListResources(ctx, pushSecretKind.groupKind(), "")
-	if err != nil {
-		return nil, nil, errx.Decorate(
-			errorx.ExternalError.Wrap(err, "failed to list PushSecrets"),
-			reasons.K8sAPIFailed,
-			"Verify the cluster is reachable: kubectl cluster-info",
-			"List them yourself: kubectl get "+pushSecretKind.kubectlName()+" -A",
-		)
-	}
-	for _, ps := range items {
-		policy, _, _ := unstructured.NestedString(ps.Object, "spec", "deletionPolicy")
-		if policy != "Delete" {
-			continue
-		}
-		refs = append(refs, ps.GetNamespace()+"/"+ps.GetName())
-		patches = append(patches, fmt.Sprintf(
-			`  kubectl patch %s %s -n %s --type=merge -p '{"spec":{"deletionPolicy":"None"}}'`,
-			pushSecretKind.kubectlName(), ps.GetName(), ps.GetNamespace()))
-	}
-	return refs, patches, nil
-}
-
-// generatorStateWarning names the GeneratorStates a reinstall will clean up.
-// They do not block: ESO has no setting that keeps what their generators made.
-func generatorStateWarning(ctx context.Context, k esoClusterReader) (string, error) {
-	items, err := k.ListResources(ctx, generatorStateKind.groupKind(), "")
-	if err != nil {
-		return "", errx.Decorate(
-			errorx.ExternalError.Wrap(err, "failed to list GeneratorStates"),
-			reasons.K8sAPIFailed,
-			"Verify the cluster is reachable: kubectl cluster-info",
-			"List them yourself: kubectl get "+generatorStateKind.kubectlName()+" -A",
-		)
-	}
-	if len(items) == 0 {
-		return "", nil
-	}
-
-	refs := make([]string, 0, len(items))
-	for _, gs := range items {
-		refs = append(refs, gs.GetNamespace()+"/"+gs.GetName())
-	}
-	logx.As().Warn().Strs("generatorStates", refs).
-		Msg("The reinstalled External Secrets Operator will clean up what these generators created")
-	return fmt.Sprintf(
-		"The reinstalled External Secrets Operator controller will finish deleting GeneratorStates %s, which cleans up what their generators created",
-		strings.Join(capList(refs, ""), ", ")), nil
-}
-
 // checkRollbackLeavesNoFinalizedObjects refuses an install rollback that would
 // leave a partial uninstall, as checkNoFinalizedESOObjects does for the
 // uninstall command.
@@ -532,162 +337,6 @@ func crdsPhrase(names []string) string {
 	return plural(len(names), "CRD ", "CRDs ") + strings.Join(names, ", ") + plural(len(names), " is", " are")
 }
 
-// ownedESOSecrets lists, as namespace/name, the target Secrets of the
-// ExternalSecrets that still have an ExternalSecret owner reference.
-func ownedESOSecrets(ctx context.Context, k esoClusterReader) ([]string, error) {
-	externalSecrets, err := k.ListResources(ctx, externalSecretKind.groupKind(), "")
-	if err != nil {
-		return nil, errx.Decorate(
-			errorx.ExternalError.Wrap(err, "failed to list ExternalSecrets"),
-			reasons.K8sAPIFailed,
-			"Verify the cluster is reachable: kubectl cluster-info",
-			"List them yourself: kubectl get "+externalSecretKind.kubectlName()+" -A",
-		)
-	}
-
-	var owned []string
-	for _, es := range externalSecrets {
-		target, _, _ := unstructured.NestedString(es.Object, "spec", "target", "name")
-		if target == "" {
-			target = es.GetName()
-		}
-		metadata, found, err := k.GetResourceNestedMap(ctx, "v1", "Secret", es.GetNamespace(), target, "metadata")
-		if err != nil {
-			return nil, errx.Decorate(
-				errorx.ExternalError.Wrap(err, "failed to read Secret %s/%s", es.GetNamespace(), target),
-				reasons.K8sAPIFailed,
-				fmt.Sprintf("Check the Secret: kubectl get secret %s -n %s -o yaml", target, es.GetNamespace()),
-			)
-		}
-		if found && ownedByExternalSecret(metadata) {
-			owned = append(owned, es.GetNamespace()+"/"+target)
-		}
-	}
-	return owned, nil
-}
-
-// ownedByExternalSecret reports whether a metadata map has an ExternalSecret
-// owner reference.
-func ownedByExternalSecret(metadata map[string]interface{}) bool {
-	refs, _ := metadata["ownerReferences"].([]interface{})
-	for _, r := range refs {
-		ref, _ := r.(map[string]interface{})
-		apiVersion, _ := ref["apiVersion"].(string)
-		kind, _ := ref["kind"].(string)
-		if kind == externalSecretKind.kind && strings.HasPrefix(apiVersion, externalSecretKind.group+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// waitESOCRDsGone polls until none of the CRDs exists. A failed read is retried
-// until the timeout, which then wraps the last read error. A cancelled ctx
-// returns an Interrupted error.
-func waitESOCRDsGone(ctx context.Context, k esoClusterReader, crdNames []string, timeout, interval time.Duration) error {
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	names := strings.Join(crdNames, ", ")
-	for {
-		left := false
-		var lastErr error
-		for _, name := range crdNames {
-			exists, _, err := k.CRDState(waitCtx, name)
-			if err != nil {
-				lastErr = err
-			}
-			left = left || err != nil || exists
-		}
-		if !left {
-			return nil
-		}
-		select {
-		case <-waitCtx.Done():
-			if ctx.Err() != nil {
-				return errorx.Interrupted.Wrap(ctx.Err(), "stopped waiting for CRDs %s to finish deleting", names)
-			}
-			if lastErr != nil {
-				return errorx.TimeoutElapsed.Wrap(lastErr, "could not confirm CRDs %s finished deleting within %s", names, timeout)
-			}
-			return errorx.TimeoutElapsed.New("CRDs %s were still being deleted after %s", names, timeout)
-		case <-time.After(interval):
-		}
-	}
-}
-
-// finishESORecovery ends a forced install. After a partial uninstall the
-// reinstalled controller drains the old ExternalSecrets, and the old
-// ExternalSecret CRD then finishes deleting, taking the release's copy with it.
-// The step waits for that and fails with the next step, since ESO cannot sync
-// secrets until a reinstall restores the CRD.
-func finishESORecovery(spec *helmChartSpec, provider esoClusterReaderProvider, timeout time.Duration) automa.Builder {
-	return automa.NewStepBuilder().WithId(FinishExternalSecretsRecoveryStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, err := resolveESOClusterReader(ctx, provider)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			if err := finishPartialUninstall(ctx, k, spec, timeout, esoCRDPollInterval); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Checking for an unfinished partial uninstall")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "External Secrets Operator needs a reinstall to finish recovery")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "No partial uninstall left to finish")
-		})
-}
-
-// finishPartialUninstall returns nil when no ESO CRD is deleting and every
-// required one is present; otherwise it waits for the deleting ones to go and
-// returns the next step.
-func finishPartialUninstall(ctx context.Context, k esoClusterReader, spec *helmChartSpec, timeout, interval time.Duration) error {
-	terminating, missingRequired, err := esoCRDGaps(ctx, k)
-	if err != nil {
-		return err
-	}
-	missing := len(missingRequired) > 0
-	if len(terminating) == 0 && !missing {
-		return nil
-	}
-
-	if len(terminating) > 0 {
-		if err := waitESOCRDsGone(ctx, k, terminating, timeout, interval); err != nil {
-			if errorx.IsOfType(err, errorx.Interrupted) {
-				return errx.Decorate(err, reasons.PreconditionNotMet,
-					"Run the install again to finish the recovery:",
-					fmt.Sprintf("  sudo solo-provisioner eso operator install --force --namespace %s", spec.Namespace))
-			}
-			return errx.Decorate(
-				errorx.IllegalState.Wrap(err, "the reinstalled External Secrets Operator controller has not cleared the old objects' finalizers"),
-				reasons.PreconditionNotMet,
-				"Check the controller is running: kubectl get pods -n "+spec.Namespace,
-				"Check what is left: kubectl get "+externalSecretKind.kubectlName()+" -A",
-				"Then run the install again:",
-				fmt.Sprintf("  sudo solo-provisioner eso operator install --force --namespace %s", spec.Namespace),
-			)
-		}
-	}
-
-	return errx.Decorate(
-		errorx.IllegalState.New(
-			"the partial uninstall has finished: the old External Secrets Operator CRDs are gone, so release %q lacks them and External Secrets Operator cannot sync secrets yet",
-			spec.Release),
-		reasons.PreconditionNotMet,
-		"Reinstall to restore every CRD:",
-		fmt.Sprintf("  sudo solo-provisioner eso operator uninstall --namespace %s", spec.Namespace),
-		fmt.Sprintf("  sudo solo-provisioner eso operator install --namespace %s", spec.Namespace),
-		"Then recreate the stores and ExternalSecrets: see "+esoRecoveryDoc,
-	)
-}
-
 // uninstallSkipMetadata is the skipped uninstall report's metadata: the partial
 // uninstall warning when there is one, so the run summary shows it.
 func uninstallSkipMetadata(ctx context.Context, k esoClusterReader) map[string]string {
@@ -713,26 +362,4 @@ func partialUninstallWarning(ctx context.Context, k esoClusterReader) string {
 	}
 	return "External Secrets Operator has no Helm release, but " + crdsPhrase(terminating) +
 		" still being deleted: a previous uninstall stopped partway. See " + esoRecoveryDoc
-}
-
-// isESORecovery reports whether a forced install is recovering from a partial
-// uninstall: the precheck has let it through, and ESO CRDs are still deleting.
-func isESORecovery(ctx context.Context, force bool, provider esoClusterReaderProvider) (bool, error) {
-	if !force {
-		return false, nil
-	}
-	k, err := resolveESOClusterReader(ctx, provider)
-	if err != nil {
-		return false, err
-	}
-	terminating, err := terminatingESOCRDs(ctx, k)
-	if err != nil {
-		return false, errx.Decorate(
-			errorx.ExternalError.Wrap(err, "failed to check the External Secrets Operator CRDs"),
-			reasons.K8sAPIFailed,
-			"Verify the cluster is reachable: kubectl cluster-info",
-			"Check the CRDs: kubectl get crd | grep external-secrets",
-		)
-	}
-	return len(terminating) > 0, nil
 }

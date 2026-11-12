@@ -713,11 +713,10 @@ func Test_SetupExternalSecrets_ChecksBeforeInstalling(t *testing.T) {
 		stepIds(t, SetupExternalSecrets("", false)))
 }
 
-// Only a forced install can be a recovery, so only it gets the step that
-// finishes one.
-func Test_SetupExternalSecrets_ForceFinishesRecovery(t *testing.T) {
+// A recovery runs inside the install step, so the steps are the same.
+func Test_SetupExternalSecrets_RecoveryKeepsTheSteps(t *testing.T) {
 	assert.Equal(t,
-		[]string{PreCheckExternalSecretsStepId, InstallExternalSecretsStepId, FinishExternalSecretsRecoveryStepId, IsExternalSecretsReadyStepId},
+		[]string{PreCheckExternalSecretsStepId, InstallExternalSecretsStepId, IsExternalSecretsReadyStepId},
 		stepIds(t, SetupExternalSecrets("", true)))
 }
 

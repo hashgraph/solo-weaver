@@ -31,7 +31,8 @@ controller clears, and the chart removes the controller and the CRDs together,
 so uninstalling over them would leave the CRDs stuck deleting. Delete them first
 (eso secret delete for ExternalSecrets). --force and --non-interactive do not
 skip this check. A release left failed, pending or uninstalling whose objects are
-all already being deleted is uninstalled anyway; recover with install --force.
+all already being deleted is uninstalled anyway; recover with
+install --recover-partial-uninstall.
 
 When it runs, the uninstall removes ESO's cluster-scoped CRDs, which deletes every
 SecretStore and ClusterSecretStore in the cluster.

@@ -43,6 +43,14 @@ func TestOperatorFlagsArePersistentAndInherited(t *testing.T) {
 	}
 }
 
+// The recovery flag is local to install, so --force keeps its global meaning
+// and uninstall does not take it.
+func TestRecoverPartialUninstallIsInstallOnly(t *testing.T) {
+	name := common.FlagRecoverPartialUninstall().Name
+	require.NotNil(t, findSubcommand(t, GetCmd(), "install").LocalNonPersistentFlags().Lookup(name))
+	require.Nil(t, findSubcommand(t, GetCmd(), "uninstall").Flags().Lookup(name))
+}
+
 // ValidateFlagGroups is what cobra calls during execute().
 func TestErrorControlFlagsAreMutuallyExclusive(t *testing.T) {
 	stop := common.FlagStopOnError().Name
