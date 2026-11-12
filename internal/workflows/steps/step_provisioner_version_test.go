@@ -35,6 +35,8 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
+	// This run's kubeadm init created the cluster.
+	step.State().Global().Set(KubeadmInitSucceeded, true)
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
 	require.NoError(t, report.Error, "step must succeed")
@@ -63,6 +65,8 @@ func TestRecordProvisionerVersion_PersistFailureIsNonFatal(t *testing.T) {
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
+	// This run's kubeadm init created the cluster.
+	step.State().Global().Set(KubeadmInitSucceeded, true)
 
 	report := step.Execute(context.Background())
 	require.NotNil(t, report)
@@ -94,6 +98,8 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	}
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
+	// This run's kubeadm init created the cluster.
+	step.State().Global().Set(KubeadmInitSucceeded, true)
 	report := step.Execute(context.Background())
 	require.NoError(t, report.Error, "persist failure must remain non-fatal")
 	assert.Equal(t, "false", report.Metadata[metaVersionPersisted],
@@ -108,6 +114,8 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 		persistProvisionerVersion = func() (bool, error) { return changed, nil }
 		step, err = RecordProvisionerVersion().Build()
 		require.NoError(t, err)
+		// This run's kubeadm init created the cluster.
+		step.State().Global().Set(KubeadmInitSucceeded, true)
 		report = step.Execute(context.Background())
 		require.NoError(t, report.Error)
 		assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
@@ -136,6 +144,8 @@ func TestRecordProvisionerVersion_UnsyncedVersionIsRecorded(t *testing.T) {
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
+	// This run's kubeadm init created the cluster.
+	step.State().Global().Set(KubeadmInitSucceeded, true)
 	report := step.Execute(context.Background())
 
 	require.NoError(t, report.Error)

@@ -16,7 +16,9 @@ import (
 // succeeds the host has Kubernetes, so a later failure in the same workflow
 // (Cilium, MetalLB, metrics, the health check) must not leave the version
 // unrecorded. Otherwise the next command re-runs every boundary migration on
-// the cluster this CLI just built.
+// the cluster this CLI just built. The two must stay siblings in one workflow:
+// the record step reads the flag init sets in the workflow's Global() state,
+// which a nested sub-workflow would only see a copy of.
 func TestKubernetesSetupWorkflow_RecordsTheVersionRightAfterInit(t *testing.T) {
 	stp, err := KubernetesSetupWorkflow(nil).Build()
 	require.NoError(t, err)
