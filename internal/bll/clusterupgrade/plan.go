@@ -36,25 +36,27 @@ const (
 )
 
 // Hop is one step of a plan. Component is "kubernetes", "cilium" or a chart
-// name; it is empty for a charts hop, whose versions are in Charts.
+// name; it is empty for a charts hop, whose versions are in Charts. Kubernetes
+// is set on a coupled charts hop: the minor that needs the bumps.
 type Hop struct {
-	Kind      HopKind
-	Step      HopStep
-	Component string
-	From      string
-	To        string
-	Charts    []ChartBump
+	Kind       HopKind     `json:"kind"`
+	Step       HopStep     `json:"step"`
+	Component  string      `json:"component,omitempty"`
+	From       string      `json:"from,omitempty"`
+	To         string      `json:"to,omitempty"`
+	Kubernetes string      `json:"kubernetes,omitempty"`
+	Charts     []ChartBump `json:"charts,omitempty"`
 }
 
 type ChartBump struct {
-	Chart string
-	From  string
-	To    string
+	Chart string `json:"chart"`
+	From  string `json:"from"`
+	To    string `json:"to"`
 }
 
 type Target struct {
-	Kubernetes string
-	Cilium     string
+	Kubernetes string `json:"kubernetes"`
+	Cilium     string `json:"cilium,omitempty"`
 }
 
 type BlockerCode string
@@ -76,16 +78,16 @@ const (
 // Blocker is a reason the cluster cannot be planned. It is data, not an
 // error, so a caller can show every blocker at once.
 type Blocker struct {
-	Code      BlockerCode
-	Component string
-	Detail    string
+	Code      BlockerCode `json:"code"`
+	Component string      `json:"component,omitempty"`
+	Detail    string      `json:"detail"`
 }
 
 // Plan is the ordered hops to Target. A plan with blockers has no hops.
 type Plan struct {
-	Target   Target
-	Hops     []Hop
-	Blockers []Blocker
+	Target   Target    `json:"target"`
+	Hops     []Hop     `json:"hops"`
+	Blockers []Blocker `json:"blockers,omitempty"`
 }
 
 type Options struct {
