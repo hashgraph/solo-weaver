@@ -15,6 +15,7 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -138,6 +139,7 @@ var installCmd = &cobra.Command{
 			Common: models.CommonInputs{
 				NodeType:         models.NodeTypeConsensus,
 				Force:            force,
+				NonInteractive:   ui.NonInteractive,
 				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
