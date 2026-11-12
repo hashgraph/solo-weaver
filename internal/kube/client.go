@@ -164,8 +164,8 @@ type Client struct {
 // ClientFromContext can be used for this provider type
 type ClientProviderFromContext func(ctx context.Context) (*Client, error)
 
-// ClientProvider is a function that provides a kube client
-// NewClient can be used for this provider type
+// ClientProvider is a function that provides a kube client.
+// Wrap NewClient in a closure to use it as one.
 type ClientProvider func() (*Client, error)
 
 // Context key for kube client
@@ -195,13 +195,48 @@ func WithKubeClient(ctx context.Context, kc *Client) context.Context {
 	return context.WithValue(ctx, kubeClientKey, kc)
 }
 
+// clientOptions are the NewClient settings a ClientOption changes.
+type clientOptions struct {
+	kubeconfig string
+	timeout    time.Duration
+}
+
+// ClientOption changes how NewClient builds its client.
+type ClientOption func(*clientOptions)
+
+// WithKubeconfig makes NewClient read only the kubeconfig at path, instead of
+// the in-cluster config, $KUBECONFIG or ~/.kube/config.
+func WithKubeconfig(path string) ClientOption {
+	return func(o *clientOptions) { o.kubeconfig = path }
+}
+
+// WithRequestTimeout bounds every request the client makes, discovery
+// included, which a context deadline does not reach.
+func WithRequestTimeout(d time.Duration) ClientOption {
+	return func(o *clientOptions) { o.timeout = d }
+}
+
 // NewClient creates a Kubernetes client that automatically detects
 // whether it is running inside a cluster or using a kubeconfig file.
 // It returns a fully prepared dynamic client + discovery mapper.
-func NewClient() (*Client, error) {
-	config, err := loadKubeConfig()
-	if err != nil {
+func NewClient(opts ...ClientOption) (*Client, error) {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	var config *rest.Config
+	var err error
+	if o.kubeconfig != "" {
+		config, err = clientcmd.BuildConfigFromFlags("", o.kubeconfig)
+		if err != nil {
+			return nil, errorx.IllegalArgument.Wrap(err, "failed to load kubeconfig %s", o.kubeconfig)
+		}
+	} else if config, err = loadKubeConfig(); err != nil {
 		return nil, err
+	}
+	if o.timeout > 0 {
+		config.Timeout = o.timeout
 	}
 
 	// Create dynamic client
