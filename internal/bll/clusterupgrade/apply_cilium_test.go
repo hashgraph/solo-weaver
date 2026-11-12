@@ -12,6 +12,8 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
 func ciliumPatch() Hop { return ciliumHop(StepPatch, "1.18.1", "1.18.16") }
@@ -214,6 +216,33 @@ func TestApplyCiliumHop_FailedHopRecordsTheFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
 	assert.Contains(t, readStateFile(t, dir, "action_history.yaml"), "outcome: failed")
+}
+
+func TestApplyCiliumHop_FailsFastOnEachLock(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cliAt bool
+		lock  state.ComponentID
+	}{
+		{"system, for the CLI", false, state.ComponentSystem},
+		{"cluster, for the hop", true, state.ComponentCluster},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubCiliumApply(t, tc.cliAt)
+			src, dir := liveSources(t, v035Cluster())
+			release, err := state.AcquireComponentLocks(dir, []state.ComponentID{tc.lock}, 0)
+			require.NoError(t, err)
+			defer release()
+			r := &fakeRunner{}
+
+			require.Error(t, ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch()))
+
+			assert.Empty(t, r.ran, "no workflow may run without the lock")
+			entries, err := state.ReadActionHistory(dir)
+			require.NoError(t, err)
+			assert.Empty(t, entries)
+		})
+	}
 }
 
 func TestApplyCiliumHop_NeedsARunner(t *testing.T) {
