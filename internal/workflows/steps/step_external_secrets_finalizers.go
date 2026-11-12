@@ -196,13 +196,20 @@ func checkNoFinalizedESOObjects(ctx context.Context, k esoClusterReader, rel *re
 				"SecretStores and ClusterSecretStores are deleted with the CRDs when the uninstall runs",
 			len(objs), plural(len(objs), "object still holds", "objects still hold"), summarizeESOObjects(objs)),
 		reasons.PreconditionNotMet,
-		finalizedObjectHints(kinds, stuck, spec)...,
+		finalizedObjectHints(kinds, stuck, isRecoveringRelease(rel), spec)...,
 	)
 }
 
 // finalizedObjectHints tells the operator how to clear the objects, or where to
 // look when the controller is not clearing them.
-func finalizedObjectHints(kinds map[esoFinalizedKind]bool, stuck bool, spec *helmChartSpec) []string {
+func finalizedObjectHints(kinds map[esoFinalizedKind]bool, stuck, recovering bool, spec *helmChartSpec) []string {
+	if stuck && recovering {
+		return []string{
+			"Objects already being deleted wait for the External Secrets Operator controller this release runs: a recovery from a partial uninstall has not finished",
+			"Finish it: sudo solo-provisioner eso operator install --recover-partial-uninstall --namespace " + spec.Namespace,
+			"Do not remove finalizers or delete the External Secrets Operator CRDs by hand",
+		}
+	}
 	if stuck {
 		return []string{
 			"Objects already being deleted wait for the External Secrets Operator controller; check it is running: kubectl get pods -n " + spec.Namespace,

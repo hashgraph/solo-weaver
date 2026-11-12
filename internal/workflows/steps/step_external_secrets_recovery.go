@@ -171,17 +171,43 @@ func esoCRDGaps(ctx context.Context, k esoClusterReader, rel *release.Release) (
 	return terminating, missing, nil
 }
 
+// esoRecoveryLabel marks a release installed by a recovery over a partial
+// uninstall. The recovery's final reinstall creates a release without it, so a
+// release that still has it is a recovery that has not finished.
+const esoRecoveryLabel = "solo.hiero.org/eso-recovery"
+
+// isRecoveringRelease reports whether rel is a recovery that has not finished.
+func isRecoveringRelease(rel *release.Release) bool {
+	return rel != nil && rel.Labels[esoRecoveryLabel] != ""
+}
+
+// needsESORecovery reports whether an install over rel has a partial uninstall
+// to recover from or finish: an ESO CRD still deleting, or a CRD a recovering
+// release declares missing. A CRD missing from a release no recovery touched
+// was removed some other way, and is not a partial uninstall.
+func needsESORecovery(rel *release.Release, terminating, missing []string) bool {
+	return len(terminating) > 0 || (isRecoveringRelease(rel) && len(missing) > 0)
+}
+
 // checkInstalledESOCRDs checks that an existing ESO release still has its CRDs.
 // A recovery that failed or was interrupted leaves a release whose old CRDs are
 // still deleting, or already gone; installing over it would only time out.
-// --recover-partial-uninstall picks such a recovery back up.
+// --recover-partial-uninstall picks such a recovery back up. A CRD missing for
+// another reason only warns.
 func checkInstalledESOCRDs(ctx context.Context, k esoClusterReader, rel *release.Release, spec *helmChartSpec, recoverPartial bool) (warning string, err error) {
 	terminating, missing, err := esoCRDGaps(ctx, k, rel)
 	if err != nil {
 		return "", err
 	}
-	if len(terminating) == 0 && len(missing) == 0 {
-		return "", nil
+	if !needsESORecovery(rel, terminating, missing) {
+		if len(missing) == 0 {
+			return "", nil
+		}
+		logx.As().Warn().Strs("crds", missing).Str("release", rel.Name).
+			Msg("External Secrets Operator release lacks CRDs it installed")
+		return fmt.Sprintf(
+			"External Secrets Operator release %q lacks %s that it installed. To restore %s, uninstall and install again, which deletes every SecretStore and ClusterSecretStore; see %s",
+			rel.Name, plural(len(missing), "CRD ", "CRDs ")+strings.Join(missing, ", "), plural(len(missing), "it", "them"), esoRecoveryDoc), nil
 	}
 	if recoverPartial {
 		return checkRecoveryKeepsData(ctx, k, append(terminating, missing...))
@@ -195,7 +221,7 @@ func checkInstalledESOCRDs(ctx context.Context, k esoClusterReader, rel *release
 		gaps = append(gaps, crdsPhrase(missing)+" missing")
 	}
 	return "", recoveryNeededError(ctx, k, spec, fmt.Sprintf(
-		"External Secrets Operator release %q is installed, but %s: a recovery from a partial uninstall has not finished, and External Secrets Operator cannot sync secrets",
+		"External Secrets Operator release %q is installed, but %s: a recovery from a partial uninstall has not finished",
 		rel.Name, strings.Join(gaps, ", and ")))
 }
 
@@ -463,27 +489,20 @@ func drainESOCRDs(ctx context.Context, hm helm.Manager, k esoClusterReader, spec
 	return nil
 }
 
-// esoRecoveryGaps reports, when the install asks to recover from a partial
-// uninstall, the ESO CRDs still being deleted and the CRDs the ESO release in
-// spec.Namespace declares but lacks, with the reader it read them through.
-// Neither means a plain install: the precheck has already refused a recovery
-// that needs the flag. It reads the state itself, so a drain that finished
-// since the precheck still counts.
-func esoRecoveryGaps(ctx context.Context, hm helm.Manager, spec *helmChartSpec, recoverPartial bool, provider esoClusterReaderProvider) (k esoClusterReader, terminating, missing []string, err error) {
-	if !recoverPartial {
-		return nil, nil, nil, nil
-	}
-	if k, err = resolveESOClusterReader(ctx, provider); err != nil {
-		return nil, nil, nil, err
-	}
+// esoRecoveryGaps reports, for an install with --recover-partial-uninstall, the
+// ESO CRDs still being deleted and the CRDs the ESO release in spec.Namespace
+// declares but lacks, and whether those are a recovery to do or finish
+// (needsESORecovery). It reads the state itself, so a drain that finished since
+// the precheck still counts.
+func esoRecoveryGaps(ctx context.Context, hm helm.Manager, k esoClusterReader, spec *helmChartSpec) (terminating, missing []string, resume bool, err error) {
 	rel, err := resolveESORelease(hm, spec)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, err
 	}
 	if terminating, missing, err = esoCRDGaps(ctx, k, rel); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, false, err
 	}
-	return k, terminating, missing, nil
+	return terminating, missing, needsESORecovery(rel, terminating, missing), nil
 }
 
 // reapplyESOChart upgrades the ESO release to the catalog chart without Helm's
@@ -497,6 +516,7 @@ func reapplyESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) 
 	_, err = hm.UpgradeChart(ctx, spec.Release, localChart, "", spec.Namespace, helm.UpgradeChartOptions{
 		ValueOpts: esoChartValues(),
 		Timeout:   helm.DefaultTimeout,
+		Labels:    map[string]string{esoRecoveryLabel: "draining"},
 	})
 	return err
 }

@@ -340,6 +340,15 @@ func esoChartValues() *values.Options {
 	}}
 }
 
+// esoInstallLabels labels a recovery's release with esoRecoveryLabel, so a
+// rerun knows the recovery has not finished.
+func esoInstallLabels(recovering bool) map[string]string {
+	if !recovering {
+		return nil
+	}
+	return map[string]string{esoRecoveryLabel: "draining"}
+}
+
 // installESOChart runs the idempotent ESO Helm install and reports whether it
 // installed (false = already present). Extracted from the step so it can be
 // unit-tested with a mock helm.Manager. A recovery over a partial uninstall
@@ -372,6 +381,7 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, 
 			Atomic:          !recovering,
 			Wait:            !recovering,
 			Timeout:         helm.DefaultTimeout,
+			Labels:          esoInstallLabels(recovering),
 		},
 	); err != nil {
 		return false, err
@@ -382,19 +392,32 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec, 
 
 // installOrRecoverESO is the install step's work, extracted so it can be
 // unit-tested with a mock helm.Manager: a recovery when recoverPartial is set and
-// ESO CRDs are deleting or missing from the release, else the idempotent
-// install. The report metadata says which, and carries the recovery's warning.
+// needsESORecovery holds, else the idempotent install. It runs the precheck's
+// CRD and data checks again before any Helm call, as uninstallESOChart does for
+// the uninstall: with --continue-on-error the step runs even after the
+// precheck refused. The report metadata says which, and carries the recovery's
+// warning.
 func installOrRecoverESO(ctx context.Context, hm helm.Manager, spec *helmChartSpec, recoverPartial bool, provider esoClusterReaderProvider, timeout, interval time.Duration) (map[string]string, error) {
-	k, terminating, missing, err := esoRecoveryGaps(ctx, hm, spec, recoverPartial, provider)
+	k, err := resolveESOClusterReader(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
-	if len(terminating) > 0 || len(missing) > 0 {
-		warning, err := recoverESOInstall(ctx, hm, k, spec, terminating, missing, timeout, interval)
+	if _, err := checkOrphanedESOCRDs(ctx, hm, k, spec, recoverPartial); err != nil {
+		return nil, err
+	}
+
+	if recoverPartial {
+		terminating, missing, resume, err := esoRecoveryGaps(ctx, hm, k, spec)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]string{InstalledByThisStep: "true", models.ReportMetaWarning: warning}, nil
+		if resume {
+			warning, err := recoverESOInstall(ctx, hm, k, spec, terminating, missing, timeout, interval)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{InstalledByThisStep: "true", models.ReportMetaWarning: warning}, nil
+		}
 	}
 
 	installed, err := installESOChart(ctx, hm, spec, false)

@@ -243,7 +243,7 @@ is skipped with a clear message.
 > * the release in the target namespace is left in a failed, pending or uninstalled state;
 > * the `external-secrets` release name in the target namespace belongs to a different chart.
 > * ESO CRDs already exist but no ESO Helm release does — ESO managed by another tool, or one whose release record was lost. Installing would take that ESO over, so the install stops and names the CRDs. When every one of those CRDs is being deleted, a previous uninstall stopped partway: see [Recover from a partial uninstall](#recover-from-a-partial-uninstall).
-> * the ESO release exists but a CRD its manifest declares is missing, or one is still being deleted — a recovery from a partial uninstall that failed or was interrupted. The message names the CRDs and the command that finishes the recovery.
+> * the ESO release exists but an ESO CRD is still being deleted, or the release a recovery installed lacks one of its CRDs — a recovery from a partial uninstall that failed or was interrupted. The message names the CRDs and the command that finishes the recovery. A CRD missing from a release no recovery installed (deleted by hand, for example) only gets a warning.
 >
 > Each message names the release and namespace that are in the way, and the command to clear it. For the
 > first two cases that is `sudo solo-provisioner eso operator uninstall --namespace <namespace>`,
@@ -367,8 +367,8 @@ detach the Secrets you need first.
 
    A `PushSecret` with `deletionPolicy: Delete` would delete its pushed secret in the remote
    store once a controller is back, so set each one to `None` first. A `GeneratorState` has no
-   such setting: the controller cleans up what its generator created, and the install names
-   them before you recover.
+   such setting: the controller cleans up what its generator created, and an install without
+   `--recover-partial-uninstall` names them before you recover.
 
    ```bash
    kubectl get pushsecrets.external-secrets.io -A
@@ -400,7 +400,8 @@ install` and `eso operator uninstall`. See
 [Global flags](../reference/global-flags.md#error-handling-flags).
 
 > **`--rollback-on-error` is not the same as Helm's own rollback.** The install already
-> runs Helm atomically, so a *failed* chart install reverts itself. The flag matters when
+> runs Helm atomically (except the first install of a recovery from a partial uninstall),
+> so a *failed* chart install reverts itself. The flag matters when
 > the install succeeds and a later step fails — for example the readiness wait timing out —
 > in which case it uninstalls the release this run created. Rollback is not shown in the
 > TUI; confirm it with `helm list -A` or the workflow report named in `report_path=…`.

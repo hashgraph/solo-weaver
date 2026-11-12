@@ -51,6 +51,14 @@ func TestRecoverPartialUninstallIsInstallOnly(t *testing.T) {
 	require.Nil(t, findSubcommand(t, GetCmd(), "uninstall").Flags().Lookup(name))
 }
 
+// The parsed value is what install hands to the workflow.
+func TestRecoverPartialUninstallParses(t *testing.T) {
+	t.Cleanup(func() { flagRecoverPartialUninstall = false })
+	install := findSubcommand(t, GetCmd(), "install")
+	require.NoError(t, install.ParseFlags([]string{"--" + common.FlagRecoverPartialUninstall().Name}))
+	require.True(t, flagRecoverPartialUninstall)
+}
+
 // ValidateFlagGroups is what cobra calls during execute().
 func TestErrorControlFlagsAreMutuallyExclusive(t *testing.T) {
 	stop := common.FlagStopOnError().Name
