@@ -219,7 +219,7 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.PrecheckConsensusSecrets(ins, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
-		steps.PrecheckConsensusPVCs(ins, inputs.Common.Force, inputs.Common.NonInteractive, steps.DefaultCapsuleKubeProvider),
+		steps.PrecheckConsensusPVCs(ins, inputs.Common.Force, inputs.Common.NonInteractive, steps.DefaultConsensusPVCProvider),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
 	)
@@ -233,6 +233,10 @@ func (h *InstallHandler) BuildWorkflow(
 	// fsGroup to hostPath). emptyDir/PVC-only installs skip this.
 	if steps.ConsensusHasHostPathVolumes(ins) {
 		deploySteps = append(deploySteps, steps.EnsureConsensusHostPaths(ins))
+	}
+	// Expand or delete kept PVCs last, so a failed earlier step deletes no data.
+	if ins.ExpandPVCs || ins.RecreatePVCs {
+		deploySteps = append(deploySteps, steps.ReconcileConsensusPVCs(ins, steps.DefaultConsensusPVCProvider))
 	}
 	deploySteps = append(deploySteps,
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),

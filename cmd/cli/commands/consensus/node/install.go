@@ -69,6 +69,10 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
+		if err := checkRecreatePVCs(flagRecreatePVCs, prompt.ShouldPrompt(force), flagNodeId, flagNamespace, prompt.RunConfirm); err != nil {
+			return err
+		}
+
 		// The key secret names are resolved later, from the node's labelled secrets
 		// (see the install handler), unless --signing-secret, --grpc-tls-secret or
 		// --admin-key-secret name them. The account id defaults from the node ID.
@@ -170,6 +174,8 @@ var installCmd = &cobra.Command{
 				MemoryLimit:               flagMemoryLimit,
 				MemoryRequest:             flagMemoryRequest,
 				Volumes:                   volCfg,
+				ExpandPVCs:                flagExpandPVCs,
+				RecreatePVCs:              flagRecreatePVCs,
 				HostPathUID:               flagHostPathUID,
 				HostPathGID:               flagHostPathGID,
 			},
@@ -242,6 +248,8 @@ func init() {
 	installCmd.Flags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
 	installCmd.Flags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
 	installCmd.Flags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
+	installCmd.Flags().BoolVar(&flagExpandPVCs, "expand-pvcs", false, "Grow a kept PVC that is smaller than the requested size; size must be the only difference, the PVC must be Bound and its StorageClass must allow volume expansion. The data is kept")
+	installCmd.Flags().BoolVar(&flagRecreatePVCs, "recreate-pvcs", false, "Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled")
 	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
 	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
 	// value is the trusted "2000" constant, so the error can't fire).
@@ -346,6 +354,29 @@ func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (
 
 	logx.As().Warn().Str("path", path).
 		Msg("node-admin-keys.json is missing; the node will use the genesis key as its admin key (local dev/test only)")
+	return nil
+}
+
+// checkRecreatePVCs asks the user to confirm --recreate-pvcs, because it deletes PVC data.
+func checkRecreatePVCs(recreate, shouldPrompt bool, nodeId int64, namespace string,
+	confirm func(title, description string, defaultValue bool) (bool, error)) error {
+	if !recreate || !shouldPrompt {
+		return nil
+	}
+	ok, err := confirm(
+		fmt.Sprintf("Delete kept PVCs of consensus node %d in namespace %s?", nodeId, namespace),
+		"--recreate-pvcs deletes each kept PVC of this node that differs from the requested volume settings, "+
+			"or that this install will not mount. The data in those PVCs is lost. PVCs that match are kept.",
+		false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errx.Decorate(
+			errorx.RejectedOperation.New("aborted: --recreate-pvcs was not confirmed"),
+			reasons.InvalidArgument,
+			"Run install again without --recreate-pvcs to keep the PVCs")
+	}
 	return nil
 }
 

@@ -79,3 +79,38 @@ func TestCheckNodeAdminKeys_MissingInteractive(t *testing.T) {
 	failing, _ := confirmSpy(false, boom)
 	require.ErrorIs(t, checkNodeAdminKeys(dir, false, true, failing), boom)
 }
+
+// recreateConfirm records whether the --recreate-pvcs prompt ran and returns the given answer.
+func recreateConfirm(answer bool) (func(string, string, bool) (bool, error), *bool) {
+	called := false
+	return func(string, string, bool) (bool, error) {
+		called = true
+		return answer, nil
+	}, &called
+}
+
+func TestCheckRecreatePVCs_FlagNotSetDoesNotPrompt(t *testing.T) {
+	confirm, called := recreateConfirm(false)
+	require.NoError(t, checkRecreatePVCs(false, true, 0, "ns", confirm))
+	assert.False(t, *called)
+}
+
+func TestCheckRecreatePVCs_NoPromptModeSkipsPrompt(t *testing.T) {
+	confirm, called := recreateConfirm(false)
+	require.NoError(t, checkRecreatePVCs(true, false, 0, "ns", confirm), "--force / --non-interactive is the confirmation")
+	assert.False(t, *called)
+}
+
+func TestCheckRecreatePVCs_Confirmed(t *testing.T) {
+	confirm, called := recreateConfirm(true)
+	require.NoError(t, checkRecreatePVCs(true, true, 0, "ns", confirm))
+	assert.True(t, *called)
+}
+
+func TestCheckRecreatePVCs_DeclinedAborts(t *testing.T) {
+	confirm, called := recreateConfirm(false)
+	err := checkRecreatePVCs(true, true, 0, "ns", confirm)
+	require.Error(t, err)
+	assert.True(t, *called)
+	assert.Contains(t, err.Error(), "aborted")
+}
