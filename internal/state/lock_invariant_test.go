@@ -111,6 +111,12 @@ var stateWriters = map[string]writerRow{
 		history: "TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry",
 	},
 
+	"internal/bll/clusterupgrade/apply.go:recordHop": {
+		lock: "RunOwning over the ids the hop part writes (system for the cilium CLI, cluster for the hop): " +
+			"TestApplyCiliumHop_FailsFastOnEachLock",
+		history: "TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_FailedHopRecordsTheFailure",
+	},
+
 	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
 		lock:    "TestLockAllState_FailsFastOnEveryStateLock",
 		history: "takes locks only",
