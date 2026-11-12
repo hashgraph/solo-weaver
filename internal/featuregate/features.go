@@ -86,3 +86,11 @@ func ActiveFromOf(f gatekit.Feature) gatekit.Activation {
 // SPIKE: this is a constant. Layer 2 replaces it with a state-backed,
 // finalize-advanced VersionSource (RSL effective-value layer).
 const CurrentActivationVersion gatekit.Activation = 1
+
+// SupportWindow is the support window W for the activation axis: how many prior
+// activation versions this binary still supports in addition to the max
+// (gatekit WithSupportWindow; see docs/dev/feature-gates.md). It is the single
+// source of truth for W — the gate (New) and the registry lints (Lint, Baseline)
+// MUST use the same value, or the lints check a different window than the gate
+// enforces. W=1 is the strict N/N+1 window.
+const SupportWindow = 1

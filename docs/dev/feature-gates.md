@@ -210,6 +210,57 @@ unprivileged.
   carries at most two eras (N and N+1) at once; deleting the old side each cycle
   is the whole point of the window.
 
+## Development gates vs compatibility gates
+
+Both are the same mechanism; they differ by one question — **does turning the
+feature on require the whole fleet to flip together?**
+
+- **Development gate** (the common case — our replacement for long-lived
+  branches). One `Alpha`, `Default: false` spec at the **current** activation
+  version. It never raises the max activation version, so it couples to nobody
+  else's work. Test it with `SOLO_PROVISIONER_ENABLE_<FEATURE>` or
+  `--experimental`; when ready, flip it on **in place** (or just delete the gate).
+  **No activation bump, no migration, no finalize.**
+- **Compatibility gate** (a breaking change where old and new must coexist during
+  a rolling upgrade — a shared wire or storage format). A **new** spec at the next
+  activation version, with — in Layer 2 — a migration and a coordinated `finalize`.
+
+So the activation version is a coordination counter, **not** a milestone: bump it
+only when turning the behavior on can't safely coexist with off across a rolling
+upgrade. Full walkthrough: gatekit-spec
+[Lesson 7](https://automa-saga.github.io/gatekit-spec/#/tutorial/7-gating-a-feature-when-plans-change).
+
+## Keeping the registry honest: the lints
+
+The catalog is guarded by `go test ./internal/featuregate`, so ordinary CI catches
+a drifted registry. `SupportWindow` (in `features.go`) is the single source of
+truth for the window `W`; the gate and every lint use it.
+
+- **Removal lint** (`TestRegistryRemovalLint`) — **fails** when a spec has gone
+  stale, a feature is past its `RemoveBy`, or a feature is `Deprecated` and due for
+  deletion. Delete the named spec and the dead path it guarded.
+- **Baseline lint** (`TestRegistryBaselineLint`) — **fails** when the catalog jumps
+  the activation version by more than one, or rewrites a spec at or below the last
+  released ceiling, both of which break or split a running fleet. It compares the
+  catalog against `testdata/baseline_registry.json`, a committed snapshot of the
+  **last released** catalog. Regenerate that snapshot **only at release**, never in
+  a feature PR (or it would compare the catalog against itself):
+
+  ```bash
+  go test ./internal/featuregate -run TestRegistryBaselineLint -update-baseline
+  ```
+
+- **Dev-gate window** (`TestDevGateWindow`) — **warns** (never fails) when an
+  `Alpha` gate has drifted below the support floor, i.e. outlived its cycle without
+  being graduated or deleted. It is a warning on purpose: a feature can legitimately
+  slip when more urgent work ships first.
+
+**Migration safety (Layer 2).** When gated migrations land, a feature migration
+runs only through gatekit's `RunNow`/`Finalize`, keyed to the activation version it
+crosses — **never** from the unconditional startup pre-run. A development gate
+carries **no migration**. Startup (`ScopeStartup`) migrations are global
+CLI-version migrations and must not depend on a feature gate.
+
 ## Related
 
 - Epic [#1275](https://github.com/hashgraph/solo-weaver/issues/1275) — the
