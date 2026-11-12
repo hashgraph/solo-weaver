@@ -517,10 +517,13 @@ func (cm *ChartMetadata) validate() error {
 		if details.Value == "" {
 			return errorx.IllegalFormat.New("version %s: empty checksum", version)
 		}
-		if details.Kubernetes != nil {
-			if err := details.Kubernetes.validate(); err != nil {
-				return errorx.IllegalFormat.Wrap(err, "version %s", version)
+		if details.Kubernetes == nil {
+			// The upgrade planner reads the supported minors of every Cilium version.
+			if cm.Name == CiliumComponentName {
+				return errorx.IllegalFormat.New("version %s: no kubernetes range", version)
 			}
+		} else if err := details.Kubernetes.validate(); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "version %s", version)
 		}
 	}
 	if _, err := cm.GetDefaultVersion(); err != nil {

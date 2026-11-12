@@ -41,6 +41,13 @@ func (r KubernetesRange) validate() error {
 	return nil
 }
 
+// contains reports whether minor is within r. r must be valid.
+func (r KubernetesRange) contains(minor [2]int) bool {
+	lo, _ := parseMinor(r.Min)
+	hi, _ := parseMinor(r.Max)
+	return slices.Compare(minor[:], lo[:]) >= 0 && slices.Compare(minor[:], hi[:]) <= 0
+}
+
 // parseMinor parses a Kubernetes minor such as "1.34".
 func parseMinor(s string) ([2]int, error) {
 	major, minor, ok := strings.Cut(s, ".")
@@ -70,8 +77,8 @@ func minorOf(version string) (string, error) {
 // validateKubernetes checks the kubernetes: entries against the rest of the
 // catalog. Every minor that has a kubelet version has exactly one entry and no
 // entry names another minor; every chart minimum is a listed version of a
-// catalog chart; and the chart defaults meet the minimums of the default
-// kubelet's minor.
+// catalog chart; the chart defaults meet the minimums of the default kubelet's
+// minor; and the default Cilium supports that minor.
 func (c *InfrastructureCatalog) validateKubernetes() error {
 	entries := map[string]KubernetesMinor{}
 	for _, k := range c.Kubernetes {
@@ -119,7 +126,29 @@ func (c *InfrastructureCatalog) validateKubernetes() error {
 	if err != nil {
 		return errorx.IllegalFormat.Wrap(err, "host[kubelet] default")
 	}
-	return c.checkDefaultsMeet(entries[minor])
+	if err := c.checkDefaultsMeet(entries[minor]); err != nil {
+		return err
+	}
+	return c.checkDefaultCiliumSupports(minor)
+}
+
+// checkDefaultCiliumSupports requires the default Cilium to support minor.
+// Chart validation has already required a valid range on every Cilium version.
+func (c *InfrastructureCatalog) checkDefaultCiliumSupports(minor string) error {
+	cilium, err := c.GetClusterComponent(CiliumComponentName)
+	if err != nil {
+		return nil // catalogs without Cilium (test fixtures) have nothing to check
+	}
+	r := cilium.Versions[cilium.Default].Kubernetes
+	m, err := parseMinor(minor)
+	if err != nil {
+		return err
+	}
+	if !r.contains(m) {
+		return errorx.IllegalFormat.New("the default cilium %s supports Kubernetes %s to %s, not the default kubelet's minor %s",
+			cilium.Default, r.Min, r.Max, minor)
+	}
+	return nil
 }
 
 // checkDefaultsMeet requires each chart's default to be at least k's minimum.
