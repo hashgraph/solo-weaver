@@ -81,6 +81,10 @@ func (n noopIntent) BuildWorkflow(state.State, models.UserInputs[struct{}]) (*au
 			if n.execute != nil {
 				n.execute()
 			}
+			if n.recordVersion {
+				// Stands in for the kubeadm init that lets the version be recorded.
+				stp.State().Global().Set(steps.KubeadmInitSucceeded, true)
+			}
 			if n.stepErr != nil {
 				return automa.FailureReport(stp, automa.WithError(n.stepErr))
 			}
