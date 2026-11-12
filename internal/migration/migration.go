@@ -36,6 +36,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/joomcode/errorx"
 	"github.com/rs/zerolog"
 )
@@ -71,6 +72,10 @@ type Context struct {
 
 	// Data holds migration-specific data (versions, managers, etc.)
 	Data automa.StateBag
+
+	// deferred lists this pass's deferrals, so use one Context per pass.
+	// Steps run one at a time, so it needs no lock.
+	deferred []Deferral
 }
 
 // Scope constants for migration registration.
@@ -177,15 +182,27 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 
 	for _, m := range migrations {
 		migration := m // capture for closure
+		// automa rolls back every step it executed, a skipped one included.
+		deferred := false
 		step := automa.NewStepBuilder().
 			WithId(stepIDPrefix + migration.ID()).
 			WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+				deferred = false
 				logx.As().Info().
 					Str("migrationID", migration.ID()).
 					Str("description", migration.Description()).
 					Msg("Executing migration")
 
 				if err := migration.Execute(ctx, mctx); err != nil {
+					if mctx.recordDeferral(migration, err) {
+						deferred = true
+						logx.As().Warn().
+							Err(err).
+							Str("migrationID", migration.ID()).
+							Msg("Migration deferred; it will run on a later invocation")
+						// A report carrying the error would count as failed.
+						return automa.StepSkippedReport(stp.Id(), automa.WithDetail(doctor.OperatorMessage(err)))
+					}
 					// The workflow error only names the failed step, so log the cause here.
 					logx.As().Error().
 						Err(err).
@@ -196,6 +213,9 @@ func MigrationsToWorkflow(migrations []Migration, mctx *Context) *automa.Workflo
 				return automa.StepSuccessReport(stp.Id())
 			}).
 			WithRollback(func(ctx context.Context, stp automa.Step) *automa.Report {
+				if deferred {
+					return automa.StepSkippedReport(stp.Id())
+				}
 				logx.As().Warn().
 					Str("migrationID", migration.ID()).
 					Msg("Rolling back migration")

@@ -170,8 +170,10 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, state.NewPerComponentStateMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
-	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumHostLegacyRoutingMigration())
+	// Out of chronological order: the restart defers when an earlier migration
+	// in the pass deferred, so it must follow every migration that can defer.
+	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCrioSocketDropInMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewNetworkNftUnitMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewNetworkShaperUnitMigration())

@@ -22,7 +22,13 @@ const (
 	CleanedUpByThisStep  = "cleanedUp"
 	ConfiguredByThisStep = "configured"
 
-	InitializedByThisStep        = "initialized"
+	InitializedByThisStep = "initialized"
+
+	// KubeadmInitSucceeded is the workflow Global() key InitializeCluster sets
+	// once this run's kubeadm init succeeded; RecordProvisionerVersion records
+	// only when it is set.
+	KubeadmInitSucceeded = "steps.kubeadm-init-succeeded"
+
 	SwapDisabledByThisStep       = "swapDisabled"
 	SysctlFilesCreatedByThisStep = "sysctlFilesCreated"
 

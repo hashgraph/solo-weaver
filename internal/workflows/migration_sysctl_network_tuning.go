@@ -27,6 +27,7 @@
 package workflows
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -111,6 +112,18 @@ func (m *SysctlNetworkTuningMigration) Execute(ctx context.Context, mctx *migrat
 			return nil
 		}
 		return errorx.IllegalState.Wrap(err, "failed to read the existing %s before overwriting it", networkTuningDestPath)
+	}
+	// While a sibling stays deferred this runs on every command, so a converged
+	// host is left alone rather than having fs.file-max restored again. The live
+	// values count too: a pass killed after writing the file never reloaded it.
+	want, err := sysctl.ConfigurationTemplate(networkPerformanceConfFile)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to read the embedded %s", networkPerformanceConfFile)
+	}
+	if bytes.Equal(prev, want) && m.verifyLiveValues() == nil {
+		logx.As().Debug().Str("file", networkTuningDestPath).
+			Msg("sysctl network tuning migration: already converged; nothing to do")
+		return nil
 	}
 	mctx.Data.Set(sysctlNetworkTuningPrevContentsKey, prev)
 

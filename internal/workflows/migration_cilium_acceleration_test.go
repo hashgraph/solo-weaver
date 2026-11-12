@@ -100,12 +100,12 @@ func TestCiliumAccelerationMigration_Execute(t *testing.T) {
 		assert.False(t, ran, "must not run before Cilium is installed")
 	})
 
-	t.Run("no-ops when the cluster is unreachable", func(t *testing.T) {
+	t.Run("defers when the cluster is unreachable", func(t *testing.T) {
 		var ran bool
 		var cmd string
-		stateReturns(false, "", assert.AnError)
+		stateReturns(false, "", errAPIDown)
 		trackUpgrade(&cmd, &ran)
-		require.NoError(t, m.Execute(context.Background(), mctx))
+		requireDeferred(t, m.Execute(context.Background(), mctx))
 		assert.False(t, ran, "must not run when the cluster is unreachable")
 	})
 

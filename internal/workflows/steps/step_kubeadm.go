@@ -284,6 +284,9 @@ func InitializeCluster() *automa.StepBuilder {
 					ReasonHostCommandFailed,
 					"Check 'sudo journalctl -u kubelet' and 'sudo crictl ps -a' for why the control plane did not start")))
 			}
+			// The cluster exists from here. If the kubeconfig copy below fails, the
+			// version is still recorded under --continue-on-error.
+			stp.State().Global().Set(KubeadmInitSucceeded, true)
 
 			// Step 3: Configure kubeconfig
 			if err := configureKubeconfig(); err != nil {

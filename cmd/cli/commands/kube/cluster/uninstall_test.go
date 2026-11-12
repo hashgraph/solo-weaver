@@ -4,6 +4,7 @@ package cluster
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,10 @@ func TestLockAllState_FailsFastOnEveryStateLock(t *testing.T) {
 		}
 	}
 
+	orig := uninstallStartupLockWait
+	t.Cleanup(func() { uninstallStartupLockWait = orig })
+	uninstallStartupLockWait = 50 * time.Millisecond
+
 	for name, hold := range holders {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -38,4 +43,34 @@ func TestLockAllState_FailsFastOnEveryStateLock(t *testing.T) {
 			all()
 		})
 	}
+}
+
+// TestLockAllState_WaitsForARunningStartupPass: while a migration is deferred
+// every command, and the DNS-refresh timer every few minutes, runs a startup
+// pass under the startup lock. The uninstall waits that out instead of failing,
+// holding no other lock meanwhile so the pass can still stamp and record.
+func TestLockAllState_WaitsForARunningStartupPass(t *testing.T) {
+	orig := uninstallStartupLockWait
+	t.Cleanup(func() { uninstallStartupLockWait = orig })
+	uninstallStartupLockWait = 5 * time.Second
+	dir := t.TempDir()
+	releasePass, err := state.AcquireStartupMigrationsLock(dir, 0)
+	require.NoError(t, err)
+
+	componentFree := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		release, err := state.AcquireComponentLocks(dir, state.AllComponentIDs, 0)
+		if err == nil {
+			release()
+		}
+		componentFree <- err
+		releasePass()
+	}()
+
+	all, err := lockAllState(dir)
+
+	require.NoError(t, err, "the uninstall must wait for the pass to finish")
+	all()
+	require.NoError(t, <-componentFree, "no component lock may be held while waiting")
 }

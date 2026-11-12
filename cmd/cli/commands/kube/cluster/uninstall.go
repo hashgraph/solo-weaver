@@ -3,6 +3,8 @@
 package cluster
 
 import (
+	"time"
+
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
@@ -89,29 +91,35 @@ var uninstallCmd = &cobra.Command{
 	},
 }
 
-// lockAllState takes, failing fast, every lock that guards a state file: each
-// component's, provisioner.yaml's, and the startup migrations'. The returned
-// release unwinds them all.
+// uninstallStartupLockWait lets a startup pass that is waiting on API timeouts
+// during a deferral finish first. A var so tests can shorten it.
+var uninstallStartupLockWait = 30 * time.Second
+
+// lockAllState takes every lock that guards a state file: each component's,
+// provisioner.yaml's, and the startup migrations'. It waits up to
+// uninstallStartupLockWait for a running startup pass first, holding nothing
+// else meanwhile, then takes the rest failing fast. The returned release
+// unwinds them all.
 func lockAllState(dir string) (release func(), err error) {
+	releaseMigrations, err := state.AcquireStartupMigrationsLock(dir, uninstallStartupLockWait)
+	if err != nil {
+		return nil, err
+	}
 	releaseComponents, err := state.AcquireComponentLocks(dir, state.AllComponentIDs, 0)
 	if err != nil {
+		releaseMigrations()
 		return nil, err
 	}
 	releaseProvisioner, err := state.AcquireProvisionerLock(dir, 0)
 	if err != nil {
 		releaseComponents()
-		return nil, err
-	}
-	releaseMigrations, err := state.AcquireStartupMigrationsLock(dir, 0)
-	if err != nil {
-		releaseProvisioner()
-		releaseComponents()
+		releaseMigrations()
 		return nil, err
 	}
 	return func() {
-		releaseMigrations()
 		releaseProvisioner()
 		releaseComponents()
+		releaseMigrations()
 	}, nil
 }
 

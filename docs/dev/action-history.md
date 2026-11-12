@@ -116,10 +116,11 @@ version that step could not record shows in the step's own completion line, and 
 `notPersisted` with "the provisioner version was not recorded; startup migrations may run again
 on the next invocation". A version written but not synced counts as recorded. A version the
 startup pass could not record, and a pass entry that could not be written, are shown as a
-warning, once. A command whose workflow ran lists it in that workflow's run summary: the
-summary table, the saved report and, under `--output=json`, the JSON summary's `warnings`. A
-command that stopped before a workflow ran prints it when the command ends, on stderr, as one
-NDJSON `warn` record per warning under `--output=json`.
+warning, once; a startup migration that deferred is a warning on every command until it runs.
+A command whose workflow ran lists it in that workflow's run summary: the summary table, the
+saved report and, under `--output=json`, the JSON summary's `warnings`. A command that stopped
+before a workflow ran prints it when the command ends, on stderr, as one NDJSON `warn` record
+per warning under `--output=json`.
 
 ## Startup migration passes
 
@@ -143,13 +144,17 @@ components: [profile, firewall, system, cluster, blocknode, consensus, teleport,
   included. `rolledBack` lists those applied and then rolled back after a later one failed, and
   `failed` the one that failed. A migration whose rollback failed stays in `migrations`.
   `fromVersion` is empty on a host with no recorded version.
+- `deferred` lists the migrations that could not run yet, such as the Cilium ones while the
+  Kubernetes API is down; they run again on a later command. `toVersion` is the running
+  binary's version. The version was recorded only if `components` names `provisioner`; a pass
+  with `deferred` never records it.
 - A pass is recorded when it changed a state file. A pass that changed no state file records
-  nothing: host-only migrations on a host with nothing to stamp, a stamp that found
-  `provisioner.yaml` already describing the running binary (such as a concurrent invocation's
-  second stamp, which waits a few seconds for the first one's lock), a stamp that failed with
-  nothing else changed, or a failed pass whose rollback put every state file back (no state
-  update happened; the log file has every attempt). A failed pass that left a file changed
-  records `failed`.
+  nothing: a pass whose migrations only deferred, host-only migrations on a host with nothing to
+  stamp, a stamp that found `provisioner.yaml` already describing the running binary (such as a
+  concurrent invocation's second stamp, which waits a few seconds for the first one's lock), a
+  stamp that failed with nothing else changed, or a failed pass whose rollback put every state
+  file back (no state update happened; the log file has every attempt). A failed pass that left
+  a file changed records `failed`.
 - A version stamp that fails warns the operator. If the pass changed files, its entry is also
   marked `notPersisted`; a stamp that fails on its own appends nothing, so one that keeps failing
   doesn't add an entry on every invocation. A stamp that wrote `provisioner.yaml` but could not
