@@ -31,36 +31,45 @@ type LiveSources struct {
 // the recorded cluster when the read fails: the plan must see a failed read to
 // refuse to plan from it.
 func PlanLive(ctx context.Context, src LiveSources, opts Options) (Plan, error) {
+	shape, m, err := readLive(ctx, src)
+	if err != nil {
+		return Plan{}, err
+	}
+	return Resolve(shape, m, opts)
+}
+
+// readLive reads the live shape and the matrix of the embedded catalog.
+func readLive(ctx context.Context, src LiveSources) (rsl.ClusterShape, Matrix, error) {
 	if src.State == nil || src.Cluster == nil || src.Machine == nil || src.Managed == nil || src.Catalog == nil {
-		return Plan{}, errorx.IllegalArgument.New("every live source must be set")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalArgument.New("every live source must be set")
 	}
 
 	// The cluster checker falls back to recorded values, so load them first.
 	if err := src.State.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the recorded state")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalState.Wrap(err, "failed to read the recorded state")
 	}
 
 	cat, err := src.Catalog()
 	if err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to load the catalog")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalState.Wrap(err, "failed to load the catalog")
 	}
 	m, err := MatrixFromCatalog(cat)
 	if err != nil {
-		return Plan{}, err
+		return rsl.ClusterShape{}, Matrix{}, err
 	}
 	managed, err := src.Managed()
 	if err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to list the managed releases")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalState.Wrap(err, "failed to list the managed releases")
 	}
 
 	var live state.State
 	if live.MachineState, err = src.Machine.RefreshState(ctx); err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the host")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalState.Wrap(err, "failed to read the host")
 	}
 	if live.ClusterState, err = src.Cluster.RefreshState(ctx); err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the cluster")
+		return rsl.ClusterShape{}, Matrix{}, errorx.IllegalState.Wrap(err, "failed to read the cluster")
 	}
 
 	// The plan uses only live values; the record would only mark what changed.
-	return Resolve(rsl.ResolveClusterShape(live, nil, managed), m, opts)
+	return rsl.ResolveClusterShape(live, nil, managed), m, nil
 }
