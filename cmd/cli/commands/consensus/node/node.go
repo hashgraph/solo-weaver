@@ -38,6 +38,10 @@ var (
 
 	flagAllowGenesisAdminKey bool
 
+	// Kept-PVC actions on install.
+	flagExpandPVCs   bool
+	flagRecreatePVCs bool
+
 	// Volume backing configuration.
 	flagDefaultVolumeType      string
 	flagDefaultPVCSize         string
