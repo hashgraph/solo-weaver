@@ -88,7 +88,7 @@ func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	newConsensusKube := func() (ConsensusKubeClient, error) { return nil, errors.New("not called") }
 
 	refresh := func(probe ClusterProbe) (state.ClusterState, state.BlockNodeState, map[string]state.ConsensusNodeState) {
-		cluster, err := NewClusterChecker(sm, probe)
+		cluster, err := NewClusterChecker(sm, newHelm, probe)
 		require.NoError(t, err)
 		blockNode, err := NewBlockNodeChecker(sm, newHelm, newKube, probe)
 		require.NoError(t, err)

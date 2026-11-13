@@ -99,17 +99,22 @@ func everyStateFile() []ChangedFile {
 // target's row; NewBaseHandler and RunOwning refuse anything else.
 var targetFiles = map[models.TargetType][]ChangedFile{
 	// Install and upgrade also write the profile and firewall records, and an
-	// install that creates the cluster writes the system record and stamps the
-	// provisioner version.
-	models.TargetBlockNode:     {ComponentBlockNode.File(), ComponentProfile.File(), ComponentFirewall.File(), ComponentSystem.File(), ChangedProvisioner},
+	// install that creates the cluster writes the system and cluster records
+	// and stamps the provisioner version.
+	models.TargetBlockNode: {ComponentBlockNode.File(), ComponentProfile.File(), ComponentFirewall.File(),
+		ComponentSystem.File(), ComponentCluster.File(), ChangedProvisioner},
 	models.TargetConsensusNode: {ComponentConsensus.File(), ComponentProfile.File()},
-	// kube cluster install writes the system record and stamps the version;
+	// kube cluster install writes the system and cluster records and stamps
+	// the version;
 	// kube cluster uninstall removes every state file.
 	models.TargetCluster: everyStateFile(),
 	// The node agent is also a host binary, so it writes the system record.
 	models.TargetTeleportNode:    {ComponentTeleport.File(), ComponentSystem.File()},
 	models.TargetTeleportCluster: {ComponentTeleport.File()},
 	models.TargetFirewall:        {ComponentFirewall.File()},
+	// Each installs cluster charts, so each writes the cluster record.
+	models.TargetAlloy: {ComponentCluster.File()},
+	models.TargetESO:   {ComponentCluster.File()},
 	// A startup migration pass can rewrite every state file.
 	models.TargetSystem: everyStateFile(),
 }

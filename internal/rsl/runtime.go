@@ -151,6 +151,39 @@ func (r *RuntimeResolver) RefreshMachine(ctx context.Context, force bool) (state
 	return current, nil
 }
 
+// RefreshMachineAndCluster is RefreshMachine plus the cluster runtime, for a
+// caller that writes the system and cluster files. A failed cluster refresh
+// keeps the persisted cluster record instead of failing: right after the
+// cluster is set up its API server may still be settling, and the system
+// record must land regardless.
+func (r *RuntimeResolver) RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error) {
+	current, err := r.RefreshMachine(ctx, force)
+	if err != nil {
+		return state.State{}, err
+	}
+	if r.ClusterRuntime == nil {
+		return state.State{}, errorx.IllegalState.New("cluster runtime is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultRefreshTimeout)
+	defer cancel()
+	if err := r.ClusterRuntime.RefreshState(ctx, force); err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to refresh cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	clusterState, err := r.ClusterRuntime.CurrentState()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to read cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	if clusterState.Unobserved {
+		logx.As().Warn().Msg("Could not read the cluster; keeping the recorded cluster")
+		return current, nil
+	}
+	current.ClusterState = clusterState
+	return current, nil
+}
+
 func (r *RuntimeResolver) refreshPersisted() error {
 	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")

@@ -90,14 +90,20 @@ const (
 
 	// TargetFirewall represents the host firewall managed by `network firewall`
 	TargetFirewall TargetType = "firewall"
+
+	// TargetAlloy represents the Alloy observability stack managed by `alloy cluster`
+	TargetAlloy TargetType = "alloy"
+
+	// TargetESO represents the External Secrets Operator managed by `eso operator`
+	TargetESO TargetType = "eso"
 )
 
 // allowedOperations maps each action to the valid target types it can be performed on.
 var allowedOperations = map[ActionType][]TargetType{
 	ActionSetup:       {TargetMachine, TargetSystem, TargetCluster},
 	ActionReset:       {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
-	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall},
-	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall},
+	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall, TargetAlloy, TargetESO},
+	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall, TargetAlloy, TargetESO},
 	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionReconfigure: {TargetBlockNode},
