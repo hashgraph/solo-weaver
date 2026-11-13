@@ -41,3 +41,22 @@ func KubernetesHopWorkflow(from, to, crio string) *automa.WorkflowBuilder {
 			steps.RecoverKubernetesHop(ctx, kube.NewClient)
 		})
 }
+
+// NodeExporterReplaceWorkflow replaces the Bitnami node-exporter with the
+// prometheus-community chart. It stops at the first failed step and has no
+// rollback.
+func NodeExporterReplaceWorkflow() *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("node-exporter-replace").
+		WithExecutionMode(automa.StopOnError).
+		Steps(steps.NodeExporterReplaceSteps(kube.NewClient)...)
+}
+
+// ExternalSecretsMigrateWorkflow moves External Secrets from a 0.x chart to to.
+// It stops at the first failed step and has no rollback.
+func ExternalSecretsMigrateWorkflow(to string) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("external-secrets-migrate").
+		WithExecutionMode(automa.StopOnError).
+		Steps(steps.ExternalSecretsMigrateSteps(to, kube.NewClient)...)
+}
