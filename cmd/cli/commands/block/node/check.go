@@ -51,7 +51,9 @@ var checkCmd = &cobra.Command{
 			opts["plugins"] = splitPlugins(flagPlugins)
 			opts["preset"] = blocknode.PresetCustom
 		} else if flagPluginPreset != "" {
-			opts["preset"] = flagPluginPreset
+			// Canonicalize so the hardware sizer (which keys on the canonical rfh name)
+			// treats a legacy tier1-rfh/tier1-lfh value the same as rfh/lfh.
+			opts["preset"] = blocknode.CanonicalPreset(flagPluginPreset)
 		}
 
 		deploySpec := hardware.DeploymentSpec{

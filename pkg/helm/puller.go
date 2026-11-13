@@ -16,6 +16,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/registry"
 )
 
@@ -68,6 +69,80 @@ func (h *helmManager) PullAndVerify(ctx context.Context, destDir, chartRef, vers
 		return h.pullAndVerifyOCI(destDir, chartRef, version, expectedChecksum)
 	}
 	return h.pullAndVerifyClassic(destDir, chartRef, version, expectedChecksum)
+}
+
+// PullChart implements Manager.PullChart. It pulls the chart archive into destDir
+// using action.Pull (which handles both OCI and classic refs once the registry
+// client is wired) and returns the local .tgz path, performing no checksum
+// comparison. Transient upstream failures are retried on the same backoff as the
+// verified pull path.
+func (h *helmManager) PullChart(ctx context.Context, destDir, chartRef, version string) (string, error) {
+	_ = ctx // not propagated into the pull; see PullAndVerify's context note.
+	if destDir == "" {
+		return "", errorx.IllegalArgument.New("destDir is empty for chart %q version %q", chartRef, version)
+	}
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", errorx.ExternalError.Wrap(err, "failed to create chart downloads dir %q", destDir)
+	}
+
+	// `helm pull` writes <last-path-segment>-<version>.tgz into destDir.
+	base := path.Base(chartRef)
+	expected := filepath.Join(destDir, fmt.Sprintf("%s-%s.tgz", base, version))
+
+	// Local cache: if an archive for this exact version is already present and loads as a
+	// valid chart of that version, reuse it instead of pulling again, so repeated commands
+	// (e.g. check then install) don't re-download. PullChart carries no pinned checksum, so
+	// a released (immutable) version is the trust anchor; a missing, partial, corrupt, or
+	// version-mismatched file falls through to a fresh pull that overwrites it.
+	if ch, loadErr := loader.Load(expected); loadErr == nil && ch.Metadata != nil && ch.Metadata.Version == version {
+		h.log.Debug().
+			Str("chart", chartRef).
+			Str("version", version).
+			Str("path", expected).
+			Msg("Reusing cached Helm chart archive")
+		return expected, nil
+	}
+
+	settings := h.WithNamespace("")
+
+	registryClient, err := newRegistryClient(settings)
+	if err != nil {
+		return "", errorx.InternalError.Wrap(err, "failed to create registry client")
+	}
+
+	actionConfig, err := initActionConfig(settings, h.log.Printf)
+	if err != nil {
+		return "", errorx.IllegalArgument.Wrap(err, "failed to init action config")
+	}
+	actionConfig.RegistryClient = registryClient
+
+	pull := action.NewPullWithOpts(action.WithConfig(actionConfig))
+	pull.Settings = settings
+	pull.DestDir = destDir
+	pull.Untar = false
+	pull.Version = version
+	pull.SetRegistryClient(registryClient)
+
+	if err := h.retryTransientFetch(chartRef, version, func() error {
+		_, err := pull.Run(chartRef)
+		return err
+	}); err != nil {
+		return "", ErrChartLoadFailed.Wrap(err, "helm pull failed for chart %q version %q", chartRef, version)
+	}
+
+	// Prefer the expected path, but fall back to a chart-scoped glob rather than trust the
+	// reconstruction, so a change to Helm's on-disk naming (e.g. for OCI refs) can't make
+	// us return a non-existent path. The glob is scoped to this chart's base name so a
+	// shared downloads directory can't match a different chart's archive.
+	if _, statErr := os.Stat(expected); statErr == nil {
+		return expected, nil
+	}
+	matches, globErr := filepath.Glob(filepath.Join(destDir, base+"-*.tgz"))
+	if globErr == nil && len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", ErrChartLoadFailed.New(
+		"helm pull for chart %q version %q did not yield a unique .tgz in %q", chartRef, version, destDir)
 }
 
 // pullAndVerifyClassic uses action.Pull (the SDK equivalent of `helm pull`)

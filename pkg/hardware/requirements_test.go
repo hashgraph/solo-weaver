@@ -255,7 +255,7 @@ func TestNodeSpecValidationWithDifferentProfiles(t *testing.T) {
 			name:              "Block node mainnet RFH - minimal resources should fail",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
-			options:           map[string]any{"preset": "tier1-rfh"},
+			options:           map[string]any{"preset": "rfh"},
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 4, 4, 10),
 			expectCPUPass:     false,
 			expectMemPass:     false,

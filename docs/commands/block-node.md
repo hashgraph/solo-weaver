@@ -67,7 +67,7 @@ Read-only preflight. Run it before `install` to find problems early.
 sudo solo-provisioner block node check --profile=mainnet
 
 # Size the check for a specific plugin preset
-sudo solo-provisioner block node check --profile=mainnet --plugin-preset=tier1-lfh
+sudo solo-provisioner block node check --profile=mainnet --plugin-preset=lfh
 
 # Size it for an explicit plugin list
 sudo solo-provisioner block node check --profile=mainnet \
@@ -121,7 +121,7 @@ When the paths or the mount table cannot be read, the block says
 
 | Flag | What it does | Default |
 |---|---|---|
-| `--plugin-preset` | Preset to size hardware for: `tier1-lfh`, `tier1-rfh`, `custom` | `""` |
+| `--plugin-preset` | Preset to size hardware for: `lfh`, `rfh`, `custom` (legacy `tier1-lfh`/`tier1-rfh` accepted) | `""` |
 | `--plugins` | Comma-separated plugin list. Overrides `--plugin-preset` | `""` |
 
 ---
@@ -192,15 +192,40 @@ Set `--base-path` and the rest default under it, or set each path yourself.
 
 | Flag | What it does |
 |---|---|
-| `--plugin-preset` | `tier1-lfh`, `tier1-rfh`, `custom`, or `none` to leave the chart default alone. Prompts if you omit it |
+| `--plugin-preset` | A chart profile name (`lfh`, `rfh`, and any other `plugin-profile-<name>` the chart ships), `custom`, or `none` to leave the chart default alone. Prompts if you omit it. Legacy `tier1-lfh`/`tier1-rfh` are accepted as aliases for `lfh`/`rfh` |
 | `--plugins` | Comma-separated plugin list. Overrides `--plugin-preset` |
 | `--plugins-size` | PV/PVC size for plugin storage (`5Gi`, `10Gi`) |
 | `--plugins-path` | Path for plugin storage |
 
-> **facility-app-state.** From chart **0.46.0** (including its alpha and rc builds), the block node does not start without
-> the `facility-app-state` plugin (`No ApplicationStateFacility provided`). The
-> `tier1-lfh` and `tier1-rfh` presets include it. A custom `--plugins` list, or
-> `plugins.names` in your `--values` file, must include it too.
+**How a preset resolves.** A preset name maps to the chart's own
+`values-overrides/plugin-profile-<name>.yaml` — the list is not baked into solo-provisioner.
+At deploy time it pulls the target chart and reads that profile's plugin set, so the list is
+always correct for the chart version you install, and **any profile the chart ships is
+selectable by name with no solo-provisioner release** (e.g. a future `--plugin-preset=all`
+works as soon as the chart has `plugin-profile-all.yaml`). `tier1-lfh`/`tier1-rfh` resolve
+to `lfh`/`rfh` for backward compatibility. Resolution precedence (first match wins):
+
+1. `--plugins` — your explicit list is used verbatim. Names not in the chart's known set
+   (`plugin-profile-all.yaml`) are logged as a warning to catch typos early, but still applied,
+   so community plugins work.
+2. a `--values` file that sets `plugins.names` — your file wins; no chart profile is read.
+3. `--plugin-preset=<profile>` (including the default `lfh`) — read from the chart's
+   `plugin-profile-<profile>.yaml`. An unknown profile fails with the list of profiles the
+   chart actually ships.
+4. `--plugin-preset=none` (or unset) with no `--values` names — weaver reads the chart's own
+   `values.yaml` default and sets `plugins.names` to it, so the **version-correct** default is
+   applied on install and on upgrade (rather than Helm `--reuse-values` keeping a stale list,
+   which could miss a newly-required plugin and crash-loop the node).
+
+Choosing `custom` interactively opens a free-text prompt where you type the plugin names
+(comma- or space-separated); there is no enumerated picker, since community plugins are not
+known to solo-provisioner. Non-interactively, pass `--plugins` (which implies `custom`).
+
+> **facility-app-state.** Recent block-node charts do not start without the
+> `facility-app-state` plugin (`No ApplicationStateFacility provided`). The `lfh` and
+> `rfh` presets include it automatically because they are read from the chart (which
+> is the source of truth for the exact version it became required). A custom `--plugins`
+> list, or `plugins.names` in your `--values` file, must include it yourself.
 
 ### Retention flags
 

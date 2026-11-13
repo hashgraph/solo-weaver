@@ -239,7 +239,7 @@ func TestAddPluginPresetPrompts_NonCustomClearsPlugins(t *testing.T) {
 	w := NewWizard()
 	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
 
-	// preset group + conditional custom group.
+	// preset-select group + conditional custom free-text group.
 	if len(w.groups) != 2 || len(w.afterRun) != 1 {
 		t.Fatalf("expected 2 groups and 1 afterRun, got %d groups / %d afterRun", len(w.groups), len(w.afterRun))
 	}
@@ -255,21 +255,14 @@ func TestAddPluginPresetPrompts_NonCustomClearsPlugins(t *testing.T) {
 	}
 }
 
-func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
-	valid := blocknode.PluginsForVersion("0.35.1")
-	if len(valid) == 0 {
-		t.Skip("no plugins available for chart version 0.35.1")
-	}
-
+func TestAddPluginPresetPrompts_CustomNormalizesTypedList(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
 
-	// Custom preset + a saved plugin list pre-selects the saved plugins.
 	var defaults state.PromptDefaults
 	defaults.BlockNode.PluginPreset = blocknode.PresetCustom
-	defaults.BlockNode.PluginList = valid[0]
 
-	chartVersion := "0.35.1"
+	chartVersion := "0.46.0"
 	cv := NewChosenValues()
 	w := NewWizard()
 	AddPluginPresetPrompts(w, cmd, defaults, &preset, &plugins, &chartVersion, "", cv)
@@ -278,10 +271,11 @@ func TestAddPluginPresetPrompts_CustomJoinsSelection(t *testing.T) {
 		t.Fatalf("expected Custom preset pre-selected, got %q", preset)
 	}
 
-	// afterRun joins the pre-selected plugins into --plugins.
+	// Simulate the operator typing a space/comma-mixed list; afterRun normalises it.
+	plugins = "health  facility-app-state, stream-publisher"
 	w.afterRun[0]()
-	if plugins != valid[0] {
-		t.Fatalf("expected plugins=%q from custom selection, got %q", valid[0], plugins)
+	if plugins != "health,facility-app-state,stream-publisher" {
+		t.Fatalf("expected normalised comma-separated list, got %q", plugins)
 	}
 	if len(cv.pairs) != 2 {
 		t.Fatalf("expected cv to record preset + custom plugins, got %+v", cv.pairs)
@@ -306,7 +300,7 @@ func TestAddPluginPresetPrompts_SmartDefaultsToNoneWhenValuesFileDefinesPlugins(
 	}
 }
 
-func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T) {
+func TestAddPluginPresetPrompts_DefaultsToLFHWhenNoValuesFile(t *testing.T) {
 	cmd := &cobra.Command{Use: "install"}
 	var preset, plugins string
 
@@ -314,8 +308,8 @@ func TestAddPluginPresetPrompts_DefaultsToTier1LFHWhenNoValuesFile(t *testing.T)
 	w := NewWizard()
 	AddPluginPresetPrompts(w, cmd, state.PromptDefaults{}, &preset, &plugins, &chartVersion, "", NewChosenValues())
 
-	if preset != blocknode.PresetTier1LFH {
-		t.Fatalf("expected the default tier1-lfh preset when no --values file is given, got %q", preset)
+	if preset != blocknode.PresetLFH {
+		t.Fatalf("expected the default lfh preset when no --values file is given, got %q", preset)
 	}
 }
 
