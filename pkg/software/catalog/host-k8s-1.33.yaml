@@ -3,6 +3,12 @@
 # Host binaries for Kubernetes 1.33. Deleting this file drops support for
 # 1.33. See README.md.
 
+# Chart versions this minor needs. See README.md.
+kubernetes:
+
+- minor: '1.33'
+  charts: {}
+
 host:
 
 - name: cri-o
@@ -82,6 +88,81 @@ host:
             arm64:
               algorithm: 'sha256'
               checksum: 'adcd45619f1f57eb38f8596bf65def237c53fb00b9f42b963f8a1556bb0918bb'
+    1.33.13:
+      archives:
+        - name: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          url: 'https://storage.googleapis.com/cri-o/artifacts/cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '3145974fe06ff399a333ef887dff4273b8a9ab091f3d6be09060f461afc861ce' # from https://storage.googleapis.com/cri-o/artifacts/cri-o.amd64.v1.33.13.tar.gz.sha256sum
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'd884cd904243fd92b2269d1524506be3c3569c14da546b34a59a9c5beadfdfa2' # from https://storage.googleapis.com/cri-o/artifacts/cri-o.arm64.v1.33.13.tar.gz.sha256sum
+      binaries:
+        - name: 'cri-o/bin/crio'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '7952611cd60b03e2aa3bd1a01ea9e0f0fab6a0bf0e63370a538ad70ef7ea526b'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '85a23dc2a522612947d8750a25586e89796f0c8ac3d0b11e11411c61376ac2dc'
+        - name: 'cri-o/bin/crun'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '8b37b0f8bfa170a9c338fa869902a33991101264ce0764e776a997a8d787dc83'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '4fa62f6fadd21a1ea4c1f7a040d4d2df4f7120fed788bf77e9ecfcaa922c417d'
+        - name: 'cri-o/bin/conmonrs'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '68494e60d5a78be045962345a6e377c8cbf15728222b59c8b89abde2e55ad52f'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'e324643834431a788b59ef910b3877697fc6e0c4f711afe5f1905a0b3f2c3939'
+        - name: 'cri-o/bin/conmon'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '1d97294c14c43d477e0a0826e9cd0f2a2af373ddfafe6f10252e8a3c43f32be6'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'c2fa62b3555eb0a729d853df23c5784d970f46050f2fb5f9931ded1bf455d216'
+        - name: 'cri-o/bin/runc'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'ac8a90f9e225bb9322189937b230cdc5478d5753f0e31e1bda98a5cf06bd9539'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'ea54032310588e115633aa2f4bba8bf9500257f657e1deca88df5778775138db'
+        - name: 'cri-o/bin/pinns'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: 'e1897c3d35a744eabff72be1368b9cf4073f54d1edc1ef59954b5fe4237e8a1f'
+            arm64:
+              algorithm: 'sha256'
+              checksum: '64e9f973f43adec511422050cc3684a042b3f600900df58b8e3ef7cdc022ffeb'
+        - name: 'cri-o/bin/crictl'
+          archive: 'cri-o.{{.ARCH}}.v{{.VERSION}}.tar.gz'
+          linux:
+            amd64:
+              algorithm: 'sha256'
+              checksum: '1899856526fde27f54ff4568ba5b0db00a182b6e7ff129efb1c0bb4950652a69'
+            arm64:
+              algorithm: 'sha256'
+              checksum: 'bfabe71951ba2021e7d9178a359cea06e3ca5ace48032aab00711b39343533af'
 
 - name: kubelet
   versions:
@@ -96,6 +177,22 @@ host:
             arm64:
               algorithm: 'sha512'
               checksum: '629083fb429f606bb30c84ab654a1ca3af8cde3e57700cdc40992ebdd28679cadc55119a77da2275d4082fd3813b2594892a4c65968c2caec957aaa628646a30' # from https://dl.k8s.io/release/v1.33.4/bin/linux/arm64/kubelet.sha512
+      configs:
+        - name: 'kubelet.service'
+          url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubelet/kubelet.service'
+          algorithm: 'sha512'
+          checksum: 'acef6a645ec2e682b136b086961495895049194aaa498b3f4ae760d3448642015ac0c1ba5836ee7406e0bbbd6461bf7843019eaa3630c003b5cad64e8f87e5cd'
+    1.33.13:
+      binaries:
+        - name: 'kubelet'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubelet'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: 'f4d7b160b7cfe5f8276ab633b1ab7da22afaa5b013be0a0a49a6ae971a81499a4b2e02cb4bb30f6dc8a5dd3a7cb2ccdc81e0382f19afdf463d6e744dfb32fc77' # from https://dl.k8s.io/release/v1.33.13/bin/linux/amd64/kubelet.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: 'a85b95df022c6167445b38c00661daf6ff4d7252971c51b15217bb6da798501231882ccc90153222a75e3eb84ae7c5f5707e04740f428c07597154a3bbdb4577' # from https://dl.k8s.io/release/v1.33.13/bin/linux/arm64/kubelet.sha512
       configs:
         - name: 'kubelet.service'
           url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubelet/kubelet.service'
@@ -120,6 +217,22 @@ host:
           url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf'
           algorithm: 'sha512'
           checksum: 'aafd152fa9ef8a2b2dde2b643ffb2a8694412bdfef0ff46afdca775a2d31d13d25bd2ff69d29bf3112d17d2d929b0aa7cf519c8b41058102a0cead4e66be1415'
+    1.33.13:
+      binaries:
+        - name: 'kubeadm'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubeadm'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: 'fba88f461cf61f13eacbfbad32ec9c720291b353ffca39c38ef0a01dd360ff27dae9051c42fc723dc6fb57f51d9c0b03ce7fde535f2cb65bf8794b7574df490f' # from https://dl.k8s.io/release/v1.33.13/bin/linux/amd64/kubeadm.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: 'f4c4001f175518604a0f44389b1dd47984db55ca117898adcc474a2e082d4e0b083e3e9ebd88256f80b12c05360ad90769dcfdd886c1d0f0e63398d190e8d016' # from https://dl.k8s.io/release/v1.33.13/bin/linux/arm64/kubeadm.sha512
+      configs:
+        - name: '10-kubeadm.conf'
+          url: 'https://raw.githubusercontent.com/kubernetes/release/v0.18.0/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf'
+          algorithm: 'sha512'
+          checksum: 'aafd152fa9ef8a2b2dde2b643ffb2a8694412bdfef0ff46afdca775a2d31d13d25bd2ff69d29bf3112d17d2d929b0aa7cf519c8b41058102a0cead4e66be1415'
 
 - name: kubectl
   versions:
@@ -134,3 +247,14 @@ host:
             arm64:
               algorithm: 'sha512'
               checksum: 'f76edb18df3e807ae664c2b3833e210f29ba2fe5ff53624f0787b47989dfc00d71da43c208a06b4f548f857893f19003e34523cb09bf588f81b3f06610b13337' # from https://dl.k8s.io/release/v1.33.4/bin/linux/arm64/kubectl.sha512
+    1.33.13:
+      binaries:
+        - name: 'kubectl'
+          url: 'https://dl.k8s.io/release/v{{.VERSION}}/bin/{{.OS}}/{{.ARCH}}/kubectl'
+          linux:
+            amd64:
+              algorithm: 'sha512'
+              checksum: '891a880438a75dba37fe5f863b63c0ca807576c24d99569df88a631aea4a5eb9c34b93ee7d0f89dc44f2f24fc3087bc0dafca59f66a30ee3a4b51d8721266525' # from https://dl.k8s.io/release/v1.33.13/bin/linux/amd64/kubectl.sha512
+            arm64:
+              algorithm: 'sha512'
+              checksum: 'b3eee04e395fa01e5fad1d4c11aa38de7d42d1870fac7d398b778b1712cf3aa9d781a8a1ff6bd77c6d4a08b1ee858da2999fb692c6fc1d0b58f7f035748a417e' # from https://dl.k8s.io/release/v1.33.13/bin/linux/arm64/kubectl.sha512

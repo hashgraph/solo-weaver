@@ -28,6 +28,9 @@ const catalogDir = "catalog"
 // deps.SOLO_OPERATOR_VERSION at load time rather than pinned in the YAML.
 const SoloOperatorComponentName = "solo-operator"
 
+// CiliumComponentName is the catalog name of the Cilium agent chart.
+const CiliumComponentName = "cilium"
+
 // ChartType identifies how a Helm chart is distributed.
 type ChartType string
 
@@ -92,8 +95,9 @@ func (si *ArtifactMetadata) getPlatform() platformProvider {
 // catalog already declares. See docs/dev/chart-checksums.md
 // ("Future overrides") for details.
 type InfrastructureCatalog struct {
-	Host    []ArtifactMetadata `yaml:"host"`
-	Cluster []ChartMetadata    `yaml:"cluster"`
+	Host       []ArtifactMetadata `yaml:"host"`
+	Cluster    []ChartMetadata    `yaml:"cluster"`
+	Kubernetes []KubernetesMinor  `yaml:"kubernetes,omitempty"`
 }
 
 // ChartMetadata describes a Helm chart entry under `cluster:`. A chart has
@@ -103,14 +107,22 @@ type InfrastructureCatalog struct {
 // — the Kubernetes namespace the chart deploys into and the Helm release
 // name used to track it.
 type ChartMetadata struct {
-	Name      string               `yaml:"name"`
-	Type      ChartType            `yaml:"type"`
-	Repo      string               `yaml:"repo,omitempty"`
-	Chart     string               `yaml:"chart"`
-	Namespace string               `yaml:"namespace"`
-	Release   string               `yaml:"release"`
-	Default   Version              `yaml:"default"`
-	Versions  map[Version]Checksum `yaml:"versions"`
+	Name      string                   `yaml:"name"`
+	Type      ChartType                `yaml:"type"`
+	Repo      string                   `yaml:"repo,omitempty"`
+	Chart     string                   `yaml:"chart"`
+	Namespace string                   `yaml:"namespace"`
+	Release   string                   `yaml:"release"`
+	Default   Version                  `yaml:"default"`
+	Versions  map[Version]ChartVersion `yaml:"versions"`
+}
+
+// ChartVersion is the integrity record of one chart version, plus the
+// Kubernetes minors it supports where the catalog records them.
+type ChartVersion struct {
+	Algorithm  string           `yaml:"algorithm"`
+	Value      string           `yaml:"checksum"`
+	Kubernetes *KubernetesRange `yaml:"kubernetes,omitempty"`
 }
 
 // ArtifactMetadata represents a single software artifact  configuration
@@ -449,7 +461,7 @@ func (c *InfrastructureCatalog) validate() error {
 			return errorx.IllegalFormat.Wrap(err, "cluster[%s]", chart.Name)
 		}
 	}
-	return nil
+	return c.validateKubernetes()
 }
 
 // validate enforces ChartMetadata invariants. It is called by
@@ -504,6 +516,14 @@ func (cm *ChartMetadata) validate() error {
 		}
 		if details.Value == "" {
 			return errorx.IllegalFormat.New("version %s: empty checksum", version)
+		}
+		if details.Kubernetes == nil {
+			// The upgrade planner reads the supported minors of every Cilium version.
+			if cm.Name == CiliumComponentName {
+				return errorx.IllegalFormat.New("version %s: no kubernetes range", version)
+			}
+		} else if err := details.Kubernetes.validate(); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "version %s", version)
 		}
 	}
 	if _, err := cm.GetDefaultVersion(); err != nil {

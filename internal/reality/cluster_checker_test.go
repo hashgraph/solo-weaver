@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/cilium"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -224,4 +225,25 @@ func TestClusterChecker_ForeignChartGetsNoCatalogChartRef(t *testing.T) {
 	require.Equal(t, "node-exporter", got.ChartName)
 	require.Equal(t, "4.5.19", got.ChartVersion)
 	require.Empty(t, got.ChartRef)
+}
+
+// Cilium is a catalog chart now, so it must be listed once, under the key the
+// recorded state already uses, and with no chart ref: it is installed from a
+// local chart directory.
+func TestManagedReleases_ListsCiliumOnce(t *testing.T) {
+	managed, err := reality.ManagedReleases()
+	require.NoError(t, err)
+
+	var found []reality.ManagedRelease
+	for _, m := range managed {
+		if m.Key == reality.CiliumReleaseKey {
+			found = append(found, m)
+		}
+	}
+	require.Equal(t, []reality.ManagedRelease{{
+		Key:       "cilium",
+		Release:   cilium.ReleaseName,
+		Namespace: cilium.Namespace,
+		Chart:     "cilium",
+	}}, found)
 }
