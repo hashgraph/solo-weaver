@@ -126,14 +126,33 @@ func InstalledVersion(ctx context.Context, dyn dynamic.Interface) (string, error
 	return chart, nil
 }
 
-func agentVersion(ctx context.Context, dyn dynamic.Interface) (string, error) {
+// AgentVersion returns the release version of the running cilium-agent image,
+// without a leading "v", and false when the agent DaemonSet does not exist.
+// Unlike InstalledVersion it does not compare the version with the chart.
+func AgentVersion(ctx context.Context, dyn dynamic.Interface) (string, bool, error) {
 	ds, err := dyn.Resource(daemonSetsGVR).Namespace(Namespace).Get(ctx, daemonSetName, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
-			return "", versionError(errorx.IllegalState.New("Cilium agent DaemonSet %s/%s not found", Namespace, daemonSetName))
+			return "", false, nil
 		}
-		return "", apiError(err, "failed to read DaemonSet %s/%s", Namespace, daemonSetName)
+		return "", false, apiError(err, "failed to read DaemonSet %s/%s", Namespace, daemonSetName)
 	}
+	version, err := agentImageVersion(ds)
+	return version, true, err
+}
+
+func agentVersion(ctx context.Context, dyn dynamic.Interface) (string, error) {
+	version, found, err := AgentVersion(ctx, dyn)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", versionError(errorx.IllegalState.New("Cilium agent DaemonSet %s/%s not found", Namespace, daemonSetName))
+	}
+	return version, nil
+}
+
+func agentImageVersion(ds *unstructured.Unstructured) (string, error) {
 
 	containers, _, _ := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
 	var images []string
