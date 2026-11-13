@@ -47,12 +47,7 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 		cmd.Short = strings.TrimSpace(cmd.Short) + " [beta]"
 	}
 
-	// Register the hidden gate-wide opt-in once (inherited by subcommands).
-	if cmd.PersistentFlags().Lookup(experimentalFlagName) == nil {
-		cmd.PersistentFlags().Bool(experimentalFlagName, false,
-			"Enable experimental (alpha) features (not supported in production)")
-		_ = cmd.PersistentFlags().MarkHidden(experimentalFlagName)
-	}
+	installExperimentalFlag(cmd)
 
 	prev := cmd.PersistentPreRunE
 	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
@@ -67,6 +62,93 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 			return err
 		}
 		return requireFeatureEnabled(c, f)
+	}
+}
+
+// GateFeatureFlag ties a single flag's visibility and availability to a feature's
+// maturity: an ALPHA flag is hidden from --help and errors if the operator sets
+// it without opting in; a BETA flag is labelled "[beta]". The flag must already
+// be registered on cmd (local or persistent). Opt-in is the same as GateFeature:
+// --experimental, or the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> override.
+//
+// A persistent flag is inherited by cmd's subcommands, so the check is installed on
+// PersistentPreRunE (which cobra inherits), not PreRunE (which it does not) — a
+// subcommand that uses the inherited flag is gated too. A local flag is gated on
+// cmd's own PreRunE.
+//
+// Use this when a stable (GA) command gains an unproven flag — gate just the
+// flag, not the whole command.
+func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
+	// A persistent flag is inherited by subcommands; a local flag is not. This
+	// decides where the gate check must live (see below).
+	persistent := cmd.PersistentFlags().Lookup(flagName)
+	flag := persistent
+	if flag == nil {
+		flag = cmd.Flags().Lookup(flagName)
+	}
+	if flag == nil {
+		return
+	}
+
+	installExperimentalFlag(cmd)
+
+	switch featuregate.MaturityOf(f) {
+	case gatekit.Alpha:
+		flag.Hidden = true
+		flag.Usage = strings.TrimSpace(flag.Usage) + " [alpha]"
+	case gatekit.Beta:
+		flag.Usage = strings.TrimSpace(flag.Usage) + " [beta]"
+	}
+
+	// enforce refuses the flag unless the operator opted in — but only when the flag
+	// was actually set.
+	enforce := func(c *cobra.Command, args []string) error {
+		if c.Flags().Changed(flagName) {
+			return requireFeatureEnabled(c, f)
+		}
+		return nil
+	}
+
+	if persistent != nil {
+		// A persistent flag can be set on cmd OR any subcommand that inherits it.
+		// cobra does NOT inherit PreRunE to subcommands, so a check installed there
+		// would let a subcommand use the flag unchecked. PersistentPreRunE IS
+		// inherited (cobra runs the nearest one up the chain), so install the check
+		// there, preserving the prior pre-run — a chained hook, or the root pre-run
+		// cobra would otherwise skip now that this hook is the closest.
+		prev := cmd.PersistentPreRunE
+		cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
+			if prev != nil {
+				if err := prev(c, args); err != nil {
+					return err
+				}
+			} else if err := RunPersistentPreRun(c, args); err != nil {
+				return err
+			}
+			return enforce(c, args)
+		}
+		return
+	}
+
+	// A local flag is usable only on cmd itself, so PreRunE is sufficient.
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(c, args); err != nil {
+				return err
+			}
+		}
+		return enforce(c, args)
+	}
+}
+
+// installExperimentalFlag registers the hidden gate-wide --experimental opt-in
+// once on cmd (inherited by subcommands when persistent).
+func installExperimentalFlag(cmd *cobra.Command) {
+	if cmd.PersistentFlags().Lookup(experimentalFlagName) == nil {
+		cmd.PersistentFlags().Bool(experimentalFlagName, false,
+			"Enable experimental (alpha) features (not supported in production)")
+		_ = cmd.PersistentFlags().MarkHidden(experimentalFlagName)
 	}
 }
 

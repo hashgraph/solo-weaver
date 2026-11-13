@@ -1,0 +1,37 @@
+# visible commands (top level + one level down)
+alloy
+  cluster
+block
+  node
+daemon
+  service
+diagnose
+  logs
+eso
+  operator
+  secret
+feature
+  list
+install
+kube
+  cluster
+  operator
+network
+  firewall
+  policy
+  reassert
+  shape
+teleport
+  cluster
+  node
+uninstall
+version
+
+# visible root persistent flags
+--config
+--force
+--log-level
+--non-interactive
+--output
+--verbose
+--version
