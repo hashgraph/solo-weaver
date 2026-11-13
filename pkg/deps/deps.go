@@ -3,7 +3,7 @@
 // Package deps holds compile-time defaults for the block-node install plan.
 // Block-node's plan flows through the RSL strategy chain
 // (default → config file → env → CLI flag), so its defaults live in Go
-// rather than in pkg/software/infrastructure-catalog.yaml alongside the
+// rather than in pkg/software/catalog/ alongside the
 // cluster-managed Helm charts.
 package deps
 

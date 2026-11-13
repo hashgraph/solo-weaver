@@ -178,9 +178,14 @@ tasks:
         echo "✓ Wrote ghcr.io auth for $GITHUB_USER to $REG_CONF"
 
   chart-checksums:
-    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in infrastructure-catalog.yaml. Prints by default; pass '-write' (go run ./scripts/chart-checksums -write) to rewrite the checksums in place. Requires 'helm' on PATH. For private charts, run 'task registry:login:ghcr' first."
+    desc: "Recompute SHA256 / OCI digests for every chart and version listed under cluster: in pkg/software/catalog/. Prints by default; pass '-write' (go run ./scripts/chart-checksums -write) to rewrite the checksums in place. Requires 'helm' on PATH. For private charts, run 'task registry:login:ghcr' first."
     cmds:
       - "go run ./scripts/chart-checksums"
+
+  host-checksums:
+    desc: "Compute the checksums of the host binaries listed under host: in pkg/software/catalog/, by downloading and unpacking each version for every platform it lists. Checks only version blocks with an empty checksum by default. Pass '-- -write' to fill them in place, '-- -all' to verify every block, '-- -name cri-o -version 1.36.7' to narrow it. See docs/dev/host-checksums.md."
+    cmds:
+      - "go run ./scripts/host-checksums {{.CLI_ARGS}}"
 
   bump:solo-operator:
     desc: "Bump solo-operator to VERSION in ONE command: the Go API module (go.mod + vendor, the CRD types), the SOLO_OPERATOR_VERSION constant (single source of truth for the chart + operator image + UC sidecar), and the catalog checksum — then it re-compiles and verifies the invariants. Host-only; needs 'helm' on PATH and GITHUB_USER/GITHUB_ACCESS_TOKEN in the root .env (used for BOTH the private Go module and the private ghcr chart). A breaking CRD change in the new version surfaces here as a compile error — fix the code and re-run. After it succeeds, run 'task vm:sync' to push vendor/ into the VM. Accepts 0.6.1 or v0.6.1."
@@ -198,7 +203,7 @@ tasks:
         BARE="${VERSION#v}"   # artifacts (constant, catalog key) use the bare version
         MODVER="v$BARE"       # Go module versions are v-prefixed
         DEPS=pkg/deps/deps.go
-        CATALOG=pkg/software/infrastructure-catalog.yaml
+        CATALOG=pkg/software/catalog/cluster.yaml
 
         # 1. Go API module (CRD types) + re-vendor. First, so a bad version / auth fails
         #    before anything else is touched. The PAT is injected into git via env-config
