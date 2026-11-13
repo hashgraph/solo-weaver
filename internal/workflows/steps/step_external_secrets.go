@@ -302,6 +302,11 @@ func preCheckExternalSecrets(spec *helmChartSpec, singletonGuard bool) automa.Bu
 		})
 }
 
+// esoHelmValues are the values every ESO install and upgrade gets.
+func esoHelmValues() *values.Options {
+	return &values.Options{Values: []string{"installCRDs=true", "webhook.port=9443"}}
+}
+
 // installESOChart runs the idempotent ESO Helm install and reports whether it
 // installed (false = already present). Extracted from the step so it can be
 // unit-tested with a mock helm.Manager.
@@ -323,11 +328,6 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) 
 		return false, err
 	}
 
-	helmValues := []string{
-		"installCRDs=true",
-		"webhook.port=9443",
-	}
-
 	if _, err := hm.InstallChart(
 		ctx,
 		spec.Release,
@@ -335,9 +335,7 @@ func installESOChart(ctx context.Context, hm helm.Manager, spec *helmChartSpec) 
 		"",
 		spec.Namespace,
 		helm.InstallChartOptions{
-			ValueOpts: &values.Options{
-				Values: helmValues,
-			},
+			ValueOpts:       esoHelmValues(),
 			CreateNamespace: true,
 			Atomic:          true,
 			Wait:            true,
