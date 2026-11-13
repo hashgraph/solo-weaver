@@ -47,7 +47,7 @@ func Test_installESOChart_FreshInstall(t *testing.T) {
 			return nil, nil
 		})
 
-	installed, err := installESOChart(context.Background(), hm, spec)
+	installed, err := installESOChart(context.Background(), hm, spec, false)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -62,7 +62,7 @@ func Test_installESOChart_Idempotent(t *testing.T) {
 	hm := helm.NewMockManager(ctrl)
 	hm.EXPECT().IsInstalled(spec.Release, spec.Namespace).Return(true, nil)
 
-	installed, err := installESOChart(context.Background(), hm, spec)
+	installed, err := installESOChart(context.Background(), hm, spec, false)
 	require.NoError(t, err)
 	assert.False(t, installed)
 }
@@ -88,7 +88,7 @@ func Test_installESOChart_NamespaceOverride(t *testing.T) {
 		InstallChart(gomock.Any(), spec.Release, localChart, "", customNS, gomock.Any()).
 		Return(nil, nil)
 
-	installed, err := installESOChart(context.Background(), hm, spec)
+	installed, err := installESOChart(context.Background(), hm, spec, false)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -106,7 +106,7 @@ func Test_uninstallESOChart_Uninstalls(t *testing.T) {
 	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	require.NotNil(t, rel)
 	assert.Equal(t, spec.Release, rel.Name)
@@ -123,7 +123,7 @@ func Test_uninstallESOChart_Idempotent(t *testing.T) {
 	hm.EXPECT().List(spec.Namespace, false).Return(nil, nil)
 	// No UninstallChart expectation: an empty namespace must skip.
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	assert.Nil(t, rel)
 }
@@ -153,7 +153,7 @@ func Test_uninstallESOChart_StalledRelease(t *testing.T) {
 			}, nil)
 			hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-			rel, err := uninstallESOChart(hm, spec)
+			rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 			require.NoError(t, err)
 			require.NotNil(t, rel)
 			assert.Equal(t, spec.Release, rel.Name)
@@ -178,7 +178,7 @@ func Test_uninstallESOChart_ForeignReleaseName(t *testing.T) {
 			}, nil)
 			hm.EXPECT().UninstallChart("my-eso", spec.Namespace).Return(nil)
 
-			rel, err := uninstallESOChart(hm, spec)
+			rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 			require.NoError(t, err)
 			require.NotNil(t, rel)
 			assert.Equal(t, "my-eso", rel.Name)
@@ -200,7 +200,7 @@ func Test_uninstallESOChart_ForeignChartAtReleaseName(t *testing.T) {
 	}, nil)
 	// No UninstallChart expectation: it is not ESO, so it is not ours to remove.
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	assert.Nil(t, rel)
 }
@@ -217,7 +217,7 @@ func Test_uninstallESOChart_IgnoresUnrelatedChart(t *testing.T) {
 		esoRelease("grafana", spec.Namespace, "grafana", release.StatusDeployed),
 	}, nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	assert.Nil(t, rel)
 }
@@ -238,7 +238,7 @@ func Test_uninstallESOChart_MissingChartMetadata(t *testing.T) {
 		}, nil)
 		hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-		rel, err := uninstallESOChart(hm, spec)
+		rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 		require.NoError(t, err)
 		require.NotNil(t, rel)
 	})
@@ -255,7 +255,7 @@ func Test_uninstallESOChart_MissingChartMetadata(t *testing.T) {
 			{Name: "grafana", Namespace: spec.Namespace, Info: &release.Info{Status: release.StatusFailed}},
 		}, nil)
 
-		rel, err := uninstallESOChart(hm, spec)
+		rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 		require.NoError(t, err)
 		assert.Nil(t, rel)
 	})
@@ -275,7 +275,7 @@ func Test_uninstallESOChart_SkipsNilRelease(t *testing.T) {
 	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	require.NotNil(t, rel)
 }
@@ -301,7 +301,7 @@ func Test_uninstallESOChart_TwoESOReleases_PrefersOccupyingOverStaleCatalogName(
 			}, nil)
 			hm.EXPECT().UninstallChart("my-eso", spec.Namespace).Return(nil)
 
-			rel, err := uninstallESOChart(hm, spec)
+			rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 			require.NoError(t, err)
 			require.NotNil(t, rel)
 			assert.Equal(t, "my-eso", rel.Name)
@@ -324,7 +324,7 @@ func Test_uninstallESOChart_TwoStaleReleases_PrefersCatalogName(t *testing.T) {
 	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	require.NotNil(t, rel)
 	assert.Equal(t, spec.Release, rel.Name)
@@ -344,7 +344,7 @@ func Test_uninstallESOChart_TwoESOReleases_PrefersCatalogName(t *testing.T) {
 	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	require.NotNil(t, rel)
 	assert.Equal(t, spec.Release, rel.Name)
@@ -364,7 +364,7 @@ func Test_uninstallESOChart_TwoESOReleases_Ambiguous(t *testing.T) {
 	}, nil)
 	// No UninstallChart expectation: the command must not guess.
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.Error(t, err)
 	assert.Nil(t, rel)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalState))
@@ -390,7 +390,7 @@ func Test_uninstallESOChart_NamespaceOverride(t *testing.T) {
 	}, nil)
 	hm.EXPECT().UninstallChart(spec.Release, customNS).Return(nil)
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.NoError(t, err)
 	require.NotNil(t, rel)
 	assert.Equal(t, customNS, rel.Namespace)
@@ -407,7 +407,7 @@ func Test_uninstallESOChart_ListError(t *testing.T) {
 	hm.EXPECT().List(spec.Namespace, false).Return(nil, errors.New("list boom"))
 	// No UninstallChart expectation: the List error must short-circuit.
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.Error(t, err)
 	assert.Nil(t, rel)
 	assert.ErrorContains(t, err, "list boom")
@@ -421,12 +421,13 @@ func Test_uninstallESOChart_UninstallChartError(t *testing.T) {
 	require.NoError(t, err)
 
 	hm := helm.NewMockManager(ctrl)
+	// Times(2): the failure re-reads the release to pick its hints.
 	hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
 		esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
-	}, nil)
+	}, nil).Times(2)
 	hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(errors.New("uninstall boom"))
 
-	rel, err := uninstallESOChart(hm, spec)
+	rel, err := uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 	require.Error(t, err)
 	assert.Nil(t, rel)
 	assert.ErrorContains(t, err, "uninstall boom")
@@ -468,7 +469,7 @@ func Test_uninstallESOChart_ErrorsAreDecorated(t *testing.T) {
 			expect: func(hm *helm.MockManager, spec *helmChartSpec) {
 				hm.EXPECT().List(spec.Namespace, false).Return([]*release.Release{
 					esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed),
-				}, nil)
+				}, nil).Times(2)
 				hm.EXPECT().UninstallChart(spec.Release, spec.Namespace).Return(errors.New("boom"))
 			},
 			wantReason: reasons.PreconditionNotMet,
@@ -488,7 +489,7 @@ func Test_uninstallESOChart_ErrorsAreDecorated(t *testing.T) {
 			hm := helm.NewMockManager(ctrl)
 			tt.expect(hm, spec)
 
-			_, err = uninstallESOChart(hm, spec)
+			_, err = uninstallESOChart(context.Background(), hm, &fakeESOCluster{}, spec)
 			require.Error(t, err)
 
 			assert.True(t, errorx.IsOfType(err, tt.wantNS), "errorx namespace")
@@ -704,24 +705,19 @@ func Test_isESORelease_FallsBackToReleaseName(t *testing.T) {
 	assert.False(t, isESORelease(&release.Release{Name: "something-else"}, spec))
 }
 
-// fakeCRDs answers CRDExists from a fixed set and counts lookups.
-type fakeCRDs struct {
-	existing map[string]bool
-	err      error
-	lookups  []string
-}
-
-func (f *fakeCRDs) CRDExists(_ context.Context, name string) (bool, error) {
-	f.lookups = append(f.lookups, name)
-	return f.existing[name], f.err
-}
-
 // The preflight runs before the install step, so a refusal there means Helm
 // installs nothing.
 func Test_SetupExternalSecrets_ChecksBeforeInstalling(t *testing.T) {
 	assert.Equal(t,
 		[]string{PreCheckExternalSecretsStepId, InstallExternalSecretsStepId, IsExternalSecretsReadyStepId},
-		stepIds(t, SetupExternalSecrets("")))
+		stepIds(t, SetupExternalSecrets("", false)))
+}
+
+// A recovery runs inside the install step, so the steps are the same.
+func Test_SetupExternalSecrets_RecoveryKeepsTheSteps(t *testing.T) {
+	assert.Equal(t,
+		[]string{PreCheckExternalSecretsStepId, InstallExternalSecretsStepId, IsExternalSecretsReadyStepId},
+		stepIds(t, SetupExternalSecrets("", true)))
 }
 
 func Test_checkOrphanedESOCRDs(t *testing.T) {
@@ -731,7 +727,7 @@ func Test_checkOrphanedESOCRDs(t *testing.T) {
 	tests := []struct {
 		name        string
 		releases    []*release.Release
-		crds        *fakeCRDs
+		crds        *fakeESOCluster
 		wantLookups int
 		wantErr     bool
 		wantReason  errx.Reason
@@ -739,34 +735,35 @@ func Test_checkOrphanedESOCRDs(t *testing.T) {
 	}{
 		{
 			name:        "fresh cluster",
-			crds:        &fakeCRDs{},
-			wantLookups: 4,
+			crds:        &fakeESOCluster{},
+			wantLookups: len(esoCRDs),
 		},
 		{
-			name:     "deployed ESO release owns the CRDs",
-			releases: []*release.Release{esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed)},
-			crds:     &fakeCRDs{existing: map[string]bool{"externalsecrets.external-secrets.io": true}},
+			name:        "deployed ESO release owns the CRDs",
+			releases:    []*release.Release{esoRelease(spec.Release, spec.Namespace, esoChartName, release.StatusDeployed)},
+			crds:        &fakeESOCluster{crds: allESOCRDs(false)},
+			wantLookups: len(esoCRDs),
 		},
 		{
 			name:        "all CRDs without a release",
 			releases:    []*release.Release{esoRelease("other", "other", "some-chart", release.StatusDeployed)},
-			crds:        &fakeCRDs{existing: map[string]bool{"externalsecrets.external-secrets.io": true, "clusterexternalsecrets.external-secrets.io": true, "secretstores.external-secrets.io": true, "clustersecretstores.external-secrets.io": true}},
-			wantLookups: 4,
+			crds:        &fakeESOCluster{crds: allESOCRDs(false)},
+			wantLookups: len(esoCRDs),
 			wantErr:     true,
 			wantReason:  reasons.PreconditionNotMet,
 			wantFound:   esoCRDs,
 		},
 		{
 			name:        "one CRD left without a release",
-			crds:        &fakeCRDs{existing: map[string]bool{"clustersecretstores.external-secrets.io": true}},
-			wantLookups: 4,
+			crds:        &fakeESOCluster{crds: map[string]fakeCRD{"clustersecretstores.external-secrets.io": {}}},
+			wantLookups: len(esoCRDs),
 			wantErr:     true,
 			wantReason:  reasons.PreconditionNotMet,
 			wantFound:   []string{"clustersecretstores.external-secrets.io"},
 		},
 		{
 			name:        "CRD lookup fails",
-			crds:        &fakeCRDs{err: errors.New("connection refused")},
+			crds:        &fakeESOCluster{crdErr: errors.New("connection refused")},
 			wantLookups: 1,
 			wantErr:     true,
 			wantReason:  reasons.K8sAPIFailed,
@@ -778,7 +775,7 @@ func Test_checkOrphanedESOCRDs(t *testing.T) {
 			hm := helm.NewMockManager(gomock.NewController(t))
 			hm.EXPECT().ListAll().Return(tt.releases, nil)
 
-			err := checkOrphanedESOCRDs(context.Background(), hm, tt.crds, spec)
+			_, err := checkOrphanedESOCRDs(context.Background(), hm, tt.crds, spec, false)
 			assert.Len(t, tt.crds.lookups, tt.wantLookups)
 			if !tt.wantErr {
 				require.NoError(t, err)
@@ -800,8 +797,9 @@ func Test_checkOrphanedESOCRDs_ListErrorFailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	hm := helm.NewMockManager(gomock.NewController(t))
 	hm.EXPECT().ListAll().Return(nil, errors.New("boom"))
-	crds := &fakeCRDs{}
+	crds := &fakeESOCluster{}
 
-	require.Error(t, checkOrphanedESOCRDs(context.Background(), hm, crds, spec))
+	_, err = checkOrphanedESOCRDs(context.Background(), hm, crds, spec, false)
+	require.Error(t, err)
 	assert.Empty(t, crds.lookups)
 }

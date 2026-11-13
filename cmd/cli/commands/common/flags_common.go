@@ -252,6 +252,17 @@ func FlagOverrideDrift() FlagDefinition[bool] {
 	}
 }
 
+// FlagRecoverPartialUninstall is registered on eso operator install, so the
+// global --force keeps its meaning there.
+func FlagRecoverPartialUninstall() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "recover-partial-uninstall",
+		ShortName:   "",
+		Description: "Reinstall over a partial uninstall: one that removed the Helm release but left the External Secrets Operator CRDs being deleted",
+		Default:     false,
+	}
+}
+
 func FlagLogLevel() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "log-level",

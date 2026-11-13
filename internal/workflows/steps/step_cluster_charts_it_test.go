@@ -399,7 +399,15 @@ func Test_ExternalSecretsChart_Integration(t *testing.T) {
 				}
 			}
 
-			for _, crd := range esoCRDs {
+			// The core CRDs the v1 manifests use; esoCRDs also holds the v1alpha1
+			// PushSecret and GeneratorState CRDs.
+			coreCRDs := []string{
+				"externalsecrets.external-secrets.io",
+				"clusterexternalsecrets.external-secrets.io",
+				"secretstores.external-secrets.io",
+				"clustersecretstores.external-secrets.io",
+			}
+			for _, crd := range coreCRDs {
 				var obj *unstructured.Unstructured
 				for i := range objs {
 					if objs[i].GetKind() == "CustomResourceDefinition" && objs[i].GetName() == crd {

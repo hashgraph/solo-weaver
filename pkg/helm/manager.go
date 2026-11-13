@@ -267,9 +267,10 @@ func (h *helmManager) InstallChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrInstallFailed.Wrap(err, "failed to install chart")
 	}
 
-	err = h.waitFor(settings, rel, StatusReady, installClient.Timeout)
-	if err != nil {
-		return rel, err
+	if o.Wait {
+		if err := h.waitFor(settings, rel, StatusReady, installClient.Timeout); err != nil {
+			return rel, err
+		}
 	}
 
 	l.Info().Str("release", releaseName).Str("namespace", namespace).Any("info", rel.Info).
@@ -405,9 +406,10 @@ func (h *helmManager) UpgradeChart(ctx context.Context, releaseName, chartRef, c
 		return nil, ErrUpgradeFailed.Wrap(err, "failed to run upgrade action")
 	}
 
-	err = h.waitFor(settings, rel, StatusReady, upgradeClient.Timeout)
-	if err != nil {
-		return rel, err
+	if o.Wait {
+		if err := h.waitFor(settings, rel, StatusReady, upgradeClient.Timeout); err != nil {
+			return rel, err
+		}
 	}
 
 	l.Info().Any("info", rel.Info).Msg("Helm chart upgraded successfully")
