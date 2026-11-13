@@ -54,3 +54,12 @@ func ExternalSecretsMigrateWorkflow(to string) *automa.WorkflowBuilder {
 		WithExecutionMode(automa.StopOnError).
 		Steps(steps.ExternalSecretsMigrateSteps(to, kube.ClientFromContext)...)
 }
+
+// ChartHopWorkflow upgrades the charts of one charts hop. It stops at the
+// first failed chart and has no rollback.
+func ChartHopWorkflow(bumps []steps.ChartBump) *automa.WorkflowBuilder {
+	return automa.NewWorkflowBuilder().
+		WithId("chart-hop").
+		WithExecutionMode(automa.StopOnError).
+		Steps(steps.ChartHopSteps(bumps, kube.NewClient)...)
+}
