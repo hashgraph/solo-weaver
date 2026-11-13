@@ -55,8 +55,17 @@ func TestNodeExporterHelmValues_ExtraArgsKeepChartDefaults(t *testing.T) {
 		"--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)",
 		"--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$",
 		"--collector.systemd",
+		`--collector.systemd.unit-include=(kubelet|crio|teleport|nftables|solo-provisioner-.+)\.(service|timer)`,
 		"--collector.processes",
 	}, args)
+}
+
+func TestNodeExporterHelmValues_SystemBusThroughHostRoot(t *testing.T) {
+	vals := mergedNodeExporterValues(t)
+
+	assert.Equal(t, map[string]any{
+		"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/host/root/run/dbus/system_bus_socket",
+	}, vals["env"])
 }
 
 func TestNodeExporterHelmValues_NoLegacyChartKeys(t *testing.T) {
