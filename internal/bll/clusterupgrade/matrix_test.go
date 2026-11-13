@@ -81,7 +81,7 @@ func TestMatrixFromCatalog(t *testing.T) {
 		kubeHop(StepMinor, "1.33.13", "1.34.13"),
 		ciliumHop(StepMinor, "1.19.10", "1.20.2"),
 		kubeHop(StepMinor, "1.34.13", "1.35.10"),
-		chartsHop(StepCoupled, bump("metallb", "0.15.2", "0.16.1")),
+		coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")),
 		kubeHop(StepMinor, "1.35.10", "1.36.5"),
 	}, plan.Hops)
 }

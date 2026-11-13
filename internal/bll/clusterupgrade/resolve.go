@@ -75,7 +75,7 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 	// That is a fault in the running cluster, so it is fixed before anything
 	// else moves.
 	if bumps := coupledBumps(c, kube.minorOf(), charts); len(bumps) > 0 {
-		add(Hop{Kind: KindCharts, Step: StepCoupled, Charts: bumps})
+		add(Hop{Kind: KindCharts, Step: StepCoupled, Kubernetes: kube.minorOf().String(), Charts: bumps})
 	}
 
 	if r, _ := c.ciliumRung(cil.minorOf()); cil.less(r.v) {
@@ -101,7 +101,7 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 			kube = r.v
 		}
 		if bumps := coupledBumps(c, k.next(), charts); len(bumps) > 0 {
-			add(Hop{Kind: KindCharts, Step: StepCoupled, Charts: bumps})
+			add(Hop{Kind: KindCharts, Step: StepCoupled, Kubernetes: k.next().String(), Charts: bumps})
 		}
 		next, _ := c.kubeRung(k.next())
 		add(Hop{Kind: KindKubernetes, Step: StepMinor, Component: componentKubernetes, From: kube.String(), To: next.v.String()})
