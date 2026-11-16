@@ -511,3 +511,42 @@ func TestRefreshState_ReadsServiceExposure(t *testing.T) {
 		})
 	}
 }
+
+// A refresh that cannot read the cluster keeps the recorded block node. It marks
+// it unobserved only when a kubeconfig exists: with none there is no cluster to
+// act on either. The mark is set both ways, so one left on the in-memory state
+// by an earlier refresh does not survive.
+func TestRefreshState_UnreadClusterKeepsTheRecordMarkedUnobserved(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		probe      ClusterReachability
+		unobserved bool
+	}{
+		{name: "no kubeconfig", probe: NotConfigured, unobserved: false},
+		{name: "API server not answering", probe: Unobservable, unobserved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorded := state.NewBlockNodeState()
+			recorded.ReleaseInfo.Name = "block-node"
+			recorded.ReleaseInfo.Status = release.StatusDeployed
+			recorded.Unobserved = !tc.unobserved
+			full := state.State{}
+			full.BlockNodeState = recorded
+
+			checker := &blockNodeChecker{
+				sm: fakeStateManager{st: full},
+				newHelm: func() (HelmManager, error) {
+					t.Fatal("an unread cluster must not be listed")
+					return nil, nil
+				},
+				newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+				probe:   func() ClusterReachability { return tc.probe },
+			}
+
+			got, err := checker.RefreshState(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, "block-node", got.ReleaseInfo.Name)
+			require.Equal(t, tc.unobserved, got.Unobserved)
+		})
+	}
+}

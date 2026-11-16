@@ -17,10 +17,20 @@ const blockNodeComponent = "block node"
 // An install or removal is reported as "installed" alone, since every other
 // field follows it; the fields are compared only while both sides have a
 // release. The recorded state has no "installed" key: the release name stands
-// for it.
+// for it. A block node the checker could not read is reported once, as an
+// Unobserved change on "installed", even one recorded as not installed: one may
+// have been installed by hand since.
 func BlockNode(baseline, live state.State) []Change {
 	persisted, observed := baseline.BlockNodeState, live.BlockNodeState
 	was, is := hasRelease(persisted), hasRelease(observed)
+	if observed.Unobserved {
+		return []Change{{
+			Component:  blockNodeComponent,
+			Field:      "installed",
+			Persisted:  strconv.FormatBool(was),
+			Unobserved: true,
+		}}
+	}
 	if was != is {
 		return []Change{{
 			Component: blockNodeComponent,
