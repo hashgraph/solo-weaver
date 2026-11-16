@@ -123,8 +123,37 @@ func planPVCs(drifts []pvcDrift, stranded []pvcStranded, expand, recreate bool) 
 	return p
 }
 
+// UnmountedConsensusPVCs returns one line for each kept PVC that this install will not
+// mount, and the --volume flags that keep their data. It returns none when the
+// precheck stops on a changed PVC first. It changes nothing.
+func UnmountedConsensusPVCs(ctx context.Context, inputs models.ConsensusNodeInputs, provider ConsensusPVCProvider) ([]string, string, error) {
+	_, plan, err := loadPVCPlan(ctx, inputs, provider)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(plan.drifts) > 0 || len(plan.stranded) == 0 {
+		return nil, "", nil
+	}
+	lines, keep := describeStranded(plan.stranded)
+	return lines, strings.Join(keep, " "), nil
+}
+
+// RecreatedConsensusPVCs returns one line for each kept PVC that --recreate-pvcs deletes.
+// It changes nothing.
+func RecreatedConsensusPVCs(ctx context.Context, inputs models.ConsensusNodeInputs, provider ConsensusPVCProvider) ([]string, error) {
+	_, plan, err := loadPVCPlan(ctx, inputs, provider)
+	if err != nil {
+		return nil, err
+	}
+	lines := make([]string, 0, len(plan.remove))
+	for _, r := range plan.remove {
+		lines = append(lines, fmt.Sprintf("%s (%s)", r.pvc.name, orNone(r.pvc.size)))
+	}
+	return lines, nil
+}
+
 // PrecheckConsensusPVCs stops an install that would silently reuse (drift: --force
-// skips) or not mount (stranded: --force/--non-interactive skip) an existing PVC.
+// skips) or not mount (stranded: --force/--non-interactive/a confirmed prompt skip) an existing PVC.
 // It also validates the --expand-pvcs / --recreate-pvcs actions. It changes nothing.
 func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteractive bool, provider ConsensusPVCProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(PrecheckConsensusPVCsStepId).
@@ -137,7 +166,7 @@ func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteract
 			if len(plan.drifts) > 0 && !force {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(pvcDriftError(inputs, plan.drifts)))
 			}
-			if len(plan.stranded) > 0 && !force && !nonInteractive {
+			if len(plan.stranded) > 0 && !force && !nonInteractive && !inputs.AcceptUnmountedPVCs {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(pvcStrandedError(inputs, plan.stranded)))
 			}
 			if err := validatePVCPlan(ctx, kc, inputs, plan); err != nil {
@@ -200,29 +229,42 @@ func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, provider Consensu
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
+			// The TUI sends logs only to the file, so each change also goes to the end summary.
+			var done []string
+			fail := func(err error) *automa.Report {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err), changedPVCsMeta(done))
+			}
+
 			for _, d := range plan.expand {
 				if err := kc.ResizePVC(ctx, inputs.Namespace, d.pvc.name, d.grow); err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
+					return fail(errx.Decorate(err,
 						reasons.K8sAPIFailed,
 						fmt.Sprintf("Inspect the PVC: kubectl -n %s describe pvc %s", inputs.Namespace, d.pvc.name),
-						"Verify RBAC for patching PersistentVolumeClaims")))
+						"Verify RBAC for patching PersistentVolumeClaims"))
 				}
 				// No wait: many drivers finish the filesystem resize only when a pod mounts the volume.
 				logx.As().Info().Str("pvc", d.pvc.name).Str("from", d.pvc.size).Str("to", d.grow).Msg("PVC expansion requested")
+				done = append(done, fmt.Sprintf("PVC %s expansion from %s to %s requested (--expand-pvcs); the data is kept",
+					d.pvc.name, d.pvc.size, d.grow))
 			}
 
 			for _, r := range plan.remove {
 				if err := deletePVCAndWait(ctx, kc, inputs.Namespace, r.pvc.name); err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err,
+					return fail(errx.Decorate(err,
 						reasons.K8sAPIFailed,
 						fmt.Sprintf("See what still uses the PVC (Used By): kubectl -n %s describe pvc %s", inputs.Namespace, r.pvc.name),
-						"Re-run install once the PVC is gone")))
+						"Re-run install once the PVC is gone"))
 				}
 				logx.As().Warn().Str("volume", r.volume).Str("pvc", r.pvc.name).Str("size", r.pvc.size).
 					Bool("recreatedByOperator", r.recreated).Msg("PVC and its data deleted (--recreate-pvcs)")
+				line := fmt.Sprintf("PVC %s (%s) and its data deleted (--recreate-pvcs)", r.pvc.name, orNone(r.pvc.size))
+				if r.recreated {
+					line += "; the operator creates it again with the requested settings"
+				}
+				done = append(done, line)
 			}
 
-			return automa.StepSuccessReport(stp.Id())
+			return automa.StepSuccessReport(stp.Id(), changedPVCsMeta(done))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Expanding or deleting existing consensus node PVCs")
@@ -234,6 +276,14 @@ func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, provider Consensu
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Existing PVCs updated")
 		})
+}
+
+// changedPVCsMeta records the PVC changes as report warnings, which the end summary shows.
+func changedPVCsMeta(done []string) automa.ReportOption {
+	if len(done) == 0 {
+		return func(*automa.Report) {}
+	}
+	return automa.WithMetadata(automa.StringMap{models.ReportMetaWarning: strings.Join(done, "\n")})
 }
 
 // loadPVCPlan lists the namespace PVCs and plans the actions. Errors are decorated.
@@ -451,13 +501,19 @@ func pvcDriftError(inputs models.ConsensusNodeInputs, drifts []pvcDrift) error {
 		reasons.PreconditionNotMet, hints...)
 }
 
-func pvcStrandedError(inputs models.ConsensusNodeInputs, stranded []pvcStranded) error {
+// describeStranded returns one line per stranded PVC and the --volume flags that keep its data.
+func describeStranded(stranded []pvcStranded) ([]string, []string) {
 	lines := make([]string, 0, len(stranded))
 	keep := make([]string, 0, len(stranded))
 	for _, s := range stranded {
 		lines = append(lines, fmt.Sprintf("%s is %s, but PVC %s exists", s.volume, s.backing, s.pvc.name))
 		keep = append(keep, "--volume "+keepVolumeArg(s.volume, s.pvc, nil))
 	}
+	return lines, keep
+}
+
+func pvcStrandedError(inputs models.ConsensusNodeInputs, stranded []pvcStranded) error {
+	lines, keep := describeStranded(stranded)
 
 	return errx.Decorate(
 		errorx.IllegalState.New(

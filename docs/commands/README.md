@@ -464,7 +464,7 @@ PVC as it is and never changes it. Before the install changes the cluster, the
 | any | none | The check passes (fresh install). |
 | `pvc`, same size, storage class and access mode | yes | The check passes. The node uses the PVC and its data. |
 | `pvc`, different size, storage class or access mode | yes | The install stops. `--force` uses the PVC as it is, and the requested settings have no effect. |
-| `emptydir` or `hostpath` | yes | The install stops, because the node will not mount the PVC data. `--force`, `--non-interactive` or `--output=json` install without the data and keep the PVC. |
+| `emptydir` or `hostpath` | yes | In a terminal, the install names each PVC and asks `Install consensus node <id> without the data in its kept PVCs?`. `Yes` installs without the data and keeps the PVC. `No` (the default) stops. `--force`, `--non-interactive` or `--output=json` install without the data, keep the PVC and show a warning. With no terminal and none of these flags, the install stops. |
 
 The check compares sizes as quantities, so `1Ti` and `1024Gi` are equal. If you do not set a
 storage class, the check accepts the class that the cluster gave the PVC. The error names each PVC
@@ -500,8 +500,13 @@ The flags follow these rules:
   PVCs that match. For an `emptydir` or `hostpath` volume, it only deletes the PVC.
 - `--recreate-pvcs` stops if the node is still installed, because its pod uses the PVCs. Run
   `consensus node uninstall` first.
-- `--recreate-pvcs` asks for confirmation. `--force`, `--non-interactive` and `--output=json` skip the
-  prompt.
+- `--recreate-pvcs` names each PVC that it will delete, with its size, and asks for confirmation. If
+  no PVC will be deleted, it does not ask. `--force`, `--non-interactive` and `--output=json` skip the
+  prompt. With no terminal (for example a pipe, cron, CI or `ssh` without `-t`), the install also
+  skips the prompt and deletes the PVCs.
+- The summary at the end of the install names each PVC that `--expand-pvcs` expanded or
+  `--recreate-pvcs` deleted. If the install fails, the summary names the PVCs that were deleted
+  before the failure.
 - A flag wins over `--force` for the PVCs that it covers.
 - The `precheck-consensus-pvcs` step only checks the PVCs. The `reconcile-consensus-pvcs` step
   changes them, directly before the ConsensusCapsule is created.
