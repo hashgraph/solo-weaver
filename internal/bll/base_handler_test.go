@@ -42,12 +42,14 @@ func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 // swaps in the real Teleport checker with that cluster probe and no Helm releases.
 // A non-nil software replaces the recorded host binaries, as the machine
 // checker's probe would after an install. A nil blockNode reads the block node
-// back as persisted.
+// back as persisted. A non-nil blockNodeProbe swaps in the real block node
+// checker with that cluster probe and no Helm releases.
 type host struct {
-	teleport      state.TeleportState
-	teleportProbe reality.ClusterProbe
-	software      map[string]state.SoftwareState
-	blockNode     *state.BlockNodeState
+	teleport       state.TeleportState
+	teleportProbe  reality.ClusterProbe
+	software       map[string]state.SoftwareState
+	blockNode      *state.BlockNodeState
+	blockNodeProbe reality.ClusterProbe
 }
 
 type noReleases struct{}
@@ -218,6 +220,13 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 	if h.teleportProbe != nil {
 		checkers.Teleport, err = reality.NewTeleportChecker(sm,
 			func() (reality.HelmManager, error) { return noReleases{}, nil }, h.teleportProbe)
+		require.NoError(t, err)
+	}
+	if h.blockNodeProbe != nil {
+		checkers.BlockNode, err = reality.NewBlockNodeChecker(sm,
+			func() (reality.HelmManager, error) { return noReleases{}, nil },
+			func() (reality.KubeClient, error) { return nil, errors.New("not called") },
+			h.blockNodeProbe)
 		require.NoError(t, err)
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
@@ -395,6 +404,35 @@ func TestHandleIntent_ReportsBlockNodeChangeThenPersistsLiveState(t *testing.T) 
 	require.False(t, *readState(t, stateFile).BlockNodeState.MetalLBPool)
 
 	require.Empty(t, ui.CollectWarnings(run()))
+}
+
+// A block node behind an API server that did not answer is reported once as
+// unread, on its installed flag. Its record is kept, and the unread mark never
+// reaches the file or the baseline.
+func TestHandleIntent_UnreadBlockNodeIsReportedAsUnobserved(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	recorded := blockNodeWithPool(true)
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = recorded })
+	h := &host{blockNodeProbe: func() reality.ClusterReachability { return reality.Unobservable }}
+
+	report, err := handleBlockNodeIntentWith(t, stateFile, h, noopIntent{}, BlockNode)
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []string{
+		`block node installed could not be read from the live system: recorded "true"`,
+	}, ui.CollectWarnings(report))
+	entries := readActionHistory(t, filepath.Dir(stateFile))
+	require.Len(t, entries, 1)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "block node", Field: "installed", Persisted: "true", Unobserved: true,
+	}}, entries[0].OwnedDrift)
+	kept := readState(t, stateFile).BlockNodeState
+	kept.LastSync = recorded.LastSync // the flush stamps it
+	require.Equal(t, recorded, kept)
+	onDisk, err := os.ReadFile(state.ComponentFilePath(filepath.Dir(stateFile), state.ComponentBlockNode))
+	require.NoError(t, err)
+	require.NotContains(t, string(onDisk), "nobserved")
 }
 
 // The block node producer runs only for a handler that manages the block node.

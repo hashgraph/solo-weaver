@@ -49,8 +49,16 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	now := htime.Now()
 	bn := b.sm.State().BlockNodeState
 
-	if !b.probe().Observed() {
-		logx.As().Debug().Msg("Kubernetes cluster is not observable, skipping BlockNodeState check")
+	// A kubeconfig that gave no usable answer may still hide a release, so the
+	// kept record is marked unobserved. With no kubeconfig there is no cluster
+	// to act on either.
+	if r := b.probe(); !r.Observed() {
+		if r.Configured() {
+			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded block node state")
+		} else {
+			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded block node state")
+		}
+		bn.Unobserved = r.Configured()
 		return bn, nil
 	}
 

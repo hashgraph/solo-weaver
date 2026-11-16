@@ -80,3 +80,22 @@ state:
 	require.Equal(t, 1, *bn.Shaping.ShapeOverrides["publisher"].Prio)
 	require.NotContains(t, bn.Shaping.ShapeOverrides, "partner")
 }
+
+// The unread mark is a refresh's, not a record: it changes neither the content
+// hash nor the file.
+func TestBlockNodeUnobserved_IsNeitherHashedNorWritten(t *testing.T) {
+	read := NewState("state.yaml")
+	read.BlockNodeState.ReleaseInfo.Name = "block-node"
+	unread := read
+	unread.BlockNodeState.Unobserved = true
+
+	readHash, err := stateContentHash(read)
+	require.NoError(t, err)
+	unreadHash, err := stateContentHash(unread)
+	require.NoError(t, err)
+	require.Equal(t, readHash, unreadHash)
+
+	b, err := yaml.Marshal(unread)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "nobserved")
+}

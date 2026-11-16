@@ -81,3 +81,29 @@ func TestBlockNode_ReportsObservableChangesOnly(t *testing.T) {
 		{Component: "block node", Field: "metallbPool", Persisted: "true", Live: "false"},
 	}, got)
 }
+
+// A block node the run could not read is reported once, on its installed flag,
+// whatever else the kept record holds. With no release recorded it is reported
+// too: one may have been installed by hand since.
+func TestBlockNode_UnreadBlockNodeIsReportedOnceAsUnobserved(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		recorded  state.BlockNodeState
+		persisted string
+	}{
+		{name: "release recorded", recorded: deployedBlockNode(), persisted: "true"},
+		{name: "no release recorded", recorded: state.NewBlockNodeState(), persisted: "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			live := tc.recorded
+			live.Unobserved = true
+			live.Storage.LiveSize = "999Gi"
+
+			got := BlockNode(withBlockNode(tc.recorded), withBlockNode(live))
+
+			require.Equal(t, []Change{
+				{Component: "block node", Field: "installed", Persisted: tc.persisted, Unobserved: true},
+			}, got)
+		})
+	}
+}

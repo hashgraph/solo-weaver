@@ -237,6 +237,9 @@ func leafFields(t reflect.Type, name string, key []string, steps []int) []leafFi
 		var leaves []leafField
 		for i := range t.NumField() {
 			f := t.Field(i)
+			if f.Tag.Get("yaml") == "-" {
+				continue // never persisted, so there is no recorded value to compare
+			}
 			fieldKey := key
 			if tag := f.Tag.Get("yaml"); !strings.Contains(tag, "inline") {
 				yamlName, _, _ := strings.Cut(tag, ",")

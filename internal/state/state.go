@@ -303,6 +303,10 @@ type BlockNodeState struct {
 	// Nil means "never set" (old state files, or a node installed without shaping).
 	Shaping  *ShapingState `yaml:"shaping,omitempty" json:"shaping,omitempty"`
 	LastSync htime.Time    `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	// Unobserved is set by a refresh that had a kubeconfig but no usable answer
+	// from the cluster, and kept the recorded state instead. It is never written
+	// to disk or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 // ShapingState is the persisted record of the traffic-shaping content bundle.
