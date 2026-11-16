@@ -26,10 +26,12 @@ Flags on this page work on every `solo-provisioner` command.
 > [`eso operator uninstall`](../commands/alloy.md#eso-operator-uninstall). Recovering from one
 > takes the install's own `--recover-partial-uninstall` flag, not `--force`.
 
-> `consensus node install` stops when a kept PVC differs from the requested volume settings, or
-> when it will not mount a kept PVC. `--force` skips both stops. `--non-interactive` and
-> `--output=json` skip only the second one. All three also skip the `--recreate-pvcs` confirmation
-> prompt. See [Install over kept PVCs](../commands/README.md#install-over-kept-pvcs).
+> `consensus node install` stops when a kept PVC differs from the requested volume settings. When
+> it will not mount a kept PVC, it asks for confirmation in a terminal. `--force` skips the stop and
+> the question. `--non-interactive` and `--output=json` skip only the question, and install without
+> the data of that PVC. All three also skip the `--recreate-pvcs` confirmation prompt. With no
+> terminal, the install also skips that prompt and deletes the PVCs. See
+> [Install over kept PVCs](../commands/README.md#install-over-kept-pvcs).
 
 > `--profile` is **not** a global flag. It lives on the command stacks that need it —
 > `block node …` and `alloy cluster install`. `kube cluster install` does not take one.

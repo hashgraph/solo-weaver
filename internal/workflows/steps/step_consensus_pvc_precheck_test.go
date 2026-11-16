@@ -28,6 +28,7 @@ type fakePVCClient struct {
 	classNoField  []string
 	calls         []string
 	waitErr       error
+	waitErrOn     string // when set, only the wait for this PVC fails
 }
 
 func (f *fakePVCClient) ResourceExists(_ context.Context, _, kind, _, name string) (bool, error) {
@@ -59,6 +60,9 @@ func (f *fakePVCClient) DeletePVC(_ context.Context, _, name string) error {
 
 func (f *fakePVCClient) WaitForResource(_ context.Context, _ kube.ResourceKind, _, name string, _ kube.CheckFunc, _ time.Duration) error {
 	f.calls = append(f.calls, "wait:"+name)
+	if f.waitErrOn != "" && name != f.waitErrOn {
+		return nil
+	}
 	return f.waitErr
 }
 
@@ -236,6 +240,45 @@ func TestPrecheckConsensusPVCs_StrandedWithForceOrNonInteractivePasses(t *testin
 	}
 }
 
+func TestPrecheckConsensusPVCs_StrandedAcceptedAtPromptPasses(t *testing.T) {
+	in := emptyDirInputs()
+	in.AcceptUnmountedPVCs = true
+	rpt := runPVCPrecheck(t, in, false, false, savedPVCObj("500Gi", "standard"))
+	require.Equal(t, automa.StatusSuccess, rpt.Status)
+	assert.Contains(t, rpt.Metadata[models.ReportMetaWarning], "has data but is not mounted", "the warning still shows")
+}
+
+func TestPrecheckConsensusPVCs_AcceptUnmountedDoesNotSkipDrift(t *testing.T) {
+	in := pvcInputs("1Ti", "", "")
+	in.AcceptUnmountedPVCs = true
+	rpt := runPVCPrecheck(t, in, false, false, savedPVCObj("500Gi", "standard"))
+	assert.Equal(t, automa.StatusFailed, rpt.Status, "only --force reuses a changed PVC")
+}
+
+func TestUnmountedConsensusPVCs(t *testing.T) {
+	stats := pvcObj(models.ConsensusVolumeStats, "1Gi", "standard", "ReadWriteOnce")
+	find := func(in models.ConsensusNodeInputs, pvcs ...unstructured.Unstructured) ([]string, string) {
+		lines, keep, err := UnmountedConsensusPVCs(context.Background(), in, (&fakePVCClient{pvcs: pvcs}).provider())
+		require.NoError(t, err)
+		return lines, keep
+	}
+
+	lines, keep := find(emptyDirInputs(), savedPVCObj("500Gi", "standard"))
+	assert.Equal(t, []string{"saved is emptydir, but PVC " + savedPVC + " exists"}, lines)
+	assert.Equal(t, "--volume name=saved,type=pvc,size=500Gi,storageClass=standard,accessMode=ReadWriteOnce", keep)
+
+	lines, _ = find(pvcInputs("500Gi", "standard", "ReadWriteOnce"), savedPVCObj("500Gi", "standard"))
+	assert.Empty(t, lines, "a mounted PVC is not reported")
+
+	lines, _ = find(pvcInputs("1Ti", "", ""), savedPVCObj("500Gi", "standard"), stats)
+	assert.Empty(t, lines, "no prompt when the precheck stops on a changed PVC first")
+
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	lines, _ = find(in, savedPVCObj("500Gi", "standard"))
+	assert.Empty(t, lines, "--recreate-pvcs deletes the PVC; its own prompt covers it")
+}
+
 func TestPrecheckConsensusPVCs_IgnoresUnmanagedPVCs(t *testing.T) {
 	other := savedPVCObj("500Gi", "standard")
 	other.SetName(models.ConsensusCapsuleName("orbit", 1) + "-saved") // another node
@@ -349,6 +392,8 @@ func TestReconcileConsensusPVCs_ExpandResizesWithoutWait(t *testing.T) {
 	rpt := runReconcile(t, fake, expandInputs())
 	require.Equal(t, automa.StatusSuccess, rpt.Status)
 	assert.Equal(t, []string{"resize:" + savedPVC + ":1Ti"}, fake.calls)
+	assert.Equal(t, "PVC "+savedPVC+" expansion from 500Gi to 1Ti requested (--expand-pvcs); the data is kept",
+		rpt.Metadata[models.ReportMetaWarning], "the end summary names the expanded PVC")
 }
 
 func TestReconcileConsensusPVCs_ExpandRevalidates(t *testing.T) {
@@ -379,6 +424,28 @@ func TestPrecheckConsensusPVCs_RecreateStopsWhenCapsuleExists(t *testing.T) {
 	assert.Contains(t, hintsOf(rpt.Error), "Uninstall the node first: sudo solo-provisioner consensus node uninstall --experimental --namespace ns --node-id 0")
 }
 
+func TestRecreatedConsensusPVCs(t *testing.T) {
+	cfg := models.ConsensusVolumeConfig{}
+	cfg.SetVolume(models.ConsensusVolumeSaved, models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC, Size: "1Ti"})
+	cfg.SetVolume(models.ConsensusVolumeState, models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC, Size: "100Gi"})
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0, Volumes: cfg, RecreatePVCs: true}
+
+	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{
+		savedPVCObj("500Gi", "standard"),
+		pvcObj(models.ConsensusVolumeState, "100Gi", "standard", "ReadWriteOnce"),
+		pvcObj(models.ConsensusVolumeLogs, "5Gi", "standard", "ReadWriteOnce"),
+	}}
+	lines, err := RecreatedConsensusPVCs(context.Background(), in, fake.provider())
+	require.NoError(t, err)
+	assert.Equal(t, []string{savedPVC + " (500Gi)", "orbit-consensus-0-logs (5Gi)"}, lines, "a matching PVC is not listed")
+	assert.Empty(t, fake.calls, "the lookup changes nothing")
+
+	in.RecreatePVCs = false
+	lines, err = RecreatedConsensusPVCs(context.Background(), in, fake.provider())
+	require.NoError(t, err)
+	assert.Empty(t, lines)
+}
+
 func TestReconcileConsensusPVCs_RecreateDeletesOnlyPlannedPVCs(t *testing.T) {
 	cfg := models.ConsensusVolumeConfig{}
 	cfg.SetVolume(models.ConsensusVolumeSaved, models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC, Size: "1Ti"})
@@ -396,6 +463,27 @@ func TestReconcileConsensusPVCs_RecreateDeletesOnlyPlannedPVCs(t *testing.T) {
 		"delete:" + savedPVC, "wait:" + savedPVC,
 		"delete:orbit-consensus-0-logs", "wait:orbit-consensus-0-logs",
 	}, fake.calls)
+	assert.Equal(t,
+		"PVC "+savedPVC+" (500Gi) and its data deleted (--recreate-pvcs); the operator creates it again with the requested settings\n"+
+			"PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)",
+		rpt.Metadata[models.ReportMetaWarning], "the end summary names each deleted PVC")
+}
+
+func TestReconcileConsensusPVCs_PartialDeleteReportsDeletedPVCs(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{
+		pvcs: []unstructured.Unstructured{
+			savedPVCObj("500Gi", "standard"),
+			pvcObj(models.ConsensusVolumeLogs, "5Gi", "standard", "ReadWriteOnce"),
+		},
+		waitErr:   errors.New("timed out"),
+		waitErrOn: savedPVC, // logs is deleted first
+	}
+	rpt := runReconcile(t, fake, in)
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Equal(t, "PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)",
+		rpt.Metadata[models.ReportMetaWarning], "a failed run still names the PVCs it deleted")
 }
 
 func TestReconcileConsensusPVCs_DeleteWaitTimeoutFails(t *testing.T) {
