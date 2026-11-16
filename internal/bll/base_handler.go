@@ -309,6 +309,10 @@ func (h *BaseHandler[T]) flushState(
 	if h.KeptAtBaseline != nil && baseline != nil {
 		h.KeptAtBaseline(&fullState, *baseline)
 	}
+	// A part this read could not see keeps its record, which may predate what
+	// the workflow just changed. Say so now: the next run may still report this
+	// run's own changes as out-of-band, and this line is what explains them.
+	addUnreadAfterRunWarnings(report, drift.Detect(baselineOrEmpty(baseline), fullState, producersOf(h.Managed)...), h.KeptChange)
 
 	// Persist the deployment profile when the handler carries one.
 	// This is done before the per-action callback so that callback logic can
