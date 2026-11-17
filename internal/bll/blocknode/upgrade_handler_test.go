@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -381,4 +382,21 @@ func TestUpgrade_PendingRelease_RefusedEvenWithForce(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"pending-upgrade"`)
 	assertResolutionMentions(t, err, "helm rollback")
+}
+
+// Upgrade renders the plugins, so its state callback records the preset the
+// run named, and clears the shaping cleanup mark once the cleanup ran.
+func TestUpgrade_StateCallbackRecordsThePluginsItNames(t *testing.T) {
+	st := deployedState()
+	st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
+	st.BlockNodeState.PluginList = "a,b"
+	st.BlockNodeState.TrafficShapingCleanupPending = true
+	h := &UpgradeHandler{shapingCleanupDone: true}
+	inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{PluginPreset: bnpkg.PresetRFH}}
+
+	require.NoError(t, h.stateCallback()(st, inputs, nil))
+
+	assert.Equal(t, bnpkg.PresetRFH, st.BlockNodeState.PluginPreset)
+	assert.Empty(t, st.BlockNodeState.PluginList)
+	assert.False(t, st.BlockNodeState.TrafficShapingCleanupPending)
 }

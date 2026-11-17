@@ -97,6 +97,10 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// release has none. Two callers do exactly that: the upgrade handler's
 	// chart-switch warning and the reconfigure handler's chart-change guard.
 	chartRef := bn.ReleaseInfo.ChartRef
+	// The plugin preset and list are weaver-only records too. They go with the
+	// release, so the release-missing branch above drops them; while it exists,
+	// keep them, or a run that renders no values (reset) records them as lost.
+	pluginPreset, pluginList := bn.PluginPreset, bn.PluginList
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -111,6 +115,8 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			Status:        re.Info.Status,
 		},
 		Storage:                      models.BlockNodeStorage{},
+		PluginPreset:                 pluginPreset,
+		PluginList:                   pluginList,
 		TrafficShapingEnabled:        trafficShapingEnabled,
 		TrafficShapingCleanupPending: cleanupPending,
 		Shaping:                      shaping,
