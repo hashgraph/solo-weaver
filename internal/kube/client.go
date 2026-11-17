@@ -1454,16 +1454,16 @@ func IsCRDReady(obj *unstructured.Unstructured, err error) (bool, error) {
 	return established, nil
 }
 
+var crdGVR = schema.GroupVersionResource{
+	Group:    "apiextensions.k8s.io",
+	Version:  "v1",
+	Resource: "customresourcedefinitions",
+}
+
 // CRDExists checks if a CustomResourceDefinition exists in the cluster.
 // The crdName should be in the format "resource.group.domain" (e.g., "servicemonitors.monitoring.coreos.com").
 func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
-	gvr := schema.GroupVersionResource{
-		Group:    "apiextensions.k8s.io",
-		Version:  "v1",
-		Resource: "customresourcedefinitions",
-	}
-
-	_, err := c.Dyn.Resource(gvr).Get(ctx, crdName, metav1.GetOptions{})
+	_, err := c.Dyn.Resource(crdGVR).Get(ctx, crdName, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
 			return false, nil
@@ -1472,6 +1472,50 @@ func (c *Client) CRDExists(ctx context.Context, crdName string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// CRDState reports whether a CustomResourceDefinition exists and whether it is
+// being deleted. A terminating CRD waits on the finalizers of its objects.
+func (c *Client) CRDState(ctx context.Context, crdName string) (exists, terminating bool, err error) {
+	obj, err := c.Dyn.Resource(crdGVR).Get(ctx, crdName, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			return false, false, nil
+		}
+		return false, false, errorx.ExternalError.Wrap(err, "failed to get CRD %s", crdName)
+	}
+
+	return true, obj.GetDeletionTimestamp() != nil, nil
+}
+
+// ListResources lists every object of a kind, across all namespaces when
+// namespace is empty; namespace is ignored for a cluster-scoped kind. The kind
+// is resolved by group and kind only, at the
+// version the cluster serves, so an empty result means no objects or no CRD,
+// never a version mismatch.
+func (c *Client) ListResources(ctx context.Context, gk schema.GroupKind, namespace string) ([]unstructured.Unstructured, error) {
+	mapping, err := c.Mapper.RESTMapping(gk)
+	if err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, errorx.ExternalError.Wrap(err, "failed to get REST mapping for %s", gk.String())
+	}
+
+	var dr dynamic.ResourceInterface = c.Dyn.Resource(mapping.Resource)
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace && namespace != "" {
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(namespace)
+	}
+
+	list, err := dr.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			// The CRD was deleted after the mapper cached it.
+			return nil, nil
+		}
+		return nil, errorx.ExternalError.Wrap(err, "failed to list %s", gk.String())
+	}
+	return list.Items, nil
 }
 
 // ScaleDeployment scales a Deployment to the specified number of replicas.

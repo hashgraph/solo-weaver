@@ -83,7 +83,7 @@ sudo solo-provisioner teleport cluster install --values=<file>
 sudo solo-provisioner teleport cluster uninstall
 
 # EXTERNAL SECRETS OPERATOR (ESO)
-sudo solo-provisioner eso operator install    [--namespace=<ns>]
+sudo solo-provisioner eso operator install    [--namespace=<ns>] [--recover-partial-uninstall]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field]
 sudo solo-provisioner eso secret delete       --name=<secret> --namespace=<ns>

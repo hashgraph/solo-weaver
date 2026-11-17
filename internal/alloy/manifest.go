@@ -139,11 +139,12 @@ func HostNetworkHelmValues() []string {
 const NodeExporterAppName = "node-exporter"
 
 // nodeExporterExtraArgs replaces the chart's extraArgs list, so it repeats the
-// chart's two filesystem excludes before adding our collectors.
+// chart's two filesystem excludes before adding our collectors and their options.
 var nodeExporterExtraArgs = []string{
 	`--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)`,
 	`--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$`,
 	"--collector.systemd",
+	`--collector.systemd.unit-include=(kubelet|crio|teleport|nftables|solo-provisioner-.+)\.(service|timer)`,
 	"--collector.processes",
 }
 
@@ -166,6 +167,7 @@ func NodeExporterHelmValues() *values.Options {
 			"resources.limits.cpu=750m",
 			"resources.limits.memory=768Mi",
 			"resources.limits.ephemeral-storage=2Gi",
+			"env.DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/root/run/dbus/system_bus_socket",
 		},
 		JSONValues: []string{"extraArgs=" + string(extraArgs)},
 	}
