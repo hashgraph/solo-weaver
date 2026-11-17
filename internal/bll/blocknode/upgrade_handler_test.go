@@ -382,3 +382,20 @@ func TestUpgrade_PendingRelease_RefusedEvenWithForce(t *testing.T) {
 	assert.Contains(t, err.Error(), `"pending-upgrade"`)
 	assertResolutionMentions(t, err, "helm rollback")
 }
+
+// Upgrade renders the plugins, so its state callback records the preset and
+// list it resolved, empty included, and clears the shaping cleanup mark once
+// the cleanup ran.
+func TestUpgrade_StateCallbackRecordsThePluginsItResolved(t *testing.T) {
+	st := deployedState()
+	st.BlockNodeState.PluginPreset = "tier1-rfh"
+	st.BlockNodeState.PluginList = "a,b"
+	st.BlockNodeState.TrafficShapingCleanupPending = true
+	h := &UpgradeHandler{shapingCleanupDone: true}
+
+	require.NoError(t, h.stateCallback()(st, models.UserInputs[models.BlockNodeInputs]{}, nil))
+
+	assert.Empty(t, st.BlockNodeState.PluginPreset)
+	assert.Empty(t, st.BlockNodeState.PluginList)
+	assert.False(t, st.BlockNodeState.TrafficShapingCleanupPending)
+}

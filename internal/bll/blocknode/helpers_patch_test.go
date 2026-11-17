@@ -7,6 +7,7 @@ package blocknode
 import (
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -210,4 +211,68 @@ func TestPatch_ExplicitShapeOverridesReplaceRecord(t *testing.T) {
 	assert.NotContains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",
 		"an explicit --shape run records only what it asked for")
 	assert.Equal(t, "200mbit", st.BlockNodeState.Shaping.ShapeOverrides["public"].Rate)
+}
+
+// Reset and uninstall render no Helm values, so whatever plugin flags they were
+// given, they leave the plugin record the refresh carried over.
+func TestPatch_RunsThatRenderNoValuesKeepThePluginRecord(t *testing.T) {
+	for _, preset := range []string{"", "tier1-lfh"} {
+		st := deployedState()
+		st.BlockNodeState.PluginPreset = "tier1-rfh"
+		st.BlockNodeState.PluginList = "a,b"
+		inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{PluginPreset: preset}}
+
+		require.NoError(t, patchBlockNodeState()(st, inputs, nil))
+
+		assert.Equal(t, "tier1-rfh", st.BlockNodeState.PluginPreset, "preset %q", preset)
+		assert.Equal(t, "a,b", st.BlockNodeState.PluginList, "preset %q", preset)
+	}
+}
+
+// Install, upgrade and reconfigure render the plugins, so they record exactly
+// what they resolved, empty included: the record says what was deployed.
+func TestPatch_RunsThatRenderValuesRecordWhatTheyResolved(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+	patches := map[string]func() bll.StateCallback[models.BlockNodeInputs]{
+		"upgrade":               patchBlockNodeStateRecordingPlugins,
+		"install / reconfigure": patchBlockNodeStateWithTrafficShaping,
+	}
+	for name, patch := range patches {
+		for _, tc := range []struct {
+			preset, list string
+		}{
+			{"", ""},
+			{"none", ""},
+			{"tier1-lfh", "x,y"},
+		} {
+			t.Run(name+"/"+tc.preset, func(t *testing.T) {
+				st := deployedState()
+				st.BlockNodeState.PluginPreset = "tier1-rfh"
+				st.BlockNodeState.PluginList = "a,b"
+				inputs := models.UserInputs[models.BlockNodeInputs]{
+					Custom: models.BlockNodeInputs{PluginPreset: tc.preset, PluginList: tc.list},
+				}
+
+				require.NoError(t, patch()(st, inputs, nil))
+
+				assert.Equal(t, tc.preset, st.BlockNodeState.PluginPreset)
+				assert.Equal(t, tc.list, st.BlockNodeState.PluginList)
+			})
+		}
+	}
+}
+
+// A release that isn't deployed (a failed or pending run) keeps the record:
+// nothing says what it runs.
+func TestPatch_ReleaseNotDeployedKeepsThePluginRecord(t *testing.T) {
+	st := deployedState()
+	st.BlockNodeState.ReleaseInfo.Status = release.StatusFailed
+	st.BlockNodeState.PluginPreset = "tier1-rfh"
+	st.BlockNodeState.PluginList = "a,b"
+	inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{PluginPreset: "tier1-lfh", PluginList: "x"}}
+
+	require.NoError(t, patchBlockNodeStateRecordingPlugins()(st, inputs, nil))
+
+	assert.Equal(t, "tier1-rfh", st.BlockNodeState.PluginPreset)
+	assert.Equal(t, "a,b", st.BlockNodeState.PluginList)
 }

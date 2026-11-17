@@ -550,3 +550,61 @@ func TestRefreshState_UnreadClusterKeepsTheRecordMarkedUnobserved(t *testing.T) 
 		})
 	}
 }
+
+// pluginRecordChecker returns a checker whose recorded block node carries a
+// plugin preset and list, with the given release found (or none).
+func pluginRecordChecker(re *release.Release) *blockNodeChecker {
+	recorded := state.NewBlockNodeState()
+	recorded.ReleaseInfo.Name = "block-node"
+	recorded.ReleaseInfo.Status = release.StatusDeployed
+	recorded.PluginPreset = "tier1-rfh"
+	recorded.PluginList = "a,b"
+	full := state.State{}
+	full.BlockNodeState = recorded
+
+	var releases []*release.Release
+	if re != nil {
+		releases = []*release.Release{re}
+	}
+	return &blockNodeChecker{
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: releases}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		probe:   func() ClusterReachability { return Reachable },
+	}
+}
+
+// The plugin preset and list are weaver-only records the release can't give
+// back, so a refresh that rebuilds the block node from its release keeps them;
+// otherwise a reset, which renders no values, records them as lost.
+func TestRefreshState_KeepsThePluginRecordWhileTheReleaseExists(t *testing.T) {
+	re := &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart:     &chart.Chart{Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.44.3", AppVersion: "0.44.3"}},
+		Manifest: `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`,
+	}
+
+	got, err := pluginRecordChecker(re).RefreshState(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "tier1-rfh", got.PluginPreset)
+	require.Equal(t, "a,b", got.PluginList)
+}
+
+// Plugins go with the release: once it is gone, so is the record.
+func TestRefreshState_DropsThePluginRecordWithTheRelease(t *testing.T) {
+	got, err := pluginRecordChecker(nil).RefreshState(context.Background())
+
+	require.NoError(t, err)
+	require.Empty(t, got.PluginPreset)
+	require.Empty(t, got.PluginList)
+}
