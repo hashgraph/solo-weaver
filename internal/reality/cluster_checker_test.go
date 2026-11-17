@@ -4,23 +4,20 @@ package reality_test
 
 import (
 	"context"
-	"path/filepath"
+	"errors"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
 )
 
-// noClusterInfo makes kube.RetrieveClusterInfo fail fast, so these tests cover
-// the releases alone.
-func noClusterInfo(t *testing.T) {
-	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing"))
-}
+// liveInfo is the cluster info a readable cluster reports in these tests.
+var liveInfo = &models.ClusterInfo{Host: "https://10.0.0.9:6443"}
 
 func helmRelease(name, namespace, chartName, version string, status release.Status) *release.Release {
 	return &release.Release{
@@ -37,19 +34,30 @@ func catalogRelease(name, version string, status release.Status) *release.Releas
 	return helmRelease(ch.Release, ch.Namespace, name, version, status)
 }
 
-// smWithReleases is a state manager whose persisted cluster records releases.
-func smWithReleases(t *testing.T, releases map[string]state.HelmReleaseInfo) state.Manager {
+// smWithCluster is a state manager whose persisted cluster is cs.
+func smWithCluster(t *testing.T, cs state.ClusterState) state.Manager {
 	t.Helper()
 	sm := newTeleportTestStateManager(t)
 	st := sm.State()
-	st.ClusterState.Releases = releases
+	st.ClusterState = cs
 	sm.Set(st)
 	return sm
 }
 
+// smWithReleases is a state manager whose persisted cluster records releases.
+func smWithReleases(t *testing.T, releases map[string]state.HelmReleaseInfo) state.Manager {
+	return smWithCluster(t, state.ClusterState{Releases: releases})
+}
+
 func refreshCluster(t *testing.T, sm state.Manager, helm reality.HelmManager, probe reality.ClusterReachability) state.ClusterState {
 	t.Helper()
-	noClusterInfo(t)
+	reality.UseClusterInfo(t, liveInfo, nil)
+	return refreshClusterAsIs(t, sm, helm, probe)
+}
+
+// refreshClusterAsIs refreshes with whatever cluster info the test set up.
+func refreshClusterAsIs(t *testing.T, sm state.Manager, helm reality.HelmManager, probe reality.ClusterReachability) state.ClusterState {
+	t.Helper()
 	checker, err := reality.NewClusterChecker(sm,
 		func() (reality.HelmManager, error) { return helm, nil },
 		func() reality.ClusterReachability { return probe })
@@ -102,24 +110,49 @@ func TestClusterChecker_NoReleasesClearsTheRecord(t *testing.T) {
 	require.Empty(t, cs.Releases)
 }
 
-// What could not be observed keeps the recorded releases, so a commit after
-// the refresh does not save them as gone.
-func TestClusterChecker_KeepsRecordedReleasesWhenNotObserved(t *testing.T) {
+// A refresh that cannot read the whole cluster returns the recorded cluster
+// unchanged, so a commit after it keeps the record. It is marked Unobserved
+// only when a kubeconfig exists.
+func TestClusterChecker_KeepsTheRecordedClusterWhenNotObserved(t *testing.T) {
+	persisted := state.ClusterState{
+		Created:     true,
+		ClusterInfo: models.ClusterInfo{Host: "https://10.0.0.1:6443"},
+		Releases:    recorded,
+	}
 	for name, tc := range map[string]struct {
-		helm  reality.HelmManager
-		probe reality.ClusterReachability
+		helm           reality.HelmManager
+		probe          reality.ClusterReachability
+		infoErr        error
+		wantUnobserved bool
 	}{
-		"no kubeconfig":       {helm: &fakeHelmManager{}, probe: reality.NotConfigured},
-		"API server silent":   {helm: &fakeHelmManager{}, probe: reality.Unobservable},
-		"helm listing failed": {helm: failingHelmManager{}, probe: reality.Reachable},
+		"no kubeconfig":           {helm: &fakeHelmManager{}, probe: reality.NotConfigured},
+		"API server silent":       {helm: &fakeHelmManager{}, probe: reality.Unobservable, wantUnobserved: true},
+		"helm listing failed":     {helm: failingHelmManager{}, probe: reality.Reachable, wantUnobserved: true},
+		"cluster info unreadable": {helm: &fakeHelmManager{}, probe: reality.Reachable, infoErr: errors.New("connection refused"), wantUnobserved: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cs := refreshCluster(t, smWithReleases(t, recorded), tc.helm, tc.probe)
+			reality.UseClusterInfo(t, liveInfo, tc.infoErr)
 
-			require.Equal(t, recorded, cs.Releases)
-			require.True(t, cs.Unobserved)
+			cs := refreshClusterAsIs(t, smWithCluster(t, persisted), tc.helm, tc.probe)
+
+			require.Equal(t, tc.wantUnobserved, cs.Unobserved)
+			cs.Unobserved = false
+			require.Equal(t, persisted, cs)
 		})
 	}
+}
+
+// A cluster read in full replaces the record, including a cluster recorded as
+// never created.
+func TestClusterChecker_ObservedClusterReplacesTheRecord(t *testing.T) {
+	cs := refreshCluster(t, smWithCluster(t, state.ClusterState{Releases: recorded}),
+		&fakeHelmManager{releases: []*release.Release{catalogRelease("metallb", "0.16.1", release.StatusDeployed)}},
+		reality.Reachable)
+
+	require.False(t, cs.Unobserved)
+	require.True(t, cs.Created)
+	require.Equal(t, liveInfo.Host, cs.Host)
+	require.Equal(t, "0.16.1", cs.Releases["metallb"].ChartVersion)
 }
 
 // A chart installed outside its catalog namespace is found by release and

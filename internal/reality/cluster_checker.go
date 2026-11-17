@@ -4,7 +4,6 @@ package reality
 
 import (
 	"context"
-	"maps"
 	"path"
 	"slices"
 
@@ -40,12 +39,16 @@ type managedRelease struct {
 
 // clusterChecker probes the Kubernetes cluster and returns a ClusterState.
 // It depends only on a ClusterProbe and a Helm factory (both injectable) and
-// kube.RetrieveClusterInfo.
+// retrieveClusterInfo.
 type clusterChecker struct {
 	sm      state.Manager
 	newHelm func() (HelmManager, error)
 	probe   ClusterProbe
 }
+
+// retrieveClusterInfo is a package var so tests can read a cluster without a
+// live API server.
+var retrieveClusterInfo = kube.RetrieveClusterInfo
 
 // NewClusterChecker constructs a clusterChecker with the given Helm factory
 // and probe. NewCheckers passes the production ones; in tests pass fakes.
@@ -60,40 +63,53 @@ func NewLiveClusterChecker(sm state.Manager) Checker[state.ClusterState] {
 	return &clusterChecker{sm: sm, newHelm: func() (HelmManager, error) { return helm2.NewManager() }, probe: probeCluster}
 }
 
-// RefreshState returns the live cluster. The chart releases are taken from Helm
-// only when the cluster answered and Helm listed its releases; otherwise the
-// recorded ones are kept. A cluster that could not be fully read is marked
-// Unobserved, and a writer then keeps the recorded cluster.
+// RefreshState returns the live cluster when it can read all of it: the
+// cluster info and the managed chart releases. Otherwise it returns the
+// recorded cluster unchanged, so every writer that commits the result keeps
+// the record instead of saving the cluster as gone. The recorded cluster is
+// marked Unobserved when a kubeconfig exists, since the cluster may still be
+// there; with no kubeconfig there is no cluster to read.
 func (c *clusterChecker) RefreshState(_ context.Context) (state.ClusterState, error) {
-	cs := state.NewClusterState()
-	cs.Releases = maps.Clone(c.sm.State().ClusterState.Releases)
-
-	if !c.probe().Observed() {
-		logx.As().Debug().Msg("Kubernetes cluster does not exist or is unreachable, returning empty ClusterState")
-		cs.Unobserved = true
-		return cs, nil
+	r := c.probe()
+	if !r.Observed() {
+		if r.Configured() {
+			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded cluster")
+		} else {
+			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded cluster")
+		}
+		return c.recorded(r.Configured())
 	}
 
 	releases, err := c.listReleases()
 	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to read the cluster chart releases; keeping the recorded ones")
-		cs.Unobserved = true
-	} else {
-		cs.Releases = releases
+		logx.As().Warn().Err(err).Msg("Failed to read the cluster chart releases; keeping the recorded cluster")
+		return c.recorded(true)
 	}
 
-	clusterInfo, err := kube.RetrieveClusterInfo()
+	clusterInfo, err := retrieveClusterInfo()
 	if err != nil {
-		logx.As().Error().Err(err).Msg("Failed to retrieve cluster info, returning empty ClusterState")
-		cs.Unobserved = true
-		return cs, nil
+		logx.As().Warn().Err(err).Msg("Failed to retrieve cluster info; keeping the recorded cluster")
+		return c.recorded(true)
 	}
 
+	cs := state.NewClusterState()
+	cs.Releases = releases
 	cs.Initialize(clusterInfo)
 
 	logx.As().Debug().Any("clusterState", cs).Msg("Refreshed cluster state")
 
 	return cs, nil
+}
+
+// recorded returns a copy of the recorded cluster, marked unobserved as told.
+func (c *clusterChecker) recorded(unobserved bool) (state.ClusterState, error) {
+	persisted := c.sm.State().ClusterState
+	cs, err := persisted.Clone()
+	if err != nil {
+		return state.ClusterState{}, err
+	}
+	cs.Unobserved = unobserved
+	return *cs, nil
 }
 
 // listReleases reads the release of every managed chart from Helm. A chart

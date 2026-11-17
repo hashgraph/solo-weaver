@@ -239,10 +239,12 @@ func TestRefreshMachineAndCluster_UnobservedClusterKeepsTheRecord(t *testing.T) 
 	st.ClusterState = state.ClusterState{Created: true, ClusterInfo: models.ClusterInfo{Host: "https://10.0.0.1:6443"}}
 	require.NoError(t, sm.Set(st).Commit(state.ActionHistory{}, state.ComponentCluster))
 
+	cluster, err := reality.NewClusterChecker(sm,
+		func() (reality.HelmManager, error) { return nil, errorx.IllegalState.New("not called") },
+		func() reality.ClusterReachability { return reality.Unobservable })
+	require.NoError(t, err)
 	checkers := reality.Checkers{
-		Cluster: funcChecker[state.ClusterState](func() (state.ClusterState, error) {
-			return state.ClusterState{Unobserved: true}, nil
-		}),
+		Cluster: cluster,
 		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
 			return sm.State().MachineState, nil
 		}),
@@ -255,6 +257,7 @@ func TestRefreshMachineAndCluster_UnobservedClusterKeepsTheRecord(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, current.ClusterState.Created)
 	require.Equal(t, "https://10.0.0.1:6443", current.ClusterState.Host)
+	require.True(t, current.ClusterState.Unobserved)
 }
 
 // unsyncedCommits is a state.Manager whose commits land but report a failed

@@ -45,6 +45,7 @@ func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 type host struct {
 	teleport      state.TeleportState
 	teleportProbe reality.ClusterProbe
+	clusterProbe  reality.ClusterProbe // when set, the real cluster checker reads the cluster
 	software      map[string]state.SoftwareState
 }
 
@@ -208,6 +209,11 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 	if h.teleportProbe != nil {
 		checkers.Teleport, err = reality.NewTeleportChecker(sm,
 			func() (reality.HelmManager, error) { return noReleases{}, nil }, h.teleportProbe)
+		require.NoError(t, err)
+	}
+	if h.clusterProbe != nil {
+		checkers.Cluster, err = reality.NewClusterChecker(sm,
+			func() (reality.HelmManager, error) { return noReleases{}, nil }, h.clusterProbe)
 		require.NoError(t, err)
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)

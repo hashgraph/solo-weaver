@@ -127,10 +127,12 @@ func TestRunRecordingCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
 
 	orig := newClusterChecker
 	t.Cleanup(func() { newClusterChecker = orig })
-	newClusterChecker = func(state.Manager) reality.Checker[state.ClusterState] {
-		return clusterFunc(func() (state.ClusterState, error) {
-			return state.ClusterState{Unobserved: true}, nil
-		})
+	newClusterChecker = func(sm state.Manager) reality.Checker[state.ClusterState] {
+		c, err := reality.NewClusterChecker(sm,
+			func() (reality.HelmManager, error) { return nil, errors.New("not called") },
+			func() reality.ClusterReachability { return reality.Unobservable })
+		require.NoError(t, err)
+		return c
 	}
 
 	_, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
