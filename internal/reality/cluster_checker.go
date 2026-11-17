@@ -21,11 +21,11 @@ import (
 // is not a catalog chart.
 const CiliumReleaseKey = "cilium"
 
-// clusterChartsRecordedElsewhere are catalog charts whose release is recorded
-// by another component, so ClusterState.Releases leaves them out.
+// clusterChartsRecordedElsewhere are catalog charts ClusterState.Releases
+// leaves out.
 var clusterChartsRecordedElsewhere = []string{
-	"teleport-cluster-agent", // TeleportState.ClusterAgent
-	"solo-operator",
+	"teleport-cluster-agent", // recorded in TeleportState.ClusterAgent
+	"solo-operator",          // not recorded in any state file yet
 }
 
 // managedRelease identifies one Helm release recorded in ClusterState.Releases.
@@ -145,7 +145,7 @@ func (c *clusterChecker) listReleases() (map[string]state.HelmReleaseInfo, error
 }
 
 // managedReleases lists the releases ClusterState.Releases records: every
-// catalog chart not recorded elsewhere, then the Cilium agent.
+// catalog chart not in clusterChartsRecordedElsewhere, then the Cilium agent.
 func managedReleases() ([]managedRelease, error) {
 	catalog, err := software.LoadInfrastructureCatalog()
 	if err != nil {
