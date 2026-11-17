@@ -68,7 +68,8 @@ func NewLiveClusterChecker(sm state.Manager) Checker[state.ClusterState] {
 // recorded cluster unchanged, so every writer that commits the result keeps
 // the record instead of saving the cluster as gone. The recorded cluster is
 // marked Unobserved when a kubeconfig exists, since the cluster may still be
-// there; with no kubeconfig there is no cluster to read.
+// there; with no kubeconfig there is no cluster to read. A cluster it cannot
+// read is never an error: a returned error is an internal fault.
 func (c *clusterChecker) RefreshState(_ context.Context) (state.ClusterState, error) {
 	r := c.probe()
 	if !r.Observed() {

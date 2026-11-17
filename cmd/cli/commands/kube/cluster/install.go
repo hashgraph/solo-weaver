@@ -105,29 +105,32 @@ var installCmd = &cobra.Command{
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
 		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}
 		inputs := map[string]any{"profile": profile, "nodeType": nodeType, "skipHardwareChecks": skipHardwareChecks}
-		// Record inside the run, before its report is saved and summarised, so
-		// a warning about recording it reaches both. A failed install returns
-		// its own error from the report.
-		var recordErr error
-		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
-			wf, err := wb.Build()
-			if err != nil {
-				return nil, err
-			}
-			report := wf.Execute(cmd.Context())
-			entry := steps.WorkflowEntry(cmd.Context(), intent, inputs, report)
-			recordErr = recordClusterInstall(cmd.Context(), sr.Runtime, entry, steps.FailureOf(report), owned)
-			return report, nil
-		}); err != nil {
+		if err := common.RunWorkflow(cmd.Context(), installRun(cmd.Context(), wb, sr.Runtime, intent, inputs, owned)); err != nil {
 			return err
-		}
-		if recordErr != nil {
-			return recordErr
 		}
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
 		return nil
 	},
+}
+
+// installRun is the RunWorkflow function of installCmd. It records the install
+// inside the run, before its report is saved and summarised, so a failure to
+// record it shows in the summary. A failed install keeps its own failure.
+func installRun(ctx context.Context, wb automa.Builder, rt clusterRecorder, intent models.Intent, inputs any, owned []state.ComponentID) func() (*automa.Report, error) {
+	return func() (*automa.Report, error) {
+		wf, err := wb.Build()
+		if err != nil {
+			return nil, err
+		}
+		report := wf.Execute(ctx)
+		entry := steps.WorkflowEntry(ctx, intent, inputs, report)
+		failure := steps.FailureOf(report)
+		if err := recordClusterInstall(ctx, rt, entry, failure, owned); err != nil && failure == nil {
+			common.FailReportOnRecordError(report, err)
+		}
+		return report, nil
+	}
 }
 
 // clusterRecorder is what recordClusterInstall needs of the runtime;

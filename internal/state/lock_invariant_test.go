@@ -91,7 +91,7 @@ var stateWriters = map[string]writerRow{
 	"cmd/cli/commands/common/cluster_record.go:runRecordingCluster": {
 		lock: "RunOwning over ComponentCluster: TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked",
 		history: "TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry, " +
-			"TestRunRecordingCluster_UnreadableClusterIsNotPersisted",
+			"TestRunRecordingCluster_UnexpectedCheckerErrorFails",
 	},
 	"cmd/cli/commands/kube/cluster/install.go:recordClusterInstall": {
 		lock: "its caller, installCmd, holds ComponentSystem's and ComponentCluster's locks for the whole command",

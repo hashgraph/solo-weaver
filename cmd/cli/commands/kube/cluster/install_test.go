@@ -10,12 +10,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
 	"github.com/stretchr/testify/require"
 )
@@ -159,4 +164,53 @@ func readCluster(t *testing.T, dir string) state.ClusterState {
 	require.NoError(t, err)
 	require.NoError(t, sm.Refresh())
 	return sm.State().ClusterState
+}
+
+// failingCommits is the install runtime with commits that fail.
+type failingCommits struct{ *rsl.RuntimeResolver }
+
+func (failingCommits) Commit(state.State, state.ActionHistory, ...state.ComponentID) error {
+	return errors.New("disk full")
+}
+
+func oneStepInstall(fails bool) automa.Builder {
+	step := automa.NewStepBuilder().WithId("kubeadm-init").
+		WithExecute(func(context.Context, automa.Step) *automa.Report {
+			if fails {
+				return automa.StepFailureReport("kubeadm-init", automa.WithError(errors.New("kubeadm init failed")))
+			}
+			return automa.StepSuccessReport("kubeadm-init")
+		})
+	return automa.NewWorkflowBuilder().WithId("install").Steps(step)
+}
+
+var clusterInstallIntent = models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}
+
+// An install that ran but could not be recorded comes back as a failed report,
+// so the summary and the command's error agree.
+func TestInstallRun_RecordFailureFailsTheReport(t *testing.T) {
+	rt, _ := newInstallRuntime(t, nil)
+
+	report, err := installRun(context.Background(), oneStepInstall(false), failingCommits{rt}, clusterInstallIntent, nil, owned)()
+
+	require.NoError(t, err, "the failure travels in the report")
+	require.Equal(t, automa.StatusFailed, report.Status)
+	failure := steps.FailureOf(report)
+	require.ErrorContains(t, failure, "failed to persist the system and cluster records")
+	reason, _ := errx.ReasonOf(failure)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	require.Equal(t, common.RecordStateStepID, report.StepReports[len(report.StepReports)-1].Id)
+}
+
+// A failed install keeps its own failure.
+func TestInstallRun_FailedInstallKeepsItsFailure(t *testing.T) {
+	rt, _ := newInstallRuntime(t, nil)
+
+	report, err := installRun(context.Background(), oneStepInstall(true), rt, clusterInstallIntent, nil, owned)()
+
+	require.NoError(t, err)
+	require.ErrorContains(t, steps.FailureOf(report), "kubeadm init failed")
+	for _, sr := range report.StepReports {
+		require.NotEqual(t, common.RecordStateStepID, sr.Id)
+	}
 }
