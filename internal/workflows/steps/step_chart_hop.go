@@ -56,7 +56,7 @@ var chartRecipes = map[string]chartRecipe{
 		values: fixedValues(&values.Options{}),
 		extra:  crdsEstablishedProblems,
 	},
-	"external-secrets": {values: fixedValues(esoHelmValues()), find: theESORelease},
+	"external-secrets": {values: fixedValues(esoChartValues()), find: theESORelease},
 	"node-exporter":    {values: fixedValues(alloy.NodeExporterHelmValues())},
 	"alloy": {
 		values: func(to string) (*values.Options, error) {
