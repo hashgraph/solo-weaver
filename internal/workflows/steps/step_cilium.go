@@ -210,7 +210,7 @@ const (
 
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		installCiliumCNI(newClusterCilium, kube.NewClient),
+		installCiliumCNI(newClusterCilium, func() (*kube.Client, error) { return kube.NewClient() }),
 		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

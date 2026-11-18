@@ -37,9 +37,16 @@ const recordProvisionerVersionStepID = "record-provisioner-version"
 // The startup pass records it only on a host that already had Kubernetes, so
 // without this a fresh cluster has no recorded version and the next invocation
 // synthesises the 0.0.0 baseline and re-runs historical migrations.
+//
+// It records only when this run's init succeeded (KubeadmInitSucceeded). On an
+// existing cluster the startup pass owns the version: recording it here would
+// drop a migration it deferred.
 func RecordProvisionerVersion() *automa.StepBuilder {
 	return automa.NewStepBuilder().WithId(recordProvisionerVersionStepID).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			if created, _ := stp.State().Global().Bool(KubeadmInitSucceeded); !created {
+				return automa.SkippedReport(stp, automa.WithDetail("no cluster created by this run"))
+			}
 			changed, err := persistProvisionerVersion()
 			if err != nil && errorx.IsOfType(err, fsx.FileSyncError) {
 				logx.As().Warn().Err(err).Msg("Recorded provisioner version after cluster install, but could not sync it to disk")
@@ -69,6 +76,10 @@ func RecordProvisionerVersion() *automa.StepBuilder {
 			notify.As().StepFailure(ctx, stp, rpt, "Failed to record provisioner version")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
+			if rpt.Status == automa.StatusSkipped {
+				notify.As().StepCompletion(ctx, stp, rpt, "Provisioner version not recorded: no cluster created by this run")
+				return
+			}
 			if rpt.Metadata[metaVersionPersisted] == "false" {
 				notify.As().StepCompletion(ctx, stp, rpt,
 					"Provisioner version not recorded (best-effort); "+
