@@ -126,10 +126,10 @@ func InstalledVersion(ctx context.Context, dyn dynamic.Interface) (string, error
 	return chart, nil
 }
 
-// AgentVersion returns the release version of the running cilium-agent image,
+// FindAgentVersion returns the release version of the running cilium-agent image,
 // without a leading "v", and false when the agent DaemonSet does not exist.
 // Unlike InstalledVersion it does not compare the version with the chart.
-func AgentVersion(ctx context.Context, dyn dynamic.Interface) (string, bool, error) {
+func FindAgentVersion(ctx context.Context, dyn dynamic.Interface) (string, bool, error) {
 	ds, err := dyn.Resource(daemonSetsGVR).Namespace(Namespace).Get(ctx, daemonSetName, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -142,7 +142,7 @@ func AgentVersion(ctx context.Context, dyn dynamic.Interface) (string, bool, err
 }
 
 func agentVersion(ctx context.Context, dyn dynamic.Interface) (string, error) {
-	version, found, err := AgentVersion(ctx, dyn)
+	version, found, err := FindAgentVersion(ctx, dyn)
 	if err != nil {
 		return "", err
 	}

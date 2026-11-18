@@ -4,6 +4,7 @@ package reality
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path"
 	"slices"
@@ -127,7 +128,7 @@ func (c *clusterChecker) RefreshState(ctx context.Context) (state.ClusterState, 
 	cs.Initialize(clusterInfo)
 
 	if err := c.readCluster(ctx, &cs); err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to read the node or the Cilium agent; keeping the recorded cluster")
+		logx.As().Warn().Err(err).Msg("Failed to read the cluster nodes or the Cilium agent; keeping the recorded cluster")
 		return c.recorded(true)
 	}
 
@@ -147,50 +148,58 @@ func (c *clusterChecker) recorded(unobserved bool) (state.ClusterState, error) {
 	return *cs, nil
 }
 
-// readCluster sets the node and Cilium agent facts of cs. On an error it
-// leaves each fact it could not read as it was.
+// readCluster sets the node and Cilium agent facts of cs. It reads both and
+// returns every failure, so the log names each read that failed. A cluster
+// reporting no nodes counts as a failed read: a working cluster has one. On an
+// error it leaves each fact it could not read as it was.
 func (c *clusterChecker) readCluster(ctx context.Context, cs *state.ClusterState) error {
 	r, err := c.newReader()
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to create kube client")
 	}
 
-	nodes, nodesErr := r.Nodes(ctx)
-	if nodesErr == nil {
+	var errs []error
+
+	nodes, err := r.Nodes(ctx)
+	switch {
+	case err != nil:
+		errs = append(errs, errorx.IllegalState.Wrap(err, "failed to read the nodes"))
+	case len(nodes) == 0:
+		errs = append(errs, errorx.IllegalState.New("the cluster reports no nodes"))
+	default:
 		node := hostNode(nodes)
 		cs.KubeletVersion = strings.TrimPrefix(node.KubeletVersion, "v")
 		cs.ContainerRuntimeVersion = node.ContainerRuntimeVersion
 		cs.NodeCount = len(nodes)
 	}
 
-	agent, found, agentErr := r.CiliumAgentVersion(ctx)
-	if agentErr == nil {
+	agent, found, err := r.CiliumAgentVersion(ctx)
+	if err != nil {
+		errs = append(errs, errorx.IllegalState.Wrap(err, "failed to read the Cilium agent"))
+	} else {
 		cs.CiliumAgentVersion = ""
 		if found {
 			cs.CiliumAgentVersion = agent
 		}
 	}
 
-	if nodesErr != nil {
-		return nodesErr
-	}
-	return agentErr
+	return errors.Join(errs...)
 }
 
 // hostNode returns the node named after this host, or the first node: the
 // provisioner creates single-node clusters, so the choice only matters when
-// someone joined more nodes by hand.
+// someone joined more nodes by hand. nodes must not be empty.
 func hostNode(nodes []NodeInfo) NodeInfo {
-	if len(nodes) == 0 {
-		return NodeInfo{}
-	}
-	if host, err := os.Hostname(); err == nil {
+	host, err := os.Hostname()
+	if err == nil {
 		for _, n := range nodes {
 			if n.Name == host {
 				return n
 			}
 		}
 	}
+	logx.As().Debug().Str("host", host).Str("node", nodes[0].Name).Int("nodes", len(nodes)).
+		Msg("No node is named after this host; recording the first node")
 	return nodes[0]
 }
 
@@ -335,5 +344,5 @@ func nodeInfoField(obj map[string]any, field string) (string, error) {
 }
 
 func (r kubeClusterReader) CiliumAgentVersion(ctx context.Context) (string, bool, error) {
-	return cilium.AgentVersion(ctx, r.kc.Dyn)
+	return cilium.FindAgentVersion(ctx, r.kc.Dyn)
 }

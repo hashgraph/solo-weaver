@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 	"helm.sh/helm/v3/pkg/release"
 )
 
@@ -93,8 +94,8 @@ func ResolveClusterShape(live state.State, recorded *state.State, managed []real
 		Kubernetes: KubernetesShape{
 			ControlPlane:     strings.TrimPrefix(cs.ServerVersion.GitVersion, "v"),
 			Kubelet:          cs.KubeletVersion,
-			KubeletBinary:    live.MachineState.Software["kubelet"].Version,
-			Kubeadm:          live.MachineState.Software["kubeadm"].Version,
+			KubeletBinary:    live.MachineState.Software[software.KubeletBinaryName].Version,
+			Kubeadm:          live.MachineState.Software[software.KubeadmBinaryName].Version,
 			ContainerRuntime: cs.ContainerRuntimeVersion,
 			NodeCount:        cs.NodeCount,
 			UnexpectedNodes:  cs.NodeCount > 1,

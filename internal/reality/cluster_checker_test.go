@@ -157,6 +157,7 @@ func TestClusterChecker_KeepsTheRecordedClusterWhenNotObserved(t *testing.T) {
 		"helm listing failed":     {helm: failingHelmManager{}, reader: oneNode, probe: reality.Reachable, wantUnobserved: true},
 		"cluster info unreadable": {helm: &fakeHelmManager{}, reader: oneNode, probe: reality.Reachable, infoErr: errors.New("connection refused"), wantUnobserved: true},
 		"node unreadable":         {helm: &fakeHelmManager{}, reader: fakeReader{nodesErr: errors.New("forbidden")}, probe: reality.Reachable, wantUnobserved: true},
+		"no nodes reported":       {helm: &fakeHelmManager{}, reader: fakeReader{agent: "1.20.2", agentFound: true}, probe: reality.Reachable, wantUnobserved: true},
 		"cilium agent unreadable": {helm: &fakeHelmManager{}, reader: fakeReader{nodes: oneNode.nodes, agentErr: errors.New("timeout")}, probe: reality.Reachable, wantUnobserved: true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -259,4 +260,29 @@ func TestClusterChecker_ForeignChartGetsNoCatalogChartRef(t *testing.T) {
 	require.Equal(t, "node-exporter", got.ChartName)
 	require.Equal(t, "4.5.19", got.ChartVersion)
 	require.Empty(t, got.ChartRef)
+}
+
+// Both reads run, and the error names each one that failed.
+func TestClusterChecker_ReportsEveryFailedRead(t *testing.T) {
+	failing := fakeReader{nodesErr: errors.New("forbidden"), agentErr: errors.New("timeout")}
+
+	err := reality.ReadCluster(context.Background(), failing, &state.ClusterState{})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read the nodes")
+	require.Contains(t, err.Error(), "forbidden")
+	require.Contains(t, err.Error(), "failed to read the Cilium agent")
+	require.Contains(t, err.Error(), "timeout")
+}
+
+// A cluster that reports no nodes is a failed read and changes nothing.
+func TestClusterChecker_NoNodesLeavesTheFactsAlone(t *testing.T) {
+	cs := state.ClusterState{KubeletVersion: "1.33.4", NodeCount: 1}
+
+	err := reality.ReadCluster(context.Background(), fakeReader{agent: "1.20.2", agentFound: true}, &cs)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no nodes")
+	require.Equal(t, "1.33.4", cs.KubeletVersion)
+	require.Equal(t, 1, cs.NodeCount)
 }
