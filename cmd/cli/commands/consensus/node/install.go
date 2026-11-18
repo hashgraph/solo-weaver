@@ -14,6 +14,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -310,7 +311,7 @@ func resolveVolumeConfig() (models.ConsensusVolumeConfig, error) {
 
 // nodeAdminKeysPath is where a deployment package sets each genesis node's admin
 // key. Without it, consensus node v0.74.2+ uses the genesis key as admin key.
-var nodeAdminKeysPath = filepath.Join("data", "config", "node-admin-keys.json")
+var nodeAdminKeysPath = cnkeys.NodeAdminKeysPath
 
 // checkNodeAdminKeys requires node-admin-keys.json in the deployment package. When
 // it is missing, it continues only if allow is set or the operator confirms.
@@ -321,8 +322,10 @@ func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (
 		return nil
 	}
 	path := filepath.Join(pkgDir, nodeAdminKeysPath)
-	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
-		return nil
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
+			return nil
+		}
 	}
 
 	if !allow {

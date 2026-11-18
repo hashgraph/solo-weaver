@@ -579,6 +579,9 @@ Expected:
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.
+- A pre-built genesis must give each node an Ed25519 admin key, in
+  `data/config/node-admin-keys.json` or in the genesis `adminKey`. If not,
+  `consensus network genesis` stops before it creates the `NetworkGenesis` CR.
 - **Multi-node:** for an in-cluster discovery network, do **not** pass
   `--deployment-package-dir` to `consensus network genesis` — that applies the
   package's single-node `genesis-network.json` verbatim and bypasses roster

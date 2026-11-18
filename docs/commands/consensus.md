@@ -218,9 +218,33 @@ For this reason, `consensus node install --deployment-package-dir <pkg>` require
 
 Use the genesis key as the admin key for local dev/test networks only.
 
-> **Note:** solo-provisioner checks only that the file is in the package. It does not
-> send `node-admin-keys.json` to the node yet: no solo-operator config CR carries it.
-> Until the solo-operator supports it, genesis nodes still get the genesis key.
+`consensus network genesis` also checks the admin keys when it applies a pre-built
+`genesis-network.json` (`--genesis-file` or `--deployment-package-dir`). It reads
+`data/config/node-admin-keys.json` from the package, if there is one, also when
+`--genesis-file` gives the genesis. For each node, the check accepts a key from
+`node-admin-keys.json` or from the `adminKey` in `genesis-network.json`. The command
+stops, and creates nothing in the cluster, if:
+
+- a node has no key in either file;
+- a node has a key in both files and the two keys are different;
+- `node-admin-keys.json` has a node that is not in `genesis-network.json`;
+- `node-admin-keys.json` is empty;
+- a node in `genesis-network.json` has a `rosterEntry` `nodeId` and a `node` `nodeId`
+  that are different;
+- a key is not a valid Ed25519 public key (hex in `node-admin-keys.json`, base64
+  `{"ed25519": "..."}` in `genesis-network.json`).
+
+```text
+genesis admin keys are invalid: no admin key for node(s) 1 (set it in node-admin-keys.json or genesis-network.json adminKey)
+```
+
+In discovery mode (no pre-built genesis), the solo-operator takes each key from the
+node's admin secret, so this check does not apply.
+
+> **Note:** solo-provisioner checks the admin keys, but it does not send
+> `node-admin-keys.json` to the nodes yet: no solo-operator CR carries it
+> (solo-operator#1465). Until the solo-operator supports it, genesis nodes still get
+> the genesis key, also when this check passes.
 
 A node that joins with DAB does not need the admin secret: its admin key goes into
 the `NodeCreate` transaction, which your wallet or SDK sends. There, a secp256k1

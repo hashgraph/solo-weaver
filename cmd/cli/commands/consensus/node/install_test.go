@@ -53,10 +53,12 @@ func TestCheckNodeAdminKeys_MissingNonInteractiveFails(t *testing.T) {
 }
 
 func TestCheckNodeAdminKeys_EmptyFileCountsAsMissing(t *testing.T) {
-	dir := pkgWithAdminKeys(t, "x")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, nodeAdminKeysPath), nil, 0o644))
-	confirm, _ := confirmSpy(true, nil)
-	require.Error(t, checkNodeAdminKeys(dir, false, false, confirm))
+	for _, content := range []string{"", " \n\t"} {
+		dir := pkgWithAdminKeys(t, "x")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, nodeAdminKeysPath), []byte(content), 0o644))
+		confirm, _ := confirmSpy(true, nil)
+		require.Error(t, checkNodeAdminKeys(dir, false, false, confirm), "content %q", content)
+	}
 }
 
 func TestCheckNodeAdminKeys_MissingAllowed(t *testing.T) {
