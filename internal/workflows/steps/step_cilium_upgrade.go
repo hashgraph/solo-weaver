@@ -103,7 +103,7 @@ func (h ciliumHealth) problems(version string) []string {
 func defaultReadCiliumHealth(ctx context.Context, k *kube.Client) (ciliumHealth, error) {
 	var h ciliumHealth
 	var err error
-	if h.AgentVersion, _, err = cilium.AgentVersion(ctx, k.Dyn); err != nil {
+	if h.AgentVersion, _, err = cilium.FindAgentVersion(ctx, k.Dyn); err != nil {
 		return h, err
 	}
 	ds := func(field ...string) (int64, error) {
