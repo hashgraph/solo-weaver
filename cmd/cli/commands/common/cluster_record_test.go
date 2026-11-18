@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -48,18 +50,30 @@ func newRecordingManager(t *testing.T) (state.Manager, string) {
 	return sm, dir
 }
 
-func oneStepWorkflow(fails bool) automa.Builder {
+func oneStepWorkflow(fails bool) *automa.WorkflowBuilder {
+	return workflowWith(fails, automa.StopOnError, nil)
+}
+
+// workflowWith is a one-step chart install in mode. rolledBack, when set, is
+// told whether the step was rolled back.
+func workflowWith(fails bool, mode automa.TypeMode, rolledBack *bool) *automa.WorkflowBuilder {
 	step := automa.NewStepBuilder().WithId("install-chart").
 		WithExecute(func(context.Context, automa.Step) *automa.Report {
 			if fails {
 				return automa.StepFailureReport("install-chart", automa.WithError(errors.New("helm install failed")))
 			}
 			return automa.StepSuccessReport("install-chart")
+		}).
+		WithRollback(func(context.Context, automa.Step) *automa.Report {
+			if rolledBack != nil {
+				*rolledBack = true
+			}
+			return automa.StepSuccessReport("install-chart", automa.WithActionType(automa.ActionRollback))
 		})
-	return automa.NewWorkflowBuilder().WithId("install").Steps(step)
+	return automa.NewWorkflowBuilder().WithId("install").WithExecutionMode(mode).Steps(step)
 }
 
-var alloyInstall = state.ActionHistory{Intent: models.Intent{Action: models.ActionInstall, Target: models.TargetAlloy}}
+var alloyIntent = models.Intent{Action: models.ActionInstall, Target: models.TargetAlloy}
 
 func loadClusterRecord(t *testing.T, dir string) state.ClusterState {
 	t.Helper()
@@ -69,61 +83,119 @@ func loadClusterRecord(t *testing.T, dir string) state.ClusterState {
 	return sm.State().ClusterState
 }
 
-// A successful run records the cluster's releases and one entry naming the
-// cluster file.
+func lastEntry(t *testing.T, dir string) state.ActionHistory {
+	t.Helper()
+	entries, err := state.ReadActionHistory(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	return entries[0]
+}
+
+func hasStep(report *automa.Report, id string) bool {
+	for _, sr := range report.StepReports {
+		if sr.Id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// A successful run records the cluster in its RecordState step, and one entry
+// naming the cluster file.
 func TestRunRecordingCluster_SuccessRecordsTheCluster(t *testing.T) {
 	useCluster(t, liveAlloy, nil)
 	sm, dir := newRecordingManager(t)
 
-	report, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
+	report, err := runRecordingCluster(context.Background(), sm, alloyIntent, nil, oneStepWorkflow(false))
 
 	require.NoError(t, err)
-	require.NotNil(t, report)
+	require.True(t, report.IsSuccess())
+	require.True(t, hasStep(report, steps.RecordStateStepID))
 	require.Equal(t, liveAlloy, loadClusterRecord(t, dir).Releases)
-	entries, err := state.ReadActionHistory(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
-	require.Equal(t, models.TargetAlloy, entries[0].Intent.Target)
-	require.Equal(t, []state.ChangedFile{state.ComponentCluster.File()}, entries[0].Components)
+	entry := lastEntry(t, dir)
+	require.Equal(t, state.OutcomeSucceeded, entry.Outcome)
+	require.Equal(t, models.TargetAlloy, entry.Intent.Target)
+	require.Equal(t, []state.ChangedFile{state.ComponentCluster.File()}, entry.Components)
 }
 
-// A failed run writes no cluster record and records that it failed.
+// A failed run stops before the RecordState step: no cluster record, and an
+// entry that says it failed.
 func TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry(t *testing.T) {
 	useCluster(t, liveAlloy, nil)
 	sm, dir := newRecordingManager(t)
 
-	report, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(true))
+	report, err := runRecordingCluster(context.Background(), sm, alloyIntent, nil, oneStepWorkflow(true))
 
-	require.ErrorContains(t, err, "helm install failed")
-	require.NotNil(t, report)
-	require.NoFileExists(t, state.ComponentFilePath(dir, state.ComponentCluster))
-	entries, err := state.ReadActionHistory(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	require.ErrorContains(t, steps.FailureOf(report), "helm install failed")
+	require.NoFileExists(t, state.ComponentFilePath(dir, state.ComponentCluster))
+	require.Equal(t, state.OutcomeFailed, lastEntry(t, dir).Outcome)
+}
+
+// failingPersist is a state manager whose Persist fails.
+type failingPersist struct{ state.Manager }
+
+func (f failingPersist) Set(s state.State) state.Writer {
+	f.Manager.Set(s)
+	return f
+}
+
+func (failingPersist) Persist(...state.ComponentID) ([]state.ChangedFile, error) {
+	return nil, errors.New("disk full")
+}
+
+// A record that can't be written leaves the run successful, with a warning in
+// the summary and an entry marked NotPersisted.
+func TestRunRecordingCluster_RecordFailureIsAWarning(t *testing.T) {
+	useCluster(t, liveAlloy, nil)
+	sm, dir := newRecordingManager(t)
+
+	report, err := runRecordingCluster(context.Background(), failingPersist{sm}, alloyIntent, nil, oneStepWorkflow(false))
+
+	require.NoError(t, err)
+	require.True(t, report.IsSuccess())
+	require.Contains(t, strings.Join(ui.CollectWarnings(report), "\n"), "The state was not recorded: disk full")
+	entry := lastEntry(t, dir)
+	require.Equal(t, state.OutcomeSucceeded, entry.Outcome)
+	require.True(t, entry.NotPersisted)
+	require.Contains(t, entry.Error, "disk full")
+	require.Equal(t, reasons.StateOperationFailed, entry.Reason)
+}
+
+// Under --rollback-on-error, a record that can't be written does not roll back
+// the chart the run installed.
+func TestRunRecordingCluster_RecordFailureRollsNothingBack(t *testing.T) {
+	useCluster(t, liveAlloy, nil)
+	sm, _ := newRecordingManager(t)
+	rolledBack := false
+
+	report, err := runRecordingCluster(context.Background(), failingPersist{sm}, alloyIntent, nil,
+		workflowWith(false, automa.RollbackOnError, &rolledBack))
+
+	require.NoError(t, err)
+	require.True(t, report.IsSuccess())
+	require.False(t, rolledBack)
 }
 
 // The cluster checker reports a cluster it cannot read by keeping the record,
-// so an error from it is an internal fault: the run fails and is not recorded.
-func TestRunRecordingCluster_UnexpectedCheckerErrorFails(t *testing.T) {
+// so an error from it is an internal fault: nothing is recorded, and the entry
+// says why.
+func TestRunRecordingCluster_UnexpectedCheckerErrorIsNotRecorded(t *testing.T) {
 	useCluster(t, nil, errors.New("checker bug"))
 	sm, dir := newRecordingManager(t)
 
-	_, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
+	report, err := runRecordingCluster(context.Background(), sm, alloyIntent, nil, oneStepWorkflow(false))
 
-	require.ErrorContains(t, err, "unexpected error from the cluster checker")
-	reason, _ := errx.ReasonOf(err)
-	require.Equal(t, reasons.Internal, reason)
-	require.NoFileExists(t, state.ComponentFilePath(dir, state.ComponentCluster))
-	entries, err := state.ReadActionHistory(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.True(t, entries[0].NotPersisted)
+	require.True(t, report.IsSuccess())
+	require.NoFileExists(t, state.ComponentFilePath(dir, state.ComponentCluster))
+	entry := lastEntry(t, dir)
+	require.True(t, entry.NotPersisted)
+	require.Contains(t, entry.Error, "unexpected error from the cluster checker")
+	require.Equal(t, reasons.Internal, entry.Reason)
 }
 
-// A cluster the refresh could not read leaves the recorded cluster as it was,
-// and the run still records its entry.
+// A cluster the refresh could not read leaves the recorded cluster as it was.
 func TestRunRecordingCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
 	sm, dir := newRecordingManager(t)
 	st := sm.State()
@@ -140,15 +212,12 @@ func TestRunRecordingCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
 		return c
 	}
 
-	_, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
+	_, err := runRecordingCluster(context.Background(), sm, alloyIntent, nil, oneStepWorkflow(false))
 
 	require.NoError(t, err)
 	got := loadClusterRecord(t, dir)
 	require.True(t, got.Created)
 	require.Equal(t, liveAlloy, got.Releases)
-	entries, err := state.ReadActionHistory(dir)
-	require.NoError(t, err)
-	require.Equal(t, state.OutcomeSucceeded, entries[len(entries)-1].Outcome)
 }
 
 // A command that cannot take the cluster lock fails before its workflow runs
@@ -160,7 +229,7 @@ func TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked(t *testing.T) {
 	require.NoError(t, err)
 	defer release()
 
-	report, err := runRecordingCluster(context.Background(), sm, alloyInstall, oneStepWorkflow(false))
+	report, err := runRecordingCluster(context.Background(), sm, alloyIntent, nil, oneStepWorkflow(false))
 
 	require.Error(t, err)
 	require.Nil(t, report, "the workflow must not run")
@@ -169,70 +238,12 @@ func TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked(t *testing.T) {
 	require.Empty(t, entries)
 }
 
-// failingCommits is a state manager whose commits fail.
-type failingCommits struct{ state.Manager }
-
-func (f failingCommits) Set(s state.State) state.Writer {
-	f.Manager.Set(s)
-	return f
-}
-
-func (failingCommits) Commit(state.ActionHistory, ...state.ComponentID) error {
-	return errors.New("disk full")
-}
-
-// A run that succeeded but could not be recorded comes back as a failed
-// report, so the summary and the command's error agree.
-func TestRecordingClusterRun_RecordFailureFailsTheReport(t *testing.T) {
-	useCluster(t, liveAlloy, nil)
-	sm, _ := newRecordingManager(t)
-
-	report, err := recordingClusterRun(context.Background(), failingCommits{sm}, alloyInstall, oneStepWorkflow(false))()
-
-	require.NoError(t, err, "the failure travels in the report")
-	require.NotNil(t, report)
-	require.Equal(t, automa.StatusFailed, report.Status)
-	failure := steps.FailureOf(report)
-	require.ErrorContains(t, failure, "disk full")
-	reason, _ := errx.ReasonOf(failure)
-	require.Equal(t, reasons.StateOperationFailed, reason)
-	require.Equal(t, RecordStateStepID, report.StepReports[len(report.StepReports)-1].Id)
-}
-
-// A failed run keeps its own failure; the recorder adds nothing to it.
-func TestRecordingClusterRun_FailedRunKeepsItsFailure(t *testing.T) {
-	useCluster(t, liveAlloy, nil)
-	sm, _ := newRecordingManager(t)
-
-	report, err := recordingClusterRun(context.Background(), sm, alloyInstall, oneStepWorkflow(true))()
-
-	require.NoError(t, err)
-	require.ErrorContains(t, steps.FailureOf(report), "helm install failed")
-	for _, sr := range report.StepReports {
-		require.NotEqual(t, RecordStateStepID, sr.Id)
-	}
-}
-
-// A workflow that never ran returns no report, only the error.
-func TestRecordingClusterRun_NothingRanReturnsTheError(t *testing.T) {
-	useCluster(t, liveAlloy, nil)
-	sm, dir := newRecordingManager(t)
-	release, err := state.AcquireComponentLocks(dir, []state.ComponentID{state.ComponentCluster}, 0)
-	require.NoError(t, err)
-	defer release()
-
-	report, err := recordingClusterRun(context.Background(), sm, alloyInstall, oneStepWorkflow(false))()
-
-	require.Error(t, err)
-	require.Nil(t, report)
-}
-
 func TestRunWorkflowRecordingCluster_StateManagerErrorIsDecorated(t *testing.T) {
 	orig := clusterStateManager
 	t.Cleanup(func() { clusterStateManager = orig })
 	clusterStateManager = func() (state.Manager, error) { return nil, errors.New("permission denied") }
 
-	err := RunWorkflowRecordingCluster(context.Background(), oneStepWorkflow(false), alloyInstall.Intent, nil)
+	err := RunWorkflowRecordingCluster(context.Background(), oneStepWorkflow(false), alloyIntent, nil)
 
 	require.ErrorContains(t, err, "permission denied")
 	reason, _ := errx.ReasonOf(err)
@@ -241,13 +252,19 @@ func TestRunWorkflowRecordingCluster_StateManagerErrorIsDecorated(t *testing.T) 
 	require.NotEmpty(t, hints)
 }
 
-// An error that already has a reason keeps it.
-func TestFailReportOnRecordError_KeepsAnExistingReason(t *testing.T) {
+// failingRecord is an entry recorder whose append fails.
+type failingRecord struct{}
+
+func (failingRecord) Record(state.ActionHistory, error) error {
+	return errors.New("history not writable")
+}
+
+// A successful run whose entry can't be appended still succeeds, with a warning.
+func TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning(t *testing.T) {
 	report := automa.StepSuccessReport("install")
-	err := errx.Decorate(errors.New("not synced"), reasons.PreconditionNotMet, "check the disk")
 
-	FailReportOnRecordError(report, err)
+	RecordEntry(failingRecord{}, state.ActionHistory{}, report)
 
-	reason, _ := errx.ReasonOf(steps.FailureOf(report))
-	require.Equal(t, reasons.PreconditionNotMet, reason)
+	require.True(t, report.IsSuccess())
+	require.Contains(t, strings.Join(ui.CollectWarnings(report), "\n"), "history not writable")
 }

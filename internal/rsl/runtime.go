@@ -289,7 +289,17 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 // reason and hint the operator needs; any other failure is "failed to
 // persist state".
 func (r *RuntimeResolver) Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error {
-	err := r.sm.Set(currentState).Commit(entry, ids...)
+	return r.persistError(r.sm.Set(currentState).Commit(entry, ids...))
+}
+
+// Persist writes only the listed components' state from currentState and
+// appends no entry; see state.Writer.Persist. Its errors are those of Commit.
+func (r *RuntimeResolver) Persist(currentState state.State, ids ...state.ComponentID) ([]state.ChangedFile, error) {
+	files, err := r.sm.Set(currentState).Persist(ids...)
+	return files, r.persistError(err)
+}
+
+func (r *RuntimeResolver) persistError(err error) error {
 	switch {
 	case err == nil:
 		return nil

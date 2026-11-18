@@ -36,8 +36,8 @@ func FailureOf(report *automa.Report) error {
 
 // WorkflowEntry is the action history entry for intent's run of a workflow
 // that produced report: its outcome, the failure the operator saw, and the
-// provisioner version when the workflow recorded it, or marked NotPersisted
-// when it could not.
+// files the RecordProvisionerVersion and RecordState steps wrote, or marked
+// NotPersisted when they could not.
 func WorkflowEntry(ctx context.Context, intent models.Intent, inputs any, report *automa.Report) state.ActionHistory {
 	entry := state.NewEntry(ctx, intent, inputs)
 	entry.Outcome = OutcomeOf(report)
@@ -51,5 +51,6 @@ func WorkflowEntry(ctx context.Context, intent models.Intent, inputs any, report
 	if err := FailureOf(report); err != nil {
 		entry = entry.WithError(err)
 	}
+	applyRecordedState(&entry, report)
 	return entry
 }

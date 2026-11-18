@@ -4,9 +4,11 @@ package common
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -21,77 +23,89 @@ var (
 	newClusterChecker   = reality.NewLiveClusterChecker
 )
 
-// RecordStateStepID names the step FailReportOnRecordError adds to a report.
-const RecordStateStepID = "record-state"
-
-// RunWorkflowRecordingCluster runs b, a workflow that installs cluster charts,
-// while holding the cluster record's lock, then records the cluster as it now
-// is, with an action history entry for intent. A failed run records only its
-// entry. The record is written inside the run, before its report is saved and
-// summarised, so a failure to write it shows in the summary.
-func RunWorkflowRecordingCluster(ctx context.Context, b automa.Builder, intent models.Intent, inputs any) error {
+// RunWorkflowRecordingCluster runs wb, a workflow that installs cluster charts,
+// while holding the cluster record's lock. A RecordState step at its end
+// records the cluster as it now is, and the run's entry is appended once the
+// workflow has finished.
+func RunWorkflowRecordingCluster(ctx context.Context, wb *automa.WorkflowBuilder, intent models.Intent, inputs any) error {
 	sm, err := clusterStateManager()
 	if err != nil {
 		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to create state manager"),
 			reasons.StateOperationFailed,
 			"Check that "+models.Paths().StateDir+" is readable and writable, then re-run this command.")
 	}
-	return RunWorkflow(ctx, recordingClusterRun(ctx, sm, state.NewEntry(ctx, intent, inputs), b))
+	return RunWorkflow(ctx, func() (*automa.Report, error) {
+		return runRecordingCluster(ctx, sm, intent, inputs, wb)
+	})
 }
 
-// recordingClusterRun is the RunWorkflow function of RunWorkflowRecordingCluster.
-// It returns no report when b never ran, so the error alone reaches the
-// operator. Otherwise the report carries every failure, including a run that
-// succeeded but could not be recorded.
-func recordingClusterRun(ctx context.Context, sm state.Manager, entry state.ActionHistory, b automa.Builder) func() (*automa.Report, error) {
-	return func() (*automa.Report, error) {
-		report, err := runRecordingCluster(ctx, sm, entry, b)
-		if report == nil {
-			return nil, err
+// runRecordingCluster is the RunWorkflow function of RunWorkflowRecordingCluster.
+// It returns no report when the workflow never ran: the lock, the state read or
+// the build failed.
+func runRecordingCluster(ctx context.Context, sm state.Manager, intent models.Intent, inputs any, wb *automa.WorkflowBuilder) (*automa.Report, error) {
+	release, err := lockAndReadCluster(sm, intent.Target)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	wf, err := wb.Steps(steps.RecordState(recordCluster(sm))).Build()
+	if err != nil {
+		return nil, err
+	}
+	report := wf.Execute(ctx)
+	RecordEntry(sm, steps.WorkflowEntry(ctx, intent, inputs, report), report)
+	return report, nil
+}
+
+// lockAndReadCluster takes the cluster record's lock and reads the record, so
+// the RecordState step keeps what it cannot read. The caller releases the lock.
+func lockAndReadCluster(sm state.Manager, target models.TargetType) (func(), error) {
+	ids := []state.ComponentID{state.ComponentCluster}
+	if err := state.CheckTargetOwns(target, ids); err != nil {
+		return nil, err
+	}
+	release, err := state.AcquireComponentLocks(filepath.Dir(sm.State().StateFile), ids, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := sm.RefreshScoped(ids...); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+		release()
+		return nil, errx.Decorate(errorx.IllegalState.Wrap(err, "failed to read state"),
+			reasons.StateOperationFailed,
+			"Fix or move aside the state file named in the error, then re-run this command.")
+	}
+	return release, nil
+}
+
+// recordCluster is the RecordState write of the chart installs: the cluster as
+// the checker reads it. The checker keeps the record when it cannot read the
+// cluster, so an error from it is an internal fault.
+func recordCluster(sm state.Manager) func(ctx context.Context) ([]state.ChangedFile, error) {
+	return func(ctx context.Context) ([]state.ChangedFile, error) {
+		cs, err := newClusterChecker(sm).RefreshState(ctx)
+		if err != nil {
+			return nil, errx.Decorate(errorx.InternalError.Wrap(err, "unexpected error from the cluster checker"),
+				reasons.Internal)
 		}
-		if err != nil && steps.FailureOf(report) == nil {
-			FailReportOnRecordError(report, err)
-		}
-		return report, nil
+		st := sm.State()
+		st.ClusterState = cs
+		return sm.Set(st).Persist(state.ComponentCluster)
 	}
 }
 
-// runRecordingCluster runs b under the cluster record's lock and records the
-// cluster afterwards. It returns nil for the report when b never ran: the lock,
-// the state read or the build failed.
-func runRecordingCluster(ctx context.Context, sm state.Manager, entry state.ActionHistory, b automa.Builder) (*automa.Report, error) {
-	var report *automa.Report
-	err := state.RunOwning(sm, entry, []state.ComponentID{state.ComponentCluster},
-		func() error {
-			wf, err := b.Build()
-			if err != nil {
-				return err
-			}
-			report = wf.Execute(ctx)
-			return steps.FailureOf(report)
-		},
-		func(st *state.State) error {
-			cs, err := newClusterChecker(sm).RefreshState(ctx)
-			if err != nil {
-				return errx.Decorate(errorx.InternalError.Wrap(err, "unexpected error from the cluster checker"),
-					reasons.Internal)
-			}
-			st.ClusterState = cs
-			return nil
-		})
-	return report, err
+// entryRecorder appends a finished run's entry; state.Manager and
+// *rsl.RuntimeResolver satisfy it.
+type entryRecorder interface {
+	Record(entry state.ActionHistory, cause error) error
 }
 
-// FailReportOnRecordError marks report, from a workflow that succeeded, as
-// failed by err, the failure to record its state. The summary, the saved
-// report and the command's error then all show it. An err with no reason gets
-// one, with a hint to re-run.
-func FailReportOnRecordError(report *automa.Report, err error) {
-	if _, ok := errx.ReasonOf(err); !ok {
-		err = errx.Decorate(err, reasons.StateOperationFailed,
-			"The workflow ran but its state was not recorded. Fix the cause above, then re-run the same command; it is safe to repeat.")
+// RecordEntry appends entry for the run that produced report. A failed run's
+// entry that can't be appended is already a state warning; a successful
+// run's becomes a warning in report, since the run itself happened.
+func RecordEntry(rec entryRecorder, entry state.ActionHistory, report *automa.Report) {
+	if err := rec.Record(entry, steps.FailureOf(report)); err != nil {
+		addReportWarnings(report, []string{"The command's action history entry was not appended: " +
+			doctor.OperatorMessage(err) + "."})
 	}
-	report.StepReports = append(report.StepReports, automa.StepFailureReport(RecordStateStepID, automa.WithError(err)))
-	report.Status = automa.StatusFailed
-	report.Error = err
 }

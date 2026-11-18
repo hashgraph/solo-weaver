@@ -312,6 +312,24 @@ func TestCommit_RecordsTheFilesItChanged(t *testing.T) {
 	require.Equal(t, []ChangedFile{ComponentProfile.File(), ChangedProvisioner}, entries[2].Components)
 }
 
+// TestPersist_WritesWithoutAnEntry verifies that Persist writes the files and
+// returns those whose content changed, but appends no entry.
+func TestPersist_WritesWithoutAnEntry(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewStateManager(WithState(newTestState(filepath.Join(dir, "state.yaml"))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+
+	files, err := m.Persist(ComponentProfile, ComponentCluster)
+	require.NoError(t, err)
+	require.Equal(t, []ChangedFile{ComponentProfile.File(), ComponentCluster.File()}, files)
+	require.FileExists(t, ComponentFilePath(dir, ComponentCluster))
+
+	files, err = m.Persist(ComponentProfile, ComponentCluster)
+	require.NoError(t, err)
+	require.Empty(t, files, "rewriting the same content changes nothing")
+	require.NoFileExists(t, ActionHistoryFilePath(dir))
+}
+
 // TestRecord_RendersTheCauseForTheOperator verifies that a recorded error keeps
 // the operator's message and moves its reason code into its own field.
 func TestRecord_RendersTheCauseForTheOperator(t *testing.T) {

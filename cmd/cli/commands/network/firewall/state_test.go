@@ -56,6 +56,9 @@ func (f *fakeStateManager) Commit(entry state.ActionHistory, ids ...state.Compon
 
 // Record never fails here: the verbs call it only with a cause, and then a lost
 // entry is a state warning, not an error.
+func (f *fakeStateManager) Persist(...state.ComponentID) ([]state.ChangedFile, error) {
+	return nil, errors.New("the firewall verbs record through Commit")
+}
 func (f *fakeStateManager) Record(entry state.ActionHistory, _ error) error {
 	f.entries = append(f.entries, entry)
 	return nil

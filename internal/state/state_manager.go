@@ -53,6 +53,11 @@ type Writer interface {
 	// an unsynced write is a state warning too, so the command reports the
 	// action's own failure.
 	Commit(entry ActionHistory, ids ...ComponentID) error
+	// Persist writes ids' state like Commit but appends no entry, for an
+	// action that records its own entry once it has finished. It returns the
+	// files whose content changed, which that entry names. An
+	// fsx.FileSyncError means they landed but are not synced.
+	Persist(ids ...ComponentID) ([]ChangedFile, error)
 	// Record appends entry to action_history.yaml for an action that changed
 	// the host but writes no state through Commit. cause, when not nil, is the
 	// action's failure: it is recorded as the entry's error, and an append that
@@ -305,6 +310,18 @@ func (m *stateManager) Record(entry ActionHistory, cause error) error {
 		return nil
 	}
 	return err
+}
+
+func (m *stateManager) Persist(ids ...ComponentID) ([]ChangedFile, error) {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	changed, err := m.flushComponents(ids)
+	files := make([]ChangedFile, 0, len(changed))
+	for _, id := range changed {
+		files = append(files, id.File())
+	}
+	return files, err
 }
 
 // writeUnrecorded persists ids' state like Commit but appends no entry: only

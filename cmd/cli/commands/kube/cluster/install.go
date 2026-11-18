@@ -14,7 +14,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
-	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -105,7 +104,8 @@ var installCmd = &cobra.Command{
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
 		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}
 		inputs := map[string]any{"profile": profile, "nodeType": nodeType, "skipHardwareChecks": skipHardwareChecks}
-		if err := common.RunWorkflow(cmd.Context(), installRun(cmd.Context(), wb, sr.Runtime, intent, inputs, owned)); err != nil {
+		wb.Steps(steps.RecordState(recordClusterInstall(sr.Runtime, owned)))
+		if err := common.RunWorkflow(cmd.Context(), installRun(cmd.Context(), wb, sr.Runtime, intent, inputs)); err != nil {
 			return err
 		}
 
@@ -114,57 +114,39 @@ var installCmd = &cobra.Command{
 	},
 }
 
-// installRun is the RunWorkflow function of installCmd. It records the install
-// inside the run, before its report is saved and summarised, so a failure to
-// record it shows in the summary. A failed install keeps its own failure.
-func installRun(ctx context.Context, wb automa.Builder, rt clusterRecorder, intent models.Intent, inputs any, owned []state.ComponentID) func() (*automa.Report, error) {
+// installRun is the RunWorkflow function of installCmd. It appends the run's
+// entry once the workflow has finished, before its report is saved and
+// summarised, so a warning about the entry shows in the summary.
+func installRun(ctx context.Context, wb automa.Builder, rt clusterRecorder, intent models.Intent, inputs any) func() (*automa.Report, error) {
 	return func() (*automa.Report, error) {
 		wf, err := wb.Build()
 		if err != nil {
 			return nil, err
 		}
 		report := wf.Execute(ctx)
-		entry := steps.WorkflowEntry(ctx, intent, inputs, report)
-		failure := steps.FailureOf(report)
-		if err := recordClusterInstall(ctx, rt, entry, failure, owned); err != nil && failure == nil {
-			common.FailReportOnRecordError(report, err)
-		}
+		common.RecordEntry(rt, steps.WorkflowEntry(ctx, intent, inputs, report), report)
 		return report, nil
 	}
 }
 
-// clusterRecorder is what recordClusterInstall needs of the runtime;
-// *rsl.RuntimeResolver satisfies it.
+// clusterRecorder is what installCmd needs of the runtime to record the
+// install; *rsl.RuntimeResolver satisfies it.
 type clusterRecorder interface {
 	RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error)
-	Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error
+	Persist(currentState state.State, ids ...state.ComponentID) ([]state.ChangedFile, error)
 	Record(entry state.ActionHistory, cause error) error
 }
 
-// recordClusterInstall records the install once its workflow ran. A failed
-// install (failure is the workflow's error) leaves the system and cluster
-// records as they were, records only that it failed, and returns failure;
-// otherwise the live state's owned files are written with the entry.
-func recordClusterInstall(ctx context.Context, rt clusterRecorder, entry state.ActionHistory, failure error, owned []state.ComponentID) error {
-	record := func(err error) error {
-		_ = rt.Record(entry, err) // with a cause, a lost entry is a state warning
-		return err
-	}
-	if failure != nil {
-		return record(failure)
-	}
-	live, err := rt.RefreshMachineAndCluster(ctx, true)
-	if err != nil {
-		entry.NotPersisted = true
-		return record(errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install"))
-	}
-	if err := rt.Commit(live, entry, owned...); err != nil {
-		if errorx.IsOfType(err, fsx.FileSyncError) {
-			return err // the records landed; rsl says what to check
+// recordClusterInstall is the RecordState write of kube cluster install: what
+// the host and cluster now have, in the owned records.
+func recordClusterInstall(rt clusterRecorder, owned []state.ComponentID) func(ctx context.Context) ([]state.ChangedFile, error) {
+	return func(ctx context.Context) ([]state.ChangedFile, error) {
+		live, err := rt.RefreshMachineAndCluster(ctx, true)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install")
 		}
-		return errorx.IllegalState.Wrap(err, "failed to persist the system and cluster records")
+		return rt.Persist(live, owned...)
 	}
-	return nil
 }
 
 func init() {

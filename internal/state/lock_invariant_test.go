@@ -22,7 +22,7 @@ import (
 // one. A method of any type with one of these names counts, so the scan can
 // over-match but never miss a call.
 var writerCalls = []string{
-	"Commit", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
+	"Commit", "Persist", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
 	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock",
 }
 
@@ -66,8 +66,12 @@ var stateWriters = map[string]writerRow{
 		history: "TestFlushState_RecordsEntryOnEveryExitAfterTheWorkflow",
 	},
 	"internal/rsl/runtime.go:Commit": {
-		lock:    "wrapper: its callers are BaseHandler.flushState and kube cluster install",
+		lock:    "wrapper: its caller is BaseHandler.flushState",
 		history: "wrapper over state.Writer.Commit: TestCommit_RecordsTheFilesItChanged",
+	},
+	"internal/rsl/runtime.go:Persist": {
+		lock:    "wrapper: its caller is kube cluster install's RecordState step",
+		history: "wrapper over state.Writer.Persist, which appends no entry: TestPersist_WritesWithoutAnEntry",
 	},
 	"internal/rsl/runtime.go:Record": {
 		lock:    "wrapper: writes no state file",
@@ -85,18 +89,26 @@ var stateWriters = map[string]writerRow{
 	},
 	"cmd/cli/commands/kube/cluster/install.go:installCmd": {
 		lock: "no unit test runs installCmd: it locks ComponentSystem and ComponentCluster for the " +
-			"whole command, then flushes only those; shown by the manual UAT's kube cluster install step",
-		history: "takes no history call: recordClusterInstall records the entry once the workflow started",
-	},
-	"cmd/cli/commands/common/cluster_record.go:runRecordingCluster": {
-		lock: "RunOwning over ComponentCluster: TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked",
-		history: "TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry, " +
-			"TestRunRecordingCluster_UnexpectedCheckerErrorFails",
+			"whole command, then writes only those; shown by the manual UAT's kube cluster install step",
+		history: "takes no history call: installRun appends the entry once the workflow has finished",
 	},
 	"cmd/cli/commands/kube/cluster/install.go:recordClusterInstall": {
 		lock: "its caller, installCmd, holds ComponentSystem's and ComponentCluster's locks for the whole command",
-		history: "TestRecordClusterInstall_SuccessRecordsOneEntry, TestRecordClusterInstall_FailedInstallRecordsAFailedEntry, " +
-			"TestRecordClusterInstall_FailedRefreshIsNotPersisted",
+		history: "appends no entry; installRun appends it with the files written: " +
+			"TestInstallRun_SuccessRecordsTheHostAndCluster, TestInstallRun_FailedRefreshIsAWarning",
+	},
+	"cmd/cli/commands/common/cluster_record.go:lockAndReadCluster": {
+		lock:    "TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked",
+		history: "takes the lock and reads only; runRecordingCluster appends the entry: TestRunRecordingCluster_SuccessRecordsTheCluster",
+	},
+	"cmd/cli/commands/common/cluster_record.go:recordCluster": {
+		lock: "runs inside runRecordingCluster, which holds ComponentCluster's lock: TestRunRecordingCluster_FailsFastWhenTheClusterIsLocked",
+		history: "appends no entry; runRecordingCluster appends it with the files written: " +
+			"TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_RecordFailureIsAWarning",
+	},
+	"cmd/cli/commands/common/cluster_record.go:RecordEntry": {
+		lock:    "appends to action_history.yaml only, after its caller's workflow, under its caller's locks",
+		history: "TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry",
 	},
 
 	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
@@ -134,7 +146,7 @@ var stateWriters = map[string]writerRow{
 	// Helpers: their callers have rows.
 	"internal/state/atomic_write.go:atomicWriteFile":       {lock: "helper", history: "helper"},
 	"internal/state/provisioner.go:writeProvisionerRecord": {lock: "helper", history: "helper"},
-	"internal/state/state_manager.go:commitComponentFlush": {lock: "inside Commit and writeUnrecorded", history: "inside Commit and writeUnrecorded"},
+	"internal/state/state_manager.go:commitComponentFlush": {lock: "inside Commit, Persist and writeUnrecorded", history: "inside Commit, Persist and writeUnrecorded"},
 
 	// kube cluster uninstall: it holds every state lock, and records one entry
 	// around its workflow, which empties the state dir but keeps the history.
