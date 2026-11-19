@@ -408,7 +408,7 @@ func TestHandleIntent_ReportsBlockNodeChangeThenPersistsLiveState(t *testing.T) 
 	}
 
 	require.Equal(t, []string{
-		`block node metallbPool differs from persisted state: recorded "true", live "false"`,
+		`blocknode metallbPool differs from persisted state: recorded "true", live "false"`,
 	}, ui.CollectWarnings(run()))
 	require.False(t, *readState(t, stateFile).BlockNodeState.MetalLBPool)
 
@@ -430,13 +430,13 @@ func TestHandleIntent_UnreadBlockNodeIsReportedAsUnobserved(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
 	require.Equal(t, []string{
-		`block node installed could not be read from the live system: recorded "true"`,
-		"block node could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+		`blocknode installed could not be read from the live system: recorded "true"`,
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
 	}, ui.CollectWarnings(report))
 	entries := readActionHistory(t, filepath.Dir(stateFile))
 	require.Len(t, entries, 1)
 	require.Equal(t, []state.OwnedDriftRecord{{
-		Component: "block node", Field: "installed", Persisted: "true", Unobserved: true,
+		Component: "blocknode", Field: "installed", Persisted: "true", Unobserved: true,
 	}}, entries[0].OwnedDrift)
 	kept := readState(t, stateFile).BlockNodeState
 	kept.LastSync = recorded.LastSync // the flush stamps it
@@ -462,19 +462,23 @@ func unreachableAfterWorkflow() (reality.ClusterProbe, noopIntent) {
 
 // A flush that cannot read the block node keeps its record, which may now be
 // out of date: the run says so, so that a report on the next run of this run's
-// own changes as out-of-band has an explanation.
+// own changes as out-of-band has an explanation. The log says so too, with the
+// component, so the next run's report can be traced back to this run.
 func TestHandleIntent_FlushThatCannotReadTheBlockNodeWarns(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = blockNodeWithPool(true) })
 	probe, intent := unreachableAfterWorkflow()
+	logs := captureLogs(t)
 
 	report, err := handleBlockNodeIntentWith(t, stateFile, &host{blockNodeProbe: probe}, intent, BlockNode)
 
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
 	require.Equal(t, []string{
-		"block node could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
 	}, ui.CollectWarnings(report))
+	require.Contains(t, logs.String(),
+		`{"level":"warn","component":"blocknode","message":"Could not read the live state after the run; the record kept may predate this run's changes"}`)
 }
 
 // A first install has no baseline yet; a flush that cannot read the block node
@@ -488,7 +492,7 @@ func TestHandleIntent_FlushThatCannotReadTheBlockNodeWarnsOnAFirstInstall(t *tes
 	require.NoError(t, err)
 	require.NoError(t, report.Error)
 	require.Equal(t, []string{
-		"block node could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
 	}, ui.CollectWarnings(report))
 }
 

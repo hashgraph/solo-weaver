@@ -85,6 +85,8 @@ func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
 func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], _ *automa.Report) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Msg("Block node release is not deployed; not recording this run's chart ref and base path")
 			return nil
 		}
 		if effectiveInputs.Custom.Chart != "" {
@@ -115,7 +117,15 @@ func patchBlockNodeStateRecordingPlugins() bll.StateCallback[models.BlockNodeInp
 			return err
 		}
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+				Msg("Block node release is not deployed; not recording this run's plugin preset and list")
 			return nil
+		}
+		if effectiveInputs.Custom.PluginPreset == "" && effectiveInputs.Custom.PluginList == "" {
+			logx.As().Debug().Str("pluginPreset", st.BlockNodeState.PluginPreset).
+				Str("pluginList", st.BlockNodeState.PluginList).
+				Msg("This run named no block node plugin preset or list; keeping the recorded ones")
 		}
 		if preset := effectiveInputs.Custom.PluginPreset; preset != "" {
 			logx.As().Debug().Str("pluginPreset", preset).

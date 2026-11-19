@@ -51,7 +51,7 @@ func TestBlockNode_RemovalIsReportedAsTheInstalledFlagOnly(t *testing.T) {
 	got := BlockNode(withBlockNode(deployedBlockNode()), withBlockNode(state.NewBlockNodeState()))
 
 	require.Equal(t, []Change{
-		{Component: "block node", Field: "installed", Persisted: "true", Live: "false", Removed: true},
+		{Component: "blocknode", Field: "installed", Persisted: "true", Live: "false", Removed: true},
 	}, got)
 }
 
@@ -59,7 +59,7 @@ func TestBlockNode_InstallIsReportedAsTheInstalledFlagOnly(t *testing.T) {
 	got := BlockNode(withBlockNode(state.NewBlockNodeState()), withBlockNode(deployedBlockNode()))
 
 	require.Equal(t, []Change{
-		{Component: "block node", Field: "installed", Persisted: "false", Live: "true"},
+		{Component: "blocknode", Field: "installed", Persisted: "false", Live: "true"},
 	}, got)
 }
 
@@ -76,9 +76,9 @@ func TestBlockNode_ReportsObservableChangesOnly(t *testing.T) {
 	got := BlockNode(withBlockNode(deployedBlockNode()), withBlockNode(live))
 
 	require.Equal(t, []Change{
-		{Component: "block node", Field: "version", Persisted: "0.41.0", Live: "0.42.0"},
-		{Component: "block node", Field: "storage.liveSize", Persisted: "20Gi", Live: "30Gi"},
-		{Component: "block node", Field: "metallbPool", Persisted: "true", Live: "false"},
+		{Component: "blocknode", Field: "version", Persisted: "0.41.0", Live: "0.42.0"},
+		{Component: "blocknode", Field: "storage.liveSize", Persisted: "20Gi", Live: "30Gi"},
+		{Component: "blocknode", Field: "metallbPool", Persisted: "true", Live: "false"},
 	}, got)
 }
 
@@ -102,7 +102,7 @@ func TestBlockNode_UnreadBlockNodeIsReportedOnceAsUnobserved(t *testing.T) {
 			got := BlockNode(withBlockNode(tc.recorded), withBlockNode(live))
 
 			require.Equal(t, []Change{
-				{Component: "block node", Field: "installed", Persisted: tc.persisted, Unobserved: true},
+				{Component: "blocknode", Field: "installed", Persisted: tc.persisted, Unobserved: true},
 			}, got)
 		})
 	}

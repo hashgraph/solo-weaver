@@ -8,7 +8,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
-const blockNodeComponent = "block node"
+const blockNodeComponent = "blocknode"
 
 // BlockNode reports block node fields that differ between the recorded state
 // and the cluster. Weaver-only records are left out: reality cannot read them

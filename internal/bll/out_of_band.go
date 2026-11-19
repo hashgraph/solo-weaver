@@ -62,6 +62,8 @@ func addUnreadAfterRunWarnings(report *automa.Report, changes []drift.Change, ke
 			continue
 		}
 		components = append(components, c.Component)
+		logx.As().Warn().Str("component", c.Component).
+			Msg("Could not read the live state after the run; the record kept may predate this run's changes")
 		lines = append(lines, c.Component+
 			" could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band")
 	}

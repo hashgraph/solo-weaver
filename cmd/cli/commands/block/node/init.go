@@ -305,6 +305,10 @@ func prepareBlocknodeInputs(cmd *cobra.Command, args []string) (*models.UserInpu
 				pluginPreset = bnpkg.PresetCustom
 				pluginList = stateDefaults.BlockNode.PluginList
 			}
+			if pluginPreset != "" {
+				logx.As().Info().Str("pluginPreset", pluginPreset).Str("pluginList", pluginList).
+					Msg("No plugin flags given; restored the block node plugin preset from the state file")
+			}
 		}
 	}
 	if pluginList != "" && pluginPreset == "" {
