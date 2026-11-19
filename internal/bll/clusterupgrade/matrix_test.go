@@ -44,6 +44,14 @@ func TestMatrixValidate(t *testing.T) {
 		{"Cilium range not a minor", func(m *Matrix) { m.Cilium[1].MaxKubernetes = "1.34.0" }, `"1.34.0" is not a minor version`},
 		{"no Cilium for a Kubernetes step", func(m *Matrix) { m.Cilium[2].MinKubernetes = "1.35" },
 			"no Cilium rung supports both Kubernetes 1.34 and 1.35"},
+		// Cilium 1.20 covers every step, but a cluster on Cilium 1.18 must pass
+		// through 1.19, which does not run on 1.33.
+		{"Cilium step skips the current minor", func(m *Matrix) { m.Cilium[1].MinKubernetes = "1.35"; m.Cilium[1].MaxKubernetes = "1.35" },
+			"a cluster on Kubernetes 1.33 with Cilium 1.18 cannot reach Kubernetes 1.36"},
+		// Cilium 1.19 covers every step, but a cluster on Cilium 1.20 cannot
+		// move up and cannot go back.
+		{"newest Cilium stops short", func(m *Matrix) { m.Cilium[1].MaxKubernetes = "1.36"; m.Cilium[2].MaxKubernetes = "1.33" },
+			"a cluster on Kubernetes 1.33 with Cilium 1.20 cannot reach Kubernetes 1.36"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

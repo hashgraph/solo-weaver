@@ -371,6 +371,18 @@ func TestResolve_InvalidMatrix(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid upgrade matrix")
 }
 
+// A matrix whose Cilium path breaks part way is rejected before planning, so
+// Resolve never stops in the middle of the ladder.
+func TestResolve_UnreachableCiliumIsAnInvalidMatrix(t *testing.T) {
+	m := fixtureMatrix()
+	m.Cilium[1].MinKubernetes, m.Cilium[1].MaxKubernetes = "1.35", "1.35"
+
+	_, err := Resolve(clusterShape("1.33.13", "1.18.16"), m, Options{})
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalFormat), err.Error())
+	assert.Contains(t, err.Error(), "a cluster on Kubernetes 1.33 with Cilium 1.18 cannot reach Kubernetes 1.36")
+}
+
 func TestResolve_IsDeterministic(t *testing.T) {
 	shape := clusterShape("1.33.4", "1.18.1", append(fleetCharts(), withLegacy("node-exporter", "4.5.19"), withLegacy("external-secrets", "1.0.0"))...)
 	first := resolve(t, shape, Options{})

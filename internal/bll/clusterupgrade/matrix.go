@@ -190,7 +190,41 @@ func (m Matrix) compile() (compiled, error) {
 			return compiled{}, errorx.IllegalFormat.New("no Cilium rung supports both Kubernetes %s and %s", k, k.next())
 		}
 	}
+
+	// That Cilium must also be reachable: Resolve moves Cilium one minor at a
+	// time, and each step must run on the minor the cluster is on. Walk from
+	// every Kubernetes minor and Cilium a cluster can start from.
+	for _, r := range c.kube {
+		start := r.v.minorOf()
+		if start.compare(def.minorOf()) >= 0 {
+			break
+		}
+		for _, cr := range c.cilium {
+			if !cr.supports(start) {
+				continue
+			}
+			if err := c.walkCilium(cr.v, start, def.minorOf()); err != nil {
+				return compiled{}, errorx.IllegalFormat.Wrap(err, "a cluster on Kubernetes %s with Cilium %s cannot reach Kubernetes %s",
+					start, cr.v.minorOf(), def.minorOf())
+			}
+		}
+	}
 	return c, nil
+}
+
+// walkCilium moves cil through the Cilium steps of every Kubernetes minor from
+// start up to target, as Resolve does.
+func (c compiled) walkCilium(cil version, start, target minorVersion) error {
+	for k := start; k.compare(target) < 0; k = k.next() {
+		steps, err := c.ciliumSteps(cil, k)
+		if err != nil {
+			return err
+		}
+		if len(steps) > 0 {
+			cil = steps[len(steps)-1]
+		}
+	}
+	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

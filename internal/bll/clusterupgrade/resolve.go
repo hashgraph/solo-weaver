@@ -84,17 +84,13 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 	}
 
 	for k := kube.minorOf(); k.compare(target.minorOf()) < 0; k = k.next() {
-		for {
-			r, _ := c.ciliumRung(cil.minorOf())
-			if r.supports(k.next()) {
-				break
-			}
-			next, ok := c.ciliumRung(cil.minorOf().next())
-			if !ok || !next.supports(k) {
-				return Plan{}, errorx.IllegalState.New("no Cilium step from %s runs on both Kubernetes %s and %s", cil, k, k.next())
-			}
-			add(Hop{Kind: KindCilium, Step: StepMinor, Component: componentCilium, From: cil.String(), To: next.v.String()})
-			cil = next.v
+		steps, err := c.ciliumSteps(cil, k)
+		if err != nil {
+			return Plan{}, err
+		}
+		for _, next := range steps {
+			add(Hop{Kind: KindCilium, Step: StepMinor, Component: componentCilium, From: cil.String(), To: next.String()})
+			cil = next
 		}
 		if r, _ := c.kubeRung(k); kube.less(r.v) {
 			add(Hop{Kind: KindKubernetes, Step: StepPatch, Component: componentKubernetes, From: kube.String(), To: r.v.String()})
@@ -125,6 +121,26 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 
 	plan.Target = Target{Kubernetes: target.String(), Cilium: cil.String()}
 	return plan, nil
+}
+
+// ciliumSteps returns the Cilium versions, in order, that take cil to one that
+// runs on Kubernetes k+1. Each runs on k, because the cluster is still on k
+// while Cilium moves. compile walks every start a cluster can have, so on a
+// valid matrix this never fails.
+func (c compiled) ciliumSteps(cil version, k minorVersion) ([]version, error) {
+	var steps []version
+	for {
+		r, _ := c.ciliumRung(cil.minorOf())
+		if r.supports(k.next()) {
+			return steps, nil
+		}
+		next, ok := c.ciliumRung(cil.minorOf().next())
+		if !ok || !next.supports(k) {
+			return nil, errorx.IllegalState.New("no Cilium step from %s runs on both Kubernetes %s and %s", cil, k, k.next())
+		}
+		steps = append(steps, next.v)
+		cil = next.v
+	}
 }
 
 // coupledBumps raises the charts that minor k needs to their minimum, records
