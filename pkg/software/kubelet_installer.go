@@ -12,6 +12,9 @@ import (
 )
 
 const KubeletBinaryName = "kubelet"
+
+// KubeletArtifactName is the kubelet catalog entry name.
+const KubeletArtifactName = "kubelet"
 const KubeletServiceName = "kubelet"
 const kubeletServiceFileName = "kubelet.service"
 
@@ -20,7 +23,7 @@ type kubeletInstaller struct {
 }
 
 func NewKubeletInstaller(opts ...InstallerOption) (Software, error) {
-	bi, err := newBaseInstaller("kubelet", opts...)
+	bi, err := newBaseInstaller(KubeletArtifactName, opts...)
 	if err != nil {
 		return nil, err
 	}

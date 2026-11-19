@@ -104,7 +104,7 @@ func (c *InfrastructureCatalog) validateKubernetes() error {
 	}
 
 	shipped := map[string]bool{}
-	kubelet, _ := c.GetHostArtifact("kubelet")
+	kubelet, _ := c.GetHostArtifact(KubeletArtifactName)
 	if kubelet != nil {
 		for v := range kubelet.Versions {
 			minor, err := minorOf(string(v))

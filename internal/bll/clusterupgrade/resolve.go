@@ -9,11 +9,12 @@ import (
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 const (
 	componentKubernetes = "kubernetes"
-	componentCilium     = "cilium"
+	componentCilium     = software.CiliumComponentName
 )
 
 // structuralSteps are the legacy charts the resolver can migrate, in the order
@@ -22,8 +23,8 @@ var structuralSteps = []struct {
 	chart string
 	step  HopStep
 }{
-	{"node-exporter", StepReplace},
-	{"external-secrets", StepMigrate},
+	{software.NodeExporterComponentName, StepReplace},
+	{software.ExternalSecretsComponentName, StepMigrate},
 }
 
 // Resolve returns the hops that take the cluster from shape to the target in

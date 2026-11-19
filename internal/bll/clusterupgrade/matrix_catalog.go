@@ -19,7 +19,7 @@ func MatrixFromCatalog(cat *software.InfrastructureCatalog) (Matrix, error) {
 		return Matrix{}, errorx.IllegalArgument.New("catalog is nil")
 	}
 
-	kubelet, err := cat.GetHostArtifact("kubelet")
+	kubelet, err := cat.GetHostArtifact(software.KubeletArtifactName)
 	if err != nil {
 		return Matrix{}, errorx.IllegalFormat.Wrap(err, "catalog")
 	}
@@ -33,7 +33,7 @@ func MatrixFromCatalog(cat *software.InfrastructureCatalog) (Matrix, error) {
 	}
 	latest, err := latestPerMinor(kubeVersions)
 	if err != nil {
-		return Matrix{}, errorx.IllegalFormat.Wrap(err, "kubelet")
+		return Matrix{}, errorx.IllegalFormat.Wrap(err, software.KubeletArtifactName)
 	}
 	m := Matrix{DefaultKubernetes: string(kubelet.Default), Charts: map[string]ChartRung{}}
 	for _, v := range latest {
@@ -50,7 +50,7 @@ func MatrixFromCatalog(cat *software.InfrastructureCatalog) (Matrix, error) {
 	}
 	latest, err = latestPerMinor(chartVersions(cilium))
 	if err != nil {
-		return Matrix{}, errorx.IllegalFormat.Wrap(err, "cilium")
+		return Matrix{}, errorx.IllegalFormat.Wrap(err, software.CiliumComponentName)
 	}
 	for _, v := range latest {
 		r := cilium.Versions[software.Version(v.String())].Kubernetes
