@@ -54,7 +54,7 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// to act on either.
 	if r := b.probe(); !r.Observed() {
 		if r.Configured() {
-			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded block node state")
+			logx.As().Warn().Msg("Could not read the Kubernetes cluster; keeping the recorded block node state")
 		} else {
 			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded block node state")
 		}

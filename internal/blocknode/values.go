@@ -629,7 +629,12 @@ func ServiceExposureFromValues(vals map[string]interface{}) (split, metallbPool 
 	}
 	section, _ := vals[exposed].(map[string]interface{})
 	annotations, _ := section["annotations"].(map[string]interface{})
-	pool, _ := annotations[metallbPoolAnnotation].(string)
+	raw, present := annotations[metallbPoolAnnotation]
+	pool, isString := raw.(string)
+	if present && raw != nil && !isString {
+		logx.As().Debug().Str("section", exposed).Str("type", fmt.Sprintf("%T", raw)).
+			Msg("MetalLB pool annotation is not a string; reading it as no pool")
+	}
 	return split, pool != ""
 }
 

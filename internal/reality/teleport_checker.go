@@ -101,7 +101,7 @@ func (t *teleportChecker) refreshNodeAgentState() (state.TeleportNodeAgentState,
 func (t *teleportChecker) refreshClusterAgentState(persisted state.TeleportClusterAgentState) (state.TeleportClusterAgentState, error) {
 	if r := t.probe(); !r.Observed() {
 		if r.Configured() {
-			logx.As().Warn().Msg("Kubernetes API server did not respond; keeping the recorded teleport cluster agent")
+			logx.As().Warn().Msg("Could not read the Kubernetes cluster; keeping the recorded teleport cluster agent")
 		} else {
 			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded teleport cluster agent")
 		}

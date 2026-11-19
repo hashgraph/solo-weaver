@@ -85,6 +85,8 @@ func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
 func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], _ *automa.Report) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Msg("Block node release is not deployed; not recording this run's chart ref and base path")
 			return nil
 		}
 		if effectiveInputs.Custom.Chart != "" {
@@ -103,7 +105,7 @@ func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 
 // patchBlockNodeStateRecordingPlugins extends patchBlockNodeState with the plugin
 // preset and list the run resolved, written as they are, empty included, so the
-// record says what the run deployed. It is used by the commands that render the
+// record says what the run resolved. It is used by the commands that render the
 // plugins: install and reconfigure (through patchBlockNodeStateWithTrafficShaping)
 // and upgrade. Reset and uninstall render none and keep the plain patch, which
 // leaves the record the refresh carried over.
@@ -114,6 +116,9 @@ func patchBlockNodeStateRecordingPlugins() bll.StateCallback[models.BlockNodeInp
 			return err
 		}
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+				Msg("Block node release is not deployed; not recording this run's plugin preset and list")
 			return nil
 		}
 		st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
