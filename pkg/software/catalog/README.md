@@ -67,15 +67,6 @@ chart defaults must meet the minimums of the default `kubelet`'s minor.
 
 ## Adding and dropping versions
 
-- **A new Kubernetes minor:** add `host-k8s-<minor>.yaml` with its `kubernetes:`
-  entry, and check each Cilium version's range. No other file changes. To make it
-  the default for new installs, also update `defaults.yaml`.
-- **A new version of any other component:** add it under the component's
-  `versions:`. A new version does not change the default.
-- **Host checksums:** write the new block with empty checksums and run
-  `task host-checksums -- -write`. See `docs/dev/host-checksums.md`.
-- **Dropping a version:** delete its entry, or the whole `host-k8s-<minor>.yaml`
-  file for a minor. Hosts installed with that version can no longer verify their
-  binaries against the catalog, so drop a version only once no supported host
-  runs it. `pkg/software/catalog_history_test.go` lists the versions that must
-  stay.
+See [`docs/dev/catalog-updates.md`](../../../docs/dev/catalog-updates.md): adding a
+Kubernetes minor and finding its chart minimums, adding versions, checksums, and
+dropping versions.
