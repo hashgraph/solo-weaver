@@ -26,7 +26,7 @@ import (
 
 // ciliumChartRepo serves a stand-in cilium chart from a local Helm repository
 // and returns a release pointing at it, with the archive's real sha256.
-func ciliumChartRepo(t *testing.T, version string) (ciliumRelease, *httptest.Server) {
+func ciliumChartRepo(t *testing.T, version string) (ciliumChartSpec, *httptest.Server) {
 	t.Helper()
 	repoDir := t.TempDir()
 	srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -38,7 +38,7 @@ func ciliumChartRepo(t *testing.T, version string) (ciliumRelease, *httptest.Ser
 	require.NoError(t, err)
 	require.NoError(t, index.WriteFile(filepath.Join(repoDir, "index.yaml"), 0o644))
 
-	return ciliumRelease{Version: version, ChartRepo: srv.URL, ChartSHA256: fileSHA256(t, archive)}, srv
+	return ciliumChartSpec{Version: version, ChartRepo: srv.URL, ChartSHA256: fileSHA256(t, archive)}, srv
 }
 
 func saveChart(t *testing.T, dir, name, version string) string {
@@ -168,7 +168,7 @@ func TestPullVerifiedCiliumChart_DownloadFailure(t *testing.T) {
 func TestUnpackVerifiedChart_UnpacksOnlyTheBytesItChecked(t *testing.T) {
 	src := t.TempDir()
 	verified := saveChart(t, src, "cilium", "1.20.2")
-	release := ciliumRelease{Version: "1.20.2", ChartSHA256: fileSHA256(t, verified)}
+	release := ciliumChartSpec{Version: "1.20.2", ChartSHA256: fileSHA256(t, verified)}
 
 	// Another archive now sits where the verified one was.
 	other := saveChart(t, t.TempDir(), "cilium", "1.20.2-tampered")
@@ -192,7 +192,7 @@ func TestUnpackVerifiedChart_ChartMustNameTheRelease(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			archive := saveChart(t, t.TempDir(), chartID[0], chartID[1])
-			release := ciliumRelease{Version: "1.20.2", ChartSHA256: fileSHA256(t, archive)}
+			release := ciliumChartSpec{Version: "1.20.2", ChartSHA256: fileSHA256(t, archive)}
 			dest := t.TempDir()
 
 			dir, err := unpackVerifiedChart(archive, release, dest)
@@ -207,11 +207,11 @@ func TestUnpackVerifiedChart_ChartMustNameTheRelease(t *testing.T) {
 }
 
 func TestNewClusterCilium_PinsTheChart(t *testing.T) {
-	assert.Equal(t, ciliumRelease{
+	assert.Equal(t, ciliumChartSpec{
 		Version:     "1.20.2",
 		ChartRepo:   "https://helm.cilium.io",
 		ChartSHA256: "b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e",
-	}, newClusterCilium())
+	}, defaultCiliumChartSpec())
 }
 
 func assertReason(t *testing.T, err error, want errx.Reason) {
