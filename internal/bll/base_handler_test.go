@@ -19,6 +19,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -41,11 +42,15 @@ func (f funcChecker[T]) RefreshState(context.Context) (T, error) { return f() }
 // the workflow can change it as a real install would. A non-nil teleportProbe
 // swaps in the real Teleport checker with that cluster probe and no Helm releases.
 // A non-nil software replaces the recorded host binaries, as the machine
-// checker's probe would after an install.
+// checker's probe would after an install. A nil blockNode reads the block node
+// back as persisted. A non-nil blockNodeProbe swaps in the real block node
+// checker with that cluster probe and no Helm releases.
 type host struct {
-	teleport      state.TeleportState
-	teleportProbe reality.ClusterProbe
-	software      map[string]state.SoftwareState
+	teleport       state.TeleportState
+	teleportProbe  reality.ClusterProbe
+	software       map[string]state.SoftwareState
+	blockNode      *state.BlockNodeState
+	blockNodeProbe reality.ClusterProbe
 }
 
 type noReleases struct{}
@@ -119,8 +124,13 @@ func newFileManager(t *testing.T) fsx.Manager {
 
 func writeState(t *testing.T, stateFile string, teleport state.TeleportState) {
 	t.Helper()
+	writeStateWith(t, stateFile, func(s *state.State) { s.TeleportState = teleport })
+}
+
+func writeStateWith(t *testing.T, stateFile string, set func(*state.State)) {
+	t.Helper()
 	s := state.NewState(stateFile)
-	s.TeleportState = teleport
+	set(&s)
 	sm, err := state.NewStateManager(state.WithState(s), state.WithFileManager(newFileManager(t)))
 	require.NoError(t, err)
 	require.NoError(t, sm.Commit(state.ActionHistory{}, state.AllComponentIDs...))
@@ -196,6 +206,9 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 			return ms, nil
 		}),
 		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
+			if h.blockNode != nil {
+				return *h.blockNode, nil
+			}
 			return sm.State().BlockNodeState, nil
 		}),
 		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
@@ -208,6 +221,13 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 	if h.teleportProbe != nil {
 		checkers.Teleport, err = reality.NewTeleportChecker(sm,
 			func() (reality.HelmManager, error) { return noReleases{}, nil }, h.teleportProbe)
+		require.NoError(t, err)
+	}
+	if h.blockNodeProbe != nil {
+		checkers.BlockNode, err = reality.NewBlockNodeChecker(sm,
+			func() (reality.HelmManager, error) { return noReleases{}, nil },
+			func() (reality.KubeClient, error) { return nil, errors.New("not called") },
+			h.blockNodeProbe)
 		require.NoError(t, err)
 	}
 	runtime, err := rsl.NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
@@ -354,6 +374,160 @@ func TestHandleIntent_NoStateFileHasNoWarning(t *testing.T) {
 	require.Equal(t, configuredNodeAgent().NodeAgent, readState(t, stateFile).TeleportState.NodeAgent)
 }
 
+func blockNodeWithPool(pool bool) state.BlockNodeState {
+	bn := state.NewBlockNodeState()
+	bn.ReleaseInfo.Name = "block-node"
+	bn.ReleaseInfo.Status = release.StatusDeployed
+	bn.ServiceTopology = state.ServiceTopologySingle
+	bn.MetalLBPool = &pool
+	return bn
+}
+
+// A hand-run helm upgrade that drops the MetalLB pool is reported once, then
+// flushed like any other live value.
+func TestHandleIntent_ReportsBlockNodeChangeThenPersistsLiveState(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = blockNodeWithPool(true) })
+	live := blockNodeWithPool(false)
+	h := &host{blockNode: &live}
+
+	run := func() *automa.Report {
+		t.Helper()
+		report, err := handleBlockNodeIntentWith(t, stateFile, h, noopIntent{}, BlockNode)
+		require.NoError(t, err)
+		require.NoError(t, report.Error)
+		return report
+	}
+
+	require.Equal(t, []string{
+		`blocknode metallbPool differs from persisted state: recorded "true", live "false"`,
+	}, ui.CollectWarnings(run()))
+	require.False(t, *readState(t, stateFile).BlockNodeState.MetalLBPool)
+
+	require.Empty(t, ui.CollectWarnings(run()))
+}
+
+// A block node behind an API server that did not answer is reported as unread
+// on its installed flag, and again after the run, since the record it keeps
+// may predate the run. The record is kept, and the unread mark never reaches
+// the file or the baseline.
+func TestHandleIntent_UnreadBlockNodeIsReportedAsUnobserved(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	recorded := blockNodeWithPool(true)
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = recorded })
+	h := &host{blockNodeProbe: func() reality.ClusterReachability { return reality.Unobservable }}
+
+	report, err := handleBlockNodeIntentWith(t, stateFile, h, noopIntent{}, BlockNode)
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []string{
+		`blocknode installed could not be read from the live system: recorded "true"`,
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+	}, ui.CollectWarnings(report))
+	entries := readActionHistory(t, filepath.Dir(stateFile))
+	require.Len(t, entries, 1)
+	require.Equal(t, []state.OwnedDriftRecord{{
+		Component: "blocknode", Field: "installed", Persisted: "true", Unobserved: true,
+	}}, entries[0].OwnedDrift)
+	kept := readState(t, stateFile).BlockNodeState
+	kept.LastSync = recorded.LastSync // the flush stamps it
+	require.Equal(t, recorded, kept)
+	onDisk, err := os.ReadFile(state.ComponentFilePath(filepath.Dir(stateFile), state.ComponentBlockNode))
+	require.NoError(t, err)
+	require.NotContains(t, string(onDisk), "nobserved")
+}
+
+// unreachableAfterWorkflow is a probe that sees no kubeconfig until the
+// workflow runs, then a kubeconfig whose API server does not answer: the
+// pre-run read keeps the record unmarked, and only the flush's read fails.
+func unreachableAfterWorkflow() (reality.ClusterProbe, noopIntent) {
+	ran := false
+	probe := func() reality.ClusterReachability {
+		if ran {
+			return reality.Unobservable
+		}
+		return reality.NotConfigured
+	}
+	return probe, noopIntent{execute: func() { ran = true }}
+}
+
+// A flush that cannot read the block node keeps its record, which may now be
+// out of date: the run says so, so that a report on the next run of this run's
+// own changes as out-of-band has an explanation. The log says so too, with the
+// component, so the next run's report can be traced back to this run.
+func TestHandleIntent_FlushThatCannotReadTheBlockNodeWarns(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = blockNodeWithPool(true) })
+	probe, intent := unreachableAfterWorkflow()
+	logs := captureLogs(t)
+
+	report, err := handleBlockNodeIntentWith(t, stateFile, &host{blockNodeProbe: probe}, intent, BlockNode)
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []string{
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+	}, ui.CollectWarnings(report))
+	require.Contains(t, logs.String(),
+		`{"level":"warn","component":"blocknode","message":"Could not read the live state after the run; the record kept may predate this run's changes"}`)
+}
+
+// A first install has no baseline yet; a flush that cannot read the block node
+// it just installed still says so.
+func TestHandleIntent_FlushThatCannotReadTheBlockNodeWarnsOnAFirstInstall(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	probe, intent := unreachableAfterWorkflow()
+
+	report, err := handleBlockNodeIntentWith(t, stateFile, &host{blockNodeProbe: probe}, intent, BlockNode)
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Equal(t, []string{
+		"blocknode could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+	}, ui.CollectWarnings(report))
+}
+
+// A part the handler keeps at baseline is not changed by this run, so a flush
+// that cannot read it says nothing about it. With no baseline the part is not
+// put back first, so only the kept-change filter stands between it and a line.
+func TestHandleIntent_FlushDoesNotWarnAboutAPartTheHandlerKeeps(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	probe, intent := unreachableAfterWorkflow()
+
+	report, err := handleIntent(t, stateFile, &host{teleportProbe: probe}, intent, commonInputs(), owns(Teleport),
+		WithKeptAtBaseline[struct{}](keepClusterAgent, drift.OnTeleportClusterAgent))
+
+	require.NoError(t, err)
+	require.NoError(t, report.Error)
+	require.Empty(t, ui.CollectWarnings(report))
+}
+
+// The same holds for every managed component whose producer reports an unread
+// part, Teleport included; one line per component.
+func TestHandleIntent_FlushThatCannotReadTeleportWarns(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeState(t, stateFile, installedClusterAgent())
+	probe, intent := unreachableAfterWorkflow()
+
+	report := runBlockNodeIntent(t, stateFile, &host{teleportProbe: probe}, intent)
+
+	require.Equal(t, []string{
+		"teleport could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
+	}, ui.CollectWarnings(report))
+}
+
+// The block node producer runs only for a handler that manages the block node.
+func TestHandleIntent_BlockNodeChangeIsNotReportedOutsideItsScope(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	writeStateWith(t, stateFile, func(s *state.State) { s.BlockNodeState = blockNodeWithPool(true) })
+	live := blockNodeWithPool(false)
+
+	report := runBlockNodeIntent(t, stateFile, &host{blockNode: &live}, noopIntent{})
+
+	require.Empty(t, ui.CollectWarnings(report))
+}
+
 func installedClusterAgent() state.TeleportState {
 	return state.TeleportState{ClusterAgent: state.TeleportClusterAgentState{
 		Installed: true, Release: "teleport-agent", Namespace: "teleport-agent", ChartVersion: "18.6.4",
@@ -372,6 +546,7 @@ func TestHandleIntent_UnobservableClusterIsNotReportedAsRemoval(t *testing.T) {
 
 	require.Equal(t, []string{
 		`teleport clusterAgent.installed could not be read from the live system: recorded "true"`,
+		"teleport could not be read after the run; its recorded state may predate this run's changes, which the next run may report as out-of-band",
 	}, ui.CollectWarnings(report))
 	require.Equal(t, installedClusterAgent().ClusterAgent, readState(t, stateFile).TeleportState.ClusterAgent)
 }

@@ -77,10 +77,16 @@ func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
 //     prompt would re-fill the PV-derived individual paths instead of the
 //     operator-chosen base path.
 //
+// PluginPreset and PluginList are left to the refresh, which carries them over
+// while the release exists; the commands that render the plugins record them
+// through patchBlockNodeStateRecordingPlugins.
+//
 // Profile persistence is handled centrally by BaseHandler.flushState via ProfileExtractor.
 func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], _ *automa.Report) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Msg("Block node release is not deployed; not recording this run's chart ref and base path")
 			return nil
 		}
 		if effectiveInputs.Custom.Chart != "" {
@@ -93,16 +99,33 @@ func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 				Msg("Persisted block node storage base path into runtime state")
 			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
 		}
-		if effectiveInputs.Custom.PluginPreset != "" {
-			logx.As().Debug().Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
-				Msg("Persisted block node plugin preset into runtime state")
-			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+		return nil
+	}
+}
+
+// patchBlockNodeStateRecordingPlugins extends patchBlockNodeState with the plugin
+// preset and list the run resolved, written as they are, empty included, so the
+// record says what the run resolved. It is used by the commands that render the
+// plugins: install and reconfigure (through patchBlockNodeStateWithTrafficShaping)
+// and upgrade. Reset and uninstall render none and keep the plain patch, which
+// leaves the record the refresh carried over.
+func patchBlockNodeStateRecordingPlugins() bll.StateCallback[models.BlockNodeInputs] {
+	base := patchBlockNodeState()
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
+		if err := base(st, effectiveInputs, report); err != nil {
+			return err
 		}
-		if effectiveInputs.Custom.PluginList != "" {
-			logx.As().Debug().Str("pluginList", effectiveInputs.Custom.PluginList).
-				Msg("Persisted block node plugin list into runtime state")
-			st.BlockNodeState.PluginList = effectiveInputs.Custom.PluginList
+		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+			logx.As().Debug().Str("status", string(st.BlockNodeState.ReleaseInfo.Status)).
+				Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+				Msg("Block node release is not deployed; not recording this run's plugin preset and list")
+			return nil
 		}
+		st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+		st.BlockNodeState.PluginList = effectiveInputs.Custom.PluginList
+		logx.As().Debug().Str("pluginPreset", st.BlockNodeState.PluginPreset).
+			Str("pluginList", st.BlockNodeState.PluginList).
+			Msg("Persisted block node plugin preset and list into runtime state")
 		return nil
 	}
 }
@@ -116,10 +139,10 @@ func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 // TrafficShapingEnabled, so their effectiveInputs.Custom value is the unset zero
 // value and would silently flip a true decision back to "disabled" on every run.
 // Upgrade in particular reads the persisted decision (via
-// currentState.BlockNodeState) to drive its silent convergence and therefore keeps
-// the plain patchBlockNodeState, which leaves this field untouched.
+// currentState.BlockNodeState) to drive its silent convergence and therefore uses
+// UpgradeHandler.stateCallback, which leaves this field untouched.
 func patchBlockNodeStateWithTrafficShaping() bll.StateCallback[models.BlockNodeInputs] {
-	base := patchBlockNodeState()
+	base := patchBlockNodeStateRecordingPlugins()
 	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
 		st.BlockNodeState.TrafficShapingEnabled = effectiveInputs.Custom.TrafficShapingEnabled
 		st.BlockNodeState.TrafficShapingCleanupPending = false

@@ -71,7 +71,9 @@ type noHelmReleases struct{}
 func (noHelmReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
 // Unobservable and NotConfigured both mean the cluster was not observed, so the
-// cluster, block node and consensus checkers refresh the same way for each.
+// cluster, block node and consensus checkers refresh the same way for each. The
+// block node checker also marks what it kept as unobserved when a kubeconfig
+// exists: the API server that did not answer may still hold a release.
 func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
 	require.NoError(t, err)
@@ -108,6 +110,9 @@ func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	gotCS, gotBN, gotCN := refresh(unobservable)
 
 	require.Equal(t, wantCS, gotCS)
+	require.False(t, wantBN.Unobserved)
+	require.True(t, gotBN.Unobserved)
+	gotBN.Unobserved = false
 	require.Equal(t, wantBN, gotBN)
 	require.Equal(t, wantCN, gotCN)
 	require.Equal(t, "block-node", gotBN.ReleaseInfo.Name)
