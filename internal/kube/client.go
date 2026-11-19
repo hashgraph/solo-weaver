@@ -44,35 +44,37 @@ type ResourceKind string
 func (k ResourceKind) String() string { return string(k) }
 
 const (
-	KindNode        ResourceKind = "Node"
-	KindService     ResourceKind = "Service"
-	KindNamespace   ResourceKind = "Namespace"
-	KindConfigMap   ResourceKind = "ConfigMap"
-	KindPod         ResourceKind = "Pod"
-	KindDeployment  ResourceKind = "Deployment"
-	KindStatefulSet ResourceKind = "StatefulSet"
-	KindDaemonSet   ResourceKind = "DaemonSet"
-	KindJob         ResourceKind = "Job"
-	KindPVC         ResourceKind = "PersistentVolumeClaim"
-	KindPV          ResourceKind = "PersistentVolume"
-	KindCRD         ResourceKind = "CustomResourceDefinition"
-	KindEvent       ResourceKind = "Event"
+	KindNode         ResourceKind = "Node"
+	KindService      ResourceKind = "Service"
+	KindNamespace    ResourceKind = "Namespace"
+	KindConfigMap    ResourceKind = "ConfigMap"
+	KindPod          ResourceKind = "Pod"
+	KindDeployment   ResourceKind = "Deployment"
+	KindStatefulSet  ResourceKind = "StatefulSet"
+	KindDaemonSet    ResourceKind = "DaemonSet"
+	KindJob          ResourceKind = "Job"
+	KindPVC          ResourceKind = "PersistentVolumeClaim"
+	KindPV           ResourceKind = "PersistentVolume"
+	KindCRD          ResourceKind = "CustomResourceDefinition"
+	KindEvent        ResourceKind = "Event"
+	KindStorageClass ResourceKind = "StorageClass"
 )
 
 var kindToGVR = map[ResourceKind]schema.GroupVersionResource{
-	KindNode:        {Group: "", Version: "v1", Resource: "nodes"},
-	KindService:     {Group: "", Version: "v1", Resource: "services"},
-	KindNamespace:   {Group: "", Version: "v1", Resource: "namespaces"},
-	KindConfigMap:   {Group: "", Version: "v1", Resource: "configmaps"},
-	KindPod:         {Group: "", Version: "v1", Resource: "pods"},
-	KindDeployment:  {Group: "apps", Version: "v1", Resource: "deployments"},
-	KindStatefulSet: {Group: "apps", Version: "v1", Resource: "statefulsets"},
-	KindDaemonSet:   {Group: "apps", Version: "v1", Resource: "daemonsets"},
-	KindJob:         {Group: "batch", Version: "v1", Resource: "jobs"},
-	KindPVC:         {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
-	KindPV:          {Group: "", Version: "v1", Resource: "persistentvolumes"},
-	KindCRD:         {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
-	KindEvent:       {Group: "", Version: "v1", Resource: "events"},
+	KindNode:         {Group: "", Version: "v1", Resource: "nodes"},
+	KindService:      {Group: "", Version: "v1", Resource: "services"},
+	KindNamespace:    {Group: "", Version: "v1", Resource: "namespaces"},
+	KindConfigMap:    {Group: "", Version: "v1", Resource: "configmaps"},
+	KindPod:          {Group: "", Version: "v1", Resource: "pods"},
+	KindDeployment:   {Group: "apps", Version: "v1", Resource: "deployments"},
+	KindStatefulSet:  {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	KindDaemonSet:    {Group: "apps", Version: "v1", Resource: "daemonsets"},
+	KindJob:          {Group: "batch", Version: "v1", Resource: "jobs"},
+	KindPVC:          {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	KindPV:           {Group: "", Version: "v1", Resource: "persistentvolumes"},
+	KindCRD:          {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+	KindEvent:        {Group: "", Version: "v1", Resource: "events"},
+	KindStorageClass: {Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"},
 }
 
 func RegisterKind(kind ResourceKind, gvr schema.GroupVersionResource) {
