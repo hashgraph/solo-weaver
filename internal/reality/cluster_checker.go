@@ -37,7 +37,7 @@ type ManagedRelease struct {
 	Release   string
 	Namespace string
 	Chart     string // the chart's name, as Helm reports it
-	ChartRef  string // empty for Cilium, installed from a local chart
+	ChartRef  string // the catalog chart reference, e.g. metallb/metallb
 }
 
 // NodeInfo is what a node reports it runs.
@@ -246,11 +246,7 @@ func ManagedReleases() ([]ManagedRelease, error) {
 		if slices.Contains(clusterChartsRecordedElsewhere, ch.Name) {
 			continue
 		}
-		m := ManagedRelease{Key: ch.Name, Release: ch.Release, Namespace: ch.Namespace, Chart: path.Base(ch.Chart), ChartRef: ch.Chart}
-		if ch.Name == CiliumReleaseKey {
-			m.ChartRef = "" // installed from a local chart
-		}
-		out = append(out, m)
+		out = append(out, ManagedRelease{Key: ch.Name, Release: ch.Release, Namespace: ch.Namespace, Chart: path.Base(ch.Chart), ChartRef: ch.Chart})
 	}
 	return out, nil
 }

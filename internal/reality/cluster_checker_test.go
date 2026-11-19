@@ -124,7 +124,7 @@ func TestClusterChecker_RecordsManagedReleases(t *testing.T) {
 			ChartVersion: "1.13.1", AppVersion: "v1.13.1", Status: release.StatusFailed,
 		},
 		reality.CiliumReleaseKey: {
-			Name: "cilium", Namespace: "kube-system", ChartName: "cilium",
+			Name: "cilium", Namespace: "kube-system", ChartRef: "cilium/cilium", ChartName: "cilium",
 			ChartVersion: "1.20.2", AppVersion: "v1.20.2", Status: release.StatusDeployed,
 		},
 	}, cs.Releases)
@@ -289,8 +289,7 @@ func TestClusterChecker_NoNodesLeavesTheFactsAlone(t *testing.T) {
 }
 
 // Cilium is a catalog chart now, so it must be listed once, under the key the
-// recorded state already uses, and with no chart ref: it is installed from a
-// local chart directory.
+// recorded state already uses.
 func TestManagedReleases_ListsCiliumOnce(t *testing.T) {
 	managed, err := reality.ManagedReleases()
 	require.NoError(t, err)
@@ -306,5 +305,6 @@ func TestManagedReleases_ListsCiliumOnce(t *testing.T) {
 		Release:   cilium.ReleaseName,
 		Namespace: cilium.Namespace,
 		Chart:     "cilium",
+		ChartRef:  "cilium/cilium",
 	}}, found)
 }
