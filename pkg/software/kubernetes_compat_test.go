@@ -202,6 +202,43 @@ func TestLoadCatalog_OnlyTheDefaultMinorBindsTheDefaults(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestKubernetesRangeContains(t *testing.T) {
+	r := KubernetesRange{Min: "1.33", Max: "1.35"}
+	for minor, want := range map[[2]int]bool{{1, 32}: false, {1, 33}: true, {1, 35}: true, {1, 36}: false} {
+		got, err := r.contains(minor)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, minor)
+	}
+
+	for _, bad := range []KubernetesRange{{Min: "x", Max: "1.35"}, {Min: "1.33", Max: "1.35.0"}} {
+		_, err := bad.contains([2]int{1, 34})
+		assert.Error(t, err, bad)
+	}
+}
+
+// The loader rejects these Cilium versions before this check runs. The check
+// still fails on them instead of panicking or passing.
+func TestCheckDefaultCiliumSupports_InvalidRange(t *testing.T) {
+	for name, tc := range map[string]struct {
+		r       *KubernetesRange
+		wantErr string
+	}{
+		"no range":  {r: nil, wantErr: "the default cilium 1.20.2 has no kubernetes range"},
+		"bad range": {r: &KubernetesRange{Min: "1.33", Max: "latest"}, wantErr: "cilium 1.20.2 kubernetes range"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := &InfrastructureCatalog{Cluster: []ChartMetadata{{
+				Name:     CiliumComponentName,
+				Default:  "1.20.2",
+				Versions: map[Version]ChartVersion{"1.20.2": {Kubernetes: tc.r}},
+			}}}
+			err := c.checkDefaultCiliumSupports("1.34")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 func TestParseMinor(t *testing.T) {
 	got, err := parseMinor("1.34")
 	require.NoError(t, err)

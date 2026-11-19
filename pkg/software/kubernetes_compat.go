@@ -41,11 +41,17 @@ func (r KubernetesRange) validate() error {
 	return nil
 }
 
-// contains reports whether minor is within r. r must be valid.
-func (r KubernetesRange) contains(minor [2]int) bool {
-	lo, _ := parseMinor(r.Min)
-	hi, _ := parseMinor(r.Max)
-	return slices.Compare(minor[:], lo[:]) >= 0 && slices.Compare(minor[:], hi[:]) <= 0
+// contains reports whether minor is within r.
+func (r KubernetesRange) contains(minor [2]int) (bool, error) {
+	lo, err := parseMinor(r.Min)
+	if err != nil {
+		return false, err
+	}
+	hi, err := parseMinor(r.Max)
+	if err != nil {
+		return false, err
+	}
+	return slices.Compare(minor[:], lo[:]) >= 0 && slices.Compare(minor[:], hi[:]) <= 0, nil
 }
 
 // parseMinor parses a Kubernetes minor such as "1.34".
@@ -133,18 +139,24 @@ func (c *InfrastructureCatalog) validateKubernetes() error {
 }
 
 // checkDefaultCiliumSupports requires the default Cilium to support minor.
-// Chart validation has already required a valid range on every Cilium version.
 func (c *InfrastructureCatalog) checkDefaultCiliumSupports(minor string) error {
 	cilium, err := c.GetClusterComponent(CiliumComponentName)
 	if err != nil {
 		return nil // catalogs without Cilium (test fixtures) have nothing to check
 	}
 	r := cilium.Versions[cilium.Default].Kubernetes
+	if r == nil {
+		return errorx.IllegalFormat.New("the default cilium %s has no kubernetes range", cilium.Default)
+	}
 	m, err := parseMinor(minor)
 	if err != nil {
 		return err
 	}
-	if !r.contains(m) {
+	ok, err := r.contains(m)
+	if err != nil {
+		return errorx.IllegalFormat.Wrap(err, "cilium %s kubernetes range", cilium.Default)
+	}
+	if !ok {
 		return errorx.IllegalFormat.New("the default cilium %s supports Kubernetes %s to %s, not the default kubelet's minor %s",
 			cilium.Default, r.Min, r.Max, minor)
 	}
