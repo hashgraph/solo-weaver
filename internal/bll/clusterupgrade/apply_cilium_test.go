@@ -4,16 +4,24 @@ package clusterupgrade
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func ciliumPatch() Hop { return ciliumHop(StepPatch, "1.18.1", "1.18.16") }
@@ -102,37 +110,91 @@ func TestCiliumHopChecks_RejectsOtherHops(t *testing.T) {
 	}
 }
 
-// fakeRunner records the workflows it is asked to run.
+// fakeRunner runs each hop's workflow as the command does, without rendering
+// it, and keeps the reports.
 type fakeRunner struct {
-	ran []string
-	err error
+	reports []*automa.Report
 }
 
-func (f *fakeRunner) run(_ context.Context, wb *automa.WorkflowBuilder) error {
-	wf, err := wb.Build()
+func (f *fakeRunner) run(_ context.Context, fn func() (*automa.Report, error)) error {
+	report, err := fn()
 	if err != nil {
 		return err
 	}
-	f.ran = append(f.ran, wf.Id())
-	return f.err
+	f.reports = append(f.reports, report)
+	return steps.FailureOf(report)
 }
 
-func stubCiliumApply(t *testing.T, cliAt bool) {
+// ran is the ids of the workflows run.
+func (f *fakeRunner) ran() []string {
+	var ids []string
+	for _, r := range f.reports {
+		ids = append(ids, r.Id)
+	}
+	return ids
+}
+
+// stepIDs is the ids of the steps of the only workflow run.
+func (f *fakeRunner) stepIDs(t *testing.T) []string {
 	t.Helper()
-	origAt, origCLI, origHop := hostBinaryAt, ciliumCLIWorkflow, ciliumHopWorkflow
-	t.Cleanup(func() { hostBinaryAt, ciliumCLIWorkflow, ciliumHopWorkflow = origAt, origCLI, origHop })
+	require.Len(t, f.reports, 1)
+	var ids []string
+	for _, sr := range f.reports[0].StepReports {
+		ids = append(ids, sr.Id)
+	}
+	return ids
+}
+
+func noopStep(id string, fail bool) automa.Builder {
+	return automa.NewStepBuilder().WithId(id).WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
+		if fail {
+			return automa.StepFailureReport(stp.Id(), automa.WithError(errorx.ExternalError.New("%s failed", id)))
+		}
+		return automa.SuccessReport(stp)
+	})
+}
+
+// stubHopFinish replaces the node check, which needs a cluster, and shortens
+// the wait for the cluster to be readable.
+func stubHopFinish(t *testing.T) {
+	t.Helper()
+	origStep, origTimeout, origInterval := nodesReadyStep, readableTimeout, readableInterval
+	t.Cleanup(func() { nodesReadyStep, readableTimeout, readableInterval = origStep, origTimeout, origInterval })
+	nodesReadyStep = func() automa.Builder { return noopStep(NodesReadyStepID, false) }
+	readableTimeout, readableInterval = 50*time.Millisecond, time.Millisecond
+}
+
+// stubCiliumApply stubs the cilium CLI check and the hop workflow, whose step
+// fails when fail is set. It returns the cilium CLI version each built
+// workflow was asked to install.
+func stubCiliumApply(t *testing.T, cliAt, fail bool) *[]string {
+	t.Helper()
+	stubHopFinish(t)
+	origAt, origHop := hostBinaryAt, ciliumHopWorkflow
+	t.Cleanup(func() { hostBinaryAt, ciliumHopWorkflow = origAt, origHop })
 	hostBinaryAt = func(string, string) (bool, error) { return cliAt, nil }
-	noop := func() automa.Builder {
-		return automa.NewStepBuilder().WithId("noop").WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
-			return automa.SuccessReport(stp)
-		})
+	var clis []string
+	ciliumHopWorkflow = func(from, to, cli string) *automa.WorkflowBuilder {
+		clis = append(clis, cli)
+		return automa.NewWorkflowBuilder().WithId("hop-" + from + "-" + to).Steps(noopStep("cilium-upgrade", fail))
 	}
-	ciliumCLIWorkflow = func(version string) *automa.WorkflowBuilder {
-		return automa.NewWorkflowBuilder().WithId("cli-" + version).Steps(noop())
-	}
-	ciliumHopWorkflow = func(from, to string) *automa.WorkflowBuilder {
-		return automa.NewWorkflowBuilder().WithId("hop-" + from + "-" + to).Steps(noop())
-	}
+	return &clis
+}
+
+// holdLocks holds the system and cluster locks in dir for the test.
+func holdLocks(t *testing.T, dir string) *state.HeldLocks {
+	t.Helper()
+	locks, err := state.AcquireHeldLocks(dir, []state.ComponentID{state.ComponentSystem, state.ComponentCluster}, 0)
+	require.NoError(t, err)
+	t.Cleanup(locks.Release)
+	return locks
+}
+
+func historyEntries(t *testing.T, dir string) []state.ActionHistory {
+	t.Helper()
+	entries, err := state.ReadActionHistory(dir)
+	require.NoError(t, err)
+	return entries
 }
 
 func stateFiles(t *testing.T, dir string) []string {
@@ -141,7 +203,9 @@ func stateFiles(t *testing.T, dir string) []string {
 	require.NoError(t, err)
 	var names []string
 	for _, e := range entries {
-		names = append(names, e.Name())
+		if !strings.HasPrefix(e.Name(), ".") {
+			names = append(names, e.Name())
+		}
 	}
 	return names
 }
@@ -153,101 +217,205 @@ func readStateFile(t *testing.T, dir, name string) string {
 	return string(data)
 }
 
+// failingPersist is a state manager whose Persist fails.
+type failingPersist struct{ state.Manager }
+
+func (f failingPersist) Set(s state.State) state.Writer {
+	f.Manager.Set(s)
+	return f
+}
+
+func (failingPersist) Persist(...state.ComponentID) ([]state.ChangedFile, error) {
+	return nil, errors.New("disk full")
+}
+
+// settlingChecker returns first on the first read and then on every later one.
+type settlingChecker struct {
+	first, then state.ClusterState
+	calls       int
+}
+
+func (c *settlingChecker) RefreshState(context.Context) (state.ClusterState, error) {
+	c.calls++
+	if c.calls == 1 {
+		return c.first, nil
+	}
+	return c.then, nil
+}
+
 func TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords(t *testing.T) {
-	stubCiliumApply(t, false)
+	clis := stubCiliumApply(t, false, false)
 	src, dir := liveSources(t, v035Cluster())
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch()))
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
 
-	assert.Equal(t, []string{"cli-0.20.1", "hop-1.18.1-1.18.16"}, r.ran)
+	assert.Equal(t, []string{"hop-1.18.1-1.18.16"}, r.ran())
+	assert.Equal(t, []string{"0.20.1"}, *clis)
+	assert.Equal(t, []string{"cilium-upgrade", NodesReadyStepID, steps.WaitClusterReadableStepID, steps.RecordStateStepID},
+		r.stepIDs(t))
 	assert.Contains(t, readStateFile(t, dir, "system.yaml"), "version: 0.20.1")
 	assert.Contains(t, readStateFile(t, dir, "cluster.yaml"), "cilium:")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1, "the CLI and the hop are one entry")
+	assert.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	assert.ElementsMatch(t, []state.ChangedFile{state.ComponentSystem.File(), state.ComponentCluster.File()}, entries[0].Components)
 	history := readStateFile(t, dir, "action_history.yaml")
-	assert.Contains(t, history, "cilium-cli")
+	assert.Contains(t, history, "cilium-cli: 0.20.1")
 	assert.Contains(t, history, "to: 1.18.16")
 }
 
 func TestApplyCiliumHop_CLIAlreadyCurrent(t *testing.T) {
-	stubCiliumApply(t, true)
+	clis := stubCiliumApply(t, true, false)
 	src, dir := liveSources(t, v035Cluster())
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch()))
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
 
-	assert.Equal(t, []string{"hop-1.18.1-1.18.16"}, r.ran)
+	assert.Equal(t, []string{""}, *clis)
 	assert.NotContains(t, stateFiles(t, dir), "system.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, []state.ChangedFile{state.ComponentCluster.File()}, entries[0].Components)
+	assert.NotContains(t, readStateFile(t, dir, "action_history.yaml"), "cilium-cli")
 }
 
 func TestApplyCiliumHop_DoneHopDoesNothing(t *testing.T) {
-	stubCiliumApply(t, false)
+	stubCiliumApply(t, false, false)
 	cs := v035Cluster()
 	cs.CiliumAgentVersion = "1.18.16"
 	cs.Releases["cilium"] = deployed("cilium", "1.18.16")
 	src, dir := liveSources(t, cs)
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch()))
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
 
-	assert.Empty(t, r.ran)
+	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
 }
 
 func TestApplyCiliumHop_FailedCheckChangesNothing(t *testing.T) {
-	stubCiliumApply(t, false)
+	stubCiliumApply(t, false, false)
 	src, dir := liveSources(t, v035Cluster())
 	r := &fakeRunner{}
 
-	err := ApplyCiliumHop(context.Background(), src, r.run, ciliumHop(StepMinor, "1.18.1", "1.20.2"))
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumHop(StepMinor, "1.18.1", "1.20.2"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "one step at a time")
-	assert.Empty(t, r.ran)
+	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
 }
 
-func TestApplyCiliumHop_FailedHopRecordsTheFailure(t *testing.T) {
-	stubCiliumApply(t, true)
+func TestApplyCiliumHop_FailedHopRecordsOnlyTheFailure(t *testing.T) {
+	stubCiliumApply(t, true, true)
 	src, dir := liveSources(t, v035Cluster())
-	r := &fakeRunner{err: errorx.ExternalError.New("cilium upgrade failed")}
+	r := &fakeRunner{}
 
-	err := ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch())
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cilium-upgrade failed")
 	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
-	assert.Contains(t, readStateFile(t, dir, "action_history.yaml"), "outcome: failed")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
 }
 
-func TestApplyCiliumHop_FailsFastOnEachLock(t *testing.T) {
+// A record that cannot be written does not fail a hop that ran: the run gets a
+// warning and its entry is marked NotPersisted.
+func TestApplyCiliumHop_RecordFailureIsAWarning(t *testing.T) {
+	stubCiliumApply(t, true, false)
+	src, dir := liveSources(t, v035Cluster())
+	src.State = failingPersist{src.State}
+	r := &fakeRunner{}
+
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
+
+	require.Len(t, r.reports, 1)
+	assert.True(t, r.reports[0].IsSuccess())
+	var warnings []string
+	for _, sr := range r.reports[0].StepReports {
+		warnings = append(warnings, sr.Metadata[models.ReportMetaWarning])
+	}
+	assert.Contains(t, strings.Join(warnings, "\n"), "The state was not recorded: disk full")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	assert.True(t, entries[0].NotPersisted)
+}
+
+// A cluster that cannot be fully read after the hop fails it, so it is never
+// recorded from a cluster that is still settling.
+func TestApplyCiliumHop_UnsettledClusterFailsTheHop(t *testing.T) {
+	stubCiliumApply(t, true, false)
+	unread := v035Cluster()
+	unread.Unobserved = true
+	src, dir := liveSources(t, v035Cluster())
+	src.Cluster = &settlingChecker{first: v035Cluster(), then: unread}
+	r := &fakeRunner{}
+
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not be fully read")
+	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+}
+
+func TestApplyCiliumHop_RefusesLocksThatDoNotCoverIt(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		cliAt bool
-		lock  state.ComponentID
+		locks func(t *testing.T, dir string) *state.HeldLocks
 	}{
-		{"system, for the CLI", false, state.ComponentSystem},
-		{"cluster, for the hop", true, state.ComponentCluster},
+		{"no locks", func(*testing.T, string) *state.HeldLocks { return nil }},
+		{"only the cluster lock", func(t *testing.T, dir string) *state.HeldLocks {
+			l, err := state.AcquireHeldLocks(dir, []state.ComponentID{state.ComponentCluster}, 0)
+			require.NoError(t, err)
+			t.Cleanup(l.Release)
+			return l
+		}},
+		{"locks in another directory", func(t *testing.T, _ string) *state.HeldLocks { return holdLocks(t, t.TempDir()) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stubCiliumApply(t, tc.cliAt)
+			stubCiliumApply(t, false, false)
 			src, dir := liveSources(t, v035Cluster())
-			release, err := state.AcquireComponentLocks(dir, []state.ComponentID{tc.lock}, 0)
-			require.NoError(t, err)
-			defer release()
 			r := &fakeRunner{}
 
-			require.Error(t, ApplyCiliumHop(context.Background(), src, r.run, ciliumPatch()))
+			err := ApplyCiliumHop(context.Background(), src, tc.locks(t, dir), r.run, ciliumPatch())
 
-			assert.Empty(t, r.ran, "no workflow may run without the lock")
-			entries, err := state.ReadActionHistory(dir)
-			require.NoError(t, err)
-			assert.Empty(t, entries)
+			require.Error(t, err)
+			reason, _ := errx.ReasonOf(err)
+			assert.Equal(t, reasons.Internal, reason)
+			assert.Empty(t, r.ran(), "no workflow may run without the locks")
+			assert.Empty(t, historyEntries(t, dir))
 		})
 	}
 }
 
+func TestApplyCiliumHop_UnreachableClusterIsRefused(t *testing.T) {
+	stubCiliumApply(t, false, false)
+	src, dir := liveSources(t, v035Cluster())
+	src.Probe = probeReturns(reality.NotConfigured)
+	r := &fakeRunner{}
+
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no kubeconfig")
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, _ := errx.Hints(err)
+	assert.Contains(t, strings.Join(hints, " "), "sudo")
+	assert.Empty(t, r.ran())
+	assert.Empty(t, historyEntries(t, dir))
+}
+
 func TestApplyCiliumHop_NeedsARunner(t *testing.T) {
-	src, _ := liveSources(t, v035Cluster())
-	err := ApplyCiliumHop(context.Background(), src, nil, ciliumPatch())
+	src, dir := liveSources(t, v035Cluster())
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), nil, ciliumPatch())
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument))
 }

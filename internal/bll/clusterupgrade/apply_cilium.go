@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 const ciliumCLI = "cilium"
@@ -20,7 +22,6 @@ const ciliumCLI = "cilium"
 // Seams so tests run no workflow and need no binaries on disk.
 var (
 	hostBinaryAt      = steps.HostBinaryAt
-	ciliumCLIWorkflow = workflows.UpgradeCiliumCLIWorkflow
 	ciliumHopWorkflow = workflows.CiliumHopWorkflow
 )
 
@@ -66,16 +67,20 @@ func CiliumHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 	return cs, nil
 }
 
-// ApplyCiliumHop moves the running Cilium by one hop. It reads the cluster,
-// does nothing when the hop is already applied, refuses when a check fails,
-// puts the cilium CLI on the catalog default, then runs the hop and records
-// the new cluster. Each part holds the state locks it writes and leaves an
-// entry in the action history.
-func ApplyCiliumHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop) error {
+// ApplyCiliumHop moves the running Cilium by one hop. The caller holds the
+// system and cluster locks in locks for the whole run. It reads the cluster,
+// does nothing when the hop is already applied, and refuses when a check
+// fails. Otherwise one workflow puts the cilium CLI on the catalog default
+// when it is not, runs the hop, waits for the cluster to settle and records
+// it, and one entry goes to the action history.
+func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
-		return errorx.IllegalArgument.New("a workflow runner must be set")
+		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
 	}
-	shape, m, _, err := readLive(ctx, src)
+	if err := heldFor(src, locks, state.ComponentSystem, state.ComponentCluster); err != nil {
+		return err
+	}
+	shape, m, err := readHopLive(ctx, src)
 	if err != nil {
 		return err
 	}
@@ -85,7 +90,7 @@ func ApplyCiliumHop(ctx context.Context, src LiveSources, run WorkflowRunner, ho
 	}
 	checks, err := CiliumHopChecks(shape, m, hop)
 	if err != nil {
-		return err
+		return errx.Decorate(err, reasons.Internal)
 	}
 	if err := checks.Err(); err != nil {
 		return err
@@ -93,36 +98,28 @@ func ApplyCiliumHop(ctx context.Context, src LiveSources, run WorkflowRunner, ho
 
 	cat, err := src.Catalog()
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to load the catalog")
+		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to load the catalog"), reasons.Internal)
 	}
-	cli, err := cat.GetHostArtifact(ciliumCLI)
+	cliArtifact, err := cat.GetHostArtifact(ciliumCLI)
 	if err != nil {
-		return errorx.IllegalFormat.Wrap(err, "catalog")
+		return errx.Decorate(errorx.IllegalFormat.Wrap(err, "catalog"), reasons.Internal)
 	}
-	version := string(cli.Default)
-	at, err := hostBinaryAt(ciliumCLI, version)
+	at, err := hostBinaryAt(ciliumCLI, string(cliArtifact.Default))
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to read the installed cilium CLI")
-	}
-	if !at {
-		err := recordHop(ctx, src, map[string]string{"component": "cilium-cli", "to": version},
-			[]state.ComponentID{state.ComponentSystem},
-			func() error { return run(ctx, ciliumCLIWorkflow(version)) },
-			func(st *state.State) {
-				if st.MachineState.Software == nil {
-					st.MachineState.Software = map[string]state.SoftwareState{}
-				}
-				sw := st.MachineState.Software[ciliumCLI]
-				sw.Name, sw.Version, sw.Installed = ciliumCLI, version, true
-				st.MachineState.Software[ciliumCLI] = sw
-			})
-		if err != nil {
-			return err
-		}
+		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to read the installed cilium CLI"),
+			reasons.StateOperationFailed, "Check the cilium binary in the provisioner's bin directory, then run the command again.")
 	}
 
-	return recordHop(ctx, src, map[string]string{"component": "cilium", "from": hop.From, "to": hop.To},
-		[]state.ComponentID{state.ComponentCluster},
-		func() error { return run(ctx, ciliumHopWorkflow(hop.From, hop.To)) },
-		nil)
+	inputs := map[string]string{inputComponent: componentCilium, inputFrom: hop.From, inputTo: hop.To}
+	written := []state.ComponentID{state.ComponentCluster}
+	var cli string
+	var patch func(*state.State)
+	if !at {
+		cli = string(cliArtifact.Default)
+		inputs[inputCiliumCLI] = cli
+		written = append(written, state.ComponentSystem)
+		patch = func(st *state.State) { recordSoftware(st, ciliumCLI, cli) }
+	}
+	logx.As().Info().Str("from", hop.From).Str("to", hop.To).Str("cli", cli).Msg("Applying the Cilium hop")
+	return runHop(ctx, src, run, inputs, ciliumHopWorkflow(hop.From, hop.To, cli), hopRecord(src, written, patch))
 }

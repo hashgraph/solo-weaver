@@ -10,18 +10,15 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-// UpgradeCiliumCLIWorkflow puts the cilium CLI on version.
-func UpgradeCiliumCLIWorkflow(version string) *automa.WorkflowBuilder {
-	return automa.NewWorkflowBuilder().
-		WithId("upgrade-cilium-cli").
-		Steps(steps.UpgradeHostBinary("cilium", version, true, software.NewCiliumInstaller))
-}
-
 // CiliumHopWorkflow moves the running Cilium from one catalog version to the
-// next. It stops at the first failed step and has no rollback: going back is a
-// second `cilium upgrade`, which a person should decide on.
-func CiliumHopWorkflow(from, to string) *automa.WorkflowBuilder {
-	return automa.NewWorkflowBuilder().
-		WithId("cilium-hop").
-		Steps(steps.CiliumHopSteps(from, to, kube.NewClient)...)
+// next. When cli is set it first puts the cilium CLI on that version. It stops
+// at the first failed step and has no rollback: going back is a second
+// `cilium upgrade`, which a person should decide on.
+func CiliumHopWorkflow(from, to, cli string) *automa.WorkflowBuilder {
+	var all []automa.Builder
+	if cli != "" {
+		all = append(all, steps.UpgradeHostBinary("cilium", cli, true, software.NewCiliumInstaller))
+	}
+	all = append(all, steps.CiliumHopSteps(from, to, kube.NewClient)...)
+	return automa.NewWorkflowBuilder().WithId("cilium-hop").Steps(all...)
 }

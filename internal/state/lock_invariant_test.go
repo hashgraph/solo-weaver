@@ -111,10 +111,11 @@ var stateWriters = map[string]writerRow{
 		history: "TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry",
 	},
 
-	"internal/bll/clusterupgrade/apply.go:recordHop": {
-		lock: "RunOwning over the ids the hop part writes (system for the cilium CLI, cluster for the hop): " +
-			"TestApplyCiliumHop_FailsFastOnEachLock",
-		history: "TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_FailedHopRecordsTheFailure",
+	"internal/bll/clusterupgrade/apply.go:hopRecord": {
+		lock: "a hop's RecordState write, under the system and cluster locks its caller holds; the executor refuses " +
+			"locks that do not cover it: TestApplyCiliumHop_RefusesLocksThatDoNotCoverIt",
+		history: "appends no entry; runHop appends it with the files written: " +
+			"TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_RecordFailureIsAWarning",
 	},
 
 	"internal/state/lock.go:AcquireHeldLocks": {

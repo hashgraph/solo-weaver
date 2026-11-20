@@ -7,6 +7,7 @@ package clusterupgrade
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -50,14 +51,18 @@ func TestWithCluster_ApplyCiliumHop(t *testing.T) {
 		Catalog: software.LoadInfrastructureCatalog,
 		Probe:   checkers.Probe,
 	}
-	run := func(ctx context.Context, wb *automa.WorkflowBuilder) error {
-		wf, err := wb.Build()
+	run := func(_ context.Context, fn func() (*automa.Report, error)) error {
+		report, err := fn()
 		if err != nil {
 			return err
 		}
-		return steps.FailureOf(wf.Execute(ctx))
+		return steps.FailureOf(report)
 	}
+	locks, err := state.AcquireHeldLocks(filepath.Dir(sm.State().StateFile),
+		[]state.ComponentID{state.ComponentSystem, state.ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer locks.Release()
 
-	require.NoError(t, ApplyCiliumHop(context.Background(), src, run,
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, locks, run,
 		Hop{Kind: KindCilium, Step: step, Component: "cilium", From: from, To: to}))
 }

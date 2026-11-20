@@ -92,12 +92,17 @@ func readLive(ctx context.Context, src LiveSources) (rsl.ClusterShape, Matrix, r
 // unreachableBlocker is the blocker for a cluster the probe could not reach. It
 // names the cause and what to do about it.
 func unreachableBlocker(r reality.ClusterReachability) Blocker {
+	cause, remedy := unreachable(r)
+	logx.As().Warn().Msg("Cannot reach the cluster; cannot plan the cluster upgrade: " + cause)
+	return Blocker{Code: BlockerNotObserved, Detail: cause + "; " + remedy}
+}
+
+// unreachable says why the probe could not reach the cluster and what to do.
+func unreachable(r reality.ClusterReachability) (cause, remedy string) {
 	if !r.Configured() {
-		logx.As().Warn().Msg("No kubeconfig found; cannot plan the cluster upgrade")
-		return Blocker{Code: BlockerNotObserved, Detail: "no kubeconfig was found in KUBECONFIG or $HOME/.kube/config; " +
-			"run the command with sudo, or set KUBECONFIG to the cluster's admin kubeconfig"}
+		return "no kubeconfig was found in KUBECONFIG or $HOME/.kube/config",
+			"run the command with sudo, or set KUBECONFIG to the cluster's admin kubeconfig"
 	}
-	logx.As().Warn().Msg("The Kubernetes API server did not answer; cannot plan the cluster upgrade")
-	return Blocker{Code: BlockerNotObserved, Detail: "the Kubernetes API server did not answer; " +
-		"check it with 'kubectl get --raw /readyz', then run the command again"}
+	return "the Kubernetes API server did not answer",
+		"check it with 'kubectl get --raw /readyz', then run the command again"
 }
