@@ -110,21 +110,26 @@ Resolution order (gatekit `resolve`):
 1. An explicit **override** wins unconditionally (bypasses version and maturity).
 2. Otherwise the last spec with `ActiveFrom <= active version`; if none is
    active yet, the feature is **off**.
-3. An `ALPHA` spec is off unless the gate is opted in.
+3. An `ALPHA` spec is off unless a per-feature override forces it on (point 1).
 4. Otherwise the spec's `Default`.
 
-Two operator opt-ins map onto this:
+The opt-in is always a **per-feature override** (version-independent), so it forces the
+feature on regardless of activation version or maturity — and, because the command gate
+and business code share one gate (see below), opting a command in turns the behaviour on
+for its business logic too. Two surfaces feed it:
 
-- **Per-feature override** — the `SOLO_PROVISIONER_ENABLE_<FEATURE>` environment
-  variable (the feature name in `UPPER_SNAKE_CASE`, e.g.
-  `SOLO_PROVISIONER_ENABLE_BLOCK_NODE_OPERATOR_MANAGED=1`). An override, so it
-  forces the feature on (or off) **regardless of the activation version or
-  maturity** — including *before* its `ActiveFrom`. This is a non-production
-  escape hatch. The exact variable for each `ALPHA` feature is printed by
-  `feature list`.
-- **Gate-wide alpha opt-in** — `--experimental`. Opts into *all* `ALPHA`
-  features, but only once the active version has reached each feature's
-  `ActiveFrom`; it does **not** bypass the version gate.
+- **`--experimental` flag** (scoped) — on a gated command, overrides *that command's*
+  gated feature(s) on for the invocation. Preferred under `sudo`, which strips env vars.
+  It is *not* a gate-wide "all alpha" switch.
+- **`SOLO_PROVISIONER_ENABLE_<FEATURE>` env var** — the feature name in
+  `UPPER_SNAKE_CASE` (e.g. `SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE=1`). The
+  per-feature surface for scripting; the exact variable is printed by `feature list`.
+  Note `sudo` drops it unless you use `sudo -E`.
+
+**One gate per invocation.** The command gate resolves these opt-ins once, builds a
+`*gatekit.FeatureGate`, and stores it on the command context. Business code reads the
+same gate with `featuregate.Gate(ctx)` — never its own `NewDefault()` — so command
+availability and in-code behaviour are a single decision.
 
 ## Inspecting the catalog
 

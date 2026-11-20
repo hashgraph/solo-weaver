@@ -70,16 +70,6 @@ func MaturityOf(f gatekit.Feature) gatekit.Maturity {
 	return def.Specs[len(def.Specs)-1].Maturity
 }
 
-// ActiveFromOf returns the activation version a feature first turns on at (its
-// first spec's ActiveFrom), or 0 if the feature is not in the catalog.
-func ActiveFromOf(f gatekit.Feature) gatekit.Activation {
-	def, ok := Catalog()[f]
-	if !ok || len(def.Specs) == 0 {
-		return 0
-	}
-	return def.Specs[0].ActiveFrom
-}
-
 // CurrentActivationVersion is the activation version in force for this binary —
 // the cursor that decides which specs are live. Everything with
 // ActiveFrom <= this value and a default-on, opted-in spec resolves on.

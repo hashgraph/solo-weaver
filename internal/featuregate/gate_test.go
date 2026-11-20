@@ -37,20 +37,16 @@ func TestGate_VersionAndMaturityAxes(t *testing.T) {
 		require.False(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 	})
 
-	t.Run("Alpha at its version turns on with --experimental", func(t *testing.T) {
-		g, err := featuregate.New(featuregate.Options{Current: 2, Experimental: true})
-		require.NoError(t, err)
-		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
-		// A GA feature is unaffected by the opt-in.
-		require.True(t, g.Enabled(featuregate.NetworkPolicy))
-	})
-
-	t.Run("per-feature override forces on regardless of version/maturity", func(t *testing.T) {
+	// The opt-in (--experimental or the env var) always resolves to a per-feature
+	// override, which forces the feature on regardless of version and maturity.
+	t.Run("a per-feature override forces on regardless of version/maturity", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{
 			Current:   1, // before ConsensusNodeOperatorManaged's ActiveFrom
 			Overrides: map[gatekit.Feature]bool{featuregate.ConsensusNodeOperatorManaged: true},
 		})
 		require.NoError(t, err)
 		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
+		// A GA feature is unaffected by the opt-in.
+		require.True(t, g.Enabled(featuregate.NetworkPolicy))
 	})
 }

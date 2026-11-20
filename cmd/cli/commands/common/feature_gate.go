@@ -14,8 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// experimentalFlagName is the hidden gate-wide alpha opt-in flag installed on a
-// gated command; it routes to gatekit's WithExperimental.
+// experimentalFlagName is the hidden alpha opt-in flag installed on a gated command.
+// It is scoped: it overrides that command's gated feature(s) on for the invocation
+// (a per-feature override, version-independent), not a gate-wide switch.
 const experimentalFlagName = "experimental"
 
 // GateFeature ties a command's availability to a gatekit feature's maturity (see
@@ -72,20 +73,32 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 
 // requireFeatureEnabled returns nil when the operator may run an f-gated command,
 // otherwise a decorated refusal. Command availability is maturity-based: GA/Beta
-// commands always run; an Alpha command runs only when opted in (--experimental
-// or its override env var). The gate is evaluated at the feature's own activation
-// version, so a not-yet-active Alpha command is still enable-able by opting in —
-// the activation-version axis governs behaviour rollout, not command availability.
+// commands always run; an Alpha command runs only when opted in.
+//
+// The opt-in is a per-feature override — version-independent — from either the
+// --experimental flag (scoped to THIS command's feature) or the feature's
+// SOLO_PROVISIONER_ENABLE_<FEATURE> env var. The resolved gate is stored on the
+// command context, so business code reading featuregate.Gate(ctx) resolves f the same
+// way: opting the command in turns the behaviour on too. The check is a plain
+// gate.Enabled(f) — command availability and business behaviour are one decision.
 func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 	if featuregate.MaturityOf(f) != gatekit.Alpha {
 		return nil
 	}
-	experimental, _ := cmd.Flags().GetBool(experimentalFlagName)
-	gate, err := featuregate.New(featuregate.Options{Experimental: experimental})
+	// --experimental overrides this command's feature on (the env override, if set, is
+	// already applied globally by featuregate.New).
+	var overrides map[gatekit.Feature]bool
+	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental {
+		overrides = map[gatekit.Feature]bool{f: true}
+	}
+	gate, err := featuregate.New(featuregate.Options{Overrides: overrides})
 	if err != nil {
 		return err
 	}
-	if gate.EnabledAt(f, featuregate.ActiveFromOf(f)) {
+	// Share this exact gate with the command's business code.
+	cmd.SetContext(featuregate.NewContext(cmd.Context(), gate))
+
+	if gate.Enabled(f) {
 		return nil
 	}
 	return errx.Decorate(

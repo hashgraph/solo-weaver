@@ -14,9 +14,9 @@ import gatekit "github.com/automa-saga/gatekit"
 //
 // Spec semantics (gatekit): a feature is on when the last spec whose
 // ActiveFrom <= the active version is default-on; an ALPHA spec additionally
-// requires the gate-wide opt-in (WithExperimental, from --experimental) or a
-// per-feature override (WithOverrides, from SOLO_PROVISIONER_ENABLE_<FEATURE>).
-// A feature graduates by adding a later spec at a higher ActiveFrom with a more
+// requires a per-feature override (WithOverrides) — from the scoped --experimental
+// flag or the SOLO_PROVISIONER_ENABLE_<FEATURE> env var — which forces it on
+// regardless of version. A feature graduates by adding a later spec at a higher ActiveFrom with a more
 // mature stage (e.g. ALPHA -> GA).
 func Catalog() gatekit.Registry {
 	return gatekit.Registry{

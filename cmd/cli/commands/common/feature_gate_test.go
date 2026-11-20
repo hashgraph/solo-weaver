@@ -44,3 +44,23 @@ func TestRequireFeatureEnabled_EnvOverride(t *testing.T) {
 	t.Setenv(featuregate.OverrideEnvVar(featuregate.ConsensusNodeOperatorManaged), "1")
 	require.NoError(t, requireFeatureEnabled(cmd, featuregate.ConsensusNodeOperatorManaged))
 }
+
+// Opting a command in shares one gate with its business code: --experimental turns the
+// feature on for both, so featuregate.Gate(ctx) sees it enabled.
+func TestRequireFeatureEnabled_SharesGateWithBusinessCode(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo"}
+	cmd.Flags().Bool(experimentalFlagName, false, "")
+
+	// Without the opt-in the feature is off for business code too.
+	off, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.False(t, off.Enabled(featuregate.ConsensusNodeOperatorManaged))
+
+	require.NoError(t, cmd.Flags().Set(experimentalFlagName, "true"))
+	require.NoError(t, requireFeatureEnabled(cmd, featuregate.ConsensusNodeOperatorManaged))
+
+	// The command installed the gate on its context; business code reads the same on-state.
+	on, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.True(t, on.Enabled(featuregate.ConsensusNodeOperatorManaged))
+}
