@@ -271,7 +271,7 @@ func installBlockNode(profile string, valuesFile string, getManager func() (*blo
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			valuesFilePath, err := manager.ComputeValuesFile(ctx, profile, valuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
@@ -438,7 +438,7 @@ func upgradeBlockNode(inputs models.BlockNodeInputs, getManager func() (*blockno
 			}
 
 			// Normal upgrade path: preflight values computation first.
-			valuesFilePath, err := manager.ComputeValuesFile(inputs.Profile, inputs.ValuesFile)
+			valuesFilePath, err := manager.ComputeValuesFile(ctx, inputs.Profile, inputs.ValuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}

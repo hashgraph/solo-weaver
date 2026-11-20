@@ -3,6 +3,7 @@
 package blocknode
 
 import (
+	"context"
 	"fmt"
 	oslib "os"
 	"path"
@@ -32,7 +33,15 @@ import (
 // Retention thresholds and plugin/service-annotation injections follow.
 //
 // NOTE: Defense-in-depth path validation is applied even though the CLI layer also validates.
-func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
+func (m *Manager) ComputeValuesFile(ctx context.Context, profile string, valuesFile string) (string, error) {
+	// Resolve the plugin list first: a chart-backed preset (tier1-lfh/tier1-rfh) is
+	// read from the pulled chart's plugin-profile override, unless the operator
+	// overrode it via --plugins or a --values plugins.names. This must run before
+	// renderDefaultValues, whose storage decision keys off the resolved PluginList.
+	if err := m.resolvePluginList(ctx, valuesFile); err != nil {
+		return "", err
+	}
+
 	valuesContent, err := m.renderDefaultValues(profile)
 	if err != nil {
 		return "", err
@@ -108,12 +117,6 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		}
 	}
 
-	// The base template's plugins.names default must go through the same
-	// version-boundary registry as an explicit --plugin-preset (PluginListForPreset),
-	// or a no-preset install/upgrade keeps requesting plugin names the target chart
-	// version no longer registers (e.g. "verification", removed in chart 0.41.0).
-	defaultPluginNames := PluginListForPreset(PresetTier1LFH, m.blockNodeInputs.ChartVersion)
-
 	valuesTemplatePath := ValuesPath
 	if profile == models.ProfileLocal {
 		valuesTemplatePath = NanoValuesPath
@@ -135,7 +138,6 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		IncludePlugins          bool
 		IncludeApplicationState bool
 		HealthPort              string
-		DefaultPluginNames      string
 	}{
 		IncludeVerification:     includeVerification,
 		IncludePlugins:          includePlugins,
@@ -144,8 +146,7 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		// the port solo-weaver drops off-node (bn-health) and dials for statusz always
 		// matches the port the BN listens on, even if the upstream chart default
 		// changes underneath us.
-		HealthPort:         DefaultBlockNodeHealthPort,
-		DefaultPluginNames: defaultPluginNames,
+		HealthPort: DefaultBlockNodeHealthPort,
 	})
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to render block node values template")

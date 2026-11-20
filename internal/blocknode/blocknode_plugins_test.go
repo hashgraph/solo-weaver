@@ -3,592 +3,254 @@
 package blocknode
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
+	"context"
 	"testing"
 
-	"github.com/hashgraph/solo-weaver/pkg/deps"
-	"github.com/hashgraph/solo-weaver/pkg/semver"
+	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
-// ── blockNodePluginHistory registry invariants ────────────────────────────────
+const (
+	lfhProfileBody = "plugins:\n  names: \"health,facility-app-state,stream-publisher\"\n"
+	rfhProfileBody = "plugins:\n  names: \"health,facility-app-state,cloud-storage-archive\"\n"
+)
 
-func TestPluginHistory_AscendingVersionOrder(t *testing.T) {
-	for i := 1; i < len(blockNodePluginHistory); i++ {
-		prev := blockNodePluginHistory[i-1]
-		curr := blockNodePluginHistory[i]
-		require.NotEmpty(t, curr.MinVersion, "entry %d must have a MinVersion (only the first entry may be empty)", i)
-		// Always validate that curr.MinVersion is parseable, even when prev is the
-		// baseline (empty MinVersion). A typo here would cause configForVersion to
-		// silently skip the entry rather than returning an error.
-		currVer, err := semver.NewSemver(curr.MinVersion)
-		require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i, curr.MinVersion)
-		if prev.MinVersion == "" {
-			continue
-		}
-		prevVer, err := semver.NewSemver(prev.MinVersion)
-		require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i-1, prev.MinVersion)
-		assert.True(t, prevVer.LessThan(currVer), "entry %d (%s) must be > entry %d (%s)", i, curr.MinVersion, i-1, prev.MinVersion)
-	}
-}
-
-func TestPluginHistory_AllKnownPresetsInEveryEntry(t *testing.T) {
-	knownPresets := []string{PresetTier1LFH, PresetTier1RFH}
-	for i, cfg := range blockNodePluginHistory {
-		for _, preset := range knownPresets {
-			assert.NotEmpty(t, cfg.Presets[preset], "entry %d (MinVersion=%q) missing preset %q", i, cfg.MinVersion, preset)
-		}
-	}
-}
-
-func TestPluginHistory_AllPluginsNonEmpty(t *testing.T) {
-	for i, cfg := range blockNodePluginHistory {
-		assert.NotEmpty(t, cfg.AllPlugins, "entry %d (MinVersion=%q) must have a non-empty AllPlugins list", i, cfg.MinVersion)
-	}
-}
-
-// ── AvailablePresets ─────────────────────────────────────────────────────────
-
-func TestAvailablePresets_ContainsExpectedPresets(t *testing.T) {
-	presets := AvailablePresets()
-	assert.Contains(t, presets, PresetTier1LFH)
-	assert.Contains(t, presets, PresetTier1RFH)
-	assert.Contains(t, presets, PresetCustom)
-	assert.Contains(t, presets, PresetNone)
-}
-
-// TestPresetNone_ResolvesToEmptyList locks in the contract that the "no override"
-// preset is not a known preset and yields an empty plugin list, so injectPluginsConfig
-// leaves the merged --values/chart-default plugins.names untouched.
-func TestPresetNone_ResolvesToEmptyList(t *testing.T) {
-	assert.False(t, IsKnownPreset(PresetNone), "PresetNone must not be a known preset")
-	assert.Empty(t, PluginListForPreset(PresetNone, ""), "PresetNone must resolve to an empty plugin list")
-	assert.Empty(t, PluginListForPreset(PresetNone, "0.35.0"), "PresetNone must resolve empty at any version")
-	assert.NotEmpty(t, PresetLabel(PresetNone), "PresetNone must have a display label")
-	// It must be absent from every version entry's Presets map.
-	for i, cfg := range blockNodePluginHistory {
-		_, ok := cfg.Presets[PresetNone]
-		assert.False(t, ok, "entry %d (MinVersion=%q) must not define PresetNone", i, cfg.MinVersion)
-	}
-}
-
-func TestAvailablePresets_ReturnsACopy(t *testing.T) {
-	a := AvailablePresets()
-	b := AvailablePresets()
-	a[0] = "mutated"
-	assert.NotEqual(t, "mutated", b[0], "AvailablePresets must return an independent copy")
-}
-
-// ── PluginListForPreset ──────────────────────────────────────────────────────
-
-func TestPluginListForPreset_Tier1LFH(t *testing.T) {
-	list := PluginListForPreset(PresetTier1LFH, "")
-	assert.NotEmpty(t, list)
-	assert.Contains(t, list, "facility-messaging")
-	assert.Contains(t, list, "blocks-file-historic")
-	assert.Contains(t, list, "blocks-file-recent")
-	assert.NotContains(t, list, "s3-archive")
-	assert.NotContains(t, list, "cloud-storage-archive")
-	assert.NotContains(t, list, "cloud-storage-expanded")
-}
-
-func TestPluginListForPreset_Tier1RFH_BN035Plus(t *testing.T) {
-	for _, ver := range []string{"", "0.35.0", "0.36.0", "1.0.0"} {
-		list := PluginListForPreset(PresetTier1RFH, ver)
-		assert.NotEmpty(t, list, "version=%q", ver)
-		assert.Contains(t, list, "cloud-storage-archive", "version=%q", ver)
-		assert.Contains(t, list, "cloud-storage-expanded", "version=%q", ver)
-		assert.NotContains(t, list, "s3-archive", "version=%q", ver)
-		assert.NotContains(t, list, "blocks-file-historic", "version=%q", ver)
-	}
-}
-
-func TestPluginListForPreset_Tier1RFH_LegacyBN(t *testing.T) {
-	for _, ver := range []string{"0.34.9", "0.30.0", "0.26.2"} {
-		list := PluginListForPreset(PresetTier1RFH, ver)
-		assert.NotEmpty(t, list, "version=%q", ver)
-		assert.Contains(t, list, "s3-archive", "version=%q", ver)
-		assert.NotContains(t, list, "cloud-storage-archive", "version=%q", ver)
-		assert.NotContains(t, list, "cloud-storage-expanded", "version=%q", ver)
-	}
-}
-
-// ── BN 0.37.1 roster-bootstrap boundary ──────────────────────────────────────
-
-// TestPluginListForPreset_BN0371_ExactLists pins the 0.37.1 preset strings to the
-// verbatim upstream values-overrides/plugin-profile-{lfh,rfh}.yaml so the injected
-// plugins.names is byte-identical to the chart default. 0.39.0 is the last version
-// in this bracket — 0.39.1 renames verification.
-func TestPluginListForPreset_BN0371_ExactLists(t *testing.T) {
-	const wantLFH = "backfill,block-access-service,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber,verification"
-	const wantRFH = "backfill,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,verification"
-	for _, ver := range []string{"0.37.1", "0.38.0", "0.39.0"} {
-		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
-		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
-	}
-}
-
-// ── BN 0.39.1 verification → block-verification boundary ─────────────────────
-
-// TestPluginListForPreset_BN0391_ExactLists pins the 0.39.1 preset strings to the
-// verbatim upstream plugin-profile-{lfh,rfh}.yaml. The bracket runs up to
-// every 0.45.x and includes the default BLOCK_NODE_VERSION in pkg/deps.
-func TestPluginListForPreset_BN0391_ExactLists(t *testing.T) {
-	const wantLFH = "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber"
-	const wantRFH = "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status"
-	for _, ver := range []string{"0.39.1", "0.40.0", "0.41.0", "0.44.3", "0.45.0-rc2", "0.45.0", "0.45.9", deps.BLOCK_NODE_VERSION} {
-		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
-		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
-	}
-}
-
-// TestPluginListForPreset_BN0391Boundary checks the rename in both directions, so a
-// future registry edit cannot quietly reintroduce the retired name at 0.39.1+ or
-// drop it from the versions that still expect it.
-func TestPluginListForPreset_BN0391Boundary(t *testing.T) {
-	for _, ver := range []string{"", "0.39.1", "0.40.0", "0.41.0"} {
-		for _, preset := range []string{PresetTier1LFH, PresetTier1RFH} {
-			list := PluginListForPreset(preset, ver)
-			assert.Contains(t, list, "block-verification", "preset=%q version=%q", preset, ver)
-			assertNoPluginNamed(t, list, "verification", preset, ver)
-		}
-	}
-	for _, ver := range []string{"0.37.1", "0.38.1", "0.39.0"} {
-		for _, preset := range []string{PresetTier1LFH, PresetTier1RFH} {
-			list := PluginListForPreset(preset, ver)
-			assert.NotContains(t, list, "block-verification", "preset=%q version=%q", preset, ver)
-			assert.Contains(t, list, "verification", "preset=%q version=%q", preset, ver)
-		}
-	}
-}
-
-// TestPluginsForVersion_BN0391Boundary verifies the TUI custom multi-select offers
-// block-verification only at 0.39.1+, and never offers both names at once.
-func TestPluginsForVersion_BN0391Boundary(t *testing.T) {
-	for _, ver := range []string{"", "0.39.1", "0.40.0", "0.41.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.Contains(t, plugins, "block-verification", "version=%q", ver)
-		assert.NotContains(t, plugins, "verification", "version=%q", ver)
-	}
-	for _, ver := range []string{"0.37.1", "0.38.1", "0.39.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.Contains(t, plugins, "verification", "version=%q", ver)
-		assert.NotContains(t, plugins, "block-verification", "version=%q", ver)
-	}
-}
-
-// ── BN 0.46.0 facility-app-state boundary ────────────────────────────────────
-
-// TestPluginListForPreset_BN046_ExactLists pins the 0.46.0 preset strings to the
-// verbatim upstream plugin-profile-{lfh,rfh}.yaml. "" resolves to the latest entry.
-func TestPluginListForPreset_BN046_ExactLists(t *testing.T) {
-	const wantLFH = "backfill,block-access-service,block-verification,blocks-file-historic,blocks-file-recent,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status,stream-publisher,stream-subscriber"
-	const wantRFH = "backfill,block-verification,cloud-storage-archive,cloud-storage-expanded,facility-app-state,facility-messaging,health,roster-bootstrap-rsa,roster-bootstrap-tss,server-status"
-	for _, ver := range []string{"", "0.46.0-SNAPSHOT", "0.46.0-alpha1", "0.46.0-rc1", "0.46.0", "1.0.0"} {
-		assert.Equal(t, wantLFH, PluginListForPreset(PresetTier1LFH, ver), "LFH version=%q", ver)
-		assert.Equal(t, wantRFH, PluginListForPreset(PresetTier1RFH, ver), "RFH version=%q", ver)
-	}
-}
-
-// TestPluginsForVersion_BN046Boundary verifies the TUI custom multi-select offers
-// facility-app-state only from 0.46.0 prereleases on, never on 0.45.x.
-func TestPluginsForVersion_BN046Boundary(t *testing.T) {
-	for _, ver := range []string{"", "0.46.0-alpha1", "0.46.0", "1.0.0"} {
-		assert.Contains(t, PluginsForVersion(ver), "facility-app-state", "version=%q", ver)
-	}
-	for _, ver := range []string{"0.44.3", "0.45.0-rc2", "0.45.0"} {
-		assert.NotContains(t, PluginsForVersion(ver), "facility-app-state", "version=%q", ver)
-	}
-}
-
-// retiredPlugins maps a plugin name the block-node team retired to the first
-// MinVersion at which it must no longer be offered. Add a row whenever a plugin is
-// deprecated upstream; TestPluginHistory_NoRetiredPluginsAtOrAboveBound then holds
-// every current and future registry entry to it.
-var retiredPlugins = map[string]string{
-	"s3-archive":   "0.35.0",
-	"verification": "0.39.1",
-}
-
-// TestPluginHistory_NoRetiredPluginsAtOrAboveBound is the invariant that catches a
-// missed rename: no entry at or above a plugin's retirement bound may offer that
-// plugin, in either a preset or the TUI list. Without it, a new BN release that
-// retires a plugin can be merged with the old name still live in the newest entry.
-func TestPluginHistory_NoRetiredPluginsAtOrAboveBound(t *testing.T) {
-	for name, bound := range retiredPlugins {
-		boundVer, err := semver.NewSemver(bound)
-		require.NoError(t, err, "retirement bound %q for %q must be valid semver", bound, name)
-		for i, cfg := range blockNodePluginHistory {
-			if cfg.MinVersion == "" {
-				continue
-			}
-			entryVer, err := semver.NewSemver(cfg.MinVersion)
-			require.NoError(t, err, "entry %d MinVersion %q must be valid semver", i, cfg.MinVersion)
-			if entryVer.LessThan(boundVer) {
-				continue
-			}
-			for preset, list := range cfg.Presets {
-				assertNoPluginNamed(t, list, name, preset, cfg.MinVersion)
-			}
-			assert.NotContains(t, cfg.AllPlugins, name,
-				"entry %d (MinVersion=%q) must not offer retired plugin %q (retired at %s)", i, cfg.MinVersion, name, bound)
-		}
-	}
-}
-
-// assertNoPluginNamed asserts that a comma-separated plugins.names list has no entry
-// exactly equal to name. A substring check is not enough: "verification" is a
-// substring of "block-verification", so assert.NotContains on the joined string
-// would fail against the very list that fixes the rename.
-func assertNoPluginNamed(t *testing.T, list, name, preset, version string) {
+// writeFixtureChart packages a minimal block-node chart .tgz carrying the given
+// files (keyed by their in-chart path, e.g. "values-overrides/plugin-profile-lfh.yaml")
+// and returns the archive path, mirroring what PullChart would hand back.
+func writeFixtureChart(t *testing.T, version string, files map[string]string) string {
 	t.Helper()
-	for _, entry := range strings.Split(list, ",") {
-		assert.NotEqual(t, name, strings.TrimSpace(entry),
-			"preset=%q version=%q must not contain plugin %q (list: %s)", preset, version, name, list)
+	ch := &chart.Chart{
+		Metadata: &chart.Metadata{APIVersion: "v2", Name: "block-node-server", Version: version},
+	}
+	for name, body := range files {
+		ch.Files = append(ch.Files, &chart.File{Name: name, Data: []byte(body)})
+	}
+	p, err := chartutil.Save(ch, t.TempDir())
+	require.NoError(t, err)
+	return p
+}
+
+// ── Preset metadata ────────────────────────────────────────────────────────────
+
+func TestAvailablePresets(t *testing.T) {
+	got := AvailablePresets()
+	assert.Equal(t, []string{PresetLFH, PresetRFH, PresetCustom, PresetNone}, got)
+}
+
+func TestCanonicalPreset(t *testing.T) {
+	assert.Equal(t, PresetLFH, CanonicalPreset(PresetTier1LFH), "tier1-lfh alias -> lfh")
+	assert.Equal(t, PresetRFH, CanonicalPreset(PresetTier1RFH), "tier1-rfh alias -> rfh")
+	// Canonical and non-alias values pass through unchanged.
+	for _, p := range []string{PresetLFH, PresetRFH, PresetCustom, PresetNone, "", "bogus"} {
+		assert.Equal(t, p, CanonicalPreset(p))
 	}
 }
 
-// TestPluginListForPreset_Pre0371_NoRosterBootstrap verifies that chart versions
-// below 0.37.1 keep resolving to the 0.35.0 bracket: no roster-bootstrap plugins,
-// and the RFH preset still carries the plugins that 0.37.1 trims.
-func TestPluginListForPreset_Pre0371_NoRosterBootstrap(t *testing.T) {
-	for _, ver := range []string{"0.35.0", "0.36.0", "0.37.0"} {
-		lfh := PluginListForPreset(PresetTier1LFH, ver)
-		rfh := PluginListForPreset(PresetTier1RFH, ver)
-		assert.NotContains(t, lfh, "roster-bootstrap", "LFH version=%q", ver)
-		assert.NotContains(t, rfh, "roster-bootstrap", "RFH version=%q", ver)
-		for _, kept := range []string{"block-access-service", "stream-publisher", "stream-subscriber", "blocks-file-recent"} {
-			assert.Contains(t, rfh, kept, "RFH version=%q must still carry %q below 0.37.1", ver, kept)
+func TestNormalizePluginList(t *testing.T) {
+	cases := map[string]string{
+		"a,b,c":         "a,b,c",
+		"a b c":         "a,b,c",
+		"a, b ,c":       "a,b,c",
+		" a  b , c ":    "a,b,c",
+		"a,,b":          "a,b",
+		"":              "",
+		"   ":           "",
+		"solo-a solo-b": "solo-a,solo-b",
+	}
+	for in, want := range cases {
+		assert.Equalf(t, want, NormalizePluginList(in), "NormalizePluginList(%q)", in)
+	}
+}
+
+func TestIsChartBackedPreset(t *testing.T) {
+	assert.True(t, IsChartBackedPreset(PresetLFH))
+	assert.True(t, IsChartBackedPreset(PresetRFH))
+	assert.True(t, IsChartBackedPreset(PresetTier1LFH), "legacy alias is chart-backed")
+	assert.True(t, IsChartBackedPreset(PresetTier1RFH), "legacy alias is chart-backed")
+	// Any profile name is chart-backed; the chart validates existence at resolve time.
+	assert.True(t, IsChartBackedPreset("archive"), "unknown-to-this-binary profiles are still chart-backed")
+	assert.False(t, IsChartBackedPreset(PresetCustom), "custom is not chart-resolved")
+	assert.False(t, IsChartBackedPreset(PresetNone), "none is not chart-resolved")
+	assert.False(t, IsChartBackedPreset(""), "empty is not chart-resolved")
+}
+
+func TestChartProfileFileName(t *testing.T) {
+	assert.Equal(t, "plugin-profile-lfh.yaml", chartProfileFileName(PresetLFH))
+	assert.Equal(t, "plugin-profile-rfh.yaml", chartProfileFileName(PresetRFH))
+	assert.Equal(t, "plugin-profile-archive.yaml", chartProfileFileName("archive"))
+}
+
+func TestPresetLabel(t *testing.T) {
+	assert.Contains(t, PresetLabel(PresetLFH), "Local Full History")
+	assert.Contains(t, PresetLabel(PresetTier1LFH), "Local Full History", "alias resolves to the canonical label")
+	assert.Equal(t, "unknown-preset", PresetLabel("unknown-preset"), "unknown IDs echo back")
+}
+
+// ── Profile YAML parsing ─────────────────────────────────────────────────────────
+
+func TestPluginNamesFromProfileYAML(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		names, err := pluginNamesFromProfileYAML([]byte(lfhProfileBody))
+		require.NoError(t, err)
+		assert.Equal(t, "health,facility-app-state,stream-publisher", names)
+	})
+	t.Run("trims surrounding whitespace", func(t *testing.T) {
+		names, err := pluginNamesFromProfileYAML([]byte("plugins:\n  names: \"  a,b  \"\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "a,b", names)
+	})
+	t.Run("missing names returns empty", func(t *testing.T) {
+		names, err := pluginNamesFromProfileYAML([]byte("plugins:\n  mavenImage: x\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "", names)
+	})
+	t.Run("malformed yaml errors", func(t *testing.T) {
+		_, err := pluginNamesFromProfileYAML([]byte("plugins: : :\n"))
+		require.Error(t, err)
+	})
+}
+
+// ── resolvePluginList precedence ─────────────────────────────────────────────────
+
+func TestResolvePluginList_ExplicitListKept(t *testing.T) {
+	// A custom list triggers a best-effort pull to warn about unknown names, but the
+	// explicit list itself must be left intact.
+	tgz := writeFixtureChart(t, "0.46.0", map[string]string{
+		"values-overrides/plugin-profile-all.yaml": "plugins:\n  names: \"x,y\"\n",
+	})
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: PresetCustom,
+		PluginList:   "x,y,z",
+	})
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
+	require.NoError(t, m.resolvePluginList(context.Background(), ""))
+	assert.Equal(t, "x,y,z", m.blockNodeInputs.PluginList, "explicit --plugins must be left intact")
+}
+
+func TestResolvePluginList_ValuesFileOverrideSkipsPull(t *testing.T) {
+	valuesFile := writeValuesFile(t, "plugins:\n  names: \"from-values\"\n")
+	m, _ := managerWithHelmMock(t, models.BlockNodeInputs{PluginPreset: PresetTier1LFH})
+	require.NoError(t, m.resolvePluginList(context.Background(), valuesFile))
+	assert.Equal(t, "", m.blockNodeInputs.PluginList,
+		"a --values plugins.names override wins over a preset; weaver injects nothing")
+}
+
+func TestResolvePluginList_NoneReadsChartDefault(t *testing.T) {
+	// none / unset injects the chart's own values.yaml default so an upgrade stays
+	// version-correct instead of Helm --reuse-values keeping a stale deployed list.
+	ch := &chart.Chart{
+		Metadata: &chart.Metadata{APIVersion: "v2", Name: "block-node-server", Version: "0.46.0"},
+		// Save writes values.yaml from Raw (not from Values), so seed the default there.
+		Raw: []*chart.File{{Name: "values.yaml", Data: []byte("plugins:\n  names: \"health,facility-app-state\"\n")}},
+	}
+	tgz, err := chartutil.Save(ch, t.TempDir())
+	require.NoError(t, err)
+
+	for _, preset := range []string{PresetNone, ""} {
+		name := preset
+		if name == "" {
+			name = "unset"
 		}
+		t.Run(name, func(t *testing.T) {
+			m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+				Chart:        "oci://example/block-node-server",
+				ChartVersion: "0.46.0",
+				PluginPreset: preset,
+			})
+			hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
+			require.NoError(t, m.resolvePluginList(context.Background(), ""))
+			assert.Equal(t, "health,facility-app-state", m.blockNodeInputs.PluginList)
+		})
 	}
 }
 
-// TestPluginsForVersion_BN0371Boundary verifies the TUI custom multi-select menu
-// gains roster-bootstrap only at 0.37.1+.
-func TestPluginsForVersion_BN0371Boundary(t *testing.T) {
-	for _, ver := range []string{"", "0.37.1", "0.38.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.Contains(t, plugins, "roster-bootstrap-rsa", "version=%q", ver)
-		assert.Contains(t, plugins, "roster-bootstrap-tss", "version=%q", ver)
-	}
-	for _, ver := range []string{"0.35.0", "0.37.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.NotContains(t, plugins, "roster-bootstrap-rsa", "version=%q", ver)
-		assert.NotContains(t, plugins, "roster-bootstrap-tss", "version=%q", ver)
-	}
+// TestResolvePluginList_NoneFallsBackWhenDefaultUnreadable verifies none degrades to
+// leaving the list unset (Helm/chart default) when the chart pull fails.
+func TestResolvePluginList_NoneFallsBackWhenDefaultUnreadable(t *testing.T) {
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: PresetNone,
+	})
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", errorx.ExternalError.New("registry down"))
+	require.NoError(t, m.resolvePluginList(context.Background(), ""), "none must not hard-fail on a pull error")
+	assert.Equal(t, "", m.blockNodeInputs.PluginList)
 }
 
-// TestPluginListForPreset_UpgradeScenario documents the expected behaviour when an
-// operator upgrades from a pre-0.35 chart to 0.35+. solo-weaver reads the stored
-// PluginPreset ("tier1-rfh") and calls PluginListForPreset with the new target
-// chart version; the returned list must contain the renamed cloud-storage plugins
-// even though the previous install used s3-archive.
-func TestPluginListForPreset_UpgradeScenario(t *testing.T) {
+func TestResolvePluginList_PresetReadsChartProfile(t *testing.T) {
 	cases := []struct {
-		name            string
-		installedPreset string
-		targetVersion   string
-		wantContains    []string
-		wantAbsent      []string
+		preset   string
+		profile  string
+		body     string
+		wantList string
 	}{
-		{
-			name:            "RFH upgrade pre-0.35 to 0.35 switches plugin names",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.35.0",
-			wantContains:    []string{"cloud-storage-archive", "cloud-storage-expanded"},
-			wantAbsent:      []string{"s3-archive"},
-		},
-		{
-			name:            "RFH upgrade stays on pre-0.35 keeps legacy name",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.34.9",
-			wantContains:    []string{"s3-archive"},
-			wantAbsent:      []string{"cloud-storage-archive", "cloud-storage-expanded"},
-		},
-		{
-			name:            "LFH upgrade is unaffected by the 0.35 boundary",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.35.0",
-			wantContains:    []string{"blocks-file-historic", "blocks-file-recent"},
-			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
-		},
-		{
-			name:            "RFH upgrade to 0.37.1 adds roster-bootstrap and drops trimmed plugins",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.37.1",
-			wantContains:    []string{"roster-bootstrap-rsa", "roster-bootstrap-tss", "cloud-storage-archive", "cloud-storage-expanded"},
-			wantAbsent:      []string{"s3-archive", "block-access-service", "stream-publisher", "stream-subscriber", "blocks-file-recent"},
-		},
-		{
-			name:            "RFH target 0.37.0 stays pre-0.37.1 (no roster-bootstrap)",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.37.0",
-			wantContains:    []string{"cloud-storage-archive", "cloud-storage-expanded", "blocks-file-recent", "block-access-service"},
-			wantAbsent:      []string{"roster-bootstrap-rsa", "roster-bootstrap-tss"},
-		},
-		{
-			name:            "LFH upgrade to 0.37.1 adds roster-bootstrap and keeps file plugins",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.37.1",
-			wantContains:    []string{"roster-bootstrap-rsa", "roster-bootstrap-tss", "blocks-file-historic", "blocks-file-recent"},
-			wantAbsent:      []string{"s3-archive", "cloud-storage-archive", "cloud-storage-expanded"},
-		},
-		{
-			name:            "RFH upgrade to 0.39.1 renames verification",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.39.1",
-			wantContains:    []string{"block-verification", "cloud-storage-archive", "cloud-storage-expanded"},
-			wantAbsent:      []string{"verification", "s3-archive"},
-		},
-		{
-			name:            "LFH upgrade to 0.39.1 renames verification",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.39.1",
-			wantContains:    []string{"block-verification", "blocks-file-historic", "blocks-file-recent"},
-			wantAbsent:      []string{"verification", "cloud-storage-archive"},
-		},
-		{
-			name:            "LFH target 0.39.0 stays pre-0.39.1 (legacy verification name)",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.39.0",
-			wantContains:    []string{"verification", "roster-bootstrap-rsa"},
-			wantAbsent:      []string{"block-verification"},
-		},
-		{
-			name:            "RFH upgrade from pre-0.35 straight to 0.41.0 crosses both renames",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.41.0",
-			wantContains:    []string{"block-verification", "cloud-storage-archive", "cloud-storage-expanded", "roster-bootstrap-rsa"},
-			wantAbsent:      []string{"verification", "s3-archive"},
-		},
-		{
-			name:            "LFH upgrade to 0.46.0 adds facility-app-state",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.46.0",
-			wantContains:    []string{"facility-app-state", "block-verification", "blocks-file-historic"},
-			wantAbsent:      []string{"verification"},
-		},
-		{
-			name:            "RFH upgrade to 0.46.0-alpha1 adds facility-app-state",
-			installedPreset: PresetTier1RFH,
-			targetVersion:   "0.46.0-alpha1",
-			wantContains:    []string{"facility-app-state", "cloud-storage-archive"},
-			wantAbsent:      []string{"s3-archive"},
-		},
-		{
-			name:            "LFH target 0.45.0 stays pre-0.46 (no facility-app-state)",
-			installedPreset: PresetTier1LFH,
-			targetVersion:   "0.45.0",
-			wantContains:    []string{"block-verification"},
-			wantAbsent:      []string{"facility-app-state"},
-		},
+		{PresetLFH, "values-overrides/plugin-profile-lfh.yaml", lfhProfileBody, "health,facility-app-state,stream-publisher"},
+		{PresetTier1LFH, "values-overrides/plugin-profile-lfh.yaml", lfhProfileBody, "health,facility-app-state,stream-publisher"},
+		{PresetRFH, "values-overrides/plugin-profile-rfh.yaml", rfhProfileBody, "health,facility-app-state,cloud-storage-archive"},
+		{PresetTier1RFH, "values-overrides/plugin-profile-rfh.yaml", rfhProfileBody, "health,facility-app-state,cloud-storage-archive"},
+		// Zero-touch: a profile name this binary has no const for still resolves,
+		// because the filename is derived and validated against the chart.
+		{"archive", "values-overrides/plugin-profile-archive.yaml", "plugins:\n  names: \"backfill,cloud-storage-archive\"\n", "backfill,cloud-storage-archive"},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			list := PluginListForPreset(tc.installedPreset, tc.targetVersion)
-			require.NotEmpty(t, list)
-			for _, want := range tc.wantContains {
-				assert.Contains(t, list, want)
-			}
-			for _, absent := range tc.wantAbsent {
-				assertNoPluginNamed(t, list, absent, tc.installedPreset, tc.targetVersion)
-			}
+		t.Run(tc.preset, func(t *testing.T) {
+			tgz := writeFixtureChart(t, "0.46.0", map[string]string{tc.profile: tc.body})
+			m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+				Chart:        "oci://example/block-node-server",
+				ChartVersion: "0.46.0",
+				PluginPreset: tc.preset,
+			})
+			hm.EXPECT().
+				PullChart(gomock.Any(), gomock.Any(), "oci://example/block-node-server", "0.46.0").
+				Return(tgz, nil)
+
+			require.NoError(t, m.resolvePluginList(context.Background(), ""))
+			assert.Equal(t, tc.wantList, m.blockNodeInputs.PluginList)
 		})
 	}
 }
 
-func TestPluginListForPreset_InvalidVersionFallsToLatest(t *testing.T) {
-	list := PluginListForPreset(PresetTier1RFH, "not-a-semver")
-	assert.Contains(t, list, "cloud-storage-archive", "invalid semver must fall back to the latest config")
+func TestResolvePluginList_PullError(t *testing.T) {
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: PresetTier1LFH,
+	})
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return("", errorx.ExternalError.New("registry down"))
+
+	err := m.resolvePluginList(context.Background(), "")
+	require.Error(t, err)
+	assert.Empty(t, m.blockNodeInputs.PluginList)
 }
 
-func TestPluginListForPreset_UnknownReturnsEmpty(t *testing.T) {
-	assert.Empty(t, PluginListForPreset("does-not-exist", ""))
-}
+func TestResolvePluginList_UnknownPresetListsAvailable(t *testing.T) {
+	// A chart that ships rfh + minimal but not the requested profile.
+	tgz := writeFixtureChart(t, "0.46.0", map[string]string{
+		"values-overrides/plugin-profile-rfh.yaml":     rfhProfileBody,
+		"values-overrides/plugin-profile-minimal.yaml": "plugins:\n  names: \"health\"\n",
+	})
+	m, hm := managerWithHelmMock(t, models.BlockNodeInputs{
+		Chart:        "oci://example/block-node-server",
+		ChartVersion: "0.46.0",
+		PluginPreset: "bogus",
+	})
+	hm.EXPECT().PullChart(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(tgz, nil)
 
-func TestPluginListForPreset_CustomReturnsEmpty(t *testing.T) {
-	assert.Empty(t, PluginListForPreset(PresetCustom, ""), "custom preset has no predefined plugin list")
-}
-
-// ── PluginsForVersion ────────────────────────────────────────────────────────
-
-func TestPluginsForVersion_BN035Plus(t *testing.T) {
-	for _, ver := range []string{"", "0.35.0", "0.36.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.Contains(t, plugins, "cloud-storage-archive", "version=%q", ver)
-		assert.Contains(t, plugins, "cloud-storage-expanded", "version=%q", ver)
-		assert.NotContains(t, plugins, "s3-archive", "version=%q", ver)
-	}
-}
-
-func TestPluginsForVersion_LegacyBN(t *testing.T) {
-	for _, ver := range []string{"0.34.9", "0.30.0"} {
-		plugins := PluginsForVersion(ver)
-		assert.Contains(t, plugins, "s3-archive", "version=%q", ver)
-		assert.NotContains(t, plugins, "cloud-storage-archive", "version=%q", ver)
-		assert.NotContains(t, plugins, "cloud-storage-expanded", "version=%q", ver)
-	}
-}
-
-func TestPluginsForVersion_ReturnsACopy(t *testing.T) {
-	a := PluginsForVersion("")
-	b := PluginsForVersion("")
-	a[0] = "mutated"
-	assert.NotEqual(t, "mutated", b[0], "PluginsForVersion must return an independent copy")
-}
-
-// ── PresetLabel ──────────────────────────────────────────────────────────────
-
-func TestPresetLabel_KnownPresets(t *testing.T) {
-	assert.NotEmpty(t, PresetLabel(PresetTier1LFH))
-	assert.NotEmpty(t, PresetLabel(PresetTier1RFH))
-	assert.NotEmpty(t, PresetLabel(PresetCustom))
-}
-
-func TestPresetLabel_UnknownReturnsFallback(t *testing.T) {
-	assert.Equal(t, "unknown-preset", PresetLabel("unknown-preset"))
-}
-
-// ── IsKnownPreset ────────────────────────────────────────────────────────────
-
-func TestIsKnownPreset_RecognisedPresets(t *testing.T) {
-	assert.True(t, IsKnownPreset(PresetTier1LFH))
-	assert.True(t, IsKnownPreset(PresetTier1RFH))
-}
-
-func TestIsKnownPreset_CustomIsFalse(t *testing.T) {
-	assert.False(t, IsKnownPreset(PresetCustom), "custom has no predefined list so IsKnownPreset must be false")
-}
-
-func TestIsKnownPreset_UnknownIsFalse(t *testing.T) {
-	assert.False(t, IsKnownPreset("not-a-preset"))
-}
-
-// ── injectPluginsConfig ──────────────────────────────────────────────────────
-
-// injectPluginsConfig_ReturnsUnchangedWhenPluginListEmpty verifies that an empty
-// PluginList leaves the values content untouched.
-func TestInjectPluginsConfig_NoOpWhenPluginListEmpty(t *testing.T) {
-	m := managerWithInputs(t, "", "")
-	input := []byte("plugins:\n  names: original-list\n")
-	result, err := m.injectPluginsConfig(input)
-	require.NoError(t, err)
-	assert.Equal(t, string(input), string(result))
-}
-
-func TestInjectPluginsConfig_SetsPluginsNames(t *testing.T) {
-	m := managerWithInputs(t, PresetTier1LFH, PluginListForPreset(PresetTier1LFH, ""))
-	input := []byte("plugins:\n  mavenImage: some-image\n")
-
-	result, err := m.injectPluginsConfig(input)
-	require.NoError(t, err)
-
-	var vals map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(result, &vals))
-
-	plugins, ok := vals["plugins"].(map[string]interface{})
-	require.True(t, ok, "plugins key must be a map")
-	assert.Equal(t, PluginListForPreset(PresetTier1LFH, ""), plugins["names"])
-}
-
-func TestInjectPluginsConfig_CreatesPluginsMapWhenAbsent(t *testing.T) {
-	m := managerWithInputs(t, PresetTier1RFH, PluginListForPreset(PresetTier1RFH, ""))
-	input := []byte("blockNode:\n  config: {}\n")
-
-	result, err := m.injectPluginsConfig(input)
-	require.NoError(t, err)
-
-	var vals map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(result, &vals))
-
-	plugins, ok := vals["plugins"].(map[string]interface{})
-	require.True(t, ok, "plugins map must be created when absent")
-	assert.Equal(t, PluginListForPreset(PresetTier1RFH, ""), plugins["names"])
-}
-
-func TestInjectPluginsConfig_OverridesExistingPluginsNames(t *testing.T) {
-	newList := "facility-messaging,health"
-	m := managerWithInputs(t, PresetCustom, newList)
-	input := []byte("plugins:\n  names: old-list\n  mavenImage: img\n")
-
-	result, err := m.injectPluginsConfig(input)
-	require.NoError(t, err)
-
-	var vals map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(result, &vals))
-
-	plugins := vals["plugins"].(map[string]interface{})
-	assert.Equal(t, newList, plugins["names"])
-	assert.Equal(t, "img", plugins["mavenImage"], "existing sibling keys must be preserved")
-}
-
-func TestInjectPluginsConfig_CustomListNoWhitespace(t *testing.T) {
-	list := "facility-messaging,health,server-status"
-	m := managerWithInputs(t, PresetCustom, list)
-	input := []byte("{}\n")
-
-	result, err := m.injectPluginsConfig(input)
-	require.NoError(t, err)
-
-	var vals map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(result, &vals))
-
-	names := vals["plugins"].(map[string]interface{})["names"].(string)
-	for _, entry := range strings.Split(names, ",") {
-		assert.Equal(t, strings.TrimSpace(entry), entry, "no surrounding whitespace per plugin entry")
-	}
-}
-
-// ── ValuesFileDefinesPlugins ───────────────────────────────────────────────────
-
-func TestValuesFileDefinesPlugins(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{"scalar string", "plugins:\n  names: \"health,verification\"\n", true},
-		{"yaml sequence", "plugins:\n  names:\n    - health\n    - verification\n", true},
-		// An explicit empty string, empty sequence, or null still counts as "defined":
-		// the operator touched the key, and Helm's CoalesceTables treats an operator
-		// null as an instruction to delete the chart's default plugins.names entirely
-		// (see ValuesFileDefinesPlugins doc comment) — that's deliberate operator intent,
-		// not "no opinion", so it must not be clobbered by a preset-derived list.
-		{"empty string", "plugins:\n  names: \"\"\n", true},
-		{"empty sequence", "plugins:\n  names: []\n", true},
-		{"explicit null", "plugins:\n  names: null\n", true},
-		{"names absent", "plugins:\n  mavenImage: img\n", false},
-		{"plugins absent", "blockNode:\n  config: {}\n", false},
-		{"unparseable yaml", "plugins: : :\n  - [\n", false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "values.yaml")
-			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o600))
-			assert.Equal(t, tc.want, ValuesFileDefinesPlugins(path))
-		})
-	}
-}
-
-func TestValuesFileDefinesPlugins_EmptyPathIsFalse(t *testing.T) {
-	assert.False(t, ValuesFileDefinesPlugins(""))
-}
-
-func TestValuesFileDefinesPlugins_MissingFileIsFalse(t *testing.T) {
-	assert.False(t, ValuesFileDefinesPlugins(filepath.Join(t.TempDir(), "does-not-exist.yaml")))
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// managerWithInputs builds a minimal Manager with PluginPreset and PluginList set.
-func managerWithInputs(t *testing.T, preset, list string) *Manager {
-	t.Helper()
-	m := &Manager{}
-	m.blockNodeInputs.PluginPreset = preset
-	m.blockNodeInputs.PluginList = list
-	return m
+	err := m.resolvePluginList(context.Background(), "")
+	require.Error(t, err)
+	// The error names the bad preset and lists the profiles the chart does ship.
+	assert.Contains(t, err.Error(), "bogus")
+	assert.Contains(t, err.Error(), "minimal")
+	assert.Contains(t, err.Error(), "rfh")
+	assert.Empty(t, m.blockNodeInputs.PluginList)
 }

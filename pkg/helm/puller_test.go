@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 func TestPullAndVerify_UnsupportedAlgorithm(t *testing.T) {
@@ -70,6 +72,31 @@ func TestIsTransientChartFetchError(t *testing.T) {
 			assert.Equal(t, tc.want, isTransientChartFetchError(tc.err))
 		})
 	}
+}
+
+func TestPullChart_EmptyDestDir(t *testing.T) {
+	hm := newTestHelmManager(t)
+	_, err := hm.PullChart(context.Background(), "", "oci://example/block-node-server", "0.46.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "destDir is empty")
+}
+
+func TestPullChart_ReusesCachedArchive(t *testing.T) {
+	hm := newTestHelmManager(t)
+	destDir := t.TempDir()
+	const chartRef = "oci://example/block-node-server"
+	const version = "0.46.0"
+
+	// Pre-seed the cache with a valid chart archive, named as `helm pull` would name it.
+	ch := &chart.Chart{Metadata: &chart.Metadata{APIVersion: "v2", Name: "block-node-server", Version: version}}
+	saved, err := chartutil.Save(ch, destDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(destDir, "block-node-server-"+version+".tgz"), saved)
+
+	// Cache hit: returns the existing archive without any network pull.
+	got, err := hm.PullChart(context.Background(), destDir, chartRef, version)
+	require.NoError(t, err)
+	assert.Equal(t, saved, got)
 }
 
 func TestWithChartPullAttempts(t *testing.T) {

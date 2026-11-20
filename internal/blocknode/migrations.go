@@ -113,7 +113,7 @@ func buildMigrationUpgradeStep(
 				Msg("All storage PV/PVCs created, upgrading chart to target version")
 
 			// Compute values file for the final target version (all storages now exist)
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			valuesFilePath, err := manager.ComputeValuesFile(ctx, profile, valuesFile)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(
 					errorx.IllegalState.Wrap(err, "failed to compute values file for target version")))
@@ -145,7 +145,7 @@ func buildMigrationUpgradeStep(
 			manager.blockNodeInputs.ChartVersion = installedVersion
 			defer func() { manager.blockNodeInputs.ChartVersion = originalVersion }()
 
-			valuesFilePath, err := manager.ComputeValuesFile(profile, valuesFile)
+			valuesFilePath, err := manager.ComputeValuesFile(ctx, profile, valuesFile)
 			if err != nil {
 				l.Error().Err(err).Msg("Rollback failed: could not compute values file")
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))

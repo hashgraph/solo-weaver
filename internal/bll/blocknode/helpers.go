@@ -93,11 +93,24 @@ func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
 				Msg("Persisted block node storage base path into runtime state")
 			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
 		}
-		if effectiveInputs.Custom.PluginPreset != "" {
-			logx.As().Debug().Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+		if preset := effectiveInputs.Custom.PluginPreset; preset != "" {
+			logx.As().Debug().Str("pluginPreset", preset).
 				Msg("Persisted block node plugin preset into runtime state")
-			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+			st.BlockNodeState.PluginPreset = preset
+			// Switching to a non-custom preset clears any previously stored custom list:
+			// a chart-backed preset (tier1-lfh/tier1-rfh) or "none" owns the plugin set
+			// (chart profile or chart default), so state must not keep a stale custom list
+			// beside the new preset. A preset left empty (e.g. a reconfigure that does not
+			// touch plugins) preserves whatever is stored.
+			if preset != bnpkg.PresetCustom {
+				st.BlockNodeState.PluginList = ""
+			}
 		}
+		// Persist the plugin list only when non-empty, which is the custom case: the
+		// explicit --plugins list is the operator's bespoke choice and cannot be
+		// re-derived from a preset. Chart-backed presets (tier1-lfh/tier1-rfh) leave
+		// PluginList empty here — they are re-resolved from the chart at each deploy,
+		// so no name snapshot is stored for them.
 		if effectiveInputs.Custom.PluginList != "" {
 			logx.As().Debug().Str("pluginList", effectiveInputs.Custom.PluginList).
 				Msg("Persisted block node plugin list into runtime state")

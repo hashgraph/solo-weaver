@@ -40,6 +40,14 @@ type Manager interface {
 	// own deadlines fire.
 	PullAndVerify(ctx context.Context, destDir, chartRef, version, algorithm, expectedChecksum string) (string, error)
 
+	// PullChart pulls a Helm chart into destDir WITHOUT integrity verification and
+	// returns the local .tgz path. Unlike PullAndVerify it carries no catalog
+	// checksum, so it is only for charts whose version the operator selects at
+	// runtime (e.g. the block-node chart) where weaver needs to read packaged
+	// files — such as values-overrides — rather than pin a release. The same
+	// ctx caveat as PullAndVerify applies: the pull is not cancellable.
+	PullChart(ctx context.Context, destDir, chartRef, version string) (string, error)
+
 	// InstallChart installs a Helm chart with the given options
 	InstallChart(ctx context.Context, releaseName, chartRef, chartVersion, namespace string, o InstallChartOptions) (*release.Release, error)
 

@@ -141,7 +141,7 @@ func TestNodeSpecValidationWithRunningNode(t *testing.T) {
 			name:             "Block node mainnet RFH validation when node is not running",
 			nodeType:         models.NodeTypeBlock,
 			profile:          models.ProfileMainnet,
-			options:          map[string]any{"preset": "tier1-rfh"},
+			options:          map[string]any{"preset": "rfh"},
 			hostProfile:      NewMockHostProfileWithNodeStatus("ubuntu", "20.04", 36, 322, 200, false), // 36 cores, 257GB available (322*0.8), 200GB storage
 			nodeRunning:      false,
 			expectValidation: true,
@@ -263,7 +263,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 			name:              "Block node mainnet RFH with sufficient resources",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
-			options:           map[string]any{"preset": "tier1-rfh"},
+			options:           map[string]any{"preset": "rfh"},
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 36, 322, 200), // 36 cores, 257GB available (322*0.8), 200GB storage
 			expectedOS:        true,
 			expectedCPU:       true,
@@ -274,7 +274,7 @@ func TestNodeSpecWithMockHostProfile(t *testing.T) {
 			name:              "Block node mainnet RFH with insufficient memory",
 			nodeType:          models.NodeTypeBlock,
 			profile:           models.ProfileMainnet,
-			options:           map[string]any{"preset": "tier1-rfh"},
+			options:           map[string]any{"preset": "rfh"},
 			actualHostProfile: NewMockHostProfile("ubuntu", "20.04", 36, 32, 200), // sufficient CPU (36>=32) and storage, insufficient memory (25GB available < 256GB)
 			expectedOS:        true,
 			expectedCPU:       true,

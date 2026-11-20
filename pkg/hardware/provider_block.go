@@ -32,7 +32,7 @@ var blockNodeSupportedOS = []string{OSUbuntu18, OSDebian10}
 
 // blockNodeRules encode hardware floors per (profile, preset) pair.
 //
-// LFH and RFH rules are mutually exclusive via not(presetPredicate("tier1-rfh")):
+// LFH and RFH rules are mutually exclusive via not(presetPredicate("rfh")):
 // RFH has lower CPU/memory/disk than LFH, so a shared baseline would prevent the
 // Max reducer from ever landing on the smaller RFH numbers.
 var blockNodeRules = []Rule{
@@ -42,33 +42,33 @@ var blockNodeRules = []Rule{
 		Then: Contribution{CpuCores: 3, MemoryGB: 1, StorageGB: 1, Why: "block node local development minimum"},
 	},
 
-	// testnet / perfnet — LFH (n2d-standard-16): default when no preset or tier1-lfh
+	// testnet / perfnet — LFH (n2d-standard-16): default when no preset or lfh
 	{
-		When: and(anyProfile(models.ProfileTestnet, models.ProfilePerfnet), not(presetPredicate("tier1-rfh"))),
+		When: and(anyProfile(models.ProfileTestnet, models.ProfilePerfnet), not(presetPredicate("rfh"))),
 		Then: Contribution{CpuCores: 16, MemoryGB: 64, StorageGB: 5000, Why: "block node testnet LFH: n2d-standard-16, 5 TB local disk"},
 	},
 	// testnet / perfnet — RFH (c3d-standard-8)
 	{
-		When: and(anyProfile(models.ProfileTestnet, models.ProfilePerfnet), presetPredicate("tier1-rfh")),
+		When: and(anyProfile(models.ProfileTestnet, models.ProfilePerfnet), presetPredicate("rfh")),
 		Then: Contribution{CpuCores: 8, MemoryGB: 32, StorageGB: 150, Why: "block node testnet RFH: c3d-standard-8, 150 GB local disk"},
 	},
 
-	// previewnet — LFH (n2d-standard-16): default when no preset or tier1-lfh
+	// previewnet — LFH (n2d-standard-16): default when no preset or lfh
 	{
-		When: and(profilePredicate(models.ProfilePreviewnet), not(presetPredicate("tier1-rfh"))),
+		When: and(profilePredicate(models.ProfilePreviewnet), not(presetPredicate("rfh"))),
 		Then: Contribution{CpuCores: 16, MemoryGB: 64, StorageGB: 3000, Why: "block node previewnet LFH: n2d-standard-16, 3 TB local disk"},
 	},
 	// previewnet — RFH (c3d-standard-8)
 	{
-		When: and(profilePredicate(models.ProfilePreviewnet), presetPredicate("tier1-rfh")),
+		When: and(profilePredicate(models.ProfilePreviewnet), presetPredicate("rfh")),
 		Then: Contribution{CpuCores: 8, MemoryGB: 32, StorageGB: 150, Why: "block node previewnet RFH: c3d-standard-8, 150 GB local disk"},
 	},
 
 	// mainnet — cloud RFH (n2d-highmem-32).
 	// LFH runs on bare metal (lfh_count=0) and is outside the scope of provisioner hardware checks;
-	// when no preset or tier1-lfh is set, no rule fires → all checks trivially pass (no-op).
+	// when no preset or lfh is set, no rule fires → all checks trivially pass (no-op).
 	{
-		When: and(profilePredicate(models.ProfileMainnet), presetPredicate("tier1-rfh")),
+		When: and(profilePredicate(models.ProfileMainnet), presetPredicate("rfh")),
 		Then: Contribution{CpuCores: 32, MemoryGB: 256, StorageGB: 150, Why: "block node mainnet cloud minimum: n2d-highmem-32, 150 GB local disk"},
 	},
 }
