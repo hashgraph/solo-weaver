@@ -110,6 +110,45 @@ func TestWaitConsensusNetworkReady_AllManualSettlesImmediately(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, rpt.Status)
 }
 
+// capsuleWithRunState is one capsule with spec.startPolicy and spec.desiredRunState.
+func capsuleWithRunState(name, phase, policy, desired string) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": name},
+		"spec":     map[string]any{"startPolicy": policy, "desiredRunState": desired},
+		"status":   map[string]any{"phase": phase},
+	}}
+}
+
+// An Auto node stopped with `consensus node stop` must not block the wait.
+func TestWaitConsensusNetworkReady_SkipsStoppedAutoNodes(t *testing.T) {
+	fake := &fakeCapsuleClient{listResult: &unstructured.UnstructuredList{Items: []unstructured.Unstructured{
+		capsuleWithRunState("orbit-consensus-0", "Active", "Auto", ""),
+		capsuleWithRunState("orbit-consensus-1", "Stopped", "Auto", "Stopped"),
+	}}}
+	rpt := runNetworkReady(t, fake, time.Second)
+	require.Equal(t, automa.StatusSuccess, rpt.Status)
+	require.Equal(t, "Consensus nodes Active: 1 (held stopped: 1, not awaited)", networkReadyMessage(rpt))
+}
+
+// A network with every node held stopped must not report "All consensus nodes are Active".
+func TestNetworkReadyMessage(t *testing.T) {
+	msg := func(ready, held string) string {
+		return networkReadyMessage(&automa.Report{Metadata: map[string]string{"nodesReady": ready, "heldStoppedNodes": held}})
+	}
+	require.Equal(t, "All consensus nodes are Active", msg("2", "0"))
+	require.Equal(t, "Consensus nodes Active: 0 (held stopped: 1, not awaited)", msg("0", "1"))
+	require.Equal(t, "All consensus nodes are Active", networkReadyMessage(nil))
+}
+
+// A Manual node started with `consensus node start` must be awaited.
+func TestWaitConsensusNetworkReady_AwaitsStartedManualNodes(t *testing.T) {
+	fake := &fakeCapsuleClient{listResult: &unstructured.UnstructuredList{Items: []unstructured.Unstructured{
+		capsuleWithRunState("orbit-consensus-0", "Running", "Manual", "Running"),
+	}}}
+	rpt := runNetworkReady(t, fake, 50*time.Millisecond)
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+}
+
 // fqdnCapsules lists capsules for node ids 0..n-1 with the operator's ref names.
 func fqdnCapsules(n int) *unstructured.UnstructuredList {
 	list := &unstructured.UnstructuredList{}

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/joomcode/errorx"
@@ -287,6 +288,9 @@ type ConsensusNodeInputs struct {
 
 	// SkipHardwareChecks bypasses the preflight hardware floor during cluster bootstrap.
 	SkipHardwareChecks bool `json:"-"`
+
+	// ReadyTimeout bounds how long start/stop wait for the node; 0 skips the wait.
+	ReadyTimeout time.Duration `json:"-"`
 
 	// Resolved config file contents (populated by BLL, not by CLI flags)
 	ConfigLog4j2                string `json:"-"`
