@@ -106,7 +106,7 @@ var stateWriters = map[string]writerRow{
 		history: "appends no entry; runRecordingCluster appends it with the files written: " +
 			"TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_RecordFailureIsAWarning",
 	},
-	"cmd/cli/commands/common/cluster_record.go:RecordEntry": {
+	"internal/workflows/steps/report_outcome.go:RecordEntry": {
 		lock:    "appends to action_history.yaml only, after its caller's workflow, under its caller's locks",
 		history: "TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry",
 	},

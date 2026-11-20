@@ -9,6 +9,7 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,4 +91,40 @@ func TestProvisionerVersionFailed_ReadsTheStepsMetadata(t *testing.T) {
 	require.False(t, ProvisionerVersionFailed(nested(stamp(nil))), "the version was already current")
 	require.False(t, ProvisionerVersionFailed(nested(&automa.Report{Id: "other"})), "the step did not run")
 	require.False(t, ProvisionerVersionFailed(nil))
+}
+
+// failingRecord is an entry recorder whose append fails.
+type failingRecord struct{}
+
+func (failingRecord) Record(state.ActionHistory, error) error {
+	return errors.New("history not writable")
+}
+
+// A successful run whose entry can't be appended still succeeds, with a warning.
+func TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning(t *testing.T) {
+	report := automa.StepSuccessReport("install")
+
+	RecordEntry(failingRecord{}, state.ActionHistory{}, report)
+
+	require.True(t, report.IsSuccess())
+	require.Contains(t, report.Metadata[models.ReportMetaWarning], "history not writable")
+}
+
+// A run without warnings keeps its summary as it was.
+func TestAddReportWarnings_NoneLeavesReportUnchanged(t *testing.T) {
+	r := automa.StepSuccessReport("root")
+
+	AddReportWarnings(r, nil)
+
+	require.NotContains(t, r.Metadata, models.ReportMetaWarning)
+}
+
+// A warning the report already has is kept, and the new ones follow it.
+func TestAddReportWarnings_AppendsAfterExisting(t *testing.T) {
+	r := automa.StepSuccessReport("root",
+		automa.WithMetadata(automa.StringMap{models.ReportMetaWarning: "existing"}))
+
+	AddReportWarnings(r, []string{"first", "second"})
+
+	require.Equal(t, "existing\nfirst\nsecond", r.Metadata[models.ReportMetaWarning])
 }

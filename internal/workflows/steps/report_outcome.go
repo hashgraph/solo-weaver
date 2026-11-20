@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"strings"
 
 	"github.com/automa-saga/automa"
 	"github.com/hashgraph/solo-weaver/internal/doctor"
@@ -53,4 +54,39 @@ func WorkflowEntry(ctx context.Context, intent models.Intent, inputs any, report
 	}
 	applyRecordedState(&entry, report)
 	return entry
+}
+
+// EntryRecorder appends a finished run's entry; state.Manager and
+// *rsl.RuntimeResolver satisfy it.
+type EntryRecorder interface {
+	Record(entry state.ActionHistory, cause error) error
+}
+
+// RecordEntry appends entry for the run that produced report. A failed run's
+// entry that can't be appended is already a state warning; a successful
+// run's becomes a warning in report, since the run itself happened.
+func RecordEntry(rec EntryRecorder, entry state.ActionHistory, report *automa.Report) {
+	if err := rec.Record(entry, FailureOf(report)); err != nil {
+		AddReportWarnings(report, []string{"The command's action history entry was not appended: " +
+			doctor.OperatorMessage(err) + "."})
+	}
+}
+
+// AddReportWarnings appends warnings to the report's own warning, which the
+// summary table and the JSON summary both show.
+func AddReportWarnings(report *automa.Report, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	lines := make([]string, 0, len(warnings)+1)
+	if existing := report.Metadata[models.ReportMetaWarning]; existing != "" {
+		lines = append(lines, existing)
+	}
+	lines = append(lines, warnings...)
+
+	if report.Metadata == nil {
+		report.Metadata = map[string]string{}
+	}
+	report.Metadata[models.ReportMetaWarning] = strings.Join(lines, "\n")
 }

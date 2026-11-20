@@ -124,7 +124,7 @@ func installRun(ctx context.Context, wb automa.Builder, rt clusterRecorder, inte
 			return nil, err
 		}
 		report := wf.Execute(ctx)
-		common.RecordEntry(rt, steps.WorkflowEntry(ctx, intent, inputs, report), report)
+		steps.RecordEntry(rt, steps.WorkflowEntry(ctx, intent, inputs, report), report)
 		return report, nil
 	}
 }

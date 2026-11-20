@@ -252,20 +252,3 @@ func TestRunWorkflowRecordingCluster_StateManagerErrorIsDecorated(t *testing.T) 
 	hints, _ := errx.Hints(err)
 	require.NotEmpty(t, hints)
 }
-
-// failingRecord is an entry recorder whose append fails.
-type failingRecord struct{}
-
-func (failingRecord) Record(state.ActionHistory, error) error {
-	return errors.New("history not writable")
-}
-
-// A successful run whose entry can't be appended still succeeds, with a warning.
-func TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning(t *testing.T) {
-	report := automa.StepSuccessReport("install")
-
-	RecordEntry(failingRecord{}, state.ActionHistory{}, report)
-
-	require.True(t, report.IsSuccess())
-	require.Contains(t, strings.Join(ui.CollectWarnings(report), "\n"), "history not writable")
-}
