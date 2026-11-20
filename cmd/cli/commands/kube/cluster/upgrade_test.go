@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/clusterupgrade"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func v035Plan() clusterupgrade.Plan {
@@ -107,6 +110,10 @@ func TestRenderPlan_Blockers(t *testing.T) {
 	assert.Equal(t, want, renderPlan(plan))
 }
 
+// forceForTests backs the root --force flag, which the command reads through
+// its parents.
+var forceForTests bool
+
 // runUpgrade runs the command's RunE with a stubbed planner. The experimental
 // gate and the root pre-run are not part of RunE.
 func runUpgrade(t *testing.T, args []string, plan clusterupgrade.Plan, planErr error) (string, clusterupgrade.Options, error) {
@@ -117,18 +124,47 @@ func runUpgrade(t *testing.T, args []string, plan clusterupgrade.Plan, planErr e
 		got = opts
 		return plan, planErr
 	}
+	t.Cleanup(func() { planLive = orig })
+	out, err := execUpgrade(t, args)
+	return out, got, err
+}
+
+// execUpgrade parses args into the command and runs its RunE, resetting every
+// flag afterwards.
+func execUpgrade(t *testing.T, args []string) (string, error) {
+	t.Helper()
+	if clusterCmd.PersistentFlags().Lookup(common.FlagForce().Name) == nil {
+		common.FlagForce().SetVarP(clusterCmd, &forceForTests, true)
+	}
 	t.Cleanup(func() {
-		planLive = orig
-		flagUpgradePlan, flagUpgradeTo = false, ""
+		flagUpgradePlan, flagUpgradeTo, flagUpgradeAll, flagUpgradeDryRun = false, "", false, false
+		flagUpgradeStopOnError, flagUpgradeRollbackOnError, flagUpgradeContinueOnError, forceForTests = false, false, false, false
+		upgradeCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 		common.OutputFormat = ""
 	})
-
 	require.NoError(t, upgradeCmd.ParseFlags(args))
+	if err := upgradeCmd.ValidateFlagGroups(); err != nil {
+		return "", err
+	}
 	var out bytes.Buffer
 	upgradeCmd.SetOut(&out)
 	t.Cleanup(func() { upgradeCmd.SetOut(nil) })
 	err := upgradeCmd.RunE(upgradeCmd, nil)
-	return out.String(), got, err
+	return out.String(), err
+}
+
+// stubApply makes the command's apply return res and err, and keeps the
+// options it was called with.
+func stubApply(t *testing.T, res clusterupgrade.ApplyResult, err error) *clusterupgrade.ApplyOptions {
+	t.Helper()
+	got := &clusterupgrade.ApplyOptions{}
+	orig := applyLive
+	applyLive = func(_ context.Context, opts clusterupgrade.ApplyOptions) (clusterupgrade.ApplyResult, error) {
+		*got = opts
+		return res, err
+	}
+	t.Cleanup(func() { applyLive = orig })
+	return got
 }
 
 func TestUpgrade_PlanPrintsThePlan(t *testing.T) {
@@ -142,10 +178,126 @@ func TestUpgrade_PlanPrintsThePlan(t *testing.T) {
 	}
 }
 
-func TestUpgrade_WithoutPlanIsRefused(t *testing.T) {
-	_, _, err := runUpgrade(t, nil, v035Plan(), nil)
+func TestUpgrade_AppliesTheNextStep(t *testing.T) {
+	plan := v035Plan()
+	got := stubApply(t, clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeApplied, Target: plan.Target,
+		Applied: plan.Hops[:1], Remaining: plan.Hops[1:]}, nil)
+
+	out, err := execUpgrade(t, []string{"--to", "1.35", "--force"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "1.35", got.To)
+	assert.False(t, got.All)
+	assert.Nil(t, got.Confirm, "--force skips the question")
+	assert.Contains(t, out, "Cluster upgrade: 1 step applied (applied)")
+	assert.Contains(t, out, "1. cilium 1.18.1 -> 1.18.16")
+	assert.Contains(t, out, "Next: cilium 1.18.16 -> 1.19.10 (8 steps left)")
+}
+
+func TestUpgrade_AllWalksEveryStep(t *testing.T) {
+	plan := v035Plan()
+	got := stubApply(t, clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeWalked, Target: plan.Target,
+		Applied: plan.Hops, Remaining: []clusterupgrade.Hop{}}, nil)
+
+	out, err := execUpgrade(t, []string{"--all", "--force"})
+
+	require.NoError(t, err)
+	assert.True(t, got.All)
+	assert.Contains(t, out, "9 steps applied (walked)")
+	assert.Contains(t, out, "The cluster is at the target (Kubernetes 1.36.5, Cilium 1.20.2)")
+}
+
+func TestUpgrade_FailedStepPrintsWhatWasApplied(t *testing.T) {
+	plan := v035Plan()
+	stubApply(t, clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeFailed, Target: plan.Target,
+		Applied: plan.Hops[:1], Remaining: plan.Hops[1:], Cause: "'cilium upgrade' to 1.19.10 failed"},
+		errx.Decorate(errorx.ExternalError.New("'cilium upgrade' to 1.19.10 failed"), reasons.PreconditionNotMet))
+
+	out, err := execUpgrade(t, []string{"--all", "--force"})
+
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "applying upgrade steps is not available yet")
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason, "the step's own reason is kept")
+	assert.Contains(t, out, "1 step applied (failed)")
+	assert.Contains(t, out, "Stopped: 'cilium upgrade' to 1.19.10 failed")
+}
+
+func TestUpgrade_ApplyJSONEndsWithTheResult(t *testing.T) {
+	common.OutputFormat = "json"
+	plan := v035Plan()
+	stubApply(t, clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeApplied, Target: plan.Target,
+		Applied: plan.Hops[:1], Remaining: plan.Hops[1:]}, nil)
+
+	out, err := execUpgrade(t, []string{"--force"})
+
+	require.NoError(t, err)
+	var got struct {
+		Type    string                 `json:"type"`
+		Outcome clusterupgrade.Outcome `json:"outcome"`
+		Applied []clusterupgrade.Hop   `json:"applied"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "upgrade", got.Type)
+	assert.Equal(t, clusterupgrade.OutcomeApplied, got.Outcome)
+	assert.Len(t, got.Applied, 1)
+}
+
+func TestUpgrade_RefusesRollbackAndContinueOnError(t *testing.T) {
+	for _, flag := range []string{"--rollback-on-error", "--continue-on-error"} {
+		t.Run(flag, func(t *testing.T) {
+			got := stubApply(t, clusterupgrade.ApplyResult{}, nil)
+			_, err := execUpgrade(t, []string{flag})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "supports only --stop-on-error")
+			reason, _ := errx.ReasonOf(err)
+			assert.Equal(t, reasons.PreconditionNotMet, reason)
+			assert.Equal(t, clusterupgrade.ApplyOptions{}, *got, "nothing runs")
+		})
+	}
+	assert.True(t, upgradeCmd.Flags().Lookup("rollback-on-error").Hidden)
+	assert.True(t, upgradeCmd.Flags().Lookup("continue-on-error").Hidden)
+	assert.False(t, upgradeCmd.Flags().Lookup("stop-on-error").Hidden)
+}
+
+func TestUpgrade_StopOnErrorIsAccepted(t *testing.T) {
+	stubApply(t, clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeAtTarget}, nil)
+	out, err := execUpgrade(t, []string{"--stop-on-error", "--force"})
+	require.NoError(t, err)
+	assert.Contains(t, out, "Nothing to do")
+}
+
+func TestUpgrade_ModesAreExclusive(t *testing.T) {
+	for _, args := range [][]string{{"--plan", "--all"}, {"--plan", "--dry-run"}, {"--dry-run", "--all"}, {"--list", "--all"}} {
+		_, err := execUpgrade(t, args)
+		require.Error(t, err, args)
+	}
+}
+
+func TestUpgrade_DryRun(t *testing.T) {
+	plan := v035Plan()
+	next := plan.Hops[0]
+	orig := dryRunLive
+	t.Cleanup(func() { dryRunLive = orig })
+
+	t.Run("passing checks", func(t *testing.T) {
+		dryRunLive = func(context.Context, clusterupgrade.Options) (clusterupgrade.DryRunResult, error) {
+			return clusterupgrade.DryRunResult{Plan: plan, Next: &next, Checks: clusterupgrade.Checks{{Name: "one node", OK: true}}}, nil
+		}
+		out, err := execUpgrade(t, []string{"--dry-run"})
+		require.NoError(t, err)
+		assert.Contains(t, out, "Next step: cilium 1.18.1 -> 1.18.16 (patch)")
+		assert.Contains(t, out, "[ok]     one node")
+	})
+	t.Run("a failed check", func(t *testing.T) {
+		dryRunLive = func(context.Context, clusterupgrade.Options) (clusterupgrade.DryRunResult, error) {
+			return clusterupgrade.DryRunResult{Plan: plan, Next: &next,
+				Checks: clusterupgrade.Checks{{Name: "one node", Detail: "the cluster has 3 nodes"}}}, nil
+		}
+		out, err := execUpgrade(t, []string{"--dry-run"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "1 check(s) failed")
+		assert.Contains(t, out, "[failed] one node: the cluster has 3 nodes")
+	})
 }
 
 func TestUpgrade_BlockersPrintAndFail(t *testing.T) {

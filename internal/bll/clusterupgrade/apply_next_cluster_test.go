@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
@@ -55,23 +54,9 @@ func liveSourcesOnHost(t *testing.T) (context.Context, LiveSources, *state.HeldL
 	return kube.WithKubeClient(context.Background(), client), src, locks, run
 }
 
-// applyHop runs hop with the executor for its kind.
-func applyHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
-	switch hop.Kind {
-	case KindCilium:
-		return ApplyCiliumHop(ctx, src, locks, run, hop)
-	case KindKubernetes:
-		return ApplyKubernetesHop(ctx, src, locks, run, hop)
-	case KindStructural:
-		return ApplyStructuralHop(ctx, src, locks, run, hop)
-	case KindCharts:
-		return ApplyChartsHop(ctx, src, locks, run, hop)
-	}
-	return errorx.IllegalArgument.New("no executor for %s hops", hop.Kind)
-}
-
-// TestWithCluster_ApplyNextHop applies the next hop of the live cluster's plan,
-// whatever its kind, and logs it. With HOP_CHARTS ("chart=from->to,...") and
+// TestWithCluster_ApplyNextHop runs the upgrade engine on the live cluster:
+// the next hop of its plan, or with HOP_ALL=1 every remaining hop, as
+// 'kube cluster upgrade' does. With HOP_CHARTS ("chart=from->to,...") and
 // HOP_STEP (coupled or refresh, plus HOP_KUBERNETES for coupled) it applies
 // that charts hop instead. Run it as root on a VM:
 //
@@ -79,24 +64,22 @@ func applyHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run 
 func TestWithCluster_ApplyNextHop(t *testing.T) {
 	ctx, src, locks, run := liveSourcesOnHost(t)
 
-	var hop Hop
 	if charts := os.Getenv("HOP_CHARTS"); charts != "" {
-		hop = Hop{Kind: KindCharts, Step: HopStep(os.Getenv("HOP_STEP")), Kubernetes: os.Getenv("HOP_KUBERNETES")}
+		hop := Hop{Kind: KindCharts, Step: HopStep(os.Getenv("HOP_STEP")), Kubernetes: os.Getenv("HOP_KUBERNETES")}
 		for _, c := range strings.Split(charts, ",") {
 			name, move, _ := strings.Cut(c, "=")
 			from, to, _ := strings.Cut(move, "->")
 			hop.Charts = append(hop.Charts, ChartBump{Chart: name, From: from, To: to})
 		}
-	} else {
-		plan, err := PlanLive(ctx, src, Options{})
-		require.NoError(t, err)
-		require.Empty(t, plan.Blockers)
-		if len(plan.Hops) == 0 {
-			t.Log("hop: none, the cluster is at its target")
-			return
-		}
-		hop = plan.Hops[0]
+		t.Logf("hop: %s", hop.Describe())
+		require.NoError(t, ApplyHop(ctx, src, locks, run, hop))
+		return
 	}
-	t.Logf("hop: %+v", hop)
-	require.NoError(t, applyHop(ctx, src, locks, run, hop))
+
+	res, err := Apply(ctx, src, locks, run, ApplyOptions{All: os.Getenv("HOP_ALL") == "1"})
+	for _, h := range res.Applied {
+		t.Logf("applied: %s", h.Describe())
+	}
+	t.Logf("outcome: %s, remaining: %d %s", res.Outcome, len(res.Remaining), res.Cause)
+	require.NoError(t, err)
 }

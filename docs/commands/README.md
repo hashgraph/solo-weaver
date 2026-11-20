@@ -45,7 +45,8 @@ sudo solo-provisioner block node tc-attach   --veth=<iface> [--detach]
 # KUBERNETES
 sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
-sudo solo-provisioner kube cluster upgrade --plan --experimental [--to=<minor>]   # experimental, read-only
+sudo solo-provisioner kube cluster upgrade --experimental [--all] [--to=<minor>]   # experimental
+sudo solo-provisioner kube cluster upgrade --plan --experimental                 # read-only
 sudo solo-provisioner kube operator install     # solo-operator (private images: needs pull secret)
 sudo solo-provisioner kube operator uninstall
 
@@ -234,26 +235,55 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 > `kube operator install` → `consensus node install`. See
 > [acceptance-tests §F](../dev/acceptance-tests.md).
 
-### Upgrade plan (experimental)
+### Upgrade (experimental)
 
 > **Experimental.** `kube cluster upgrade` is hidden and runs only with `--experimental` or
 > `SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE=1`. Under `sudo`, use the flag, because `sudo` drops the
 > environment.
 
-`kube cluster upgrade --plan` reads the live cluster and lists every step left to reach the
-Kubernetes and Cilium versions this binary installs. It changes nothing and takes no lock.
-Applying the steps is not available yet; without `--plan` the command refuses to run.
+`kube cluster upgrade` moves the cluster toward the Kubernetes and Cilium versions this binary
+installs, one step at a time. Each run reads the live cluster, plans the steps left, and applies
+the next one. `--all` applies every remaining step, reading the cluster again after each.
 
 ```bash
 sudo solo-provisioner kube cluster upgrade --plan --experimental
-sudo solo-provisioner kube cluster upgrade --plan --experimental --to=1.35
-sudo solo-provisioner kube cluster upgrade --plan --experimental --output json
+sudo solo-provisioner kube cluster upgrade --dry-run --experimental
+sudo solo-provisioner kube cluster upgrade --experimental
+sudo solo-provisioner kube cluster upgrade --all --experimental --to=1.35
+sudo solo-provisioner kube cluster upgrade --all --experimental --force --output json
 ```
 
 | Flag | Description |
 |---|---|
 | `--plan` (alias `--list`) | List every remaining upgrade step and change nothing |
+| `--dry-run` | Show the next step and its pre-step checks, and change nothing |
+| `--all` | Apply every remaining step, re-planning after each, instead of only the next one |
 | `--to` | Stop at this Kubernetes minor (1.35) or its latest patch (1.35.10); defaults to the version this binary installs |
+| `--stop-on-error` | Stop execution on first error (default behaviour when no execution-mode flag is set) |
+
+`--plan`, `--dry-run` and `--all` cannot be combined. `--rollback-on-error` and
+`--continue-on-error` are refused: a Kubernetes upgrade cannot be rolled back, and the next step
+must not run after one failed.
+
+Before it changes anything, an interactive run lists the steps it will apply and asks to go on.
+`--force`, `--non-interactive` or a run without a terminal skips the question. Workloads on the
+node restart during Kubernetes and Cilium steps.
+
+A run holds the `system` and `cluster` state locks from the first read to the end, so another
+command that changes the cluster fails at once with `<record> is being modified (held by pid N)`.
+`--plan` and `--dry-run` take no lock.
+
+Each step is one workflow and one `upgrade` / `cluster` entry in the action history. A step ends
+by checking the node, waiting until the whole cluster can be read, and recording it. A record that
+cannot be written is a warning, not a failure. At the target, a run records the cluster and the
+host binaries and adds an entry only when a record changed.
+
+The run ends with what it applied and what is next. With `--output json` the last object has
+`"type": "upgrade"`, the `outcome` (`applied`, `walked`, `at-target`, `blocked`, `declined`,
+`stopped` or `failed`), the steps `applied` and those `remaining`. The command exits 0 when the
+step or the walk finished, or the cluster is at the target.
+
+#### The plan
 
 Kubernetes moves one minor at a time, and each minor step lands on that minor's latest patch.
 Cilium moves first whenever it does not run on the next Kubernetes minor. Charts that a minor
@@ -276,9 +306,9 @@ Cluster upgrade plan: 8 steps remaining (target: Kubernetes 1.36.5, Cilium 1.20.
 ```
 
 When the cluster cannot be planned, for example because it has more than one node or its Cilium
-agent and chart differ, the command lists each reason and exits non-zero. The plan needs the live
-cluster: with no kubeconfig (run it with `sudo`), or when the API server does not answer, it
-says so and plans nothing.
+agent and chart differ, the command lists each reason, changes nothing and exits non-zero. The
+plan needs the live cluster: with no kubeconfig (run it with `sudo`), or when the API server does
+not answer, it says so and plans nothing.
 
 ### Uninstall
 
