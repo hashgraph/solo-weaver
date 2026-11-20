@@ -7,6 +7,7 @@ import (
 	"maps"
 
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/pkg/software"
@@ -285,6 +286,18 @@ func readShape(shape rsl.ClusterShape, c compiled) (installed, []Blocker) {
 	for _, name := range sortedKeys(shape.Charts) {
 		ch := shape.Charts[name]
 		if ch.Missing {
+			// A chart swap that stopped after its uninstall leaves no release,
+			// while the record still names the legacy chart: finish the swap.
+			if replaces(name) && ch.RecordedIdentity == rsl.IdentityLegacy && hasChart(c, name) {
+				in.legacy[name] = ch.Recorded
+			}
+			continue
+		}
+		// A failed or pending release cannot be planned from: its version
+		// says what Helm tried, not what runs.
+		if ch.Status != release.StatusDeployed {
+			block(BlockerReleaseNotDeployed, name, "the last Helm revision of %s is %q; check it with 'helm history' "+
+				"and roll it back or finish it, then plan again", name, ch.Status)
 			continue
 		}
 		switch ch.Identity {
@@ -316,6 +329,17 @@ func resumable(k, cp version) bool {
 	}
 	km, cm := k.minorOf(), cp.minorOf()
 	return km == cm || km.next() == cm
+}
+
+// replaces reports whether chart's migration replaces the release, so a
+// stopped one leaves no release behind.
+func replaces(chart string) bool {
+	for _, s := range structuralSteps {
+		if s.chart == chart {
+			return s.step == StepReplace
+		}
+	}
+	return false
 }
 
 func hasMigration(chart string) bool {

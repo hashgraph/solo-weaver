@@ -121,3 +121,58 @@ func plural(n int, one, many string) string {
 	}
 	return many
 }
+
+// renderDryRun is the text form of a dry run: the next step and each of its
+// pre-step checks.
+func renderDryRun(res clusterupgrade.DryRunResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Next step: %s (%s)\n", res.Next.Describe(), res.Next.Step)
+	fmt.Fprintln(&b, "Pre-step checks:")
+	for _, c := range res.Checks {
+		if c.OK {
+			fmt.Fprintf(&b, "  [ok]     %s\n", c.Name)
+		} else {
+			fmt.Fprintf(&b, "  [failed] %s: %s\n", c.Name, c.Detail)
+		}
+	}
+	fmt.Fprintln(&b, "The health of the node, Cilium and the charts is checked when the step runs.")
+	return b.String()
+}
+
+// renderApplyResult is the text form of what an apply run did.
+func renderApplyResult(res clusterupgrade.ApplyResult) string {
+	var b strings.Builder
+	switch res.Outcome {
+	case clusterupgrade.OutcomeAtTarget:
+		fmt.Fprintf(&b, "Nothing to do: the cluster is at the target (Kubernetes %s, Cilium %s).\n",
+			res.Target.Kubernetes, res.Target.Cilium)
+		return b.String()
+	case clusterupgrade.OutcomeBlocked:
+		fmt.Fprintf(&b, "The upgrade to Kubernetes %s cannot run; nothing was changed:\n", res.Target.Kubernetes)
+		for _, bl := range res.Blockers {
+			fmt.Fprintf(&b, "  - %s: %s\n", bl.Code, bl.Detail)
+		}
+		return b.String()
+	case clusterupgrade.OutcomeDeclined:
+		fmt.Fprintln(&b, "Not confirmed; nothing was changed.")
+		return b.String()
+	}
+
+	fmt.Fprintf(&b, "Cluster upgrade: %d %s applied (%s)\n", len(res.Applied), plural(len(res.Applied), "step", "steps"), res.Outcome)
+	for i, h := range res.Applied {
+		fmt.Fprintf(&b, "  %2d. %s\n", i+1, h.Describe())
+	}
+	if res.Cause != "" {
+		fmt.Fprintf(&b, "  Stopped: %s\n", res.Cause)
+	}
+	switch {
+	case res.Outcome == clusterupgrade.OutcomeWalked:
+		fmt.Fprintf(&b, "The cluster is at the target (Kubernetes %s, Cilium %s).\n", res.Target.Kubernetes, res.Target.Cilium)
+	case len(res.Remaining) > 0:
+		fmt.Fprintf(&b, "Next: %s (%d %s left). Run the command again, or with --all for every step.\n",
+			res.Remaining[0].Describe(), len(res.Remaining), plural(len(res.Remaining), "step", "steps"))
+	case res.Outcome == clusterupgrade.OutcomeApplied && res.Cause == "":
+		fmt.Fprintln(&b, "The cluster is at the target.")
+	}
+	return b.String()
+}

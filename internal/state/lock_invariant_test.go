@@ -121,6 +121,13 @@ var stateWriters = map[string]writerRow{
 			"TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced",
 	},
 
+	"cmd/cli/commands/kube/cluster/upgrade.go:applyLive": {
+		lock: "holds the system and cluster locks for the whole run, failing fast when held elsewhere " +
+			"(TestAcquireHeldLocks_FailsFastWhenHeldElsewhere); the engine refuses locks that do not cover it: " +
+			"TestApply_RefusesLocksThatDoNotCoverIt",
+		history: "takes locks only; each hop and the record at the target append their entry: " +
+			"TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApply_AtTargetRecordsOnlyWhatChanged",
+	},
 	"internal/state/lock.go:AcquireHeldLocks": {
 		lock:    "TestAcquireHeldLocks_FailsFastWhenHeldElsewhere",
 		history: "takes locks only",

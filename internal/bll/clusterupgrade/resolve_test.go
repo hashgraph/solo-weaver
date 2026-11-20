@@ -184,6 +184,25 @@ func TestResolve_StructuralOnly(t *testing.T) {
 	}, plan.Hops)
 }
 
+// A node-exporter swap that stopped after its uninstall is planned again from
+// the legacy version the record names; a chart that was never there is not.
+func TestResolve_FinishesAStoppedSwap(t *testing.T) {
+	stopped := clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.16.1"))
+	stopped.Charts["node-exporter"] = rsl.ChartShape{Missing: true, Recorded: "4.4.9", RecordedIdentity: rsl.IdentityLegacy}
+
+	assert.Equal(t, []Hop{
+		{Kind: KindStructural, Step: StepReplace, Component: "node-exporter", From: "4.4.9", To: "4.59.0"},
+	}, resolve(t, stopped, Options{}).Hops)
+
+	never := clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.16.1"))
+	never.Charts["node-exporter"] = rsl.ChartShape{Missing: true}
+	assert.Empty(t, resolve(t, never, Options{}).Hops)
+
+	gone := clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.16.1"))
+	gone.Charts["external-secrets"] = rsl.ChartShape{Missing: true, Recorded: "0.20.2", RecordedIdentity: rsl.IdentityLegacy}
+	assert.Empty(t, resolve(t, gone, Options{}).Hops, "a migration that upgrades in place never leaves the release gone")
+}
+
 // Structural hops run before the ladder, and the charts they install are not
 // refreshed again.
 func TestResolve_StructuralBeforeLadder(t *testing.T) {
@@ -335,13 +354,21 @@ func TestResolve_Blockers(t *testing.T) {
 			BlockerUnsupportedPairing, "Cilium 1.18.16 does not support Kubernetes 1.34 (it supports 1.30 to 1.33)"},
 		{"chart identity unknown", func() rsl.ClusterShape {
 			s := clusterShape("1.36.5", "1.20.2")
-			s.Charts["alloy"] = rsl.ChartShape{Live: "1.13.1", Identity: rsl.IdentityUnknown, Reason: "the release has no chart metadata"}
+			s.Charts["alloy"] = rsl.ChartShape{Live: "1.13.1", Identity: rsl.IdentityUnknown, Reason: "the release has no chart metadata",
+				Status: release.StatusDeployed}
 			return s
 		}, BlockerChartUnknown, "the release has no chart metadata"},
 		{"chart version unreadable", func() rsl.ClusterShape { return clusterShape("1.36.5", "1.20.2", withChart("alloy", "latest")) },
 			BlockerChartUnknown, `chart version "latest"`},
 		{"legacy chart with no migration", func() rsl.ClusterShape { return clusterShape("1.36.5", "1.20.2", withLegacy("alloy", "0.9.0")) },
 			BlockerNoMigration, "legacy alloy; no migration exists"},
+		{"release not deployed", func() rsl.ClusterShape {
+			s := clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.16.1"))
+			ch := s.Charts["metallb"]
+			ch.Status = release.StatusPendingUpgrade
+			s.Charts["metallb"] = ch
+			return s
+		}, BlockerReleaseNotDeployed, `the last Helm revision of metallb is "pending-upgrade"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,7 +386,7 @@ func TestResolve_Blockers(t *testing.T) {
 func TestResolve_ListsEveryBlocker(t *testing.T) {
 	s := clusterShape("1.32.9", "")
 	s.Observed = false
-	s.Charts["alloy"] = rsl.ChartShape{Identity: rsl.IdentityUnknown, Reason: "no metadata"}
+	s.Charts["alloy"] = rsl.ChartShape{Identity: rsl.IdentityUnknown, Reason: "no metadata", Status: release.StatusDeployed}
 
 	plan, err := Resolve(s, fixtureMatrix(), Options{})
 	require.NoError(t, err)
