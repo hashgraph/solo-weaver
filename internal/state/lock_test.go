@@ -217,3 +217,73 @@ func TestAcquireComponentLocks_OtherOpenFailuresAreNotDecorated(t *testing.T) {
 	_, ok := errx.ReasonOf(err)
 	require.False(t, ok, "an unexplained open failure must not get a reason")
 }
+
+func TestHeldLocks_CoversWhatItHolds(t *testing.T) {
+	dir := t.TempDir()
+	held, err := AcquireHeldLocks(dir, []ComponentID{ComponentSystem, ComponentCluster, ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer held.Release()
+
+	require.NoError(t, held.Covers(dir, ComponentCluster))
+	require.NoError(t, held.Covers(dir+"/", ComponentSystem, ComponentCluster))
+}
+
+func TestHeldLocks_NamesWhatItDoesNotHold(t *testing.T) {
+	dir := t.TempDir()
+	held, err := AcquireHeldLocks(dir, []ComponentID{ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer held.Release()
+
+	err = held.Covers(dir, ComponentSystem, ComponentCluster)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "the system lock")
+	reason, _ := errx.ReasonOf(err)
+	require.Equal(t, reasons.Internal, reason)
+
+	err = held.Covers(t.TempDir(), ComponentCluster)
+	require.Error(t, err, "locks in another directory cover nothing here")
+
+	var none *HeldLocks
+	require.Error(t, none.Covers(dir, ComponentCluster))
+}
+
+func TestHeldLocks_ReleaseFreesTheLocksOnce(t *testing.T) {
+	dir := t.TempDir()
+	held, err := AcquireHeldLocks(dir, []ComponentID{ComponentCluster}, 0)
+	require.NoError(t, err)
+
+	held.Release()
+	held.Release()
+	require.Error(t, held.Covers(dir, ComponentCluster), "released locks cover nothing")
+
+	release, err := AcquireComponentLocks(dir, []ComponentID{ComponentCluster}, 0)
+	require.NoError(t, err)
+	release()
+}
+
+func TestAcquireHeldLocks_FailsFastWhenHeldElsewhere(t *testing.T) {
+	dir := t.TempDir()
+	release, err := AcquireComponentLocks(dir, []ComponentID{ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer release()
+
+	held, err := AcquireHeldLocks(dir, []ComponentID{ComponentSystem, ComponentCluster}, 0)
+	require.Error(t, err)
+	require.Nil(t, held)
+	require.Contains(t, err.Error(), "is being modified")
+
+	other, err := AcquireComponentLocks(dir, []ComponentID{ComponentSystem}, 0)
+	require.NoError(t, err, "a failed acquire releases what it took")
+	other()
+}
+
+func TestHeldLocks_RejectsNoIDs(t *testing.T) {
+	dir := t.TempDir()
+	_, err := AcquireHeldLocks(dir, nil, 0)
+	require.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err)
+
+	held, err := AcquireHeldLocks(dir, []ComponentID{ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer held.Release()
+	require.True(t, errorx.IsOfType(held.Covers(dir), errorx.IllegalArgument))
+}

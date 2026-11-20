@@ -23,7 +23,7 @@ import (
 // over-match but never miss a call.
 var writerCalls = []string{
 	"Commit", "Persist", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
-	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock",
+	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock", "AcquireHeldLocks",
 }
 
 // fileCalls write, remove or move a file. They count only in the files that
@@ -117,6 +117,10 @@ var stateWriters = map[string]writerRow{
 		history: "TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_FailedHopRecordsTheFailure",
 	},
 
+	"internal/state/lock.go:AcquireHeldLocks": {
+		lock:    "TestAcquireHeldLocks_FailsFastWhenHeldElsewhere",
+		history: "takes locks only",
+	},
 	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
 		lock:    "TestLockAllState_FailsFastOnEveryStateLock",
 		history: "takes locks only",

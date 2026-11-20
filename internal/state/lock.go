@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,56 @@ func AcquireComponentLocks(dir string, ids []ComponentID, wait time.Duration) (r
 		held = append(held, unlock)
 	}
 	return release, nil
+}
+
+// HeldLocks are component locks a caller holds for the code it runs. That code
+// checks it is covered instead of locking again: a second acquire of a held
+// lock fails, even in the same process.
+type HeldLocks struct {
+	dir     string
+	ids     []ComponentID
+	release func()
+}
+
+// AcquireHeldLocks takes the locks of ids in dir as AcquireComponentLocks does.
+// The caller must call Release.
+func AcquireHeldLocks(dir string, ids []ComponentID, wait time.Duration) (*HeldLocks, error) {
+	if len(ids) == 0 {
+		return nil, errx.Decorate(errorx.IllegalArgument.New("no component locks to acquire"), reasons.Internal)
+	}
+	release, err := AcquireComponentLocks(dir, ids, wait)
+	if err != nil {
+		return nil, err
+	}
+	return &HeldLocks{dir: filepath.Clean(dir), ids: DedupeComponentIDs(ids), release: release}, nil
+}
+
+// Covers returns an error naming each of ids that h does not hold in dir. A nil
+// or released h holds nothing.
+func (h *HeldLocks) Covers(dir string, ids ...ComponentID) error {
+	if len(ids) == 0 {
+		return errx.Decorate(errorx.IllegalArgument.New("no component locks to check"), reasons.Internal)
+	}
+	var missing []string
+	for _, id := range DedupeComponentIDs(ids) {
+		if h == nil || h.release == nil || h.dir != filepath.Clean(dir) || !slices.Contains(h.ids, id) {
+			missing = append(missing, string(id))
+		}
+	}
+	if len(missing) > 0 {
+		return errx.Decorate(errorx.IllegalState.New("the caller does not hold the %s lock in %s",
+			strings.Join(missing, ", "), dir), reasons.Internal)
+	}
+	return nil
+}
+
+// Release frees the locks. It is safe to call more than once.
+func (h *HeldLocks) Release() {
+	if h == nil || h.release == nil {
+		return
+	}
+	h.release()
+	h.release = nil
 }
 
 func lockFilePath(dir string, id ComponentID) string {
