@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -66,19 +68,20 @@ type ciliumHopHarness struct {
 	health   []ciliumHealth // returned in turn; the last one repeats
 	charts   []string
 	scripts  []string
-	verified []string
+	verified []string // the artifacts whose installed versions were read
+	cliAt    []string // the versions the installed cilium CLI matches
 	config   string
 	helm     *helm.MockManager
 }
 
 func newCiliumHopHarness(t *testing.T, health ...ciliumHealth) *ciliumHopHarness {
 	t.Helper()
-	h := &ciliumHopHarness{health: health, helm: helm.NewMockManager(gomock.NewController(t))}
-	origHealth, origFetch, origRender, origHelm, origRun, origVerify, origPoll :=
-		readCiliumHealth, fetchCiliumChart, rerenderCiliumConfig, newCiliumHopHelm, runCiliumScript, verifyExecutables, ciliumPollInterval
+	h := &ciliumHopHarness{health: health, cliAt: []string{hopCLI}, helm: helm.NewMockManager(gomock.NewController(t))}
+	origHealth, origFetch, origRender, origHelm, origRun, origIdentify, origPoll :=
+		readCiliumHealth, fetchCiliumChart, rerenderCiliumConfig, newCiliumHopHelm, runCiliumScript, identifyInstalledVersions, ciliumPollInterval
 	t.Cleanup(func() {
-		readCiliumHealth, fetchCiliumChart, rerenderCiliumConfig, newCiliumHopHelm, runCiliumScript, verifyExecutables, ciliumPollInterval =
-			origHealth, origFetch, origRender, origHelm, origRun, origVerify, origPoll
+		readCiliumHealth, fetchCiliumChart, rerenderCiliumConfig, newCiliumHopHelm, runCiliumScript, identifyInstalledVersions, ciliumPollInterval =
+			origHealth, origFetch, origRender, origHelm, origRun, origIdentify, origPoll
 	})
 
 	readCiliumHealth = func(context.Context, *kube.Client) (ciliumHealth, error) {
@@ -99,9 +102,9 @@ func newCiliumHopHarness(t *testing.T, health ...ciliumHealth) *ciliumHopHarness
 		h.scripts = append(h.scripts, scripts...)
 		return "", nil
 	}
-	verifyExecutables = func(name string) error {
+	identifyInstalledVersions = func(name string) ([]string, error) {
 		h.verified = append(h.verified, name)
-		return nil
+		return h.cliAt, nil
 	}
 	ciliumPollInterval = time.Millisecond
 	return h
@@ -122,10 +125,13 @@ func runSteps(t *testing.T, builders []automa.Builder) []*automa.Report {
 	return reports
 }
 
+// hopCLI is the cilium CLI version the tested hops run with.
+const hopCLI = "0.20.1"
+
 // The hop's own steps, without the bandwidth guard, which reads the cluster
 // through its own client.
 func hopSteps(from, to string) []automa.Builder {
-	all := CiliumHopSteps(from, to, func() (*kube.Client, error) { return &kube.Client{}, nil })
+	all := CiliumHopSteps(from, to, hopCLI, func() (*kube.Client, error) { return &kube.Client{}, nil })
 	return all[:len(all)-1]
 }
 
@@ -266,6 +272,33 @@ func TestCiliumHop_HealthGateTimesOut(t *testing.T) {
 	assert.Equal(t, "wait-cilium-healthy", last.Id)
 	assert.Equal(t, automa.StatusFailed, last.Status)
 	assert.Contains(t, last.Error.Error(), `the agent runs "1.18.16", not 1.19.10`)
+}
+
+// The CLI is checked against the hop's version, not its record, which the
+// workflow updates only at its end.
+func TestCiliumHop_CLINotAtTheHopsVersionStopsTheUpgrade(t *testing.T) {
+	h := newCiliumHopHarness(t,
+		healthyCilium("1.18.16"), // check-cilium-healthy: not done
+		healthyCilium("1.18.16"), // check-cilium-healthy: healthy at from
+		healthyCilium("1.18.16"), // prepare: not done
+	)
+	h.cliAt = []string{"0.18.7"}
+	gomock.InOrder(
+		h.helm.EXPECT().IsInstalled(ciliumPreflightRelease, "kube-system").Return(false, nil),
+		h.helm.EXPECT().InstallChart(gomock.Any(), ciliumPreflightRelease, gomock.Any(), "1.19.10", "kube-system", gomock.Any()).
+			Return(&release.Release{}, nil),
+		h.helm.EXPECT().IsInstalled(ciliumPreflightRelease, "kube-system").Return(false, nil),
+	)
+
+	reports := runSteps(t, hopSteps("1.18.16", "1.19.10"))
+
+	last := reports[len(reports)-1]
+	assert.Equal(t, "upgrade-cilium-cni", last.Id)
+	assert.Equal(t, automa.StatusFailed, last.Status)
+	assert.Contains(t, last.Error.Error(), `the installed cilium CLI is not the catalog's "0.20.1"`)
+	reason, _ := errx.ReasonOf(last.Error)
+	assert.Equal(t, reasons.IntegrityCheckFailed, reason)
+	assert.Empty(t, h.scripts, "cilium upgrade must not run")
 }
 
 func TestUpgradeHostBinary(t *testing.T) {

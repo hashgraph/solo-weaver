@@ -44,18 +44,19 @@ var (
 
 // ciliumHop holds what the steps of one Cilium hop share.
 type ciliumHop struct {
-	from, to  string
-	newClient kube.ClientProvider
-	chartDir  string
-	config    string
+	from, to, cli string
+	newClient     kube.ClientProvider
+	chartDir      string
+	config        string
 }
 
 // CiliumHopSteps are the steps that move the running Cilium from one version
-// to the next: a health check, the verified chart and values, Cilium's
-// pre-flight image pull, `cilium upgrade`, and a health gate that also checks
-// our settings survived. Every step skips once Cilium runs the target.
-func CiliumHopSteps(from, to string, newClient kube.ClientProvider) []automa.Builder {
-	h := &ciliumHop{from: from, to: to, newClient: newClient}
+// to the next with the cilium CLI at cli: a health check, the verified chart
+// and values, Cilium's pre-flight image pull, `cilium upgrade`, and a health
+// gate that also checks our settings survived. Every step skips once Cilium
+// runs the target.
+func CiliumHopSteps(from, to, cli string, newClient kube.ClientProvider) []automa.Builder {
+	h := &ciliumHop{from: from, to: to, cli: cli, newClient: newClient}
 	return []automa.Builder{
 		h.checkHealthyBefore(),
 		h.prepare(),
@@ -311,8 +312,15 @@ func (h *ciliumHop) upgrade() automa.Builder {
 			if h.chartDir == "" {
 				return automa.SkippedReport(stp, automa.WithDetail("Cilium already runs "+h.to))
 			}
-			if err := verifyExecutables("cilium"); err != nil {
-				return automa.FailureReport(stp, automa.WithError(err))
+			// The workflow may have replaced the CLI before it is recorded, so
+			// the binary is checked against the hop's CLI version instead.
+			at, err := HostBinaryAt(software.CiliumBinaryName, h.cli)
+			if err == nil && !at {
+				err = errorx.IllegalState.New("the installed cilium CLI is not the catalog's %q", h.cli)
+			}
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.IntegrityCheckFailed,
+					fmt.Sprintf("Check %s/cilium; re-run the upgrade to install the cilium CLI %s again", models.Paths().SandboxBinDir, h.cli))))
 			}
 			cmd := ciliumHopUpgradeCommand(h.to, h.chartDir, h.config)
 			logx.As().Info().Str("from", h.from).Str("to", h.to).Msg("Upgrading Cilium")

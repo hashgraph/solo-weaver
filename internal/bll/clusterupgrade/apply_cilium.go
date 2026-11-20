@@ -15,9 +15,8 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
-
-const ciliumCLI = "cilium"
 
 // Seams so tests run no workflow and need no binaries on disk.
 var (
@@ -72,8 +71,8 @@ func CiliumHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 // does nothing when the hop is already applied, and refuses when a check
 // fails. Otherwise one workflow puts the cilium CLI on the catalog default
 // when it is not, runs the hop, waits for the cluster to settle and records
-// it, and one entry goes to the action history. A failed hop still records the
-// cilium CLI when it had already replaced it.
+// it and the CLI, and one entry goes to the action history. A failed hop still
+// records the CLI when it is at the catalog default.
 func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
 		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
@@ -101,40 +100,30 @@ func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks
 	if err != nil {
 		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to load the catalog"), reasons.Internal)
 	}
-	cliArtifact, err := cat.GetHostArtifact(ciliumCLI)
+	cliArtifact, err := cat.GetHostArtifact(software.CiliumBinaryName)
 	if err != nil {
 		return errx.Decorate(errorx.IllegalFormat.Wrap(err, "catalog"), reasons.Internal)
 	}
-	at, err := hostBinaryAt(ciliumCLI, string(cliArtifact.Default))
-	if err != nil {
-		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to read the installed cilium CLI"),
-			reasons.StateOperationFailed, "Check the cilium binary in the provisioner's bin directory, then run the command again.")
-	}
+	cli := string(cliArtifact.Default)
 
-	inputs := map[string]string{inputComponent: componentCilium, inputFrom: hop.From, inputTo: hop.To}
-	written := []state.ComponentID{state.ComponentCluster}
-	var cli string
-	var patch func(*state.State)
-	var afterFailure recordFunc
-	if !at {
-		cli = string(cliArtifact.Default)
-		inputs[inputCiliumCLI] = cli
-		written = append(written, state.ComponentSystem)
-		patch = func(st *state.State) { recordSoftware(st, ciliumCLI, cli) }
-		afterFailure = cliAfterFailure(src, cli)
-	}
+	// The CLI is recorded even when this hop does not replace it: an earlier
+	// run may have replaced it without recording it.
+	inputs := map[string]string{inputComponent: componentCilium, inputFrom: hop.From, inputTo: hop.To, inputCiliumCLI: cli}
+	written := []state.ComponentID{state.ComponentSystem, state.ComponentCluster}
+	patch := func(st *state.State) { recordSoftware(st, software.CiliumBinaryName, cli) }
 	logx.As().Info().Str("from", hop.From).Str("to", hop.To).Str("cli", cli).Msg("Applying the Cilium hop")
-	return runHop(ctx, src, run, inputs, ciliumHopWorkflow(hop.From, hop.To, cli), hopRecord(src, written, patch), afterFailure)
+	return runHop(ctx, src, run, inputs, ciliumHopWorkflow(hop.From, hop.To, cli), hopRecord(src, written, patch),
+		cliAfterFailure(src, cli))
 }
 
-// cliAfterFailure records the cilium CLI at cli when a failed hop had already
-// replaced it. Other commands verify a binary against its recorded version, so
-// a stale record would make them refuse it.
+// cliAfterFailure records the cilium CLI at cli when it is at cli after a
+// failed hop, which may have replaced it. Other commands verify a binary
+// against its recorded version, so a stale record would make them refuse it.
 func cliAfterFailure(src LiveSources, cli string) recordFunc {
 	write := hopRecord(src, []state.ComponentID{state.ComponentSystem},
-		func(st *state.State) { recordSoftware(st, ciliumCLI, cli) })
+		func(st *state.State) { recordSoftware(st, software.CiliumBinaryName, cli) })
 	return func(ctx context.Context) ([]state.ChangedFile, error) {
-		at, err := hostBinaryAt(ciliumCLI, cli)
+		at, err := hostBinaryAt(software.CiliumBinaryName, cli)
 		if err != nil {
 			return nil, errorx.IllegalState.Wrap(err, "failed to read the installed cilium CLI")
 		}

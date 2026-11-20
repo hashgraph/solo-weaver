@@ -22,6 +22,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
 func ciliumPatch() Hop { return ciliumHop(StepPatch, "1.18.1", "1.18.16") }
@@ -167,7 +168,7 @@ func stubHopFinish(t *testing.T) {
 // stubCiliumApply stubs the cilium CLI check and the hop workflow. The CLI is
 // at the catalog default when cliAt is set, or once the workflow's CLI step
 // has run; the hop's step fails when fail is set. It returns the cilium CLI
-// version each built workflow was asked to install.
+// version each built workflow was asked to run with.
 func stubCiliumApply(t *testing.T, cliAt, fail bool) *[]string {
 	t.Helper()
 	stubHopFinish(t)
@@ -178,16 +179,13 @@ func stubCiliumApply(t *testing.T, cliAt, fail bool) *[]string {
 	var clis []string
 	ciliumHopWorkflow = func(from, to, cli string) *automa.WorkflowBuilder {
 		clis = append(clis, cli)
-		var all []automa.Builder
-		if cli != "" {
-			all = append(all, automa.NewStepBuilder().WithId("upgrade-cilium").
+		return automa.NewWorkflowBuilder().WithId("hop-"+from+"-"+to).Steps(
+			automa.NewStepBuilder().WithId("upgrade-cilium").
 				WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
 					installed = true
 					return automa.SuccessReport(stp)
-				}))
-		}
-		all = append(all, noopStep("cilium-upgrade", fail))
-		return automa.NewWorkflowBuilder().WithId("hop-" + from + "-" + to).Steps(all...)
+				}),
+			noopStep("cilium-upgrade", fail))
 	}
 	return &clis
 }
@@ -276,19 +274,42 @@ func TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords(t *testing.T) {
 	assert.Contains(t, history, "to: 1.18.16")
 }
 
-func TestApplyCiliumHop_CLIAlreadyCurrent(t *testing.T) {
+// seedCLIRecord records the cilium CLI at version in src's state directory.
+func seedCLIRecord(t *testing.T, src LiveSources, version string) {
+	t.Helper()
+	st := src.State.State()
+	recordSoftware(&st, software.CiliumBinaryName, version)
+	_, err := src.State.Set(st).Persist(state.ComponentSystem)
+	require.NoError(t, err)
+}
+
+func TestApplyCiliumHop_CurrentCLIRecordIsLeftAsIs(t *testing.T) {
 	clis := stubCiliumApply(t, true, false)
 	src, dir := liveSources(t, v035Cluster())
+	seedCLIRecord(t, src, "0.20.1")
 	r := &fakeRunner{}
 
 	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
 
-	assert.Equal(t, []string{""}, *clis)
-	assert.NotContains(t, stateFiles(t, dir), "system.yaml")
+	assert.Equal(t, []string{"0.20.1"}, *clis, "the hop runs with the catalog's CLI")
 	entries := historyEntries(t, dir)
 	require.Len(t, entries, 1)
 	assert.Equal(t, []state.ChangedFile{state.ComponentCluster.File()}, entries[0].Components)
-	assert.NotContains(t, readStateFile(t, dir, "action_history.yaml"), "cilium-cli")
+}
+
+// An earlier run may have replaced the CLI without recording it.
+func TestApplyCiliumHop_StaleCLIRecordIsRepaired(t *testing.T) {
+	stubCiliumApply(t, true, false)
+	src, dir := liveSources(t, v035Cluster())
+	seedCLIRecord(t, src, "0.18.7")
+	r := &fakeRunner{}
+
+	require.NoError(t, ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch()))
+
+	assert.Contains(t, readStateFile(t, dir, "system.yaml"), "version: 0.20.1")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.ElementsMatch(t, []state.ChangedFile{state.ComponentSystem.File(), state.ComponentCluster.File()}, entries[0].Components)
 }
 
 func TestApplyCiliumHop_DoneHopDoesNothing(t *testing.T) {
@@ -318,7 +339,7 @@ func TestApplyCiliumHop_FailedCheckChangesNothing(t *testing.T) {
 	assert.Empty(t, stateFiles(t, dir))
 }
 
-func TestApplyCiliumHop_FailedHopRecordsOnlyTheFailure(t *testing.T) {
+func TestApplyCiliumHop_FailedHopKeepsTheClusterRecord(t *testing.T) {
 	stubCiliumApply(t, true, true)
 	src, dir := liveSources(t, v035Cluster())
 	r := &fakeRunner{}
