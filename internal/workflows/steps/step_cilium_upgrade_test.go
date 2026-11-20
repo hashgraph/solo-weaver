@@ -131,7 +131,7 @@ const hopCLI = "0.20.1"
 // The hop's own steps, without the bandwidth guard, which reads the cluster
 // through its own client.
 func hopSteps(from, to string) []automa.Builder {
-	all := CiliumHopSteps(from, to, hopCLI, func() (*kube.Client, error) { return &kube.Client{}, nil })
+	all := CiliumHopSteps(from, to, hopCLI, func(context.Context) (*kube.Client, error) { return &kube.Client{}, nil })
 	return all[:len(all)-1]
 }
 

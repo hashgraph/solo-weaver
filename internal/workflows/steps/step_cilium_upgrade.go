@@ -17,6 +17,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/hashgraph/solo-weaver/internal/cilium"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
@@ -45,7 +46,7 @@ var (
 // ciliumHop holds what the steps of one Cilium hop share.
 type ciliumHop struct {
 	from, to, cli string
-	newClient     kube.ClientProvider
+	newClient     kube.ClientProviderFromContext
 	chartDir      string
 	config        string
 }
@@ -55,7 +56,7 @@ type ciliumHop struct {
 // and values, Cilium's pre-flight image pull, `cilium upgrade`, and a health
 // gate that also checks our settings survived. Every step skips once Cilium
 // runs the target.
-func CiliumHopSteps(from, to, cli string, newClient kube.ClientProvider) []automa.Builder {
+func CiliumHopSteps(from, to, cli string, newClient kube.ClientProviderFromContext) []automa.Builder {
 	h := &ciliumHop{from: from, to: to, cli: cli, newClient: newClient}
 	return []automa.Builder{
 		h.checkHealthyBefore(),
@@ -152,8 +153,8 @@ func (h *ciliumHop) done(ctx context.Context, k *kube.Client) bool {
 	return err == nil && len(health.problems(h.to)) == 0
 }
 
-func (h *ciliumHop) client(stp automa.Step) (*kube.Client, *automa.Report) {
-	k, err := h.newClient()
+func (h *ciliumHop) client(ctx context.Context, stp automa.Step) (*kube.Client, *automa.Report) {
+	k, err := h.newClient(ctx)
 	if err != nil {
 		return nil, automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
 			"Check that the admin kubeconfig works: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))
@@ -164,7 +165,7 @@ func (h *ciliumHop) client(stp automa.Step) (*kube.Client, *automa.Report) {
 func (h *ciliumHop) checkHealthyBefore() automa.Builder {
 	return automa.NewStepBuilder().WithId("check-cilium-healthy").
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -193,7 +194,7 @@ func (h *ciliumHop) prepare() automa.Builder {
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -208,7 +209,8 @@ func (h *ciliumHop) prepare() automa.Builder {
 				return automa.FailureReport(stp, automa.WithError(err)) // already decorated
 			}
 			if h.config, err = rerenderCiliumConfig(); err != nil {
-				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.Internal)))
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.StateOperationFailed,
+					fmt.Sprintf("Check that %s/etc/weaver is writable, then run the command again", models.Paths().SandboxDir))))
 			}
 			return automa.SuccessReport(stp)
 		})
@@ -329,7 +331,7 @@ func (h *ciliumHop) upgrade() automa.Builder {
 					errorx.ExternalError.Wrap(err, "'cilium upgrade' to %s failed", h.to),
 					ReasonHostCommandFailed,
 					"Check the agents: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get pods -l k8s-app=cilium",
-					fmt.Sprintf("To go back to %s, run: sudo %s/cilium upgrade --version %q --values %s --wait", h.from, models.Paths().SandboxBinDir, h.from, h.config))))
+					fmt.Sprintf("To go back to %s, run: sudo %s/cilium upgrade --version %q --values %s --wait", h.from, models.Paths().SandboxBinDir, h.from, shellQuote(h.config)))))
 			}
 			return automa.SuccessReport(stp)
 		})
@@ -342,7 +344,7 @@ func (h *ciliumHop) waitHealthy() automa.Builder {
 			return ctx, nil
 		}).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -351,7 +353,7 @@ func (h *ciliumHop) waitHealthy() automa.Builder {
 			for {
 				health, err := readCiliumHealth(ctx, k)
 				if err != nil {
-					last = []string{err.Error()}
+					last = []string{doctor.OperatorMessage(err)}
 				} else if last = health.problems(h.to); len(last) == 0 {
 					return automa.SuccessReport(stp, automa.WithDetail("Cilium "+h.to+" is healthy"))
 				}
@@ -360,7 +362,11 @@ func (h *ciliumHop) waitHealthy() automa.Builder {
 				}
 				select {
 				case <-ctx.Done():
-					return automa.FailureReport(stp, automa.WithError(errx.Decorate(ctx.Err(), reasons.Internal)))
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(ctx.Err(), "stopped waiting for Cilium %s to be healthy", h.to),
+						reasons.PreconditionNotMet,
+						"Check the agents: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get pods -l k8s-app=cilium",
+						"Run the command again; it continues from where Cilium is now")))
 				case <-time.After(ciliumPollInterval):
 				}
 			}

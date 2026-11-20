@@ -62,6 +62,8 @@ func TestCiliumHopChecks_Fail(t *testing.T) {
 		{"target not shipped", "1.33.4", ciliumHop(StepPatch, "1.18.1", "1.18.15"), nil, "the target is a catalog version"},
 		{"two minors", "1.33.4", ciliumHop(StepMinor, "1.18.1", "1.20.2"), nil, "one step at a time"},
 		{"downgrade", "1.33.4", ciliumHop(StepPatch, "1.18.1", "1.18.0"), nil, "one step at a time"},
+		{"patch across minors", "1.33.4", ciliumHop(StepPatch, "1.18.1", "1.19.10"), nil, "one step at a time"},
+		{"minor within a minor", "1.33.4", ciliumHop(StepMinor, "1.18.1", "1.18.16"), nil, "one step at a time"},
 		{"target too new for Kubernetes", "1.30.2", ciliumHop(StepMinor, "1.18.1", "1.19.10"), nil, "the target runs on this Kubernetes"},
 	}
 	for _, tc := range cases {
@@ -108,6 +110,8 @@ func TestCiliumHopChecks_RejectsOtherHops(t *testing.T) {
 		_, err := CiliumHopChecks(clusterShape("1.33.4", "1.18.1"), fixtureMatrix(), hop)
 		require.Error(t, err)
 		assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err.Error())
+		reason, _ := errx.ReasonOf(err)
+		assert.Equal(t, reasons.Internal, reason)
 	}
 }
 

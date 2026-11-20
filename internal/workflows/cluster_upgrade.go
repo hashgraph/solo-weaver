@@ -16,6 +16,6 @@ import (
 // going back is a second `cilium upgrade`, which a person should decide on.
 func CiliumHopWorkflow(from, to, cli string) *automa.WorkflowBuilder {
 	all := []automa.Builder{steps.UpgradeHostBinary(software.CiliumBinaryName, cli, true, software.NewCiliumInstaller)}
-	all = append(all, steps.CiliumHopSteps(from, to, cli, kube.NewClient)...)
+	all = append(all, steps.CiliumHopSteps(from, to, cli, kube.ClientFromContext)...)
 	return automa.NewWorkflowBuilder().WithId("cilium-hop").Steps(all...)
 }

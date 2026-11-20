@@ -29,19 +29,20 @@ var (
 // first step of the hop.
 func CiliumHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) {
 	if hop.Kind != KindCilium || (hop.Step != StepPatch && hop.Step != StepMinor) {
-		return nil, errorx.IllegalArgument.New("%s %s is not a Cilium patch or minor hop", hop.Kind, hop.Step)
+		return nil, errx.Decorate(errorx.IllegalArgument.New("%s %s is not a Cilium patch or minor hop", hop.Kind, hop.Step),
+			reasons.Internal)
 	}
 	from, err := parseVersion(hop.From)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "hop start")
+		return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "hop start"), reasons.Internal)
 	}
 	to, err := parseVersion(hop.To)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "hop target")
+		return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "hop target"), reasons.Internal)
 	}
 	c, err := m.compile()
 	if err != nil {
-		return nil, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
+		return nil, errx.Decorate(errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix"), reasons.Internal)
 	}
 
 	var cs Checks
@@ -57,8 +58,14 @@ func CiliumHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 	shipped = shipped && rung.v == to
 	cs.add("the target is a catalog version", shipped, fmt.Sprintf("Cilium %s is not a version this binary ships", to))
 
-	oneStep := from.less(to) && (from.minorOf() == to.minorOf() || from.minorOf().next() == to.minorOf())
-	cs.add("one step at a time", oneStep, fmt.Sprintf("%s -> %s is not a patch or one minor up", from, to))
+	var oneStep bool
+	switch hop.Step {
+	case StepPatch:
+		oneStep = from.less(to) && from.minorOf() == to.minorOf()
+	case StepMinor:
+		oneStep = from.minorOf().next() == to.minorOf()
+	}
+	cs.add("one step at a time", oneStep, fmt.Sprintf("%s -> %s is not a %s hop", from, to, hop.Step))
 
 	kube, err := parseVersion(shape.Kubernetes.ControlPlane)
 	cs.add("the target runs on this Kubernetes", err == nil && shipped && rung.supports(kube.minorOf()),
@@ -90,7 +97,7 @@ func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks
 	}
 	checks, err := CiliumHopChecks(shape, m, hop)
 	if err != nil {
-		return errx.Decorate(err, reasons.Internal)
+		return err
 	}
 	if err := checks.Err(); err != nil {
 		return err

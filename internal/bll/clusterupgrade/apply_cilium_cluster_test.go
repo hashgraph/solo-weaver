@@ -13,6 +13,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -63,6 +64,10 @@ func TestWithCluster_ApplyCiliumHop(t *testing.T) {
 	require.NoError(t, err)
 	defer locks.Release()
 
-	require.NoError(t, ApplyCiliumHop(context.Background(), src, locks, run,
+	client, err := kube.NewClient()
+	require.NoError(t, err)
+	ctx := kube.WithKubeClient(context.Background(), client)
+
+	require.NoError(t, ApplyCiliumHop(ctx, src, locks, run,
 		Hop{Kind: KindCilium, Step: step, Component: "cilium", From: from, To: to}))
 }
