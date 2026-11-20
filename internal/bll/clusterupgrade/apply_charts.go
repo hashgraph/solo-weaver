@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 var chartHopWorkflow = workflows.ChartHopWorkflow
@@ -23,34 +25,34 @@ var chartHopWorkflow = workflows.ChartHopWorkflow
 // checked by the hop's first step.
 func ChartsHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) {
 	if hop.Kind != KindCharts || (hop.Step != StepCoupled && hop.Step != StepRefresh) {
-		return nil, errorx.IllegalArgument.New("%s %s is not a coupled or refresh charts hop", hop.Kind, hop.Step)
+		return nil, errx.Decorate(errorx.IllegalArgument.New("%s %s is not a coupled or refresh charts hop", hop.Kind, hop.Step), reasons.Internal)
 	}
 	if len(hop.Charts) == 0 {
-		return nil, errorx.IllegalArgument.New("a charts hop must name at least one chart")
+		return nil, errx.Decorate(errorx.IllegalArgument.New("a charts hop must name at least one chart"), reasons.Internal)
 	}
 	seen := map[string]bool{}
 	for _, b := range hop.Charts {
 		if seen[b.Chart] {
-			return nil, errorx.IllegalArgument.New("chart %s appears twice in the hop", b.Chart)
+			return nil, errx.Decorate(errorx.IllegalArgument.New("chart %s appears twice in the hop", b.Chart), reasons.Internal)
 		}
 		seen[b.Chart] = true
 		if _, err := parseVersion(b.From); err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "%s start", b.Chart)
+			return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "%s start", b.Chart), reasons.Internal)
 		}
 		if _, err := parseVersion(b.To); err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "%s target", b.Chart)
+			return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "%s target", b.Chart), reasons.Internal)
 		}
 	}
 	var kubeMinor minorVersion
 	if hop.Step == StepCoupled {
 		var err error
 		if kubeMinor, err = parseMinor(hop.Kubernetes); err != nil {
-			return nil, errorx.IllegalArgument.Wrap(err, "the Kubernetes minor of a coupled hop")
+			return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "the Kubernetes minor of a coupled hop"), reasons.Internal)
 		}
 	}
 	c, err := m.compile()
 	if err != nil {
-		return nil, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
+		return nil, errx.Decorate(errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix"), reasons.Internal)
 	}
 
 	var cs Checks
@@ -102,15 +104,20 @@ func ChartsHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 	return cs, nil
 }
 
-// ApplyChartsHop runs one charts hop: a coupled bump or the charts refresh. It
+// ApplyChartsHop runs one charts hop: a coupled bump or the charts refresh. The
+// caller holds the system and cluster locks in locks for the whole run. It
 // reads the cluster, does nothing when every chart already runs its target,
-// refuses when a check fails, then runs the hop under the cluster lock,
-// records the cluster and leaves an entry in the action history.
-func ApplyChartsHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop) error {
+// and refuses when a check fails. Otherwise one workflow runs the hop, waits
+// for the cluster to settle and records it, and one entry goes to the action
+// history.
+func ApplyChartsHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
-		return errorx.IllegalArgument.New("a workflow runner must be set")
+		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
 	}
-	shape, m, err := readLive(ctx, src)
+	if err := heldFor(src, locks, state.ComponentCluster); err != nil {
+		return err
+	}
+	shape, m, err := readHopLive(ctx, src)
 	if err != nil {
 		return err
 	}
@@ -138,10 +145,10 @@ func ApplyChartsHop(ctx context.Context, src LiveSources, run WorkflowRunner, ho
 		bumps[i] = steps.ChartBump{Chart: b.Chart, From: b.From, To: b.To}
 		moves[i] = fmt.Sprintf("%s=%s->%s", b.Chart, b.From, b.To)
 	}
-	inputs := map[string]string{"component": "charts", "step": string(hop.Step), "charts": strings.Join(moves, ",")}
+	inputs := map[string]string{inputComponent: string(KindCharts), inputStep: string(hop.Step), inputCharts: strings.Join(moves, ",")}
 	if hop.Kubernetes != "" {
-		inputs["kubernetes"] = hop.Kubernetes
+		inputs[inputKubernetes] = hop.Kubernetes
 	}
-	return recordHop(ctx, src, inputs, []state.ComponentID{state.ComponentCluster},
-		func() error { return run(ctx, chartHopWorkflow(bumps)) }, nil)
+	logx.As().Info().Str("step", string(hop.Step)).Strs("charts", moves).Msg("Applying the charts hop")
+	return runHop(ctx, src, run, inputs, chartHopWorkflow(bumps), hopRecord(src, []state.ComponentID{state.ComponentCluster}, nil), nil)
 }

@@ -109,7 +109,7 @@ var (
 // release is deployed at the target and the chart's own checks pass. A chart
 // already at its target is skipped, so a re-run finishes a hop that stopped
 // part way. The first failure stops the hop; charts already moved stay.
-func ChartHopSteps(bumps []ChartBump, newClient kube.ClientProvider) []automa.Builder {
+func ChartHopSteps(bumps []ChartBump, newClient kube.ClientProviderFromContext) []automa.Builder {
 	ordered := orderBumps(bumps)
 	out := []automa.Builder{checkChartHop(ordered)}
 	for _, b := range ordered {
@@ -148,7 +148,7 @@ func checkChartHop(bumps []ChartBump) automa.Builder {
 		})
 }
 
-func upgradeChart(b ChartBump, newClient kube.ClientProvider) automa.Builder {
+func upgradeChart(b ChartBump, newClient kube.ClientProviderFromContext) automa.Builder {
 	recipe := chartRecipes[b.Chart]
 	return automa.NewStepBuilder().WithId("upgrade-chart-" + b.Chart).
 		WithPrepare(detail(fmt.Sprintf("upgrading %s to %s...", b.Chart, b.To))).
@@ -176,7 +176,7 @@ func upgradeChart(b ChartBump, newClient kube.ClientProvider) automa.Builder {
 			spec.Release, spec.Namespace = rel.Name, rel.Namespace
 			live := rel.Chart.Metadata.Version
 
-			k, err := newClient()
+			k, err := newClient(ctx)
 			if err != nil {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
 					"Check that the admin kubeconfig works: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))

@@ -61,5 +61,5 @@ func ChartHopWorkflow(bumps []steps.ChartBump) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("chart-hop").
 		WithExecutionMode(automa.StopOnError).
-		Steps(steps.ChartHopSteps(bumps, kube.NewClient)...)
+		Steps(steps.ChartHopSteps(bumps, kube.ClientFromContext)...)
 }

@@ -7,6 +7,7 @@ package clusterupgrade
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,13 +15,17 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
-func liveSourcesOnHost(t *testing.T) (LiveSources, WorkflowRunner) {
+// liveSourcesOnHost reads the real state directory and cluster. It holds the
+// system and cluster locks for the test and puts the kube client in the
+// returned context.
+func liveSourcesOnHost(t *testing.T) (context.Context, LiveSources, *state.HeldLocks, WorkflowRunner) {
 	t.Helper()
 	sm, err := state.NewStateManager()
 	require.NoError(t, err)
@@ -32,28 +37,35 @@ func liveSourcesOnHost(t *testing.T) (LiveSources, WorkflowRunner) {
 		Machine: checkers.Machine,
 		Managed: reality.ManagedReleases,
 		Catalog: software.LoadInfrastructureCatalog,
+		Probe:   checkers.Probe,
 	}
-	run := func(ctx context.Context, wb *automa.WorkflowBuilder) error {
-		wf, err := wb.Build()
+	run := func(_ context.Context, fn func() (*automa.Report, error)) error {
+		report, err := fn()
 		if err != nil {
 			return err
 		}
-		return steps.FailureOf(wf.Execute(ctx))
+		return steps.FailureOf(report)
 	}
-	return src, run
+	locks, err := state.AcquireHeldLocks(filepath.Dir(sm.State().StateFile),
+		[]state.ComponentID{state.ComponentSystem, state.ComponentCluster}, 0)
+	require.NoError(t, err)
+	t.Cleanup(locks.Release)
+	client, err := kube.NewClient()
+	require.NoError(t, err)
+	return kube.WithKubeClient(context.Background(), client), src, locks, run
 }
 
 // applyHop runs hop with the executor for its kind.
-func applyHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop) error {
+func applyHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	switch hop.Kind {
 	case KindCilium:
-		return ApplyCiliumHop(ctx, src, run, hop)
+		return ApplyCiliumHop(ctx, src, locks, run, hop)
 	case KindKubernetes:
-		return ApplyKubernetesHop(ctx, src, run, hop)
+		return ApplyKubernetesHop(ctx, src, locks, run, hop)
 	case KindStructural:
-		return ApplyStructuralHop(ctx, src, run, hop)
+		return ApplyStructuralHop(ctx, src, locks, run, hop)
 	case KindCharts:
-		return ApplyChartsHop(ctx, src, run, hop)
+		return ApplyChartsHop(ctx, src, locks, run, hop)
 	}
 	return errorx.IllegalArgument.New("no executor for %s hops", hop.Kind)
 }
@@ -65,8 +77,7 @@ func applyHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop)
 //
 //	go test -tags require_cluster -run '^TestWithCluster_ApplyNextHop$' ./internal/bll/clusterupgrade/
 func TestWithCluster_ApplyNextHop(t *testing.T) {
-	ctx := context.Background()
-	src, run := liveSourcesOnHost(t)
+	ctx, src, locks, run := liveSourcesOnHost(t)
 
 	var hop Hop
 	if charts := os.Getenv("HOP_CHARTS"); charts != "" {
@@ -87,5 +98,5 @@ func TestWithCluster_ApplyNextHop(t *testing.T) {
 		hop = plan.Hops[0]
 	}
 	t.Logf("hop: %+v", hop)
-	require.NoError(t, applyHop(ctx, src, run, hop))
+	require.NoError(t, applyHop(ctx, src, locks, run, hop))
 }
