@@ -39,11 +39,7 @@ var structuralSteps = []struct {
 // A cluster that cannot be planned gets a plan with blockers and no hops. An
 // error means m or opts is invalid.
 func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
-	c, err := m.compile()
-	if err != nil {
-		return Plan{}, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
-	}
-	target, err := c.target(opts.To)
+	c, target, err := compileTarget(m, opts)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -76,7 +72,7 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 	// That is a fault in the running cluster, so it is fixed before anything
 	// else moves.
 	if bumps := coupledBumps(c, kube.minorOf(), charts); len(bumps) > 0 {
-		add(Hop{Kind: KindCharts, Step: StepCoupled, Charts: bumps})
+		add(Hop{Kind: KindCharts, Step: StepCoupled, Kubernetes: kube.minorOf().String(), Charts: bumps})
 	}
 
 	if r, _ := c.ciliumRung(cil.minorOf()); cil.less(r.v) {
@@ -98,7 +94,7 @@ func Resolve(shape rsl.ClusterShape, m Matrix, opts Options) (Plan, error) {
 			kube = r.v
 		}
 		if bumps := coupledBumps(c, k.next(), charts); len(bumps) > 0 {
-			add(Hop{Kind: KindCharts, Step: StepCoupled, Charts: bumps})
+			add(Hop{Kind: KindCharts, Step: StepCoupled, Kubernetes: k.next().String(), Charts: bumps})
 		}
 		next, _ := c.kubeRung(k.next())
 		add(Hop{Kind: KindKubernetes, Step: StepMinor, Component: componentKubernetes, From: kube.String(), To: next.v.String()})
@@ -165,6 +161,29 @@ func coupledBumps(c compiled, k minorVersion, charts map[string]version) []Chart
 }
 
 // target resolves opts.To against the ladder.
+// compileTarget compiles m and picks the Kubernetes target opts asks for.
+func compileTarget(m Matrix, opts Options) (compiled, version, error) {
+	c, err := m.compile()
+	if err != nil {
+		return compiled{}, version{}, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
+	}
+	target, err := c.target(opts.To)
+	if err != nil {
+		return compiled{}, version{}, err
+	}
+	return c, target, nil
+}
+
+// blockedPlan is the plan for a cluster that cannot be planned for a reason
+// found before its shape was read: the target and the blockers, no hops.
+func blockedPlan(m Matrix, opts Options, blockers ...Blocker) (Plan, error) {
+	_, target, err := compileTarget(m, opts)
+	if err != nil {
+		return Plan{}, err
+	}
+	return Plan{Target: Target{Kubernetes: target.String()}, Blockers: blockers}, nil
+}
+
 func (c compiled) target(to string) (version, error) {
 	if to == "" {
 		return c.def, nil

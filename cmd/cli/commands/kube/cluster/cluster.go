@@ -29,6 +29,7 @@ func init() {
 
 	clusterCmd.AddCommand(installCmd)
 	clusterCmd.AddCommand(uninstallCmd)
+	clusterCmd.AddCommand(upgradeCmd)
 }
 
 func GetCmd() *cobra.Command {
