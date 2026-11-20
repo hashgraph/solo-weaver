@@ -46,6 +46,10 @@ type baseInstaller struct {
 	machineRuntime       MachineRuntime // optional, if it is not passed, it would perform disk check directly
 	softwareState        *state.SoftwareState
 
+	// workDir, when set, replaces the shared downloads and unpack folders, so
+	// checksums can be computed for any platform without touching the host.
+	workDir string
+
 	// These function fields allow for installer-specific overrides of the verification logic while still
 	// providing a default implementation in the baseInstaller. For example, kubeadm and kubelet need to verify
 	// configuration files in the sandbox in addition to the binaries, so they override the verifyConfigured function
@@ -106,7 +110,7 @@ func newBaseInstaller(softwareName string, opts ...InstallerOption) (*baseInstal
 // Download handles the common download logic with checksum verification
 // It downloads all archives, binaries (with URLs), and config files if available.
 func (b *baseInstaller) Download() error {
-	downloadFolder := models.Paths().DownloadsDir
+	downloadFolder := b.downloadsDir()
 
 	// Create download folder if it doesn't exist
 	err := b.fileManager.CreateDirectory(downloadFolder, true)
@@ -141,7 +145,7 @@ func (b *baseInstaller) downloadArchives() error {
 
 	// Download all archives
 	for _, archive := range versionInfo.Archives {
-		err := b.downloadAndVerifyArchive(archive)
+		err := b.downloadAndVerify(archive.Name, archive.URL, archive.PlatformChecksum)
 		if err != nil {
 			return err
 		}
@@ -150,43 +154,22 @@ func (b *baseInstaller) downloadArchives() error {
 	return nil
 }
 
-// downloadAndVerifyArchive downloads and verifies a single archive
-func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
-	platform := b.software.getPlatform()
-
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
-	// Resolve the archive URL
-	downloadURL, err := executeTemplate(archive.URL, data)
+// downloadAndVerify downloads one archive or URL binary for this installer's
+// platform and verifies its checksum, skipping the download when a valid copy
+// is already present.
+func (b *baseInstaller) downloadAndVerify(nameTmpl, urlTmpl string, pc PlatformChecksum) error {
+	downloadURL, destinationFile, err := b.resolveDownload(nameTmpl, urlTmpl)
 	if err != nil {
-		return NewTemplateError(err, b.software.Name)
+		return err
 	}
 
-	// Resolve the archive name
-	archiveName, err := executeTemplate(archive.Name, data)
+	checksum, err := b.platformChecksum(pc)
 	if err != nil {
-		return NewTemplateError(err, b.software.Name)
-	}
-
-	destinationFile := path.Join(models.Paths().DownloadsDir, archiveName)
-
-	// Get expected checksum for this archive
-	osInfo, exists := archive.PlatformChecksum[platform.os]
-	if !exists {
-		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
-	}
-
-	checksum, exists := osInfo[platform.arch]
-	if !exists {
-		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+		return err
 	}
 
 	// Check if file already exists and is valid
-	_, exists, err = b.fileManager.PathExists(destinationFile)
+	_, exists, err := b.fileManager.PathExists(destinationFile)
 	if err == nil && exists {
 		// File exists, verify checksum
 		err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
@@ -201,13 +184,53 @@ func (b *baseInstaller) downloadAndVerifyArchive(archive ArchiveDetail) error {
 		}
 	}
 
-	// Download the archive and verify its checksum, retrying transient corruption
-	err = b.downloader.DownloadAndVerify(downloadURL, destinationFile, checksum.Value, checksum.Algorithm)
+	// Download the file and verify its checksum, retrying transient corruption
+	return b.downloader.DownloadAndVerify(downloadURL, destinationFile, checksum.Value, checksum.Algorithm)
+}
+
+// resolveDownload templates an archive or binary's URL and file name for this
+// installer's version and platform, and returns the URL and where to save it.
+func (b *baseInstaller) resolveDownload(nameTmpl, urlTmpl string) (string, string, error) {
+	data := b.templateData()
+
+	downloadURL, err := executeTemplate(urlTmpl, data)
 	if err != nil {
-		return err
+		return "", "", NewTemplateError(err, b.software.Name)
 	}
 
-	return nil
+	name, err := executeTemplate(nameTmpl, data)
+	if err != nil {
+		return "", "", NewTemplateError(err, b.software.Name)
+	}
+
+	return downloadURL, path.Join(b.downloadsDir(), name), nil
+}
+
+// platformChecksum returns the checksum entry for this installer's platform.
+func (b *baseInstaller) platformChecksum(pc PlatformChecksum) (Checksum, error) {
+	platform := b.software.getPlatform()
+
+	osInfo, exists := pc[platform.os]
+	if !exists {
+		return Checksum{}, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
+	}
+
+	checksum, exists := osInfo[platform.arch]
+	if !exists {
+		return Checksum{}, NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
+	}
+
+	return checksum, nil
+}
+
+// templateData is the data catalog names and URLs are templated with.
+func (b *baseInstaller) templateData() TemplateData {
+	platform := b.software.getPlatform()
+	return TemplateData{
+		VERSION: b.versionToBeInstalled,
+		OS:      platform.os,
+		ARCH:    platform.arch,
+	}
 }
 
 // downloadBinaries downloads all binaries that have URLs (not from archives)
@@ -219,70 +242,10 @@ func (b *baseInstaller) downloadBinaries() error {
 
 	// Download all binaries that have URLs (not from archives)
 	for _, binary := range versionInfo.BinariesByURL() {
-		err := b.downloadAndVerifyBinary(binary)
+		err := b.downloadAndVerify(binary.Name, binary.URL, binary.PlatformChecksum)
 		if err != nil {
 			return err
 		}
-	}
-
-	return nil
-}
-
-// downloadAndVerifyBinary downloads and verifies a single binary (that has a URL)
-func (b *baseInstaller) downloadAndVerifyBinary(binary BinaryDetail) error {
-	platform := b.software.getPlatform()
-
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
-	// Resolve the binary URL
-	downloadURL, err := executeTemplate(binary.URL, data)
-	if err != nil {
-		return NewTemplateError(err, b.software.Name)
-	}
-
-	// Resolve the binary name
-	binaryName, err := executeTemplate(binary.Name, data)
-	if err != nil {
-		return NewTemplateError(err, b.software.Name)
-	}
-
-	destinationFile := path.Join(models.Paths().DownloadsDir, binaryName)
-
-	// Get expected checksum for this binary
-	osInfo, exists := binary.PlatformChecksum[platform.os]
-	if !exists {
-		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, "")
-	}
-
-	checksum, exists := osInfo[platform.arch]
-	if !exists {
-		return NewPlatformNotFoundError(b.software.Name, b.versionToBeInstalled, platform.os, platform.arch)
-	}
-
-	// Check if file already exists and is valid
-	_, exists, err = b.fileManager.PathExists(destinationFile)
-	if err == nil && exists {
-		// File exists, verify checksum
-		err = VerifyChecksum(destinationFile, checksum.Value, checksum.Algorithm)
-		if err == nil {
-			// File is already downloaded and valid
-			return nil
-		}
-		// File exists but invalid checksum, remove it and re-download
-		err = b.fileManager.RemoveAll(destinationFile)
-		if err != nil {
-			return NewDownloadError(err, downloadURL, 0)
-		}
-	}
-
-	// Download the binary and verify its checksum, retrying transient corruption
-	err = b.downloader.DownloadAndVerify(downloadURL, destinationFile, checksum.Value, checksum.Algorithm)
-	if err != nil {
-		return err
 	}
 
 	return nil
@@ -298,7 +261,7 @@ func (b *baseInstaller) downloadConfigs() error {
 
 	// Download the config file
 	for _, config := range configs {
-		configFile := path.Join(models.Paths().DownloadsDir, config.Name)
+		configFile := path.Join(b.downloadsDir(), config.Name)
 
 		// Check if file already exists and verify checksum
 		_, exists, err := b.fileManager.PathExists(configFile)
@@ -383,21 +346,13 @@ func (b *baseInstaller) Extract() error {
 
 // extractArchive extracts a single archive
 func (b *baseInstaller) extractArchive(archive ArchiveDetail, extractFolder string) error {
-	platform := b.software.getPlatform()
-
-	data := TemplateData{
-		VERSION: b.versionToBeInstalled,
-		OS:      platform.os,
-		ARCH:    platform.arch,
-	}
-
 	// Resolve the archive name
-	archiveName, err := executeTemplate(archive.Name, data)
+	archiveName, err := executeTemplate(archive.Name, b.templateData())
 	if err != nil {
 		return NewTemplateError(err, b.software.Name)
 	}
 
-	compressedFile := path.Join(models.Paths().DownloadsDir, archiveName)
+	compressedFile := path.Join(b.downloadsDir(), archiveName)
 
 	// Verify that the compressed file exists
 	_, exists, err := b.fileManager.PathExists(compressedFile)
@@ -783,7 +738,18 @@ func (b *baseInstaller) replaceAllInFile(sourceFile string, old string, new stri
 
 // extractFolder returns the software-specific extraction folder path
 func (b *baseInstaller) extractFolder() string {
+	if b.workDir != "" {
+		return path.Join(b.workDir, models.DefaultUnpackFolderName)
+	}
 	return path.Join(models.Paths().TempDir, b.software.Name, models.DefaultUnpackFolderName)
+}
+
+// downloadsDir returns the folder artifacts are downloaded into.
+func (b *baseInstaller) downloadsDir() string {
+	if b.workDir != "" {
+		return path.Join(b.workDir, "downloads")
+	}
+	return models.Paths().DownloadsDir
 }
 
 // Version returns the version being installed

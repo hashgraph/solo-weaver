@@ -44,7 +44,7 @@ type daemonVersionOutput struct {
 
 // DaemonBinarySource describes where to obtain the daemon binary.
 // When BinPath is empty the binary is auto-downloaded from the release URL
-// embedded in the infrastructure catalog (pkg/software/infrastructure-catalog.yaml)
+// embedded in the infrastructure catalog (pkg/software/catalog/host-tools.yaml)
 // and checked against the digest of the co-released daemon, which is stamped into
 // the CLI at link time; a version other than the CLI's own is checked against the
 // release's published .sha256 asset instead.

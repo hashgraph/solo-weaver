@@ -1,6 +1,6 @@
 # Chart checksums
 
-Helm charts under `cluster:` in `pkg/software/infrastructure-catalog.yaml`
+Helm charts under `cluster:` in `pkg/software/catalog/cluster.yaml`
 are pinned by an integrity record. There is one record per version:
 
 ```yaml
@@ -19,8 +19,9 @@ The semantics of `checksum:` depend on the chart `type:`:
 
 ## Updating an existing chart version
 
-1. Bump the `default:` field for the chart (and add the new entry under
-   `versions:` if it is not yet present).
+1. Add the new entry under the chart's `versions:` in `cluster.yaml` if it
+   is not yet present, and bump the chart's default in
+   `pkg/software/catalog/defaults.yaml`.
 2. Recompute the checksum for every version listed under that chart.
 3. Run `task lint` and the unit/integration tests so the schema validator
    catches typos and unknown versions.
@@ -35,7 +36,7 @@ task chart-checksums
 
 It does the following:
 
-- Loads `pkg/software/infrastructure-catalog.yaml` via the same
+- Loads the catalog files in `pkg/software/catalog/` via the same
   `software.LoadInfrastructureCatalog()` used at runtime — so the chart
   list, repo, and version list come straight from the catalog (no
   hardcoded duplicates) and are validated by the schema before any
@@ -49,17 +50,18 @@ It does the following:
 Source lives in `scripts/chart-checksums/main.go`. Requires `helm` on
 PATH.
 
-Copy the values into `pkg/software/infrastructure-catalog.yaml` under
-the matching `versions:` entry. The target is also handy as a
+Copy the values into `pkg/software/catalog/cluster.yaml` under the
+matching `versions:` entry, or run `go run ./scripts/chart-checksums -write`
+to rewrite them in place. The target is also handy as a
 verification step before a release: rerun it and confirm the printed
 digests match the values committed to the catalog.
 
 ## Adding a new chart
 
-1. Add a new entry under `cluster:` in
-   `pkg/software/infrastructure-catalog.yaml` with `type`, `chart`
-   (and `repo` for classic charts), `default`, and at least one
-   `versions:` record.
+1. Add a new entry under `cluster:` in `pkg/software/catalog/cluster.yaml`
+   with `type`, `chart` (and `repo` for classic charts), `namespace`,
+   `release`, and at least one `versions:` record. Add its default under
+   `cluster:` in `pkg/software/catalog/defaults.yaml`.
 2. Run `task chart-checksums` — it picks up the new chart automatically
    because it reads the catalog. Paste the printed checksum into the new
    `versions:` entry.
@@ -69,11 +71,16 @@ digests match the values committed to the catalog.
 
 ## Schema invariants
 
-The loader in `pkg/software/config.go` rejects the catalog at startup if
-any of the following hold:
+The loader in `pkg/software/catalog_loader.go` and `pkg/software/config.go`
+rejects the catalog at startup if any of the following hold. The file layout
+and merge rules are in `pkg/software/catalog/README.md`.
 
-- A `host:` or `cluster:` entry has no `default:`, or `default:` points to
-  a version absent from `versions:`.
+- A `host:` or `cluster:` entry has no default in `defaults.yaml`, or its
+  default points to a version absent from `versions:`.
+- A component file declares a `default:`, or any file has a key the schema
+  does not know.
+- The same version of a component is listed in two files, or a chart's
+  `type`, `repo`, `chart`, `namespace` or `release` differs between files.
 - A `cluster:` entry has no `type:` or a `type:` that is neither `classic`
   nor `oci`.
 - A `classic` entry is missing `repo:`, or an `oci` entry declares `repo:`.
@@ -87,10 +94,10 @@ any of the following hold:
 > `solo-weaver-catalog-alternatives.md` §8) so the catalog rename is
 > grounded in concrete intent.
 
-The embedded `infrastructure-catalog.yaml` is the in-binary manifest of
+The embedded catalog (`pkg/software/catalog/`) is the in-binary manifest of
 *what this build of `solo-provisioner` is able to install*. The default
-version for every component is set by the catalog's `default:` field —
-that is the single source of truth at install time. Two future
+version for every component is set in its `defaults.yaml` — that is the
+single source of truth at install time. Two future
 mechanisms relate to that default; neither lives in this PR.
 
 ### CN release package audit manifest (declarative, not an override)
@@ -98,15 +105,13 @@ mechanisms relate to that default; neither lives in this PR.
 The CN release package (`build-v<semver>.zip`) ships a file named
 `manifests/infrastructure-versions.yaml` with the same top-level
 `host:` and `cluster:` keys as our catalog, but a **minimal schema**:
-each entry lists only `name` + `version`. Filename collision with the
-embedded catalog is the primary reason the embedded file is named
-`infrastructure-catalog.yaml` — the two files have distinct schemas,
-distinct producers, and distinct roles, and the filenames need to make
-that obvious.
+each entry lists only `name` + `version`. The two have distinct schemas,
+distinct producers, and distinct roles; the audit manifest is not a
+catalog file and is never merged into the embedded catalog.
 
 The audit manifest is **declarative**, not imperative: at apply time
 the provisioner validates that every listed version equals the
-embedded catalog's `default:` for that component, and aborts on the
+embedded catalog's default for that component, and aborts on the
 first mismatch. The provisioner still installs from its catalog — the
 audit manifest does not direct version selection, it just records the
 combination that the CN release pipeline has validated for the council
