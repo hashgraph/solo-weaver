@@ -49,17 +49,43 @@ func smWithReleases(t *testing.T, releases map[string]state.HelmReleaseInfo) sta
 	return smWithCluster(t, state.ClusterState{Releases: releases})
 }
 
+// fakeReader is a cluster with nodes and a Cilium agent, or whose reads fail.
+type fakeReader struct {
+	nodes      []reality.NodeInfo
+	agent      string
+	agentFound bool
+	nodesErr   error
+	agentErr   error
+}
+
+func (f fakeReader) Nodes(context.Context) ([]reality.NodeInfo, error) { return f.nodes, f.nodesErr }
+func (f fakeReader) CiliumAgentVersion(context.Context) (string, bool, error) {
+	return f.agent, f.agentFound, f.agentErr
+}
+
+var oneNode = fakeReader{
+	nodes:      []reality.NodeInfo{{Name: "n1", KubeletVersion: "v1.36.5", ContainerRuntimeVersion: "cri-o://1.36.7"}},
+	agent:      "1.20.2",
+	agentFound: true,
+}
+
 func refreshCluster(t *testing.T, sm state.Manager, helm reality.HelmManager, probe reality.ClusterReachability) state.ClusterState {
 	t.Helper()
+	return refreshClusterWith(t, sm, helm, oneNode, probe)
+}
+
+func refreshClusterWith(t *testing.T, sm state.Manager, helm reality.HelmManager, reader reality.ClusterReader, probe reality.ClusterReachability) state.ClusterState {
+	t.Helper()
 	reality.UseClusterInfo(t, liveInfo, nil)
-	return refreshClusterAsIs(t, sm, helm, probe)
+	return refreshClusterAsIs(t, sm, helm, reader, probe)
 }
 
 // refreshClusterAsIs refreshes with whatever cluster info the test set up.
-func refreshClusterAsIs(t *testing.T, sm state.Manager, helm reality.HelmManager, probe reality.ClusterReachability) state.ClusterState {
+func refreshClusterAsIs(t *testing.T, sm state.Manager, helm reality.HelmManager, reader reality.ClusterReader, probe reality.ClusterReachability) state.ClusterState {
 	t.Helper()
 	checker, err := reality.NewClusterChecker(sm,
 		func() (reality.HelmManager, error) { return helm, nil },
+		func() (reality.ClusterReader, error) { return reader, nil },
 		func() reality.ClusterReachability { return probe })
 	require.NoError(t, err)
 	cs, err := checker.RefreshState(context.Background())
@@ -121,19 +147,23 @@ func TestClusterChecker_KeepsTheRecordedClusterWhenNotObserved(t *testing.T) {
 	}
 	for name, tc := range map[string]struct {
 		helm           reality.HelmManager
+		reader         reality.ClusterReader
 		probe          reality.ClusterReachability
 		infoErr        error
 		wantUnobserved bool
 	}{
-		"no kubeconfig":           {helm: &fakeHelmManager{}, probe: reality.NotConfigured},
-		"API server silent":       {helm: &fakeHelmManager{}, probe: reality.Unobservable, wantUnobserved: true},
-		"helm listing failed":     {helm: failingHelmManager{}, probe: reality.Reachable, wantUnobserved: true},
-		"cluster info unreadable": {helm: &fakeHelmManager{}, probe: reality.Reachable, infoErr: errors.New("connection refused"), wantUnobserved: true},
+		"no kubeconfig":           {helm: &fakeHelmManager{}, reader: oneNode, probe: reality.NotConfigured},
+		"API server silent":       {helm: &fakeHelmManager{}, reader: oneNode, probe: reality.Unobservable, wantUnobserved: true},
+		"helm listing failed":     {helm: failingHelmManager{}, reader: oneNode, probe: reality.Reachable, wantUnobserved: true},
+		"cluster info unreadable": {helm: &fakeHelmManager{}, reader: oneNode, probe: reality.Reachable, infoErr: errors.New("connection refused"), wantUnobserved: true},
+		"node unreadable":         {helm: &fakeHelmManager{}, reader: fakeReader{nodesErr: errors.New("forbidden")}, probe: reality.Reachable, wantUnobserved: true},
+		"no nodes reported":       {helm: &fakeHelmManager{}, reader: fakeReader{agent: "1.20.2", agentFound: true}, probe: reality.Reachable, wantUnobserved: true},
+		"cilium agent unreadable": {helm: &fakeHelmManager{}, reader: fakeReader{nodes: oneNode.nodes, agentErr: errors.New("timeout")}, probe: reality.Reachable, wantUnobserved: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			reality.UseClusterInfo(t, liveInfo, tc.infoErr)
 
-			cs := refreshClusterAsIs(t, smWithCluster(t, persisted), tc.helm, tc.probe)
+			cs := refreshClusterAsIs(t, smWithCluster(t, persisted), tc.helm, tc.reader, tc.probe)
 
 			require.Equal(t, tc.wantUnobserved, cs.Unobserved)
 			cs.Unobserved = false
@@ -171,4 +201,88 @@ func TestClusterChecker_FindsAReleaseInAnotherNamespace(t *testing.T) {
 	otherChart := helmRelease(eso.Release, "my-eso", "something-else", "1.0.0", release.StatusDeployed)
 	cs = refreshCluster(t, smWithReleases(t, nil), &fakeHelmManager{releases: []*release.Release{otherChart}}, reality.Reachable)
 	require.NotContains(t, cs.Releases, "external-secrets")
+}
+
+func TestClusterChecker_RecordsTheNodeAndTheCiliumAgent(t *testing.T) {
+	cs := refreshCluster(t, smWithReleases(t, nil), &fakeHelmManager{}, reality.Reachable)
+
+	require.Equal(t, "1.36.5", cs.KubeletVersion)
+	require.Equal(t, "cri-o://1.36.7", cs.ContainerRuntimeVersion)
+	require.Equal(t, 1, cs.NodeCount)
+	require.Equal(t, "1.20.2", cs.CiliumAgentVersion)
+}
+
+// A cluster with no Cilium agent records none; a node joined by hand shows in
+// the count.
+func TestClusterChecker_NoAgentAndExtraNodes(t *testing.T) {
+	reader := fakeReader{nodes: []reality.NodeInfo{
+		{Name: "a", KubeletVersion: "v1.36.5"}, {Name: "b", KubeletVersion: "v1.35.2"},
+	}}
+	sm := newTeleportTestStateManager(t)
+	st := sm.State()
+	st.ClusterState.CiliumAgentVersion = "1.18.1"
+	sm.Set(st)
+
+	cs := refreshClusterWith(t, sm, &fakeHelmManager{}, reader, reality.Reachable)
+
+	require.Equal(t, 2, cs.NodeCount)
+	require.Empty(t, cs.CiliumAgentVersion)
+}
+
+// A node or agent read that fails keeps the recorded cluster and marks the
+// result unobserved.
+func TestClusterChecker_FailedReadKeepsTheRecordedNodeAndAgent(t *testing.T) {
+	sm := newTeleportTestStateManager(t)
+	st := sm.State()
+	st.ClusterState.KubeletVersion = "1.33.4"
+	st.ClusterState.NodeCount = 1
+	st.ClusterState.CiliumAgentVersion = "1.18.1"
+	sm.Set(st)
+	failing := fakeReader{nodesErr: errors.New("forbidden"), agentErr: errors.New("timeout")}
+
+	cs := refreshClusterWith(t, sm, &fakeHelmManager{}, failing, reality.Reachable)
+
+	require.Equal(t, "1.33.4", cs.KubeletVersion)
+	require.Equal(t, 1, cs.NodeCount)
+	require.Equal(t, "1.18.1", cs.CiliumAgentVersion)
+	require.True(t, cs.Unobserved)
+}
+
+// A release of another chart under a managed release name (the Bitnami
+// node-exporter) is recorded with its own chart name and no catalog chartRef.
+func TestClusterChecker_ForeignChartGetsNoCatalogChartRef(t *testing.T) {
+	ne := software.MustGetClusterComponent("node-exporter")
+	bitnami := helmRelease(ne.Release, ne.Namespace, "node-exporter", "4.5.19", release.StatusDeployed)
+
+	cs := refreshCluster(t, smWithReleases(t, nil), &fakeHelmManager{releases: []*release.Release{bitnami}}, reality.Reachable)
+
+	got := cs.Releases["node-exporter"]
+	require.Equal(t, "node-exporter", got.ChartName)
+	require.Equal(t, "4.5.19", got.ChartVersion)
+	require.Empty(t, got.ChartRef)
+}
+
+// Both reads run, and the error names each one that failed.
+func TestClusterChecker_ReportsEveryFailedRead(t *testing.T) {
+	failing := fakeReader{nodesErr: errors.New("forbidden"), agentErr: errors.New("timeout")}
+
+	err := reality.ReadCluster(context.Background(), failing, &state.ClusterState{})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read the nodes")
+	require.Contains(t, err.Error(), "forbidden")
+	require.Contains(t, err.Error(), "failed to read the Cilium agent")
+	require.Contains(t, err.Error(), "timeout")
+}
+
+// A cluster that reports no nodes is a failed read and changes nothing.
+func TestClusterChecker_NoNodesLeavesTheFactsAlone(t *testing.T) {
+	cs := state.ClusterState{KubeletVersion: "1.33.4", NodeCount: 1}
+
+	err := reality.ReadCluster(context.Background(), fakeReader{agent: "1.20.2", agentFound: true}, &cs)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no nodes")
+	require.Equal(t, "1.33.4", cs.KubeletVersion)
+	require.Equal(t, 1, cs.NodeCount)
 }
