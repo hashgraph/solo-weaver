@@ -3,11 +3,13 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -15,8 +17,10 @@ import (
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	"github.com/hashgraph/solo-weaver/internal/ui"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -138,6 +142,7 @@ var installCmd = &cobra.Command{
 			Common: models.CommonInputs{
 				NodeType:         models.NodeTypeConsensus,
 				Force:            force,
+				NonInteractive:   ui.NonInteractive,
 				ExecutionOptions: *workflows.DefaultWorkflowExecutionOptions(),
 			},
 			Custom: models.ConsensusNodeInputs{
@@ -169,6 +174,8 @@ var installCmd = &cobra.Command{
 				MemoryLimit:               flagMemoryLimit,
 				MemoryRequest:             flagMemoryRequest,
 				Volumes:                   volCfg,
+				ExpandPVCs:                flagExpandPVCs,
+				RecreatePVCs:              flagRecreatePVCs,
 				HostPathUID:               flagHostPathUID,
 				HostPathGID:               flagHostPathGID,
 			},
@@ -178,6 +185,28 @@ var installCmd = &cobra.Command{
 			Int64("nodeId", inputs.Custom.NodeId).
 			Str("namespace", inputs.Custom.Namespace).
 			Msg("Installing consensus node")
+
+		// The PVC prompts run before the TUI starts. The install handler sets OrbitName the same way.
+		lookup := inputs.Custom
+		lookup.OrbitName = lookup.Namespace
+		if err := checkRecreatePVCs(flagRecreatePVCs, prompt.ShouldPrompt(force), flagNodeId, flagNamespace, func() ([]string, error) {
+			ctx, cancel := context.WithTimeout(cmd.Context(), unmountedPVCLookupTimeout)
+			defer cancel()
+			return steps.RecreatedConsensusPVCs(ctx, lookup, steps.DefaultConsensusPVCProvider)
+		}, prompt.RunConfirm); err != nil {
+			return err
+		}
+
+		// #1360: without a prompt, the precheck step stops instead.
+		accepted, err := checkUnmountedPVCs(prompt.ShouldPrompt(force), flagNodeId, func() ([]string, string, error) {
+			ctx, cancel := context.WithTimeout(cmd.Context(), unmountedPVCLookupTimeout)
+			defer cancel()
+			return steps.UnmountedConsensusPVCs(ctx, lookup, steps.DefaultConsensusPVCProvider)
+		}, prompt.RunConfirm)
+		if err != nil {
+			return err
+		}
+		inputs.Custom.AcceptUnmountedPVCs = accepted
 
 		ac, err := handler.ForAction(intent.Action)
 		if err != nil {
@@ -241,6 +270,8 @@ func init() {
 	installCmd.Flags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
 	installCmd.Flags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
 	installCmd.Flags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
+	installCmd.Flags().BoolVar(&flagExpandPVCs, "expand-pvcs", false, "Grow a kept PVC that is smaller than the requested size; size must be the only difference, the PVC must be Bound and its StorageClass must allow volume expansion. The data is kept")
+	installCmd.Flags().BoolVar(&flagRecreatePVCs, "recreate-pvcs", false, "Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled")
 	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
 	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
 	// value is the trusted "2000" constant, so the error can't fire).
@@ -348,6 +379,77 @@ func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (
 	logx.As().Warn().Str("path", path).
 		Msg("node-admin-keys.json is missing; the node will use the genesis key as its admin key (local dev/test only)")
 	return nil
+}
+
+// checkRecreatePVCs asks the user to confirm the PVCs that --recreate-pvcs deletes.
+// No PVC to delete: no prompt. A failed lookup asks without the PVC names.
+func checkRecreatePVCs(recreate, shouldPrompt bool, nodeId int64, namespace string, find func() ([]string, error),
+	confirm func(title, description string, defaultValue bool) (bool, error)) error {
+	if !recreate || !shouldPrompt {
+		return nil
+	}
+	description := "--recreate-pvcs deletes each kept PVC of this node that differs from the requested volume settings, " +
+		"or that this install will not mount. The data in those PVCs is lost. PVCs that match are kept."
+	pvcs, err := find()
+	switch {
+	case err != nil:
+		logx.As().Warn().Err(err).Msg("The PVC lookup failed; the --recreate-pvcs prompt cannot name the PVCs")
+	case len(pvcs) == 0:
+		return nil
+	default:
+		description = "--recreate-pvcs deletes these PVCs and their data: " + strings.Join(pvcs, ", ") +
+			". PVCs that match the requested volume settings are kept."
+	}
+	ok, err := confirm(
+		fmt.Sprintf("Delete kept PVCs of consensus node %d in namespace %s?", nodeId, namespace),
+		description, false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errx.Decorate(
+			errorx.RejectedOperation.New("aborted: --recreate-pvcs was not confirmed"),
+			reasons.InvalidArgument,
+			"Run install again without --recreate-pvcs to keep the PVCs")
+	}
+	return nil
+}
+
+// unmountedPVCLookupTimeout bounds the PVC lookup before each PVC prompt.
+const unmountedPVCLookupTimeout = 15 * time.Second
+
+// checkUnmountedPVCs asks the user to confirm an install that does not mount kept PVCs
+// with data. It returns true when the user accepts. A failed lookup skips the prompt:
+// the precheck step reports the error.
+func checkUnmountedPVCs(shouldPrompt bool, nodeId int64, find func() ([]string, string, error),
+	confirm func(title, description string, defaultValue bool) (bool, error)) (bool, error) {
+	if !shouldPrompt {
+		return false, nil
+	}
+	lines, keep, err := find()
+	if err != nil {
+		logx.As().Debug().Err(err).Msg("Skipping the unmounted PVC prompt: the PVC lookup failed")
+		return false, nil
+	}
+	if len(lines) == 0 {
+		return false, nil
+	}
+	ok, err := confirm(
+		fmt.Sprintf("Install consensus node %d without the data in its kept PVCs?", nodeId),
+		"Existing PVCs hold data that this install will not mount: "+strings.Join(lines, "; ")+
+			". The PVCs and their data are kept. Choose No to stop and keep the data.",
+		false)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, errx.Decorate(
+			errorx.RejectedOperation.New("aborted: consensus node %d not installed, because it would not mount its kept PVCs", nodeId),
+			reasons.PreconditionNotMet,
+			"To keep the data, back the volumes with their PVCs again: "+keep,
+			"Pass --recreate-pvcs to delete these PVCs (this deletes their data)")
+	}
+	return true, nil
 }
 
 func confirmGenesisAdminKey() (bool, error) {
