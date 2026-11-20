@@ -288,6 +288,15 @@ func TestUpgrade_DryRun(t *testing.T) {
 		assert.Contains(t, out, "Next step: cilium 1.18.1 -> 1.18.16 (patch)")
 		assert.Contains(t, out, "[ok]     one node")
 	})
+	t.Run("an internal error keeps its reason", func(t *testing.T) {
+		dryRunLive = func(context.Context, clusterupgrade.Options) (clusterupgrade.DryRunResult, error) {
+			return clusterupgrade.DryRunResult{}, errx.Decorate(errorx.IllegalArgument.New("no checks for \"x\" hops"), reasons.Internal)
+		}
+		_, err := execUpgrade(t, []string{"--dry-run"})
+		require.Error(t, err)
+		reason, _ := errx.ReasonOf(err)
+		assert.Equal(t, reasons.Internal, reason)
+	})
 	t.Run("a failed check", func(t *testing.T) {
 		dryRunLive = func(context.Context, clusterupgrade.Options) (clusterupgrade.DryRunResult, error) {
 			return clusterupgrade.DryRunResult{Plan: plan, Next: &next,

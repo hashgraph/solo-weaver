@@ -5,6 +5,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/clusterupgrade"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
@@ -37,7 +39,7 @@ var (
 			"plans the remaining steps (one Kubernetes or Cilium minor at a time, with the chart changes each step " +
 			"needs) and applies the next one. --all applies every remaining step, re-planning after each. " +
 			"--plan lists the steps and --dry-run checks the next one; neither changes anything or takes a lock. " +
-			"A run holds the system and cluster state locks, so other commands that change the cluster wait for it.",
+			"A run holds the system and cluster state locks, so other commands that change the cluster are refused until it ends.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flagUpgradeRollbackOnError || flagUpgradeContinueOnError {
@@ -58,7 +60,7 @@ var (
 			case flagUpgradeDryRun:
 				res, err := dryRunLive(cmd.Context(), opts)
 				if err != nil {
-					return decoratePlanError(err)
+					return decorateUnlessDecorated(err)
 				}
 				return printDryRun(cmd, res)
 			}
@@ -69,15 +71,16 @@ var (
 			}
 			var confirm func([]clusterupgrade.Hop) (bool, error)
 			if prompt.ShouldPrompt(force) {
+				if common.OutputIsJSON() {
+					return errx.Decorate(errorx.RejectedOperation.New("a run with --output json cannot ask for confirmation"),
+						reasons.PreconditionNotMet, "Pass --force to apply without the question.")
+				}
 				confirm = confirmHops
 			}
 			res, err := applyLive(cmd.Context(), clusterupgrade.ApplyOptions{Options: opts, All: flagUpgradeAll, Confirm: confirm})
 			printErr := printApplyResult(cmd, res)
 			if err != nil {
-				if _, ok := errx.ReasonOf(err); !ok {
-					err = decoratePlanError(err)
-				}
-				return err
+				return decorateUnlessDecorated(err)
 			}
 			return printErr
 		},
@@ -139,28 +142,39 @@ var (
 	applyLive = func(ctx context.Context, opts clusterupgrade.ApplyOptions) (clusterupgrade.ApplyResult, error) {
 		src, err := liveSources()
 		if err != nil {
-			return clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeFailed}, err
+			return failedResult(err), err
 		}
 		// Held for the whole run: other commands that change the cluster are
 		// refused, and the plan cannot change between the read and the hop.
 		locks, err := state.AcquireHeldLocks(filepath.Dir(src.State.State().StateFile),
 			[]state.ComponentID{state.ComponentSystem, state.ComponentCluster}, 0)
 		if err != nil {
-			return clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeFailed}, err
+			return failedResult(err), err
 		}
 		defer locks.Release()
 		return clusterupgrade.Apply(ctx, src, locks, common.RunWorkflow, opts)
 	}
 )
 
-// confirmHops asks the operator to confirm the hops a run will apply.
+// failedResult is the result of a run that failed before it read the plan.
+func failedResult(err error) clusterupgrade.ApplyResult {
+	return clusterupgrade.ApplyResult{Outcome: clusterupgrade.OutcomeFailed, Applied: []clusterupgrade.Hop{},
+		Remaining: []clusterupgrade.Hop{}, Cause: doctor.OperatorMessage(err)}
+}
+
+// confirmHops asks the operator to confirm the hops a run will apply. Leaving
+// the question with Ctrl-C is a no.
 func confirmHops(hops []clusterupgrade.Hop) (bool, error) {
 	desc := ""
 	for i, h := range hops {
 		desc += fmt.Sprintf("%d. %s\n", i+1, h.Describe())
 	}
 	desc += "Workloads on the node restart while Kubernetes, Cilium and the charts are upgraded."
-	return prompt.RunConfirm(fmt.Sprintf("Apply %d cluster upgrade %s?", len(hops), plural(len(hops), "step", "steps")), desc, false)
+	ok, err := prompt.RunConfirm(fmt.Sprintf("Apply %d cluster upgrade %s?", len(hops), plural(len(hops), "step", "steps")), desc, false)
+	if errors.Is(err, prompt.ErrAborted) {
+		return false, nil
+	}
+	return ok, err
 }
 
 // printPlan writes the plan to stdout, as text or as JSON with --output json.
@@ -235,6 +249,15 @@ func printApplyResult(cmd *cobra.Command, res clusterupgrade.ApplyResult) error 
 	}
 	fmt.Fprint(out, renderApplyResult(res))
 	return nil
+}
+
+// decorateUnlessDecorated keeps the reason and hints an error already carries,
+// such as a failed step's, and decorates a plain plan error.
+func decorateUnlessDecorated(err error) error {
+	if _, ok := errx.ReasonOf(err); ok {
+		return err
+	}
+	return decoratePlanError(err)
 }
 
 func decoratePlanError(err error) error {

@@ -135,45 +135,63 @@ func DryRun(ctx context.Context, src LiveSources, opts Options) (DryRunResult, e
 
 // Apply applies the next hop of the live plan, or with opts.All every remaining
 // hop, re-planning from the live cluster after each one. The caller holds the
-// system and cluster locks in locks for the whole run. At the target it still
-// records the cluster and the host binaries, so a record an earlier run could
-// not write is written now. The result is returned with the error too.
-func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, opts ApplyOptions) (ApplyResult, error) {
+// system and cluster locks in locks for the whole run. When the cluster
+// reaches or is at the target, it records the cluster and the host binaries,
+// so a record an earlier run could not write is written now. The result is
+// returned with the error too, with Cause set when the run did not finish.
+func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, opts ApplyOptions) (res ApplyResult, err error) {
+	res = ApplyResult{Applied: []Hop{}, Remaining: []Hop{}}
+	defer func() {
+		if err != nil {
+			if res.Outcome == "" {
+				res.Outcome = OutcomeFailed
+			}
+			if res.Cause == "" {
+				res.Cause = doctor.OperatorMessage(err)
+			}
+		}
+	}()
+
 	if run == nil {
-		return ApplyResult{}, errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
+		return res, errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
 	}
 	if err := heldFor(src, locks, state.ComponentSystem, state.ComponentCluster); err != nil {
-		return ApplyResult{}, err
+		return res, err
 	}
 	plan, err := livePlan(ctx, src, opts.Options)
 	if err != nil {
-		return ApplyResult{Outcome: OutcomeFailed, Applied: []Hop{}}, err
+		return res, err
 	}
-	res := ApplyResult{Target: plan.Target, Applied: []Hop{}, Remaining: plan.Hops}
+	res.Target = plan.Target
 	if len(plan.Blockers) > 0 {
 		res.Outcome, res.Blockers = OutcomeBlocked, plan.Blockers
 		return res, blockedError(plan.Blockers)
 	}
+	res.Remaining = plan.Hops
 
 	if ctx, err = withKubeClient(ctx); err != nil {
-		res.Outcome = OutcomeFailed
 		return res, err
 	}
 	if len(plan.Hops) == 0 {
-		res.Outcome = OutcomeAtTarget
 		logx.As().Info().Str("kubernetes", plan.Target.Kubernetes).Msg("The cluster is at the target; recording it")
-		return res, recordAtTarget(ctx, src, run)
+		if err := recordAtTarget(ctx, src, run); err != nil {
+			return res, err
+		}
+		res.Outcome = OutcomeAtTarget
+		return res, nil
 	}
 
+	// With --all the walk runs only the hops the operator confirmed: a new plan
+	// that is not what is left of them stops it.
+	var confirmed []Hop
 	if opts.Confirm != nil {
-		confirmHops := plan.Hops[:1]
+		confirmed = plan.Hops[:1]
 		if opts.All {
-			confirmHops = plan.Hops
+			confirmed = plan.Hops
 		}
-		ok, err := opts.Confirm(confirmHops)
+		ok, err := opts.Confirm(confirmed)
 		if err != nil {
-			res.Outcome = OutcomeFailed
-			return res, err
+			return res, errx.Decorate(errorx.InternalError.Wrap(err, "failed to ask for confirmation"), reasons.Internal)
 		}
 		if !ok {
 			res.Outcome = OutcomeDeclined
@@ -186,12 +204,12 @@ func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run Wor
 	for {
 		hop := plan.Hops[0]
 		if n := len(res.Applied); n > 0 && reflect.DeepEqual(res.Applied[n-1], hop) {
-			res.Outcome = OutcomeFailed
+			res.Remaining = plan.Hops
 			return res, errx.Decorate(errorx.IllegalState.New("the plan still starts with the %s hop just applied", hop.Describe()),
 				reasons.Internal)
 		}
 		if len(res.Applied) >= limit {
-			res.Outcome = OutcomeFailed
+			res.Remaining = plan.Hops
 			return res, errx.Decorate(errorx.IllegalState.New("the upgrade did not reach its target in %d hops", limit),
 				reasons.Internal)
 		}
@@ -199,7 +217,7 @@ func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run Wor
 		logx.As().Info().Str("kind", string(hop.Kind)).Str("step", string(hop.Step)).Str("from", hop.From).Str("to", hop.To).
 			Msg("Applying a cluster upgrade hop")
 		if err := applyOneHop(ctx, src, locks, run, hop); err != nil {
-			res.Outcome, res.Remaining, res.Cause = OutcomeFailed, plan.Hops, doctor.OperatorMessage(err)
+			res.Remaining = plan.Hops
 			logx.As().Warn().Err(err).Str("kind", string(hop.Kind)).Msg("The cluster upgrade hop failed")
 			return res, err
 		}
@@ -207,15 +225,14 @@ func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run Wor
 		logx.As().Info().Str("kind", string(hop.Kind)).Str("to", hop.To).Msg("Applied a cluster upgrade hop")
 
 		next, err := livePlan(ctx, src, opts.Options)
-		switch {
-		case err != nil || len(next.Blockers) > 0:
+		if err != nil || len(next.Blockers) > 0 {
 			cause := "the next plan could not be made"
 			if err != nil {
 				cause += ": " + doctor.OperatorMessage(err)
 			} else {
 				cause += ": " + blockerSummary(next.Blockers)
 			}
-			res.Remaining, res.Blockers, res.Cause = nil, next.Blockers, cause
+			res.Remaining, res.Blockers, res.Cause = []Hop{}, next.Blockers, cause
 			logx.As().Warn().Err(err).Msg("The hop was applied, but the next plan could not be made")
 			if !opts.All {
 				res.Outcome = OutcomeApplied
@@ -225,12 +242,30 @@ func Apply(ctx context.Context, src LiveSources, locks *state.HeldLocks, run Wor
 			return res, errx.Decorate(errorx.IllegalState.New("the upgrade stopped after %d hop(s): %s", len(res.Applied), cause),
 				reasons.PreconditionNotMet,
 				"Run 'solo-provisioner kube cluster upgrade --plan --experimental' to see why, then run the upgrade again.")
-		case !opts.All:
-			res.Outcome, res.Remaining = OutcomeApplied, next.Hops
+		}
+		res.Remaining = next.Hops
+
+		if len(next.Hops) == 0 {
+			res.Outcome = OutcomeWalked
+			if !opts.All {
+				res.Outcome = OutcomeApplied
+			}
+			// The last hop recorded the cluster; this also records the host
+			// binaries that hops of other kinds do not.
+			if err := recordAtTarget(ctx, src, run); err != nil {
+				res.Cause = "the cluster is at the target, but recording it failed: " + doctor.OperatorMessage(err)
+				logx.As().Warn().Err(err).Msg("The cluster is at the target, but recording it failed")
+			}
 			return res, nil
-		case len(next.Hops) == 0:
-			res.Outcome, res.Remaining = OutcomeWalked, next.Hops
+		}
+		if !opts.All {
+			res.Outcome = OutcomeApplied
 			return res, nil
+		}
+		if confirmed != nil && !reflect.DeepEqual(next.Hops, confirmed[len(res.Applied):]) {
+			res.Outcome = OutcomeStopped
+			return res, errx.Decorate(errorx.IllegalState.New("the plan changed after it was confirmed"),
+				reasons.PreconditionNotMet, "Run the command again to see and confirm the remaining steps.")
 		}
 		plan = next
 	}

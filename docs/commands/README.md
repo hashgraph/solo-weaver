@@ -266,8 +266,10 @@ sudo solo-provisioner kube cluster upgrade --all --experimental --force --output
 must not run after one failed.
 
 Before it changes anything, an interactive run lists the steps it will apply and asks to go on.
-`--force`, `--non-interactive` or a run without a terminal skips the question. Workloads on the
-node restart during Kubernetes and Cilium steps.
+`--force`, `--non-interactive` or a run without a terminal skips the question; with `--output json`
+in a terminal, pass `--force`. Ctrl-C at the question is a no. With `--all`, the walk stops if the
+plan changes from the steps confirmed. Workloads on the node restart during Kubernetes and Cilium
+steps.
 
 A run holds the `system` and `cluster` state locks from the first read to the end, so another
 command that changes the cluster fails at once with `<record> is being modified (held by pid N)`.
@@ -275,8 +277,8 @@ command that changes the cluster fails at once with `<record> is being modified 
 
 Each step is one workflow and one `upgrade` / `cluster` entry in the action history. A step ends
 by checking the node, waiting until the whole cluster can be read, and recording it. A record that
-cannot be written is a warning, not a failure. At the target, a run records the cluster and the
-host binaries and adds an entry only when a record changed.
+cannot be written is a warning, not a failure. When the cluster reaches or is at the target, the run
+records the cluster and the host binaries, and adds an entry only when a record changed.
 
 The run ends with what it applied and what is next. With `--output json` the last object has
 `"type": "upgrade"`, the `outcome` (`applied`, `walked`, `at-target`, `blocked`, `declined`,

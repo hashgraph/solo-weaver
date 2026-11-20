@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -48,6 +49,10 @@ func scriptApply(t *testing.T, plans ...Plan) *scriptedApply {
 		return s.hopErr[i]
 	}
 	newKubeClient = func() (*kube.Client, error) { return &kube.Client{}, nil }
+	origIdentify, origAt := identifyHostVersions, hostBinaryAt
+	t.Cleanup(func() { identifyHostVersions, hostBinaryAt = origIdentify, origAt })
+	identifyHostVersions = func(string) ([]string, error) { return nil, nil }
+	hostBinaryAt = func(string, string) (bool, error) { return false, nil }
 	return s
 }
 
@@ -85,13 +90,38 @@ func TestApply_OneHop(t *testing.T) {
 func TestApply_AllWalksToTheTarget(t *testing.T) {
 	s := scriptApply(t, planABC, planBC, planC, planDone)
 
-	res, err, _ := applyWith(t, ApplyOptions{All: true})
+	res, err, dir := applyWith(t, ApplyOptions{All: true})
 
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeWalked, res.Outcome)
 	assert.Equal(t, []Hop{hopA, hopB, hopC}, res.Applied)
 	assert.Empty(t, res.Remaining)
 	assert.Equal(t, []Hop{hopA, hopB, hopC}, s.hops)
+	assert.Len(t, historyEntries(t, dir), 1, "the walk ends by recording the cluster at the target")
+}
+
+// A walk runs only the hops the operator confirmed.
+func TestApply_AllStopsWhenThePlanChangesAfterTheConfirmation(t *testing.T) {
+	s := scriptApply(t, planABC, planC)
+
+	res, err, _ := applyWith(t, ApplyOptions{All: true, Confirm: func([]Hop) (bool, error) { return true, nil }})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the plan changed after it was confirmed")
+	assert.Equal(t, OutcomeStopped, res.Outcome)
+	assert.Equal(t, []Hop{hopA}, s.hops)
+	assert.Equal(t, []Hop{hopC}, res.Remaining)
+}
+
+func TestApply_FailedRecordAtTheTargetFails(t *testing.T) {
+	scriptApply(t, planDone)
+	nodesReadyStep = func() automa.Builder { return noopStep(NodesReadyStepID, true) }
+
+	res, err, _ := applyWith(t, ApplyOptions{})
+
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailed, res.Outcome)
+	assert.NotEmpty(t, res.Cause)
 }
 
 func TestApply_AllStopsAtTheFirstFailure(t *testing.T) {
@@ -184,6 +214,8 @@ func TestApply_NoProgressIsAnInternalError(t *testing.T) {
 	assert.Equal(t, reasons.Internal, reason)
 	assert.Equal(t, OutcomeFailed, res.Outcome)
 	assert.Len(t, s.hops, 1)
+	assert.Equal(t, planABC.Hops, res.Remaining, "what is left is the last plan read")
+	assert.Contains(t, res.Cause, "just applied")
 }
 
 func TestApply_StopsAtTheHopCap(t *testing.T) {
