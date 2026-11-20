@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/cilium"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -123,7 +124,7 @@ func TestClusterChecker_RecordsManagedReleases(t *testing.T) {
 			ChartVersion: "1.13.1", AppVersion: "v1.13.1", Status: release.StatusFailed,
 		},
 		reality.CiliumReleaseKey: {
-			Name: "cilium", Namespace: "kube-system", ChartName: "cilium",
+			Name: "cilium", Namespace: "kube-system", ChartRef: "cilium/cilium", ChartName: "cilium",
 			ChartVersion: "1.20.2", AppVersion: "v1.20.2", Status: release.StatusDeployed,
 		},
 	}, cs.Releases)
@@ -285,4 +286,25 @@ func TestClusterChecker_NoNodesLeavesTheFactsAlone(t *testing.T) {
 	require.Contains(t, err.Error(), "no nodes")
 	require.Equal(t, "1.33.4", cs.KubeletVersion)
 	require.Equal(t, 1, cs.NodeCount)
+}
+
+// Cilium is a catalog chart now, so it must be listed once, under the key the
+// recorded state already uses.
+func TestManagedReleases_ListsCiliumOnce(t *testing.T) {
+	managed, err := reality.ManagedReleases()
+	require.NoError(t, err)
+
+	var found []reality.ManagedRelease
+	for _, m := range managed {
+		if m.Key == reality.CiliumReleaseKey {
+			found = append(found, m)
+		}
+	}
+	require.Equal(t, []reality.ManagedRelease{{
+		Key:       "cilium",
+		Release:   cilium.ReleaseName,
+		Namespace: cilium.Namespace,
+		Chart:     "cilium",
+		ChartRef:  "cilium/cilium",
+	}}, found)
 }

@@ -187,20 +187,24 @@ func configureCilium(provider func(opts ...software.InstallerOption) (software.S
 		})
 }
 
-// ciliumRelease is a Cilium release, the Helm repository serving its chart, and
-// the sha256 of that chart archive.
-type ciliumRelease struct {
+// ciliumChartSpec is the Cilium chart to install: its version, the Helm
+// repository serving it, and the sha256 of its archive.
+type ciliumChartSpec struct {
 	Version     string
 	ChartRepo   string
 	ChartSHA256 string
 }
 
-// newClusterCilium is the Cilium release a new cluster gets. Clusters that
-// already run Cilium keep their release: installCiliumCNI leaves them alone.
-var newClusterCilium = ciliumRelease{
-	Version:     "1.20.2",
-	ChartRepo:   "https://helm.cilium.io",
-	ChartSHA256: "b2afd87b7f75f875f92a14559f14f59b7babbb479d968e3fd625a20bf30ec20e",
+// defaultCiliumChartSpec is the Cilium chart a new cluster gets: the catalog
+// default. Clusters that already run Cilium keep theirs: installCiliumCNI
+// leaves them alone.
+func defaultCiliumChartSpec() ciliumChartSpec {
+	chart := software.MustGetClusterComponent(software.CiliumComponentName)
+	return ciliumChartSpec{
+		Version:     string(chart.Default),
+		ChartRepo:   chart.Repo,
+		ChartSHA256: chart.Versions[chart.Default].Value,
+	}
 }
 
 const (
@@ -210,7 +214,7 @@ const (
 
 func StartCilium() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().WithId("start-cilium").Steps(
-		installCiliumCNI(newClusterCilium, kube.NewClient),
+		installCiliumCNI(defaultCiliumChartSpec(), kube.NewClient),
 		guardBandwidthManagerDisabled(),
 	).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
@@ -231,7 +235,7 @@ func StartCilium() *automa.WorkflowBuilder {
 // never read as "absent".
 //
 // TODO to be replaced with helm invocation
-func installCiliumCNI(release ciliumRelease, newClient kube.ClientProvider) *automa.StepBuilder {
+func installCiliumCNI(release ciliumChartSpec, newClient kube.ClientProvider) *automa.StepBuilder {
 	version := release.Version
 
 	return automa.NewStepBuilder().WithId("install-cilium-cni").
@@ -327,7 +331,7 @@ var runCiliumScript = automa_steps.RunBashScript
 
 // fetchCiliumChart returns the unpacked, verified chart directory. A var so
 // tests can avoid the network.
-var fetchCiliumChart = func(ctx context.Context, release ciliumRelease) (string, error) {
+var fetchCiliumChart = func(ctx context.Context, release ciliumChartSpec) (string, error) {
 	hm, err := newHelmManager()
 	if err != nil {
 		return "", err
@@ -341,7 +345,7 @@ var fetchCiliumChart = func(ctx context.Context, release ciliumRelease) (string,
 // --chart-directory`. The CLI bundles charts only up to its own default
 // release and would otherwise download a newer one itself, without any
 // checksum check.
-func pullVerifiedCiliumChart(ctx context.Context, hm helm.Manager, release ciliumRelease, destDir string) (string, error) {
+func pullVerifiedCiliumChart(ctx context.Context, hm helm.Manager, release ciliumChartSpec, destDir string) (string, error) {
 	if _, err := hm.AddRepo(ciliumChartRepoAlias, release.ChartRepo, helm.RepoAddOptions{}); err != nil {
 		return "", chartDownloadError(err, release)
 	}
@@ -361,7 +365,7 @@ func pullVerifiedCiliumChart(ctx context.Context, hm helm.Manager, release ciliu
 // replacing any previous copy: the archive is read once, hashed against the
 // pinned digest, and its Chart.yaml must name the release, because
 // --chart-directory makes the CLI ignore --version.
-func unpackVerifiedChart(archive string, release ciliumRelease, dest string) (string, error) {
+func unpackVerifiedChart(archive string, release ciliumChartSpec, dest string) (string, error) {
 	data, err := os.ReadFile(archive)
 	if err != nil {
 		return "", unpackError(errorx.ExternalError.Wrap(err, "failed to read the Cilium chart %s", archive), dest)
@@ -396,7 +400,7 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func chartIntegrityError(err error, release ciliumRelease) error {
+func chartIntegrityError(err error, release ciliumChartSpec) error {
 	return errx.Decorate(
 		errorx.Decorate(err, "the downloaded Cilium chart failed verification, so 'cilium install' was not run"),
 		reasons.IntegrityCheckFailed,
@@ -409,7 +413,7 @@ func unpackError(err error, dir string) error {
 		fmt.Sprintf("Check that %s is writable and the disk has free space: df -h %s", dir, dir))
 }
 
-func chartDownloadError(err error, release ciliumRelease) error {
+func chartDownloadError(err error, release ciliumChartSpec) error {
 	return errx.Decorate(
 		errorx.Decorate(err, "failed to download the Cilium %s chart, so 'cilium install' was not run", release.Version),
 		reasons.DownloadFailed,

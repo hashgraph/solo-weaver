@@ -21,9 +21,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// CiliumReleaseKey is the ClusterState.Releases key of the Cilium agent, which
-// is not a catalog chart.
-const CiliumReleaseKey = "cilium"
+// CiliumReleaseKey is the ClusterState.Releases key of the Cilium agent.
+const CiliumReleaseKey = software.CiliumComponentName
 
 // clusterChartsRecordedElsewhere are catalog charts ClusterState.Releases
 // leaves out.
@@ -38,7 +37,7 @@ type ManagedRelease struct {
 	Release   string
 	Namespace string
 	Chart     string // the chart's name, as Helm reports it
-	ChartRef  string // empty for Cilium, installed from a local chart
+	ChartRef  string // the catalog chart reference, e.g. metallb/metallb
 }
 
 // NodeInfo is what a node reports it runs.
@@ -235,7 +234,7 @@ func (c *clusterChecker) listReleases() (map[string]state.HelmReleaseInfo, error
 }
 
 // ManagedReleases lists the releases ClusterState.Releases records: every
-// catalog chart not in clusterChartsRecordedElsewhere, then the Cilium agent.
+// catalog chart not recorded elsewhere, the Cilium agent included.
 func ManagedReleases() ([]ManagedRelease, error) {
 	catalog, err := software.LoadInfrastructureCatalog()
 	if err != nil {
@@ -249,7 +248,7 @@ func ManagedReleases() ([]ManagedRelease, error) {
 		}
 		out = append(out, ManagedRelease{Key: ch.Name, Release: ch.Release, Namespace: ch.Namespace, Chart: path.Base(ch.Chart), ChartRef: ch.Chart})
 	}
-	return append(out, ManagedRelease{Key: CiliumReleaseKey, Release: cilium.ReleaseName, Namespace: cilium.Namespace, Chart: "cilium"}), nil
+	return out, nil
 }
 
 // findRelease returns m's release in its catalog namespace. Failing that, it
