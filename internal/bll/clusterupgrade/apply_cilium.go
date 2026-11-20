@@ -72,7 +72,8 @@ func CiliumHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 // does nothing when the hop is already applied, and refuses when a check
 // fails. Otherwise one workflow puts the cilium CLI on the catalog default
 // when it is not, runs the hop, waits for the cluster to settle and records
-// it, and one entry goes to the action history.
+// it, and one entry goes to the action history. A failed hop still records the
+// cilium CLI when it had already replaced it.
 func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
 		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
@@ -114,12 +115,32 @@ func ApplyCiliumHop(ctx context.Context, src LiveSources, locks *state.HeldLocks
 	written := []state.ComponentID{state.ComponentCluster}
 	var cli string
 	var patch func(*state.State)
+	var afterFailure recordFunc
 	if !at {
 		cli = string(cliArtifact.Default)
 		inputs[inputCiliumCLI] = cli
 		written = append(written, state.ComponentSystem)
 		patch = func(st *state.State) { recordSoftware(st, ciliumCLI, cli) }
+		afterFailure = cliAfterFailure(src, cli)
 	}
 	logx.As().Info().Str("from", hop.From).Str("to", hop.To).Str("cli", cli).Msg("Applying the Cilium hop")
-	return runHop(ctx, src, run, inputs, ciliumHopWorkflow(hop.From, hop.To, cli), hopRecord(src, written, patch))
+	return runHop(ctx, src, run, inputs, ciliumHopWorkflow(hop.From, hop.To, cli), hopRecord(src, written, patch), afterFailure)
+}
+
+// cliAfterFailure records the cilium CLI at cli when a failed hop had already
+// replaced it. Other commands verify a binary against its recorded version, so
+// a stale record would make them refuse it.
+func cliAfterFailure(src LiveSources, cli string) recordFunc {
+	write := hopRecord(src, []state.ComponentID{state.ComponentSystem},
+		func(st *state.State) { recordSoftware(st, ciliumCLI, cli) })
+	return func(ctx context.Context) ([]state.ChangedFile, error) {
+		at, err := hostBinaryAt(ciliumCLI, cli)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to read the installed cilium CLI")
+		}
+		if !at {
+			return nil, nil
+		}
+		return write(ctx)
+	}
 }

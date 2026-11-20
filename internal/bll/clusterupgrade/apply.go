@@ -14,6 +14,7 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -143,9 +144,12 @@ func clusterReadable(src LiveSources) func(ctx context.Context) error {
 	}
 }
 
+// recordFunc writes a hop's records and returns the files whose content changed.
+type recordFunc func(ctx context.Context) ([]state.ChangedFile, error)
+
 // hopRecord is the RecordState write of a hop: the cluster as the checker reads
 // it when ids include the cluster, then patch, persisted for ids only.
-func hopRecord(src LiveSources, ids []state.ComponentID, patch func(*state.State)) func(ctx context.Context) ([]state.ChangedFile, error) {
+func hopRecord(src LiveSources, ids []state.ComponentID, patch func(*state.State)) recordFunc {
 	return func(ctx context.Context) ([]state.ChangedFile, error) {
 		st := src.State.State()
 		if slices.Contains(ids, state.ComponentCluster) {
@@ -165,9 +169,11 @@ func hopRecord(src LiveSources, ids []state.ComponentID, patch func(*state.State
 
 // runHop runs wb as one hop through run: the hop's steps, a check that the node
 // is ready, a wait until the cluster is fully readable, then RecordState with
-// write. One upgrade entry with inputs is appended once the workflow has run.
+// write. When the hop fails, afterFailure, if set, records what the hop may
+// have changed before it failed. One upgrade entry with inputs and the files
+// written is appended once the workflow has run.
 func runHop(ctx context.Context, src LiveSources, run WorkflowRunner, inputs map[string]string,
-	wb *automa.WorkflowBuilder, write func(ctx context.Context) ([]state.ChangedFile, error)) error {
+	wb *automa.WorkflowBuilder, write, afterFailure recordFunc) error {
 	intent := models.Intent{Action: models.ActionUpgrade, Target: models.TargetCluster}
 	return run(ctx, func() (*automa.Report, error) {
 		wf, err := wb.Steps(
@@ -179,9 +185,27 @@ func runHop(ctx context.Context, src LiveSources, run WorkflowRunner, inputs map
 			return nil, errx.Decorate(errorx.InternalError.Wrap(err, "failed to build the hop workflow"), reasons.Internal)
 		}
 		report := wf.Execute(ctx)
-		steps.RecordEntry(src.State, steps.WorkflowEntry(ctx, intent, inputs, report), report)
+		entry := steps.WorkflowEntry(ctx, intent, inputs, report)
+		if afterFailure != nil && steps.OutcomeOf(report) == state.OutcomeFailed {
+			recordAfterFailure(ctx, afterFailure, &entry, report)
+		}
+		steps.RecordEntry(src.State, entry, report)
 		return report, nil
 	})
+}
+
+// recordAfterFailure runs write after a failed hop and names the files it
+// wrote in entry. A write that fails leaves a warning in report and marks
+// entry NotPersisted, like RecordState: the hop's own failure is the error.
+func recordAfterFailure(ctx context.Context, write recordFunc, entry *state.ActionHistory, report *automa.Report) {
+	files, err := write(ctx)
+	entry.Components = append(entry.Components, files...)
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to record what the failed hop changed")
+		entry.NotPersisted = true
+		steps.AddReportWarnings(report, []string{"What the failed hop changed was not recorded: " +
+			doctor.OperatorMessage(err) + ". The next run of this command records it."})
+	}
 }
 
 // recordSoftware patches st with name installed at version.

@@ -164,19 +164,30 @@ func stubHopFinish(t *testing.T) {
 	readableTimeout, readableInterval = 50*time.Millisecond, time.Millisecond
 }
 
-// stubCiliumApply stubs the cilium CLI check and the hop workflow, whose step
-// fails when fail is set. It returns the cilium CLI version each built
-// workflow was asked to install.
+// stubCiliumApply stubs the cilium CLI check and the hop workflow. The CLI is
+// at the catalog default when cliAt is set, or once the workflow's CLI step
+// has run; the hop's step fails when fail is set. It returns the cilium CLI
+// version each built workflow was asked to install.
 func stubCiliumApply(t *testing.T, cliAt, fail bool) *[]string {
 	t.Helper()
 	stubHopFinish(t)
 	origAt, origHop := hostBinaryAt, ciliumHopWorkflow
 	t.Cleanup(func() { hostBinaryAt, ciliumHopWorkflow = origAt, origHop })
-	hostBinaryAt = func(string, string) (bool, error) { return cliAt, nil }
+	installed := cliAt
+	hostBinaryAt = func(string, string) (bool, error) { return installed, nil }
 	var clis []string
 	ciliumHopWorkflow = func(from, to, cli string) *automa.WorkflowBuilder {
 		clis = append(clis, cli)
-		return automa.NewWorkflowBuilder().WithId("hop-" + from + "-" + to).Steps(noopStep("cilium-upgrade", fail))
+		var all []automa.Builder
+		if cli != "" {
+			all = append(all, automa.NewStepBuilder().WithId("upgrade-cilium").
+				WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
+					installed = true
+					return automa.SuccessReport(stp)
+				}))
+		}
+		all = append(all, noopStep("cilium-upgrade", fail))
+		return automa.NewWorkflowBuilder().WithId("hop-" + from + "-" + to).Steps(all...)
 	}
 	return &clis
 }
@@ -252,8 +263,8 @@ func TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords(t *testing.T) {
 
 	assert.Equal(t, []string{"hop-1.18.1-1.18.16"}, r.ran())
 	assert.Equal(t, []string{"0.20.1"}, *clis)
-	assert.Equal(t, []string{"cilium-upgrade", NodesReadyStepID, steps.WaitClusterReadableStepID, steps.RecordStateStepID},
-		r.stepIDs(t))
+	assert.Equal(t, []string{"upgrade-cilium", "cilium-upgrade", NodesReadyStepID, steps.WaitClusterReadableStepID,
+		steps.RecordStateStepID}, r.stepIDs(t))
 	assert.Contains(t, readStateFile(t, dir, "system.yaml"), "version: 0.20.1")
 	assert.Contains(t, readStateFile(t, dir, "cluster.yaml"), "cilium:")
 	entries := historyEntries(t, dir)
@@ -320,6 +331,65 @@ func TestApplyCiliumHop_FailedHopRecordsOnlyTheFailure(t *testing.T) {
 	entries := historyEntries(t, dir)
 	require.Len(t, entries, 1)
 	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+}
+
+// A hop that fails after it replaced the cilium CLI records the CLI, so other
+// commands verify the binary against the version now on disk.
+func TestApplyCiliumHop_FailedHopRecordsTheCLIItReplaced(t *testing.T) {
+	stubCiliumApply(t, false, true)
+	src, dir := liveSources(t, v035Cluster())
+	r := &fakeRunner{}
+
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cilium-upgrade failed")
+	assert.Contains(t, readStateFile(t, dir, "system.yaml"), "version: 0.20.1")
+	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1, "the failure and what it recorded are one entry")
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	assert.Equal(t, []state.ChangedFile{state.ComponentSystem.File()}, entries[0].Components)
+	assert.False(t, entries[0].NotPersisted)
+}
+
+func TestApplyCiliumHop_FailedCLIUpgradeKeepsItsRecord(t *testing.T) {
+	stubCiliumApply(t, false, false)
+	ciliumHopWorkflow = func(string, string, string) *automa.WorkflowBuilder {
+		return automa.NewWorkflowBuilder().WithId("hop").Steps(noopStep("upgrade-cilium", true))
+	}
+	src, dir := liveSources(t, v035Cluster())
+	r := &fakeRunner{}
+
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "upgrade-cilium failed")
+	assert.NotContains(t, stateFiles(t, dir), "system.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	assert.Empty(t, entries[0].Components)
+}
+
+// What a failed hop changed that cannot be recorded is a warning: the hop's
+// own failure is the error.
+func TestApplyCiliumHop_UnrecordedCLIAfterAFailureIsAWarning(t *testing.T) {
+	stubCiliumApply(t, false, true)
+	src, dir := liveSources(t, v035Cluster())
+	src.State = failingPersist{src.State}
+	r := &fakeRunner{}
+
+	err := ApplyCiliumHop(context.Background(), src, holdLocks(t, dir), r.run, ciliumPatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cilium-upgrade failed")
+	require.Len(t, r.reports, 1)
+	assert.Contains(t, r.reports[0].Metadata[models.ReportMetaWarning], "What the failed hop changed was not recorded: disk full")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	assert.True(t, entries[0].NotPersisted)
 }
 
 // A record that cannot be written does not fail a hop that ran: the run gets a
