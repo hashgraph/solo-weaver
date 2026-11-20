@@ -58,12 +58,18 @@ func Catalog() gatekit.Registry {
 			},
 		},
 
-		// --- Activation version 2: the operator-migration cohort ---
+		// --- Activation version 2: the alpha opt-in cohort ---
 		// ALPHA: dormant until the axis reaches 2 AND the operator opts in via
 		// --experimental (or a per-feature override). Each graduates to GA with a
 		// later spec once validated.
 		ConsensusNodeOperatorManaged: {
 			Description: "Manage consensus node lifecycle through solo-operator.",
+			Specs: gatekit.VersionedSpecs{
+				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+			},
+		},
+		KubeClusterUpgrade: {
+			Description: "Upgrade the Kubernetes cluster along the k8s/Cilium ladder (`kube cluster upgrade`).",
 			Specs: gatekit.VersionedSpecs{
 				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
 			},

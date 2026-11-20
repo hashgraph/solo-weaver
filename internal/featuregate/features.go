@@ -29,6 +29,10 @@ const (
 	// against the legacy path.
 	ConsensusNodeOperatorManaged gatekit.Feature = "ConsensusNodeOperatorManaged"
 
+	// KubeClusterUpgrade gates the Kubernetes cluster upgrade ladder
+	// (`kube cluster upgrade`), still experimental.
+	KubeClusterUpgrade gatekit.Feature = "KubeClusterUpgrade"
+
 	// KubeOperatorManagement covers the solo-operator lifecycle managed by
 	// solo-provisioner: install, uninstall, and upgrade (`kube operator ...`).
 	KubeOperatorManagement gatekit.Feature = "KubeOperatorManagement"
