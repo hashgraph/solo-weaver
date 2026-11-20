@@ -176,6 +176,7 @@ func (o *ConsensusNodeObservedShape) Clone() *ConsensusNodeObservedShape {
 // Clone creates a deep copy of ClusterState
 func (cs *ClusterState) Clone() (*ClusterState, error) {
 	clone := *cs
+	clone.Releases = maps.Clone(cs.Releases)
 	return &clone, nil
 }
 

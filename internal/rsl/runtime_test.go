@@ -230,6 +230,36 @@ func TestRefreshMachine_IgnoresUnreachableClusterRuntimes(t *testing.T) {
 	require.Equal(t, persistedTeleport().NodeAgent, current.TeleportState.NodeAgent, "other sections keep their persisted value")
 }
 
+// A cluster the refresh could not read keeps the persisted cluster record, so
+// committing the result never saves the cluster as gone.
+func TestRefreshMachineAndCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	st := sm.State()
+	st.ClusterState = state.ClusterState{Created: true, ClusterInfo: models.ClusterInfo{Host: "https://10.0.0.1:6443"}}
+	require.NoError(t, sm.Set(st).Commit(state.ActionHistory{}, state.ComponentCluster))
+
+	cluster, err := reality.NewClusterChecker(sm,
+		func() (reality.HelmManager, error) { return nil, errorx.IllegalState.New("not called") },
+		func() reality.ClusterReachability { return reality.Unobservable })
+	require.NoError(t, err)
+	checkers := reality.Checkers{
+		Cluster: cluster,
+		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
+			return sm.State().MachineState, nil
+		}),
+	}
+	r, err := NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
+	require.NoError(t, err)
+
+	current, err := r.RefreshMachineAndCluster(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, current.ClusterState.Created)
+	require.Equal(t, "https://10.0.0.1:6443", current.ClusterState.Host)
+	require.True(t, current.ClusterState.Unobserved)
+}
+
 // unsyncedCommits is a state.Manager whose commits land but report a failed
 // sync.
 type unsyncedCommits struct{ state.Manager }

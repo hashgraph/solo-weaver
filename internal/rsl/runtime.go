@@ -151,6 +151,35 @@ func (r *RuntimeResolver) RefreshMachine(ctx context.Context, force bool) (state
 	return current, nil
 }
 
+// RefreshMachineAndCluster is RefreshMachine plus the cluster runtime, for a
+// caller that writes the system and cluster files. A failed cluster refresh
+// keeps the persisted cluster record instead of failing: right after the
+// cluster is set up its API server may still be settling, and the system
+// record must land regardless.
+func (r *RuntimeResolver) RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error) {
+	current, err := r.RefreshMachine(ctx, force)
+	if err != nil {
+		return state.State{}, err
+	}
+	if r.ClusterRuntime == nil {
+		return state.State{}, errorx.IllegalState.New("cluster runtime is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultRefreshTimeout)
+	defer cancel()
+	if err := r.ClusterRuntime.RefreshState(ctx, force); err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to refresh cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	clusterState, err := r.ClusterRuntime.CurrentState()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to read cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	current.ClusterState = clusterState
+	return current, nil
+}
+
 func (r *RuntimeResolver) refreshPersisted() error {
 	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
@@ -260,7 +289,17 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 // reason and hint the operator needs; any other failure is "failed to
 // persist state".
 func (r *RuntimeResolver) Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error {
-	err := r.sm.Set(currentState).Commit(entry, ids...)
+	return r.persistError(r.sm.Set(currentState).Commit(entry, ids...))
+}
+
+// Persist writes only the listed components' state from currentState and
+// appends no entry; see state.Writer.Persist. Its errors are those of Commit.
+func (r *RuntimeResolver) Persist(currentState state.State, ids ...state.ComponentID) ([]state.ChangedFile, error) {
+	files, err := r.sm.Set(currentState).Persist(ids...)
+	return files, r.persistError(err)
+}
+
+func (r *RuntimeResolver) persistError(err error) error {
 	switch {
 	case err == nil:
 		return nil
