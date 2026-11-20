@@ -240,6 +240,7 @@ Detailed framework docs live in `docs/dev/`:
 - `error-handling.md` — `errorx` + `errx` contract: reason codes, hints, typed errors
 - `security-model.md` — Trust boundaries and sandbox binary risks
 - `migration-framework.md` — Migration system design and usage
+- `cluster-upgrade.md` — `kube cluster upgrade`: how the plan is built, the hop executors, and what each records
 - `functionality-test-suite.md` — Testing approach and patterns
 - `acceptance-tests.md` — Acceptance/UAT test patterns
 - `golden-image.md` — VM golden image setup
