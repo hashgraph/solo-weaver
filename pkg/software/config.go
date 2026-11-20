@@ -31,6 +31,12 @@ const SoloOperatorComponentName = "solo-operator"
 // CiliumComponentName is the catalog name of the Cilium agent chart.
 const CiliumComponentName = "cilium"
 
+// Catalog names of the charts the cluster upgrade migrates from older charts.
+const (
+	NodeExporterComponentName    = "node-exporter"
+	ExternalSecretsComponentName = "external-secrets"
+)
+
 // ChartType identifies how a Helm chart is distributed.
 type ChartType string
 

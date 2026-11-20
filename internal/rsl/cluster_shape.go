@@ -28,7 +28,7 @@ const (
 
 // minChartMajor is the lowest chart major the catalog manages, for charts whose
 // older majors keep the same chart name.
-var minChartMajor = map[string]int{"external-secrets": 2}
+var minChartMajor = map[string]int{software.ExternalSecretsComponentName: 2}
 
 // ClusterShape is what the cluster runs, read live, with what state recorded
 // beside it. It is the upgrade resolver's input.
