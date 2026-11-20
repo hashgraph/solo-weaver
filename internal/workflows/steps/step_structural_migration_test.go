@@ -17,6 +17,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func fakeClient(context.Context) (*kube.Client, error) { return &kube.Client{}, nil }
@@ -31,12 +32,13 @@ func hintsOf(err error) []string {
 func stubStructural(t *testing.T) (*helm.MockManager, *[]string) {
 	t.Helper()
 	hm := helm.NewMockManager(gomock.NewController(t))
-	origHelm, origNE, origESO, origWait, origTimeout, origPoll :=
-		newStructuralHelm, readNodeExporterHealth, readESOHealth, waitForPodsGone, structuralHealthTimeout, structuralPollInterval
+	origHelm, origNE, origESO, origWait, origTimeout, origPoll, origCRD :=
+		newStructuralHelm, readNodeExporterHealth, readESOHealth, waitForPodsGone, structuralHealthTimeout, structuralPollInterval, serviceMonitorCRDExists
 	t.Cleanup(func() {
-		newStructuralHelm, readNodeExporterHealth, readESOHealth, waitForPodsGone, structuralHealthTimeout, structuralPollInterval =
-			origHelm, origNE, origESO, origWait, origTimeout, origPoll
+		newStructuralHelm, readNodeExporterHealth, readESOHealth, waitForPodsGone, structuralHealthTimeout, structuralPollInterval, serviceMonitorCRDExists =
+			origHelm, origNE, origESO, origWait, origTimeout, origPoll, origCRD
 	})
+	serviceMonitorCRDExists = func(context.Context, *kube.Client) (bool, error) { return true, nil }
 	newStructuralHelm = func() (helm.Manager, error) { return hm, nil }
 	var waits []string
 	waitForPodsGone = func(_ context.Context, _ *kube.Client, ns, prefix string) error {
@@ -120,6 +122,24 @@ func TestNodeExporterReplace_FinishesASwapThatStoppedAfterTheUninstall(t *testin
 	assert.Equal(t, automa.StatusSkipped, reports[1].Status, "nothing to uninstall")
 	assert.Equal(t, automa.StatusSuccess, reports[3].Status)
 	assert.Empty(t, *waits)
+}
+
+// Without the ServiceMonitor CRD the new chart cannot install, so the swap
+// refuses before it uninstalls the Bitnami release.
+func TestNodeExporterReplace_RefusesWithoutTheServiceMonitorCRD(t *testing.T) {
+	hm, waits := stubStructural(t)
+	serviceMonitorCRDExists = func(context.Context, *kube.Client) (bool, error) { return false, nil }
+	spec := chartSpec("node-exporter")
+	hm.EXPECT().GetRelease(spec.Release, spec.Namespace).Return(releaseOf("node-exporter", "4.4.9", release.StatusDeployed), nil)
+
+	reports := runAll(t, NodeExporterReplaceSteps(fakeClient))
+
+	require.Len(t, reports, 1)
+	assert.Equal(t, automa.StatusFailed, reports[0].Status)
+	assert.Contains(t, reports[0].Error.Error(), "servicemonitors.monitoring.coreos.com CRD is not installed")
+	reason, _ := errx.ReasonOf(reports[0].Error)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	assert.Empty(t, *waits, "nothing was uninstalled")
 }
 
 func TestNodeExporterReplace_RefusesAForeignChart(t *testing.T) {

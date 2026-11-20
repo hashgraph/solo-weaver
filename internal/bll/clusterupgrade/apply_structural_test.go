@@ -11,6 +11,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
@@ -31,6 +32,22 @@ func withMissing(name string) shapeOpt {
 	return func(s *rsl.ClusterShape) { s.Charts[name] = rsl.ChartShape{Missing: true} }
 }
 
+// withSwapStopped is a node-exporter swap that stopped after its uninstall:
+// no release, and the record still names the legacy chart at recorded.
+func withSwapStopped(recorded string) shapeOpt {
+	return func(s *rsl.ClusterShape) {
+		s.Charts["node-exporter"] = rsl.ChartShape{Missing: true, Recorded: recorded, RecordedIdentity: rsl.IdentityLegacy}
+	}
+}
+
+func withStatus(name string, status release.Status) shapeOpt {
+	return func(s *rsl.ClusterShape) {
+		ch := s.Charts[name]
+		ch.Status = status
+		s.Charts[name] = ch
+	}
+}
+
 func TestStructuralHopChecks_Pass(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -38,7 +55,7 @@ func TestStructuralHopChecks_Pass(t *testing.T) {
 		hop   Hop
 	}{
 		{"node-exporter swap", clusterShape("1.33.4", "1.18.1", withLegacy("node-exporter", "4.4.9")), neReplace("4.4.9")},
-		{"node-exporter swap that stopped after the uninstall", clusterShape("1.33.4", "1.18.1", withMissing("node-exporter")), neReplace("4.4.9")},
+		{"node-exporter swap that stopped after the uninstall", clusterShape("1.33.4", "1.18.1", withSwapStopped("4.4.9")), neReplace("4.4.9")},
 		{"External Secrets migration", clusterShape("1.33.4", "1.18.1", withLegacy("external-secrets", "0.20.2")), esoMigrate("0.20.2")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,7 +63,7 @@ func TestStructuralHopChecks_Pass(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, checks.Failed())
 			assert.NoError(t, checks.Err())
-			assert.Len(t, checks, 4)
+			assert.Len(t, checks, 5)
 		})
 	}
 }
@@ -68,6 +85,10 @@ func TestStructuralHopChecks_Fail(t *testing.T) {
 		{"legacy chart at another version", clusterShape("1.33.4", "1.18.1", withLegacy("node-exporter", "4.4.8")), neReplace("4.4.9"), "the chart is where the hop starts"},
 		{"current chart, not the target", clusterShape("1.33.4", "1.18.1", withChart("node-exporter", "4.58.0")), neReplace("4.4.9"), "the chart is where the hop starts"},
 		{"no External Secrets to migrate", clusterShape("1.33.4", "1.18.1", withMissing("external-secrets")), esoMigrate("0.20.2"), "the chart is where the hop starts"},
+		{"node-exporter never installed", clusterShape("1.33.4", "1.18.1", withMissing("node-exporter")), neReplace("4.4.9"), "the chart is where the hop starts"},
+		{"swap stopped at another version", clusterShape("1.33.4", "1.18.1", withSwapStopped("4.4.8")), neReplace("4.4.9"), "the chart is where the hop starts"},
+		{"legacy release failed", clusterShape("1.33.4", "1.18.1", withLegacy("external-secrets", "0.20.2"),
+			withStatus("external-secrets", release.StatusFailed)), esoMigrate("0.20.2"), "the release is deployed"},
 		{"chart not in the cluster", clusterShape("1.33.4", "1.18.1"), esoMigrate("0.20.2"), "the chart is where the hop starts"},
 		{"target is not the catalog default", clusterShape("1.33.4", "1.18.1", withLegacy("external-secrets", "0.20.2")),
 			Hop{Kind: KindStructural, Step: StepMigrate, Component: "external-secrets", From: "0.20.2", To: "2.12.0"}, "the target is the catalog default"},
@@ -180,6 +201,24 @@ func TestApplyStructuralHop_DoneHopDoesNothing(t *testing.T) {
 
 	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
+}
+
+// A release at the target whose last Helm revision failed is not done: the
+// hop is refused with what to do, not skipped.
+func TestApplyStructuralHop_FailedReleaseAtTheTargetIsNotDone(t *testing.T) {
+	stubStructuralApply(t, false)
+	cs := legacyCluster()
+	failed := deployed("external-secrets", "2.13.0")
+	failed.Status = release.StatusFailed
+	cs.Releases["external-secrets"] = failed
+	src, dir := liveSources(t, cs)
+	r := &fakeRunner{}
+
+	err := ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, esoMigrate("0.20.2"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the release is deployed")
+	assert.Empty(t, r.ran())
 }
 
 func TestApplyStructuralHop_FailedCheckChangesNothing(t *testing.T) {

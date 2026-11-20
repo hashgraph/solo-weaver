@@ -35,6 +35,7 @@ var (
 // Seams so tests run without a cluster or Helm.
 var (
 	newStructuralHelm       = newHelmManager
+	serviceMonitorCRDExists = defaultServiceMonitorCRDExists
 	readNodeExporterHealth  = defaultReadNodeExporterHealth
 	readESOHealth           = defaultReadESOHealth
 	waitForPodsGone         = defaultWaitForPodsGone
@@ -45,7 +46,8 @@ var (
 func structuralHelm(stp automa.Step) (helm.Manager, *automa.Report) {
 	hm, err := newStructuralHelm()
 	if err != nil {
-		return nil, automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.Internal)))
+		return nil, automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
+			"Check that the admin kubeconfig works: sudo helm --kubeconfig /etc/kubernetes/admin.conf list -A")))
 	}
 	return hm, nil
 }
@@ -72,7 +74,9 @@ func waitHealthy(ctx context.Context, stp automa.Step, what string, problems fun
 		}
 		select {
 		case <-ctx.Done():
-			return automa.FailureReport(stp, automa.WithError(errx.Decorate(ctx.Err(), reasons.Internal)))
+			return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+				errorx.IllegalState.Wrap(ctx.Err(), "stopped waiting for %s to be healthy", what), reasons.PreconditionNotMet,
+				append(hints, "Run the upgrade again; it continues from where the cluster is")...)))
 		case <-time.After(structuralPollInterval):
 		}
 	}
@@ -80,6 +84,12 @@ func waitHealthy(ctx context.Context, stp automa.Step, what string, problems fun
 	return automa.FailureReport(stp, automa.WithError(errx.Decorate(
 		errorx.IllegalState.New("%s is not healthy after %s: %s", what, structuralHealthTimeout, strings.Join(last, "; ")),
 		reasons.PreconditionNotMet, hints...)))
+}
+
+const serviceMonitorCRD = "servicemonitors.monitoring.coreos.com"
+
+func defaultServiceMonitorCRDExists(ctx context.Context, k *kube.Client) (bool, error) {
+	return k.ResourceExists(ctx, "apiextensions.k8s.io/v1", "CustomResourceDefinition", "", serviceMonitorCRD)
 }
 
 // ---- node-exporter: Bitnami chart -> prometheus-community chart ----
@@ -128,6 +138,24 @@ func (s *nodeExporterSwap) prepare() automa.Builder {
 						s.spec.Release, s.spec.Namespace, chartName(rel)),
 					reasons.PreconditionNotMet,
 					fmt.Sprintf("Inspect it: helm status %s -n %s", s.spec.Release, s.spec.Namespace))))
+			}
+			// The new chart creates a ServiceMonitor. Without its CRD the install
+			// fails after the old release is gone, leaving no node-exporter.
+			k, rpt := structuralClient(ctx, stp, s.newClient)
+			if rpt != nil {
+				return rpt
+			}
+			exists, err := serviceMonitorCRDExists(ctx, k)
+			if err != nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
+					"Check the API server: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz")))
+			}
+			if !exists {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("the %s CRD is not installed; the prometheus-community node-exporter chart needs it", serviceMonitorCRD),
+					reasons.PreconditionNotMet,
+					"Install the monitoring CRDs first: sudo solo-provisioner alloy cluster install",
+					"Nothing was changed; run the upgrade again once the CRD exists")))
 			}
 			s.localChart, err = hm.PullAndVerify(ctx, chartDownloadsDir(), s.spec.Chart, s.spec.Version, s.spec.Algorithm, s.spec.Checksum)
 			if err != nil {

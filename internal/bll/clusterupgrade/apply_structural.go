@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -60,15 +61,19 @@ func StructuralHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, err
 	cs.add("one node", !shape.Kubernetes.UnexpectedNodes,
 		fmt.Sprintf("the cluster has %d nodes; upgrades support one", shape.Kubernetes.NodeCount))
 
-	// A node-exporter swap that stopped after the uninstall leaves no release,
-	// and can run again to finish.
+	// A node-exporter swap that stopped after the uninstall leaves no release;
+	// the record still names the legacy chart, so the swap can run again to
+	// finish. A chart that was never installed is not a swap.
 	ch := shape.Charts[hop.Component]
-	atStart := ch.Identity == rsl.IdentityLegacy && ch.Live == hop.From
-	if hop.Step == StepReplace && ch.Missing {
-		atStart = true
+	resume := hop.Step == StepReplace && ch.Missing && ch.RecordedIdentity == rsl.IdentityLegacy && ch.Recorded == hop.From
+	atStart := (ch.Identity == rsl.IdentityLegacy && ch.Live == hop.From) || resume
+	detail := fmt.Sprintf("%s runs %q (%s), the hop starts at the legacy chart %s", hop.Component, ch.Live, identityOf(ch), hop.From)
+	if ch.Missing {
+		detail = fmt.Sprintf("%s is not installed, and the record does not show the legacy chart %s", hop.Component, hop.From)
 	}
-	cs.add("the chart is where the hop starts", atStart,
-		fmt.Sprintf("%s runs %q (%s), the hop starts at the legacy chart %s", hop.Component, ch.Live, identityOf(ch), hop.From))
+	cs.add("the chart is where the hop starts", atStart, detail)
+	cs.add("the release is deployed", ch.Missing || ch.Status == release.StatusDeployed,
+		fmt.Sprintf("the last Helm revision of %s is %q; check it with 'helm history' and roll it back or finish it", hop.Component, ch.Status))
 
 	r, ok := c.charts[hop.Component]
 	cs.add("the target is the catalog default", ok && r.def.String() == hop.To,
@@ -84,8 +89,8 @@ func identityOf(ch rsl.ChartShape) string {
 }
 
 // ApplyStructuralHop runs one structural hop: the node-exporter swap or the
-// External Secrets migration. The caller holds the system and cluster locks
-// in locks for the whole run. It reads the cluster, does nothing when the hop
+// External Secrets migration. The caller holds locks for the whole run, and
+// they must cover the cluster record, the only one the hop writes. It reads the cluster, does nothing when the hop
 // is already applied, and refuses when a check fails. Otherwise one workflow
 // runs the hop, waits for the cluster to settle and records it, and one entry
 // goes to the action history.
@@ -104,7 +109,7 @@ func ApplyStructuralHop(ctx context.Context, src LiveSources, locks *state.HeldL
 	if err != nil {
 		return err
 	}
-	if ch := shape.Charts[hop.Component]; ch.Identity == rsl.IdentityCurrent && ch.Live == hop.To {
+	if ch := shape.Charts[hop.Component]; ch.Identity == rsl.IdentityCurrent && ch.Live == hop.To && ch.Status == release.StatusDeployed {
 		logx.As().Info().Str("chart", hop.Component).Str("version", hop.To).Msg("The chart already runs the hop's target; nothing to do")
 		return nil
 	}
