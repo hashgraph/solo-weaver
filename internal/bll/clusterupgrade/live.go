@@ -5,6 +5,7 @@ package clusterupgrade
 import (
 	"context"
 
+	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -20,6 +21,8 @@ type LiveSources struct {
 	Machine reality.Checker[state.MachineState]
 	Managed func() ([]reality.ManagedRelease, error)
 	Catalog func() (*software.InfrastructureCatalog, error)
+	// Probe must be the probe the cluster checker uses.
+	Probe reality.ClusterProbe
 }
 
 // PlanLive plans the upgrade of the cluster as it runs now. It reads state and
@@ -31,7 +34,7 @@ type LiveSources struct {
 // the recorded cluster when the read fails: the plan must see a failed read to
 // refuse to plan from it.
 func PlanLive(ctx context.Context, src LiveSources, opts Options) (Plan, error) {
-	if src.State == nil || src.Cluster == nil || src.Machine == nil || src.Managed == nil || src.Catalog == nil {
+	if src.State == nil || src.Cluster == nil || src.Machine == nil || src.Managed == nil || src.Catalog == nil || src.Probe == nil {
 		return Plan{}, errorx.IllegalArgument.New("every live source must be set")
 	}
 
@@ -48,6 +51,12 @@ func PlanLive(ctx context.Context, src LiveSources, opts Options) (Plan, error) 
 	if err != nil {
 		return Plan{}, err
 	}
+	// With no kubeconfig the cluster checker returns the record as read, so the
+	// plan would come from the record.
+	if r := src.Probe(); !r.Observed() {
+		return blockedPlan(m, opts, unreachableBlocker(r))
+	}
+
 	managed, err := src.Managed()
 	if err != nil {
 		return Plan{}, errorx.IllegalState.Wrap(err, "failed to list the managed releases")
@@ -63,4 +72,17 @@ func PlanLive(ctx context.Context, src LiveSources, opts Options) (Plan, error) 
 
 	// The plan uses only live values; the record would only mark what changed.
 	return Resolve(rsl.ResolveClusterShape(live, nil, managed), m, opts)
+}
+
+// unreachableBlocker is the blocker for a cluster the probe could not reach. It
+// names the cause and what to do about it.
+func unreachableBlocker(r reality.ClusterReachability) Blocker {
+	if !r.Configured() {
+		logx.As().Warn().Msg("No kubeconfig found; cannot plan the cluster upgrade")
+		return Blocker{Code: BlockerNotObserved, Detail: "no kubeconfig was found in KUBECONFIG or $HOME/.kube/config; " +
+			"run the command with sudo, or set KUBECONFIG to the cluster's admin kubeconfig"}
+	}
+	logx.As().Warn().Msg("The Kubernetes API server did not answer; cannot plan the cluster upgrade")
+	return Blocker{Code: BlockerNotObserved, Detail: "the Kubernetes API server did not answer; " +
+		"check it with 'kubectl get --raw /readyz', then run the command again"}
 }

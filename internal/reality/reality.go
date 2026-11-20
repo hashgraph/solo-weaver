@@ -26,6 +26,9 @@ type Checkers struct {
 	BlockNode Checker[state.BlockNodeState]
 	Consensus Checker[map[string]state.ConsensusNodeState]
 	Teleport  Checker[state.TeleportState]
+	// Probe is the probe the checkers use, for callers that must know why the
+	// cluster could not be read.
+	Probe ClusterProbe
 }
 
 // ---------------------------------------------------------------------------
@@ -175,5 +178,6 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		BlockNode: blocknode,
 		Consensus: consensus,
 		Teleport:  teleport,
+		Probe:     cc.probe,
 	}, nil
 }

@@ -276,7 +276,9 @@ Cluster upgrade plan: 8 steps remaining (target: Kubernetes 1.36.5, Cilium 1.20.
 ```
 
 When the cluster cannot be planned, for example because it has more than one node or its Cilium
-agent and chart differ, the command lists each reason and exits non-zero.
+agent and chart differ, the command lists each reason and exits non-zero. The plan needs the live
+cluster: with no kubeconfig (run it with `sudo`), or when the API server does not answer, it
+says so and plans nothing.
 
 ### Uninstall
 

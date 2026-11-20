@@ -70,6 +70,7 @@ var planLive = func(ctx context.Context, opts clusterupgrade.Options) (clusterup
 		Machine: checkers.Machine,
 		Managed: reality.ManagedReleases,
 		Catalog: software.LoadInfrastructureCatalog,
+		Probe:   checkers.Probe,
 	}, opts)
 }
 

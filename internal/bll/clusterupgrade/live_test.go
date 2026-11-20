@@ -26,6 +26,10 @@ type fakeChecker[T any] struct {
 
 func (f fakeChecker[T]) RefreshState(context.Context) (T, error) { return f.value, f.err }
 
+func probeReturns(r reality.ClusterReachability) reality.ClusterProbe {
+	return func() reality.ClusterReachability { return r }
+}
+
 func deployed(chart, version string) state.HelmReleaseInfo {
 	return state.HelmReleaseInfo{ChartName: chart, ChartVersion: version, Status: release.StatusDeployed}
 }
@@ -57,6 +61,7 @@ func liveSources(t *testing.T, cluster state.ClusterState) (LiveSources, string)
 		Machine: fakeChecker[state.MachineState]{value: state.MachineState{Software: map[string]state.SoftwareState{}}},
 		Managed: reality.ManagedReleases,
 		Catalog: software.LoadInfrastructureCatalog,
+		Probe:   probeReturns(reality.Reachable),
 	}, filepath.Dir(file)
 }
 
@@ -109,6 +114,41 @@ func TestPlanLive_UnreadClusterBlocks(t *testing.T) {
 	assert.Equal(t, BlockerNotObserved, plan.Blockers[0].Code)
 }
 
+// An unreachable cluster blocks before the cluster is read: the checker would
+// return the record, so a cluster fake that fails proves it was not called.
+func TestPlanLive_UnreachableClusterBlocksWithTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		probe  reality.ClusterReachability
+		detail string
+	}{
+		{"no kubeconfig", reality.NotConfigured, "run the command with sudo, or set KUBECONFIG"},
+		{"API server silent", reality.Unobservable, "kubectl get --raw /readyz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, _ := liveSources(t, v035Cluster())
+			src.Probe = probeReturns(tc.probe)
+			src.Cluster = fakeChecker[state.ClusterState]{err: errorx.IllegalState.New("the cluster must not be read")}
+
+			plan, err := PlanLive(context.Background(), src, Options{})
+			require.NoError(t, err)
+			assert.Empty(t, plan.Hops)
+			assert.Equal(t, Target{Kubernetes: "1.36.5"}, plan.Target)
+			require.Len(t, plan.Blockers, 1)
+			assert.Equal(t, BlockerNotObserved, plan.Blockers[0].Code)
+			assert.Contains(t, plan.Blockers[0].Detail, tc.detail)
+		})
+	}
+}
+
+func TestPlanLive_UnreachableClusterStillChecksTheTarget(t *testing.T) {
+	src, _ := liveSources(t, v035Cluster())
+	src.Probe = probeReturns(reality.NotConfigured)
+	_, err := PlanLive(context.Background(), src, Options{To: "1.37"})
+	require.Error(t, err)
+	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err.Error())
+}
+
 func TestPlanLive_Errors(t *testing.T) {
 	boom := errorx.ExternalError.New("boom")
 	tests := []struct {
@@ -117,6 +157,7 @@ func TestPlanLive_Errors(t *testing.T) {
 		wantErr string
 	}{
 		{"missing source", func(s *LiveSources) { s.Managed = nil }, "every live source must be set"},
+		{"missing probe", func(s *LiveSources) { s.Probe = nil }, "every live source must be set"},
 		{"cluster read fails", func(s *LiveSources) { s.Cluster = fakeChecker[state.ClusterState]{err: boom} }, "failed to read the cluster"},
 		{"host read fails", func(s *LiveSources) { s.Machine = fakeChecker[state.MachineState]{err: boom} }, "failed to read the host"},
 		{"managed list fails", func(s *LiveSources) {

@@ -117,3 +117,13 @@ func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	require.Equal(t, "block-node", gotBN.ReleaseInfo.Name)
 	require.Contains(t, gotCN, "node1")
 }
+
+func TestNewCheckers_ExposesTheProbeTheCheckersUse(t *testing.T) {
+	sm, err := state.NewStateManager(state.WithStateFile(filepath.Join(t.TempDir(), state.StateFileName)))
+	require.NoError(t, err)
+
+	checkers, err := NewCheckers(sm, WithClusterProbe(func() ClusterReachability { return Unobservable }))
+	require.NoError(t, err)
+	require.NotNil(t, checkers.Probe)
+	require.Equal(t, Unobservable, checkers.Probe())
+}
