@@ -10,6 +10,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -36,12 +37,21 @@ func ChartsHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 			return nil, errx.Decorate(errorx.IllegalArgument.New("chart %s appears twice in the hop", b.Chart), reasons.Internal)
 		}
 		seen[b.Chart] = true
-		if _, err := parseVersion(b.From); err != nil {
+		from, err := parseVersion(b.From)
+		if err != nil {
 			return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "%s start", b.Chart), reasons.Internal)
 		}
-		if _, err := parseVersion(b.To); err != nil {
+		to, err := parseVersion(b.To)
+		if err != nil {
 			return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "%s target", b.Chart), reasons.Internal)
 		}
+		if !from.less(to) {
+			return nil, errx.Decorate(errorx.IllegalArgument.New("%s %s -> %s is not an upgrade", b.Chart, b.From, b.To), reasons.Internal)
+		}
+	}
+	if hop.Step == StepRefresh && hop.Kubernetes != "" {
+		return nil, errx.Decorate(errorx.IllegalArgument.New("a refresh hop is not for a Kubernetes minor, but names %q", hop.Kubernetes),
+			reasons.Internal)
 	}
 	var kubeMinor minorVersion
 	if hop.Step == StepCoupled {
@@ -62,12 +72,21 @@ func ChartsHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 
 	// A chart already at its target counts as started, so a hop that stopped
 	// part way can run again.
-	var elsewhere, notShipped, noRecipe []string
+	var elsewhere, notShipped, noRecipe, notDeployed []string
 	rung, rungOK := c.kubeRung(kubeMinor)
 	for _, b := range hop.Charts {
-		ch := shape.Charts[b.Chart]
-		if ch.Missing || ch.Identity != rsl.IdentityCurrent || (ch.Live != b.From && ch.Live != b.To) {
+		ch, known := shape.Charts[b.Chart]
+		ch.Missing = ch.Missing || !known
+		switch {
+		case ch.Missing:
+			elsewhere = append(elsewhere, b.Chart+" is not installed")
+		case ch.Identity != rsl.IdentityCurrent:
+			elsewhere = append(elsewhere, fmt.Sprintf("%s runs %q under another chart (%s)", b.Chart, ch.Live, ch.Reason))
+		case ch.Live != b.From && ch.Live != b.To:
 			elsewhere = append(elsewhere, fmt.Sprintf("%s runs %q, the hop starts at %s", b.Chart, ch.Live, b.From))
+		}
+		if !ch.Missing && ch.Status != release.StatusDeployed {
+			notDeployed = append(notDeployed, fmt.Sprintf("the last Helm revision of %s is %q", b.Chart, ch.Status))
 		}
 		want := ""
 		switch hop.Step {
@@ -94,6 +113,8 @@ func ChartsHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) 
 		fmt.Sprintf("not the %s target this binary ships: %s", hop.Step, strings.Join(notShipped, ", ")))
 	cs.add("every chart can be upgraded", len(noRecipe) == 0,
 		"this binary does not upgrade "+strings.Join(noRecipe, ", "))
+	cs.add("every release is deployed", len(notDeployed) == 0,
+		strings.Join(notDeployed, "; ")+"; check it with 'helm history' and roll it back or finish it")
 
 	if hop.Step == StepCoupled {
 		cp, err := parseVersion(shape.Kubernetes.ControlPlane)
@@ -127,7 +148,7 @@ func ApplyChartsHop(ctx context.Context, src LiveSources, locks *state.HeldLocks
 	}
 	done := true
 	for _, b := range hop.Charts {
-		if ch := shape.Charts[b.Chart]; ch.Identity != rsl.IdentityCurrent || ch.Live != b.To {
+		if ch := shape.Charts[b.Chart]; ch.Identity != rsl.IdentityCurrent || ch.Live != b.To || ch.Status != release.StatusDeployed {
 			done = false
 		}
 	}

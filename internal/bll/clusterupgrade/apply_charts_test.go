@@ -12,6 +12,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 	k8sversion "k8s.io/apimachinery/pkg/version"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
@@ -31,13 +32,13 @@ func TestChartsHopChecks_Pass(t *testing.T) {
 		n     int
 	}{
 		{"refresh", clusterShape("1.36.5", "1.20.2", withChart("alloy", "1.4.0"), withChart("metrics-server", "3.13.0")),
-			refreshHop(bump("alloy", "1.4.0", "1.13.1"), bump("metrics-server", "3.13.0", "3.14.0")), 5},
+			refreshHop(bump("alloy", "1.4.0", "1.13.1"), bump("metrics-server", "3.13.0", "3.14.0")), 6},
 		{"refresh that stopped part way", clusterShape("1.36.5", "1.20.2", withChart("alloy", "1.13.1"), withChart("metrics-server", "3.13.0")),
-			refreshHop(bump("alloy", "1.4.0", "1.13.1"), bump("metrics-server", "3.13.0", "3.14.0")), 5},
+			refreshHop(bump("alloy", "1.4.0", "1.13.1"), bump("metrics-server", "3.13.0", "3.14.0")), 6},
 		{"coupled before the next minor", clusterShape("1.35.10", "1.20.2", withChart("metallb", "0.15.2")),
-			coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")), 6},
+			coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")), 7},
 		{"coupled for the current minor", clusterShape("1.36.5", "1.20.2", withChart("metallb", "0.15.2")),
-			coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")), 6},
+			coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")), 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks, err := ChartsHopChecks(tc.shape, fixtureMatrix(), tc.hop)
@@ -75,6 +76,8 @@ func TestChartsHopChecks_Fail(t *testing.T) {
 			refreshHop(bump("cilium", "1.18.1", "1.20.2")), "every chart can be upgraded"},
 		{"coupled for a minor two away", clusterShape("1.34.13", "1.20.2", withChart("metallb", "0.15.2")),
 			coupledHop("1.36", bump("metallb", "0.15.2", "0.16.1")), "the hop is for this cluster's Kubernetes"},
+		{"release not deployed", clusterShape("1.36.5", "1.20.2", withChart("alloy", "1.4.0"), withStatus("alloy", release.StatusFailed)),
+			alloyRefresh, "every release is deployed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks, err := ChartsHopChecks(tc.shape, fixtureMatrix(), tc.hop)
@@ -94,6 +97,20 @@ func TestChartsHopChecks_Fail(t *testing.T) {
 	}
 }
 
+// Each way a chart is not at the hop's start says so plainly.
+func TestChartsHopChecks_StartDetails(t *testing.T) {
+	alloyRefresh := refreshHop(bump("alloy", "1.4.0", "1.13.1"))
+	for detail, shape := range map[string]rsl.ClusterShape{
+		"alloy is not installed":                                  clusterShape("1.36.5", "1.20.2"),
+		"alloy runs \"1.4.0\" under another chart (legacy alloy)": clusterShape("1.36.5", "1.20.2", withLegacy("alloy", "1.4.0")),
+		"alloy runs \"1.3.0\", the hop starts at 1.4.0":           clusterShape("1.36.5", "1.20.2", withChart("alloy", "1.3.0")),
+	} {
+		checks, err := ChartsHopChecks(shape, fixtureMatrix(), alloyRefresh)
+		require.NoError(t, err)
+		assert.Contains(t, checks.Err().Error(), detail)
+	}
+}
+
 func TestChartsHopChecks_RejectsOtherHops(t *testing.T) {
 	for _, hop := range []Hop{
 		ciliumHop(StepPatch, "1.18.1", "1.18.16"),
@@ -102,6 +119,9 @@ func TestChartsHopChecks_RejectsOtherHops(t *testing.T) {
 		refreshHop(bump("alloy", "1.4.0", "1.13.1"), bump("alloy", "1.4.0", "1.13.1")),
 		refreshHop(bump("alloy", "1.4", "1.13.1")),
 		refreshHop(bump("alloy", "1.4.0", "latest")),
+		refreshHop(bump("alloy", "1.13.1", "1.4.0")),
+		refreshHop(bump("alloy", "1.13.1", "1.13.1")),
+		{Kind: KindCharts, Step: StepRefresh, Kubernetes: "1.36", Charts: []ChartBump{bump("alloy", "1.4.0", "1.13.1")}},
 		coupledHop("", bump("metallb", "0.15.2", "0.16.1")),
 		coupledHop("1.36.5", bump("metallb", "0.15.2", "0.16.1")),
 	} {
@@ -187,6 +207,24 @@ func TestApplyChartsHop_DoneHopDoesNothing(t *testing.T) {
 	assert.Empty(t, r.ran())
 	assert.Empty(t, *built)
 	assert.Empty(t, stateFiles(t, dir))
+}
+
+// A release at the target whose last Helm revision failed is not done.
+func TestApplyChartsHop_FailedReleaseAtTheTargetIsNotDone(t *testing.T) {
+	built := stubChartsApply(t, false)
+	cs := v035Cluster()
+	failed := deployed("metallb", "0.16.1")
+	failed.Status = release.StatusFailed
+	cs.Releases["metallb"] = failed
+	cs.Releases["metrics-server"] = deployed("metrics-server", "3.14.0")
+	src, dir := liveSources(t, cs)
+	r := &fakeRunner{}
+
+	err := ApplyChartsHop(context.Background(), src, holdLocks(t, dir), r.run, v035Refresh)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "every release is deployed")
+	assert.Empty(t, *built)
 }
 
 func TestApplyChartsHop_FailedCheckChangesNothing(t *testing.T) {

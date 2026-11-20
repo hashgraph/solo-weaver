@@ -4,11 +4,14 @@ package steps
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -21,6 +24,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/alloy"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 // stubChartHop replaces Helm, the API server version and each recipe's extra
@@ -167,6 +171,45 @@ func TestChartHop_ChartElsewhereIsRefused(t *testing.T) {
 	require.Len(t, reports, 2)
 	assert.Equal(t, automa.StatusFailed, reports[1].Status)
 	assert.Contains(t, reports[1].Error.Error(), "metallb runs 0.14.9, not the hop's start 0.15.2")
+}
+
+// A release the finder refuses keeps the finder's reason and hints, such as
+// the rollback for a failed release.
+func TestChartHop_RefusedReleaseKeepsItsHints(t *testing.T) {
+	hm, _ := stubChartHop(t, "v1.35.10")
+	spec := chartSpec("metallb")
+	hm.EXPECT().GetRelease(spec.Release, spec.Namespace).Return(relAt(spec, "metallb", "0.16.1", release.StatusFailed), nil)
+
+	reports := chartHopRun(t, ChartBump{Chart: "metallb", From: "0.15.2", To: "0.16.1"})
+
+	require.Len(t, reports, 2)
+	assert.Equal(t, automa.StatusFailed, reports[1].Status)
+	hints, _ := errx.Hints(reports[1].Error)
+	assert.Contains(t, strings.Join(hints, " "), "roll back")
+}
+
+// A release under another chart is not this chart, even at the hop's start.
+func TestChartHop_ReleaseUnderAnotherChartIsRefused(t *testing.T) {
+	hm, _ := stubChartHop(t, "v1.35.10")
+	spec := chartSpec("node-exporter")
+	hm.EXPECT().GetRelease(spec.Release, spec.Namespace).Return(relAt(spec, "node-exporter", "4.4.9", release.StatusDeployed), nil)
+
+	reports := chartHopRun(t, ChartBump{Chart: "node-exporter", From: "4.4.9", To: "4.59.0"})
+
+	require.Len(t, reports, 2)
+	assert.Equal(t, automa.StatusFailed, reports[1].Status)
+	assert.Contains(t, reports[1].Error.Error(), `runs chart "node-exporter", not "prometheus-node-exporter"`)
+}
+
+func TestChartHop_UnreadableServerVersionIsAnAPIFailure(t *testing.T) {
+	stubChartHop(t, "v1.35.10")
+	chartHopServerVer = func() (string, error) { return "", errorx.ExternalError.New("connection refused") }
+
+	reports := chartHopRun(t, ChartBump{Chart: "metrics-server", From: "3.13.0", To: "3.14.0"})
+
+	require.Len(t, reports, 1)
+	reason, _ := errx.ReasonOf(reports[0].Error)
+	assert.Equal(t, reasons.K8sAPIFailed, reason)
 }
 
 func TestChartHop_MissingReleaseIsRefused(t *testing.T) {

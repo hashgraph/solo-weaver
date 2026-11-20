@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/hashgraph/solo-weaver/internal/alloy"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -130,12 +132,14 @@ func checkChartHop(bumps []ChartBump) automa.Builder {
 				if b.Chart != "metrics-server" {
 					continue
 				}
-				// metrics-server's chart depends on the Kubernetes minor.
+				// metrics-server's chart depends on the Kubernetes minor. No rung
+				// lists it, so it only moves in a refresh, on the running minor.
 				kv, err := chartHopServerVer()
-				var spec *helmChartSpec
-				if err == nil {
-					spec, err = metricsServerChartFor(kv)
+				if err != nil {
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
+						"Check that the API server is up: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version")))
 				}
+				spec, err := metricsServerChartFor(kv)
 				if err == nil && spec.Version != b.To {
 					err = errorx.IllegalState.New("metrics-server %s is not the chart for Kubernetes %s (that is %s)", b.To, kv, spec.Version)
 				}
@@ -166,11 +170,22 @@ func upgradeChart(b ChartBump, newClient kube.ClientProviderFromContext) automa.
 				find = deployedRelease
 			}
 			rel, err := find(hm, spec)
-			if err == nil && rel == nil {
-				err = errorx.IllegalState.New("chart %s has no release to upgrade", b.Chart)
-			}
 			if err != nil {
-				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.PreconditionNotMet,
+				// The finders give the reason and hints, such as a rollback.
+				return automa.FailureReport(stp, automa.WithError(err))
+			}
+			if rel == nil {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("chart %s has no release to upgrade", b.Chart), reasons.PreconditionNotMet,
+					"Run 'solo-provisioner kube cluster upgrade --plan --experimental' to see the next hop for this cluster")))
+			}
+			// The same rule as the reality checker's: a release under another
+			// chart, such as the Bitnami node-exporter, is not this chart.
+			if want := path.Base(spec.Chart); chartName(rel) != want {
+				return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+					errorx.IllegalState.New("release %s in namespace %s runs chart %q, not %q", rel.Name, rel.Namespace, chartName(rel), want),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Inspect it: helm status %s -n %s", rel.Name, rel.Namespace),
 					"Run 'solo-provisioner kube cluster upgrade --plan --experimental' to see the next hop for this cluster")))
 			}
 			spec.Release, spec.Namespace = rel.Name, rel.Namespace
@@ -209,7 +224,11 @@ func upgradeChart(b ChartBump, newClient kube.ClientProviderFromContext) automa.
 				}
 				select {
 				case <-ctx.Done():
-					return automa.FailureReport(stp, automa.WithError(errx.Decorate(ctx.Err(), reasons.Internal)))
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(ctx.Err(), "stopped waiting for %s %s to be healthy", b.Chart, b.To),
+						reasons.PreconditionNotMet,
+						fmt.Sprintf("Check the release: helm status %s -n %s", spec.Release, spec.Namespace),
+						"Run the upgrade again; it continues from where the chart is")))
 				case <-time.After(chartHopPollInterval):
 				}
 			}
@@ -256,7 +275,10 @@ func chartProblems(ctx context.Context, hm helm.Manager, k *kube.Client, spec *h
 	extra func(context.Context, *kube.Client, *helmChartSpec) ([]string, error)) []string {
 	rel, err := hm.GetRelease(spec.Release, spec.Namespace)
 	if err != nil {
-		return []string{err.Error()}
+		return []string{doctor.OperatorMessage(err)}
+	}
+	if rel == nil {
+		return []string{"the release has no record"}
 	}
 	var out []string
 	version := ""
@@ -269,7 +291,7 @@ func chartProblems(ctx context.Context, hm helm.Manager, k *kube.Client, spec *h
 	if extra != nil {
 		more, err := extra(ctx, k, spec)
 		if err != nil {
-			more = []string{err.Error()}
+			more = []string{doctor.OperatorMessage(err)}
 		}
 		out = append(out, more...)
 	}
