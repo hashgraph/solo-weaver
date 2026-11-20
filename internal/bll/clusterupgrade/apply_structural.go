@@ -7,12 +7,14 @@ import (
 	"fmt"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -39,17 +41,18 @@ func structuralWorkflow(hop Hop) (func() *automa.WorkflowBuilder, bool) {
 // step.
 func StructuralHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) {
 	if _, ok := structuralWorkflow(hop); hop.Kind != KindStructural || !ok {
-		return nil, errorx.IllegalArgument.New("%s %s %s is not a structural hop this binary runs", hop.Kind, hop.Step, hop.Component)
+		return nil, errx.Decorate(errorx.IllegalArgument.New("%s %s %s is not a structural hop this binary runs",
+			hop.Kind, hop.Step, hop.Component), reasons.Internal)
 	}
 	if hop.From == "" {
-		return nil, errorx.IllegalArgument.New("hop start: the legacy chart version must be set")
+		return nil, errx.Decorate(errorx.IllegalArgument.New("hop start: the legacy chart version must be set"), reasons.Internal)
 	}
 	if _, err := parseVersion(hop.To); err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "hop target")
+		return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "hop target"), reasons.Internal)
 	}
 	c, err := m.compile()
 	if err != nil {
-		return nil, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
+		return nil, errx.Decorate(errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix"), reasons.Internal)
 	}
 
 	var cs Checks
@@ -81,14 +84,19 @@ func identityOf(ch rsl.ChartShape) string {
 }
 
 // ApplyStructuralHop runs one structural hop: the node-exporter swap or the
-// External Secrets migration. It reads the cluster, does nothing when the hop
-// is already applied, refuses when a check fails, then runs the hop under the
-// cluster lock, records the cluster and leaves an entry in the action history.
-func ApplyStructuralHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop) error {
+// External Secrets migration. The caller holds the system and cluster locks
+// in locks for the whole run. It reads the cluster, does nothing when the hop
+// is already applied, and refuses when a check fails. Otherwise one workflow
+// runs the hop, waits for the cluster to settle and records it, and one entry
+// goes to the action history.
+func ApplyStructuralHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
-		return errorx.IllegalArgument.New("a workflow runner must be set")
+		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
 	}
-	shape, m, err := readLive(ctx, src)
+	if err := heldFor(src, locks, state.ComponentCluster); err != nil {
+		return err
+	}
+	shape, m, err := readHopLive(ctx, src)
 	if err != nil {
 		return err
 	}
@@ -105,7 +113,8 @@ func ApplyStructuralHop(ctx context.Context, src LiveSources, run WorkflowRunner
 	}
 
 	workflow, _ := structuralWorkflow(hop)
-	inputs := map[string]string{"component": hop.Component, "step": string(hop.Step), "from": hop.From, "to": hop.To}
-	return recordHop(ctx, src, inputs, []state.ComponentID{state.ComponentCluster},
-		func() error { return run(ctx, workflow()) }, nil)
+	inputs := map[string]string{inputComponent: hop.Component, inputStep: string(hop.Step), inputFrom: hop.From, inputTo: hop.To}
+	logx.As().Info().Str("component", hop.Component).Str("step", string(hop.Step)).Str("from", hop.From).Str("to", hop.To).
+		Msg("Applying the structural hop")
+	return runHop(ctx, src, run, inputs, workflow(), hopRecord(src, []state.ComponentID{state.ComponentCluster}, nil), nil)
 }

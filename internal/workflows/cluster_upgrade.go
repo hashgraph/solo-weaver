@@ -43,7 +43,7 @@ func NodeExporterReplaceWorkflow() *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("node-exporter-replace").
 		WithExecutionMode(automa.StopOnError).
-		Steps(steps.NodeExporterReplaceSteps(kube.NewClient)...)
+		Steps(steps.NodeExporterReplaceSteps(kube.ClientFromContext)...)
 }
 
 // ExternalSecretsMigrateWorkflow moves External Secrets from a 0.x chart to to.
@@ -52,5 +52,5 @@ func ExternalSecretsMigrateWorkflow(to string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("external-secrets-migrate").
 		WithExecutionMode(automa.StopOnError).
-		Steps(steps.ExternalSecretsMigrateSteps(to, kube.NewClient)...)
+		Steps(steps.ExternalSecretsMigrateSteps(to, kube.ClientFromContext)...)
 }

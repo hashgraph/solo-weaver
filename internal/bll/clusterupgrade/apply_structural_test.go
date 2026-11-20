@@ -7,12 +7,16 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func neReplace(from string) Hop {
@@ -98,6 +102,8 @@ func TestStructuralHopChecks_RejectsOtherHops(t *testing.T) {
 		_, err := StructuralHopChecks(clusterShape("1.33.4", "1.18.1"), fixtureMatrix(), hop)
 		require.Error(t, err)
 		assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err.Error())
+		reason, _ := errx.ReasonOf(err)
+		assert.Equal(t, reasons.Internal, reason)
 	}
 }
 
@@ -107,18 +113,18 @@ func TestStructuralHopChecks_InvalidMatrix(t *testing.T) {
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalFormat), err.Error())
 }
 
-func stubStructuralApply(t *testing.T) {
+// stubStructuralApply stubs the hop workflows, whose step fails when fail is
+// set.
+func stubStructuralApply(t *testing.T, fail bool) {
 	t.Helper()
+	stubHopFinish(t)
 	origNE, origESO := nodeExporterReplaceWorkflow, externalSecretsMigrateWorkflow
 	t.Cleanup(func() { nodeExporterReplaceWorkflow, externalSecretsMigrateWorkflow = origNE, origESO })
-	noop := func(id string) *automa.WorkflowBuilder {
-		return automa.NewWorkflowBuilder().WithId(id).
-			Steps(automa.NewStepBuilder().WithId("noop").WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
-				return automa.SuccessReport(stp)
-			}))
+	hop := func(id string) *automa.WorkflowBuilder {
+		return automa.NewWorkflowBuilder().WithId(id).Steps(noopStep("structural-hop", fail))
 	}
-	nodeExporterReplaceWorkflow = func() *automa.WorkflowBuilder { return noop("ne-replace") }
-	externalSecretsMigrateWorkflow = func(to string) *automa.WorkflowBuilder { return noop("eso-" + to) }
+	nodeExporterReplaceWorkflow = func() *automa.WorkflowBuilder { return hop("ne-replace") }
+	externalSecretsMigrateWorkflow = func(to string) *automa.WorkflowBuilder { return hop("eso-" + to) }
 }
 
 // legacyCluster is a v0.35 cluster that also runs the Bitnami node-exporter
@@ -140,79 +146,136 @@ func TestApplyStructuralHop_RunsTheHopAndRecords(t *testing.T) {
 		{esoMigrate("0.20.2"), "eso-2.13.0", "component: external-secrets"},
 	} {
 		t.Run(tc.workflow, func(t *testing.T) {
-			stubStructuralApply(t)
+			stubStructuralApply(t, false)
 			src, dir := liveSources(t, legacyCluster())
 			r := &fakeRunner{}
 
-			require.NoError(t, ApplyStructuralHop(context.Background(), src, r.run, tc.hop))
+			require.NoError(t, ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, tc.hop))
 
-			assert.Equal(t, []string{tc.workflow}, r.ran)
+			assert.Equal(t, []string{tc.workflow}, r.ran())
+			assert.Equal(t, []string{"structural-hop", NodesReadyStepID, steps.WaitClusterReadableStepID, steps.RecordStateStepID},
+				r.stepIDs(t))
 			assert.Contains(t, readStateFile(t, dir, "cluster.yaml"), "releases:")
 			assert.NotContains(t, stateFiles(t, dir), "system.yaml")
+			entries := historyEntries(t, dir)
+			require.Len(t, entries, 1)
+			assert.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+			assert.Equal(t, []state.ChangedFile{state.ComponentCluster.File()}, entries[0].Components)
 			history := readStateFile(t, dir, "action_history.yaml")
 			assert.Contains(t, history, tc.component)
+			assert.Contains(t, history, "step: "+string(tc.hop.Step))
 			assert.Contains(t, history, "to: "+tc.hop.To)
 		})
 	}
 }
 
 func TestApplyStructuralHop_DoneHopDoesNothing(t *testing.T) {
-	stubStructuralApply(t)
+	stubStructuralApply(t, false)
 	cs := v035Cluster()
 	cs.Releases["node-exporter"] = deployed("prometheus-node-exporter", "4.59.0")
 	src, dir := liveSources(t, cs)
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyStructuralHop(context.Background(), src, r.run, neReplace("4.4.9")))
+	require.NoError(t, ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, neReplace("4.4.9")))
 
-	assert.Empty(t, r.ran)
+	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
 }
 
 func TestApplyStructuralHop_FailedCheckChangesNothing(t *testing.T) {
-	stubStructuralApply(t)
+	stubStructuralApply(t, false)
 	src, dir := liveSources(t, legacyCluster())
 	r := &fakeRunner{}
 
-	err := ApplyStructuralHop(context.Background(), src, r.run, esoMigrate("0.19.0"))
+	err := ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, esoMigrate("0.19.0"))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "the chart is where the hop starts")
-	assert.Empty(t, r.ran)
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
 }
 
-func TestApplyStructuralHop_FailedHopRecordsTheFailure(t *testing.T) {
-	stubStructuralApply(t)
+func TestApplyStructuralHop_FailedHopRecordsOnlyTheFailure(t *testing.T) {
+	stubStructuralApply(t, true)
 	src, dir := liveSources(t, legacyCluster())
-	r := &fakeRunner{err: errorx.ExternalError.New("helm upgrade failed")}
-
-	err := ApplyStructuralHop(context.Background(), src, r.run, esoMigrate("0.20.2"))
-
-	require.Error(t, err)
-	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
-	assert.Contains(t, readStateFile(t, dir, "action_history.yaml"), "outcome: failed")
-}
-
-func TestApplyStructuralHop_FailsFastOnTheClusterLock(t *testing.T) {
-	stubStructuralApply(t)
-	src, dir := liveSources(t, legacyCluster())
-	release, err := state.AcquireComponentLocks(dir, []state.ComponentID{state.ComponentCluster}, 0)
-	require.NoError(t, err)
-	defer release()
 	r := &fakeRunner{}
 
-	require.Error(t, ApplyStructuralHop(context.Background(), src, r.run, neReplace("4.4.9")))
+	err := ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, esoMigrate("0.20.2"))
 
-	assert.Empty(t, r.ran)
-	entries, err := state.ReadActionHistory(dir)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "structural-hop failed")
+	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	assert.Empty(t, entries[0].Components)
+}
+
+// A record that cannot be written does not fail a hop that ran.
+func TestApplyStructuralHop_RecordFailureIsAWarning(t *testing.T) {
+	stubStructuralApply(t, false)
+	src, dir := liveSources(t, legacyCluster())
+	src.State = failingPersist{src.State}
+	r := &fakeRunner{}
+
+	require.NoError(t, ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, neReplace("4.4.9")))
+
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	assert.True(t, entries[0].NotPersisted)
+}
+
+func TestApplyStructuralHop_RefusesLocksThatDoNotCoverIt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		locks func(t *testing.T, dir string) *state.HeldLocks
+	}{
+		{"no locks", func(*testing.T, string) *state.HeldLocks { return nil }},
+		{"only the system lock", func(t *testing.T, dir string) *state.HeldLocks {
+			l, err := state.AcquireHeldLocks(dir, []state.ComponentID{state.ComponentSystem}, 0)
+			require.NoError(t, err)
+			t.Cleanup(l.Release)
+			return l
+		}},
+		{"locks in another directory", func(t *testing.T, _ string) *state.HeldLocks { return holdLocks(t, t.TempDir()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubStructuralApply(t, false)
+			src, dir := liveSources(t, legacyCluster())
+			r := &fakeRunner{}
+
+			err := ApplyStructuralHop(context.Background(), src, tc.locks(t, dir), r.run, neReplace("4.4.9"))
+
+			require.Error(t, err)
+			reason, _ := errx.ReasonOf(err)
+			assert.Equal(t, reasons.Internal, reason)
+			assert.Empty(t, r.ran(), "no workflow may run without the locks")
+			assert.Empty(t, historyEntries(t, dir))
+		})
+	}
+}
+
+func TestApplyStructuralHop_UnreachableClusterIsRefused(t *testing.T) {
+	stubStructuralApply(t, false)
+	src, dir := liveSources(t, legacyCluster())
+	src.Probe = probeReturns(reality.NotConfigured)
+	r := &fakeRunner{}
+
+	err := ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), r.run, neReplace("4.4.9"))
+
+	require.Error(t, err)
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	assert.Empty(t, r.ran())
+	assert.Empty(t, historyEntries(t, dir))
 }
 
 func TestApplyStructuralHop_NeedsARunner(t *testing.T) {
-	src, _ := liveSources(t, legacyCluster())
-	err := ApplyStructuralHop(context.Background(), src, nil, neReplace("4.4.9"))
+	src, dir := liveSources(t, legacyCluster())
+	err := ApplyStructuralHop(context.Background(), src, holdLocks(t, dir), nil, neReplace("4.4.9"))
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument))
 }

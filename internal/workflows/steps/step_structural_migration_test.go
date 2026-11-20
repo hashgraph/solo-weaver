@@ -19,7 +19,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 )
 
-func fakeClient() (*kube.Client, error) { return &kube.Client{}, nil }
+func fakeClient(context.Context) (*kube.Client, error) { return &kube.Client{}, nil }
 
 func hintsOf(err error) []string {
 	hints, _ := errx.Hints(err)

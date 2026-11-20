@@ -50,8 +50,8 @@ func structuralHelm(stp automa.Step) (helm.Manager, *automa.Report) {
 	return hm, nil
 }
 
-func structuralClient(stp automa.Step, newClient kube.ClientProvider) (*kube.Client, *automa.Report) {
-	k, err := newClient()
+func structuralClient(ctx context.Context, stp automa.Step, newClient kube.ClientProviderFromContext) (*kube.Client, *automa.Report) {
+	k, err := newClient(ctx)
 	if err != nil {
 		return nil, automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
 			"Check that the admin kubeconfig works: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))
@@ -87,7 +87,7 @@ func waitHealthy(ctx context.Context, stp automa.Step, what string, problems fun
 // nodeExporterSwap holds what the steps of the node-exporter swap share.
 type nodeExporterSwap struct {
 	spec       *helmChartSpec
-	newClient  kube.ClientProvider
+	newClient  kube.ClientProviderFromContext
 	done       bool
 	legacy     bool // the Bitnami release is still there
 	localChart string
@@ -98,7 +98,7 @@ type nodeExporterSwap struct {
 // chart, uninstall the old release and wait for its pods to go (both bind host
 // port 9100), install the new chart, and wait until it is healthy. A swap that
 // stopped after the uninstall finishes on a re-run; a done swap changes nothing.
-func NodeExporterReplaceSteps(newClient kube.ClientProvider) []automa.Builder {
+func NodeExporterReplaceSteps(newClient kube.ClientProviderFromContext) []automa.Builder {
 	s := &nodeExporterSwap{spec: chartSpec("node-exporter"), newClient: newClient}
 	return []automa.Builder{s.prepare(), s.uninstallLegacy(), s.install(), s.waitHealthy()}
 }
@@ -149,7 +149,7 @@ func (s *nodeExporterSwap) uninstallLegacy() automa.Builder {
 			if rpt != nil {
 				return rpt
 			}
-			k, rpt := structuralClient(stp, s.newClient)
+			k, rpt := structuralClient(ctx, stp, s.newClient)
 			if rpt != nil {
 				return rpt
 			}
@@ -260,7 +260,7 @@ func (s *nodeExporterSwap) waitHealthy() automa.Builder {
 			if rpt != nil {
 				return rpt
 			}
-			k, rpt := structuralClient(stp, s.newClient)
+			k, rpt := structuralClient(ctx, stp, s.newClient)
 			if rpt != nil {
 				return rpt
 			}
@@ -281,7 +281,7 @@ func (s *nodeExporterSwap) waitHealthy() automa.Builder {
 type esoMigration struct {
 	to         string
 	spec       *helmChartSpec // the target chart, with the release's name and namespace
-	newClient  kube.ClientProvider
+	newClient  kube.ClientProviderFromContext
 	done       bool
 	localChart string
 	wasReady   []string // ExternalSecrets Ready before the upgrade
@@ -292,7 +292,7 @@ type esoMigration struct {
 // chart and note which ExternalSecrets are Ready, upgrade with our values, and
 // wait until the controllers run to and those ExternalSecrets are Ready again.
 // Both charts serve the same CRD API (v1), so no resource needs converting.
-func ExternalSecretsMigrateSteps(to string, newClient kube.ClientProvider) []automa.Builder {
+func ExternalSecretsMigrateSteps(to string, newClient kube.ClientProviderFromContext) []automa.Builder {
 	m := &esoMigration{to: to, newClient: newClient}
 	return []automa.Builder{m.prepare(), m.upgrade(), m.waitHealthy()}
 }
@@ -320,7 +320,7 @@ func (m *esoMigration) prepare() automa.Builder {
 				return automa.SkippedReport(stp, automa.WithDetail("External Secrets already runs "+m.to))
 			}
 
-			k, rpt := structuralClient(stp, m.newClient)
+			k, rpt := structuralClient(ctx, stp, m.newClient)
 			if rpt != nil {
 				return rpt
 			}
@@ -509,7 +509,7 @@ func (m *esoMigration) waitHealthy() automa.Builder {
 			if rpt != nil {
 				return rpt
 			}
-			k, rpt := structuralClient(stp, m.newClient)
+			k, rpt := structuralClient(ctx, stp, m.newClient)
 			if rpt != nil {
 				return rpt
 			}
