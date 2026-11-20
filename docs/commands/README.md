@@ -452,6 +452,31 @@ Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus n
 other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
 `consensus node install --profile local`, not `consensus node --profile local install`.
 
+### Install: data volumes
+
+```bash
+# All volumes on PVCs of the cluster default StorageClass
+sudo solo-provisioner consensus node install --experimental --namespace hiero-network-1 --node-id 0 \
+  --profile local --default-volume-type pvc
+
+# Only the saved volume on a PVC of a named StorageClass
+sudo solo-provisioner consensus node install --experimental --namespace hiero-network-1 --node-id 0 \
+  --profile local --volume name=saved,type=pvc,size=500Gi,storageClass=fast-ssd
+```
+
+| Flag | What it does |
+|---|---|
+| `--default-volume-type` | Default backing for all data volumes: `emptydir\|hostpath\|pvc` (empty = emptydir) |
+| `--default-pvc-size` | Default PVC size for pvc-backed volumes when size= is omitted (empty = per-volume default) |
+| `--default-pvc-storage-class` | Default StorageClass for pvc-backed volumes (empty = cluster default) |
+| `--default-pvc-access-mode` | Default access mode for pvc-backed volumes: `ReadWriteOnce\|ReadWriteOncePod` (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected |
+| `--volume` | Per-volume backing override, repeatable: `name=<vol>[,type=,path=,size=,storageClass=,accessMode=]` (e.g. `name=saved,size=500Gi,storageClass=fast-ssd`) |
+| `--volumes-file` | YAML file of volume backings (`defaults:` + `volumes:`). CLI flags override the file |
+
+> **`pvc` needs a StorageClass.** `kube cluster install` does not install one. Check with
+> `kubectl get storageclass`. Preflight stops the install if a named StorageClass is missing, or if
+> a volume needs the default and none exists. `--force` changes this to a warning.
+
 ### Uninstall
 
 `consensus node uninstall` removes one node:

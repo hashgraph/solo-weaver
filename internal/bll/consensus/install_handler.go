@@ -212,7 +212,7 @@ func (h *InstallHandler) BuildWorkflow(
 
 	// Group the steps into named phases so the TUI renders the collapsed
 	// phase + progress bar (like cluster install) rather than a flat step list.
-	preflight := phaseWorkflow("consensus-preflight", "Preflight Checks",
+	preflightSteps := []automa.Builder{
 		// The solo-operator is installed separately by `kube operator install`, not
 		// here — consensus install is a pure consumer. These prechecks are the hard
 		// guard that the operator is present and the right version.
@@ -221,7 +221,13 @@ func (h *InstallHandler) BuildWorkflow(
 		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
 		steps.PrecheckOperatorVersion(),
-	)
+	}
+	// pvc volumes need a StorageClass; kube cluster install does not provide one.
+	if steps.ConsensusHasPVCVolumes(ins) {
+		preflightSteps = append(preflightSteps,
+			steps.PrecheckConsensusStorageClasses(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider))
+	}
+	preflight := phaseWorkflow("consensus-preflight", "Preflight Checks", preflightSteps...)
 
 	deploySteps := []automa.Builder{
 		steps.EnsureOrbit(ins, steps.DefaultCapsuleKubeProvider),

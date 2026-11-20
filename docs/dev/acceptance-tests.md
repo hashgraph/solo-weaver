@@ -441,6 +441,9 @@ sudo solo-provisioner kube operator install
 > `SOLO_PROVISIONER_ENABLE_CONSENSUS=1` — it is not production-ready. Under `sudo`
 > use the flag; sudo drops the environment, so the env var would not reach the process.
 
+> **PVC volumes need a StorageClass.** The steps below use `emptydir`. For `pvc` volumes, install a
+> StorageClass first (`kubectl get storageclass`). Without it, preflight fails with `PreconditionNotMet`.
+
 ### F1. Single consensus node
 
 Create the node keys, install one node, then generate genesis. With defaults it is
@@ -546,9 +549,10 @@ Expected:
   ```bash
   kubectl get orbit "${NS}"   # F2 after step 7 -> found; F1 after step 7, or F2 after step 9 -> NotFound
   ```
-- The Secrets stay:
+- The Secrets stay (names have a `-<date>-<fp8>` suffix, so select by label):
   ```bash
-  kubectl -n "${NS}" get secret node0-gossip-keys node0-grpc-tls-keys   # -> both found
+  kubectl -n "${NS}" get secret -l solo.hiero.org/node=node0
+  # -> node0-gossip-keys-<date>-<fp8> and node0-grpc-tls-keys-<date>-<fp8> are listed
   ```
 - PVCs stay when the node used PVC volumes (`--default-volume-type pvc`). They have no owner, so a
   later delete of an Orbit or a capsule does not remove them:

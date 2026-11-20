@@ -32,6 +32,10 @@ type fakeCapsuleClient struct {
 	listResult  *unstructured.UnstructuredList
 	pvcs        []unstructured.Unstructured
 	released    []string
+	// storageClasses answers a StorageClass List; scListCalls counts those calls.
+	storageClasses []unstructured.Unstructured
+	scListErr      error
+	scListCalls    int
 }
 
 func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name string) (bool, error) {
@@ -58,6 +62,13 @@ func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) er
 func (f *fakeCapsuleClient) List(_ context.Context, kind kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
 	if kind == kube.KindPVC {
 		return &unstructured.UnstructuredList{Items: f.pvcs}, nil
+	}
+	if kind == kube.KindStorageClass {
+		f.scListCalls++
+		if f.scListErr != nil {
+			return nil, f.scListErr
+		}
+		return &unstructured.UnstructuredList{Items: f.storageClasses}, nil
 	}
 	if f.listResult != nil {
 		return f.listResult, nil
