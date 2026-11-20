@@ -23,25 +23,18 @@ func TestGate_VersionAndMaturityAxes(t *testing.T) {
 		require.True(t, g.Enabled(featuregate.EsoSecretManagement))
 	})
 
-	t.Run("Alpha feature is off before its activation version", func(t *testing.T) {
+	t.Run("Alpha feature is off without an opt-in", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{Current: 1})
 		require.NoError(t, err)
-		// ActiveFrom 2 has not been reached: no active spec, so off.
+		// The spec is active at version 1, but Alpha maturity withholds it until opt-in.
 		require.False(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
 	})
 
-	t.Run("Alpha at its version is still off without --experimental", func(t *testing.T) {
-		g, err := featuregate.New(featuregate.Options{Current: 2})
-		require.NoError(t, err)
-		// Spec is active, but Alpha maturity withholds it until opt-in.
-		require.False(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
-	})
-
-	// The opt-in (--experimental or the env var) always resolves to a per-feature
-	// override, which forces the feature on regardless of version and maturity.
-	t.Run("a per-feature override forces on regardless of version/maturity", func(t *testing.T) {
+	// Options.Overrides is the raw seam (tests/programmatic): it forces a feature on
+	// regardless of version, maturity, or readiness.
+	t.Run("a raw override forces on regardless of maturity", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{
-			Current:   1, // before ConsensusNodeOperatorManaged's ActiveFrom
+			Current:   1,
 			Overrides: map[gatekit.Feature]bool{featuregate.ConsensusNodeOperatorManaged: true},
 		})
 		require.NoError(t, err)
@@ -49,4 +42,18 @@ func TestGate_VersionAndMaturityAxes(t *testing.T) {
 		// A GA feature is unaffected by the opt-in.
 		require.True(t, g.Enabled(featuregate.NetworkPolicy))
 	})
+}
+
+// Model C: the operator opt-ins (--experimental / env) respect readiness. Both current
+// alphas are Alpha,Default:true, so they are ready to dogfood via an opt-in. (An
+// unfinished Alpha,Default:false feature would report false — see TestExperimentalReadyIn.)
+func TestExperimentalReady_CurrentAlphas(t *testing.T) {
+	for _, f := range []gatekit.Feature{
+		featuregate.ConsensusNodeOperatorManaged,
+		featuregate.KubeClusterUpgrade,
+	} {
+		ready, err := featuregate.ExperimentalReady(f)
+		require.NoError(t, err)
+		require.True(t, ready, "%s should be ready to dogfood", f)
+	}
 }

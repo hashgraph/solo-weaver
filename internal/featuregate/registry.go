@@ -13,11 +13,14 @@ import gatekit "github.com/automa-saga/gatekit"
 // version are the structured fields (Maturity, ActiveFrom), not prose.
 //
 // Spec semantics (gatekit): a feature is on when the last spec whose
-// ActiveFrom <= the active version is default-on; an ALPHA spec additionally
-// requires a per-feature override (WithOverrides) — from the scoped --experimental
-// flag or the SOLO_PROVISIONER_ENABLE_<FEATURE> env var — which forces it on
-// regardless of version. A feature graduates by adding a later spec at a higher ActiveFrom with a more
-// mature stage (e.g. ALPHA -> GA).
+// ActiveFrom <= the active version is default-on. An ALPHA spec is off until the
+// operator opts in (the scoped --experimental flag or the
+// SOLO_PROVISIONER_ENABLE_<FEATURE> env var) AND the spec is ready — i.e. its
+// Default is true (Model C): an Alpha,Default:true feature is dogfoodable via an
+// opt-in; an Alpha,Default:false feature is DORMANT (unfinished) and cannot be
+// enabled by any opt-in until its spec is flipped to Default:true or graduated. A
+// feature graduates by adding a later spec at a higher ActiveFrom with a more mature
+// stage (e.g. ALPHA -> GA).
 func Catalog() gatekit.Registry {
 	return gatekit.Registry{
 		// --- Activation version 1: the GA floor (shipped, default-on) ---
@@ -58,27 +61,33 @@ func Catalog() gatekit.Registry {
 			},
 		},
 
-		// --- Activation version 2: the alpha opt-in cohort ---
-		// ALPHA: dormant until the axis reaches 2 AND the operator opts in via
-		// --experimental (or a per-feature override). Each graduates to GA with a
-		// later spec once validated.
+		// --- Activation version 1: the alpha opt-in cohort (dev gates) ---
+		// ALPHA dev gates live at the CURRENT activation version (1), not a future
+		// one: solo does not need rolling-upgrade coordinated activation, so a dev
+		// gate never raises the max (see docs/dev/feature-gates.md and gatekit-spec
+		// Lesson 7). Each is off by default and, being Default:true, is dogfoodable
+		// via --experimental (or its env var); set Default:false to keep an
+		// unfinished feature dormant (unreachable by any opt-in). Each graduates to
+		// GA with a later spec once validated.
 		ConsensusNodeOperatorManaged: {
 			Description: "Manage consensus node lifecycle through solo-operator.",
 			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+				{ActiveFrom: 1, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
 		KubeClusterUpgrade: {
 			Description: "Upgrade the Kubernetes cluster along the k8s/Cilium ladder (`kube cluster upgrade`).",
 			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+				{ActiveFrom: 1, Default: true, Maturity: gatekit.Alpha},
 			},
 		},
 
 		// Not yet in main. A feature enters the registry in the same PR that lands
 		// the code it gates, so the catalog never advertises a gate with no
-		// behavior behind it. Uncomment each (and its constant in features.go)
-		// in its implementing PR:
+		// behavior behind it. When a feature lands incrementally (code merged before
+		// it is ready to dogfood), register it Default:false — dormant, so no opt-in
+		// can switch the half-done path on — and flip to Default:true once ready.
+		// Uncomment each (and its constant in features.go) in its implementing PR:
 		//   - BlockNodeOperatorManaged (operator HelmCapsule path) -> PR #1364.
 		//     Block node has two deployment models: BlockNodeProvisionerManaged
 		//     (direct Helm, GA, in the floor above) is today's default; the
@@ -90,19 +99,19 @@ func Catalog() gatekit.Registry {
 		// BlockNodeOperatorManaged: {
 		// 	Description: "Manage block node lifecycle through solo-operator.",
 		// 	Specs: gatekit.VersionedSpecs{
-		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 		{ActiveFrom: 1, Default: false, Maturity: gatekit.Alpha},
 		// 	},
 		// },
 		// ConsensusNodeMigrationSoak: {
 		// 	Description: "Soak-watch health during consensus migration (`consensus migration soak`).",
 		// 	Specs: gatekit.VersionedSpecs{
-		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 		{ActiveFrom: 1, Default: false, Maturity: gatekit.Alpha},
 		// 	},
 		// },
 		// SelfUpgrade: {
 		// 	Description: "Paired CLI/daemon self-upgrade with coordinated activation finalize.",
 		// 	Specs: gatekit.VersionedSpecs{
-		// 		{ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+		// 		{ActiveFrom: 1, Default: false, Maturity: gatekit.Alpha},
 		// 	},
 		// },
 	}

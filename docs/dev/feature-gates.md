@@ -44,9 +44,11 @@ Every spec is placed on two axes:
   (in `features.go`) is the in-force value — today's GA floor is `1`; a new
   behaviour schedules at the next integer. A feature is on when the last spec
   whose `ActiveFrom <= CurrentActivationVersion` resolves on.
-- **Maturity** — `ALPHA` / `BETA` / `GA` / `DEPRECATED`. `ALPHA` is off unless
-  the operator opts in (see [Enabling a feature](#enabling-a-feature)); `BETA`
-  and `GA` follow the version axis alone.
+- **Maturity** — `ALPHA` / `BETA` / `GA` / `DEPRECATED`. `ALPHA` is off unless the
+  operator opts in **and** the spec is ready — i.e. `Default: true` (see
+  [Enabling a feature](#enabling-a-feature)); an unfinished `Alpha, Default: false`
+  feature is **dormant** and cannot be enabled by any opt-in. `BETA` and `GA` follow
+  the version axis alone.
 
 ## How to add a feature
 
@@ -72,16 +74,20 @@ Name the behaviour, namespaced by its command area (`BlockNode*`, `ConsensusNode
 BlockNodeOperatorManaged: {
     Description: "Manage block node lifecycle through solo-operator.",
     Specs: gatekit.VersionedSpecs{
-        {ActiveFrom: 2, Default: true, Maturity: gatekit.Alpha},
+        {ActiveFrom: 1, Default: false, Maturity: gatekit.Alpha},
     },
 },
 ```
 
-- **`ActiveFrom`** — the activation version it turns on at. The GA floor is `1`;
-  a new, not-yet-active behaviour is `2`.
-- **`Default`** — whether it is on at/after `ActiveFrom` (unless a later spec
-  overrides). For an `ALPHA` feature this still only applies once the operator
-  opts in.
+- **`ActiveFrom`** — the activation version it turns on at. Alpha **dev gates** live
+  at the **current** activation version (`1`); only a compatibility change that must
+  flip the whole fleet together bumps the axis (see
+  [Development gates vs compatibility gates](#development-gates-vs-compatibility-gates)).
+- **`Default`** — for an `ALPHA` feature this is the **readiness** switch
+  ([Model C](#enabling-a-feature)): `false` = dormant (unfinished — no opt-in can
+  enable it, but code may already reference `gate.Enabled(f)`, which returns false);
+  `true` = ready to dogfood via `--experimental`/env. For `BETA`/`GA` it is whether
+  the feature is on at/after `ActiveFrom`.
 - **`Maturity`** — start at `Alpha` for anything unvalidated (forces opt-in);
   `Beta`/`GA` are default-on once their version is active.
 - **`Description`** — a short, human-readable line; it is shown in
@@ -126,15 +132,16 @@ Visibility and availability follow the feature's maturity:
 | `BETA`  | visible, labelled `[beta]` | only when opted in |
 | `GA`    | visible | always |
 
-An opted-in operator runs the command with the hidden gate-wide `--experimental`
-flag, or the feature's `SOLO_PROVISIONER_ENABLE_<FEATURE>` override. A hidden
-alpha command stays **discoverable** via `solo-provisioner feature list`, which
+An opted-in operator runs the command with the hidden, command-scoped
+`--experimental` flag, or the feature's `SOLO_PROVISIONER_ENABLE_<FEATURE>` opt-in. A
+hidden alpha command stays **discoverable** via `solo-provisioner feature list`, which
 prints the feature and its exact opt-in env var.
 
-Command availability is *maturity-based*, independent of the activation-version
-axis: `--experimental` enables an alpha command even when the feature's
-`ActiveFrom` is a future version. (The activation-version axis governs behaviour
-rollout, not command availability.)
+Command availability is *maturity-based*: a `GA`/`BETA` command always runs; an
+`ALPHA` command runs only when opted in **and ready** (`Default: true`). An
+unfinished `Alpha, Default: false` command is **dormant** — `--experimental` and the
+env var cannot enable it, and the refusal says so. (The activation-version axis
+governs behaviour rollout, not command availability.)
 
 ### Gate a flag — `common.GateFeatureFlag(cmd, flagName, feature)`
 
@@ -168,26 +175,31 @@ go test ./cmd/cli/commands -run TestRootHelpSurface_Golden -update-golden
 
 ## Enabling a feature
 
-Resolution order (gatekit `resolve`):
+**Model C — the opt-ins respect readiness.** An operator opt-in may enable an alpha
+feature **only when its spec is ready** (`Default: true`). An unfinished
+`Alpha, Default: false` feature is **dormant**: neither `--experimental` nor the env
+var can switch it on — only changing its spec (flip to `Default: true`, or graduate)
+can. This lets code merge incrementally (`gate.Enabled(f)` compiles and returns false)
+without any risk of a half-done path being turned on. Because the command gate and
+business code share one gate (see below), opting a *ready* command in turns the
+behaviour on for its business logic too.
 
-1. An explicit **override** wins unconditionally (bypasses version and maturity).
-2. Otherwise the last spec with `ActiveFrom <= active version`; if none is
-   active yet, the feature is **off**.
-3. An `ALPHA` spec is off unless a per-feature override forces it on (point 1).
-4. Otherwise the spec's `Default`.
+Two opt-in surfaces, both readiness-respecting:
 
-The opt-in is always a **per-feature override** (version-independent), so it forces the
-feature on regardless of activation version or maturity — and, because the command gate
-and business code share one gate (see below), opting a command in turns the behaviour on
-for its business logic too. Two surfaces feed it:
-
-- **`--experimental` flag** (scoped) — on a gated command, overrides *that command's*
-  gated feature(s) on for the invocation. Preferred under `sudo`, which strips env vars.
-  It is *not* a gate-wide "all alpha" switch.
+- **`--experimental` flag** (command-scoped) — on a gated command, turns *that
+  command's* ready feature on for the invocation. Preferred under `sudo`, which strips
+  env vars. It is *not* a gate-wide "all alpha" switch, and it cannot wake a dormant
+  feature.
 - **`SOLO_PROVISIONER_ENABLE_<FEATURE>` env var** — the feature name in
   `UPPER_SNAKE_CASE` (e.g. `SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE=1`). The
   per-feature surface for scripting; the exact variable is printed by `feature list`.
   Note `sudo` drops it unless you use `sudo -E`.
+
+Under the hood each is resolved by gatekit (`resolve`): the opt-in asks whether the
+feature is ready (gatekit's `WithExperimental` resolved for that feature — `Alpha`
+returns its `Default`), and only a ready feature is forced on via a scoped override.
+A raw gatekit override still wins unconditionally, but solo exposes that only as the
+internal `Options.Overrides` seam (tests/programmatic forcing), never to operators.
 
 **One gate per invocation.** The command gate resolves these opt-ins once, builds a
 `*gatekit.FeatureGate`, and stores it on the command context. Business code reads the
@@ -221,11 +233,14 @@ Both are the same mechanism; they differ by one question — **does turning the
 feature on require the whole fleet to flip together?**
 
 - **Development gate** (the common case — our replacement for long-lived
-  branches). One `Alpha`, `Default: false` spec at the **current** activation
-  version. It never raises the max activation version, so it couples to nobody
-  else's work. Test it with `SOLO_PROVISIONER_ENABLE_<FEATURE>` or
-  `--experimental`; when ready, flip it on **in place** (or just delete the gate).
-  **No activation bump, no migration, no finalize.**
+  branches). One `Alpha` spec at the **current** activation version. It never raises
+  the max activation version, so it couples to nobody else's work. While the code is
+  unfinished, keep it `Default: false` — **dormant**, so no opt-in can switch the
+  half-done path on, yet `gate.Enabled(f)` already compiles and returns false. When
+  the path is ready to dogfood, flip it to `Default: true` (now `--experimental` /
+  env enable it); when it is ready for everyone, graduate it (`Beta`/`GA`) **in
+  place** (or just delete the gate). **No activation bump, no migration, no
+  finalize.**
 - **Compatibility gate** (a breaking change where old and new must coexist during
   a rolling upgrade — a shared wire or storage format). A **new** spec at the next
   activation version, with — in Layer 2 — a migration and a coordinated `finalize`.

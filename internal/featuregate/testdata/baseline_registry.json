@@ -13,7 +13,7 @@
     "description": "Manage consensus node lifecycle through solo-operator.",
     "specs": [
       {
-        "activeFrom": 2,
+        "activeFrom": 1,
         "default": true,
         "maturity": "ALPHA"
       }
@@ -26,6 +26,16 @@
         "activeFrom": 1,
         "default": true,
         "maturity": "GA"
+      }
+    ]
+  },
+  "KubeClusterUpgrade": {
+    "description": "Upgrade the Kubernetes cluster along the k8s/Cilium ladder (`kube cluster upgrade`).",
+    "specs": [
+      {
+        "activeFrom": 1,
+        "default": true,
+        "maturity": "ALPHA"
       }
     ]
   },

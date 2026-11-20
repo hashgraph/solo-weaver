@@ -74,8 +74,11 @@ func MaturityOf(f gatekit.Feature) gatekit.Maturity {
 // the cursor that decides which specs are live. Everything with
 // ActiveFrom <= this value and a default-on, opted-in spec resolves on.
 //
-// Think of each integer as a roadmap milestone (documented per feature in the
-// catalog): 1 is today's GA floor; 2 is the operator-migration cohort.
+// It is a coordination counter, not a roadmap: today it is 1 (the GA floor), and
+// alpha dev gates live here too rather than at a future version, because solo does
+// not need rolling-upgrade coordinated activation (see docs/dev/feature-gates.md).
+// It advances only for a compatibility change that cannot safely coexist with its
+// off state across a rolling upgrade.
 //
 // SPIKE: this is a constant. Layer 2 replaces it with a state-backed,
 // finalize-advanced VersionSource (RSL effective-value layer).

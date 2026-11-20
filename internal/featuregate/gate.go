@@ -15,23 +15,58 @@ type staticSource struct{ v gatekit.Activation }
 
 func (s staticSource) Current() gatekit.Activation { return s.v }
 
-// Options carries the operator-facing opt-ins the CLI resolves and feeds into
-// the gate. The opt-in is always a per-feature override (version-independent), from
-// one of two surfaces:
+// Options carries the operator-facing opt-ins the CLI resolves and feeds into the
+// gate. There are two operator surfaces, both of which respect each feature's
+// readiness (Model C — see ExperimentalReady):
 //
-//   - the SOLO_PROVISIONER_ENABLE_<FEATURE>=1 env var (applied globally via
-//     gatekit.WithEnvOverrides); and
-//   - the --experimental flag, which the command layer resolves to an override of
-//     THAT command's gated feature(s) and passes in here as Overrides.
+//   - the SOLO_PROVISIONER_ENABLE_<FEATURE>=1 env var (read globally by New); and
+//   - the --experimental flag, which the command layer scopes to THAT command's
+//     gated feature and passes in here as Overrides.
 //
 // gatekit owns the decision; solo owns reading the flag/env (gatekit never touches
-// cobra). Because the opt-in is an override, the gated command and its business code
-// resolve the feature identically — the "one system" epic #1275 calls for.
+// cobra). The gated command and its business code resolve the feature identically —
+// the "one system" epic #1275 calls for.
 type Options struct {
 	// Current is the activation version in force. Zero means CurrentActivationVersion.
 	Current gatekit.Activation
-	// Overrides forces specific features on/off regardless of version/maturity.
+	// Overrides forces specific features on/off regardless of version/maturity. It is
+	// the raw, readiness-bypassing seam for programmatic/test forcing and for the
+	// command layer's already-readiness-checked --experimental opt-in; it is applied
+	// last, so it wins over an env opt-in per feature.
 	Overrides map[gatekit.Feature]bool
+}
+
+// ExperimentalReady reports whether an operator opt-in (--experimental or the
+// SOLO_PROVISIONER_ENABLE_<FEATURE> env var) may turn f on. It mirrors gatekit's
+// gate-wide alpha opt-in (WithExperimental) resolved for f alone at the current
+// activation version:
+//
+//   - Alpha, Default:false      -> false (dormant: unfinished; no opt-in can enable it)
+//   - Alpha, Default:true       -> true  (ready to dogfood)
+//   - Beta/GA at/after version  -> true
+//   - unknown / not yet active  -> false
+//
+// This is the Model C readiness gate: an unfinished feature is marked
+// Alpha,Default:false and stays off through every operator surface until its spec is
+// changed (flipped to Default:true, or graduated). The raw Options.Overrides seam
+// still bypasses it for tests and programmatic forcing.
+func ExperimentalReady(f gatekit.Feature) (bool, error) {
+	return experimentalReadyIn(Catalog(), f, CurrentActivationVersion)
+}
+
+func experimentalReadyAt(f gatekit.Feature, v gatekit.Activation) (bool, error) {
+	return experimentalReadyIn(Catalog(), f, v)
+}
+
+// experimentalReadyIn is the registry-parameterized core of ExperimentalReady (so the
+// readiness rule can be unit-tested against both Default values without changing the
+// live catalog).
+func experimentalReadyIn(reg gatekit.Registry, f gatekit.Feature, v gatekit.Activation) (bool, error) {
+	g, err := gatekit.New(reg, staticSource{v: v}, gatekit.WithExperimental(true))
+	if err != nil {
+		return false, err
+	}
+	return g.Enabled(f), nil
 }
 
 // New builds a FeatureGate over the solo catalog with the given opt-ins.
@@ -41,22 +76,42 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 		current = CurrentActivationVersion
 	}
 
-	// WithSupportWindow pins W (the N/N+1 window) to the one value the registry lints
-	// also use, so the gate enforces the same window the lints check.
-	//
-	// Per-feature opt-ins from SOLO_PROVISIONER_ENABLE_<FEATURE> env vars. Strict:
-	// an unknown or malformed <prefix>* variable fails New (and stops the binary).
-	// Safe now that every SOLO_PROVISIONER_ENABLE_* var maps to a feature — the
-	// experimental command gate was converged into the registry (#1392).
-	opts := []gatekit.Option{
-		gatekit.WithSupportWindow(SupportWindow),
-		gatekit.WithEnvOverrides(envPrefix),
+	// Resolve the SOLO_PROVISIONER_ENABLE_<FEATURE> env opt-ins ourselves, so each one
+	// respects the feature's readiness (Model C) instead of forcing on unconditionally.
+	// Validation stays strict: an unknown or malformed <prefix>* variable fails New
+	// (and stops the binary).
+	envReq, err := envFeatureRequests()
+	if err != nil {
+		return nil, err
+	}
+	overrides := map[gatekit.Feature]bool{}
+	for f, on := range envReq {
+		if !on {
+			overrides[f] = false // an off-request is a kill switch — always honoured
+			continue
+		}
+		ready, err := experimentalReadyAt(f, current)
+		if err != nil {
+			return nil, err
+		}
+		if ready {
+			overrides[f] = true
+		}
+		// A not-ready feature stays dormant: the on-request is dropped.
 	}
 
-	// Explicit overrides win over env (applied last — gatekit is last-writer). This is
-	// where the --experimental opt-in lands, as a per-feature override.
-	if len(o.Overrides) > 0 {
-		opts = append(opts, gatekit.WithOverrides(o.Overrides))
+	// Explicit Options.Overrides win over env (applied last — last-writer). This is the
+	// raw seam: the command layer's --experimental opt-in (already readiness-checked),
+	// and programmatic/test forcing.
+	for f, v := range o.Overrides {
+		overrides[f] = v
+	}
+
+	// WithSupportWindow pins W (the N/N+1 window) to the one value the registry lints
+	// also use, so the gate enforces the same window the lints check.
+	opts := []gatekit.Option{gatekit.WithSupportWindow(SupportWindow)}
+	if len(overrides) > 0 {
+		opts = append(opts, gatekit.WithOverrides(overrides))
 	}
 
 	return gatekit.New(Catalog(), staticSource{v: current}, opts...)

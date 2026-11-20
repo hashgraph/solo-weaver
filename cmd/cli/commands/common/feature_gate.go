@@ -15,17 +15,19 @@ import (
 )
 
 // experimentalFlagName is the hidden alpha opt-in flag installed on a gated command.
-// It is scoped: it overrides that command's gated feature(s) on for the invocation
-// (a per-feature override, version-independent), not a gate-wide switch.
+// It is scoped: it turns that command's gated feature on for the invocation when the
+// feature is ready (Model C — featuregate.ExperimentalReady), not a gate-wide switch.
 const experimentalFlagName = "experimental"
 
 // GateFeature ties a command's availability to a gatekit feature's maturity (see
 // internal/featuregate). It is the entry-level half of the feature-gate system
 // (#1392): a command whose feature does not resolve enabled at the current
 // activation version is labelled with its maturity in --help and refuses to run
-// unless the operator opts in — gate-wide with the hidden --experimental flag, or
-// per feature with the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> override. It
-// replaces the bespoke GateExperimental and routes every opt-in through gatekit.
+// unless the operator opts in — with the hidden, command-scoped --experimental flag,
+// or the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> opt-in. Both opt-ins respect the
+// feature's readiness (Model C): they can enable a ready alpha (Default:true) but not
+// a dormant one (Default:false). It replaces the bespoke GateExperimental and routes
+// every opt-in through gatekit.
 //
 // It works for both models:
 //
@@ -143,7 +145,7 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 	}
 }
 
-// installExperimentalFlag registers the hidden gate-wide --experimental opt-in
+// installExperimentalFlag registers the hidden, command-scoped --experimental opt-in
 // once on cmd (inherited by subcommands when persistent).
 func installExperimentalFlag(cmd *cobra.Command) {
 	if cmd.PersistentFlags().Lookup(experimentalFlagName) == nil {
@@ -155,22 +157,29 @@ func installExperimentalFlag(cmd *cobra.Command) {
 
 // requireFeatureEnabled returns nil when the operator may run an f-gated command,
 // otherwise a decorated refusal. Command availability is maturity-based: GA/Beta
-// commands always run; an Alpha command runs only when opted in.
+// commands always run; an Alpha command runs only when opted in AND ready.
 //
-// The opt-in is a per-feature override — version-independent — from either the
-// --experimental flag (scoped to THIS command's feature) or the feature's
-// SOLO_PROVISIONER_ENABLE_<FEATURE> env var. The resolved gate is stored on the
-// command context, so business code reading featuregate.Gate(ctx) resolves f the same
-// way: opting the command in turns the behaviour on too. The check is a plain
-// gate.Enabled(f) — command availability and business behaviour are one decision.
+// The opt-in is a per-feature override from either the --experimental flag (scoped to
+// THIS command's feature) or the feature's SOLO_PROVISIONER_ENABLE_<FEATURE> env var.
+// Both respect the feature's readiness (Model C — featuregate.ExperimentalReady): a
+// ready alpha (Default:true) is enabled by an opt-in; an unfinished alpha
+// (Default:false) is dormant and cannot be turned on by any opt-in. The resolved gate
+// is stored on the command context, so business code reading featuregate.Gate(ctx)
+// resolves f the same way — command availability and business behaviour are one
+// decision.
 func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 	if featuregate.MaturityOf(f) != gatekit.Alpha {
 		return nil
 	}
-	// --experimental overrides this command's feature on (the env override, if set, is
-	// already applied globally by featuregate.New).
+
+	// A not-ready alpha (Alpha,Default:false) cannot be enabled by any opt-in, so
+	// --experimental is dropped for it; the refusal below explains it is dormant.
+	ready, err := featuregate.ExperimentalReady(f)
+	if err != nil {
+		return err
+	}
 	var overrides map[gatekit.Feature]bool
-	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental {
+	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental && ready {
 		overrides = map[gatekit.Feature]bool{f: true}
 	}
 	gate, err := featuregate.New(featuregate.Options{Overrides: overrides})
@@ -182,6 +191,14 @@ func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 
 	if gate.Enabled(f) {
 		return nil
+	}
+	if !ready {
+		// The feature is registered but unfinished: no opt-in can enable it.
+		return errx.Decorate(
+			errorx.RejectedOperation.New("%s is under active development and cannot be enabled yet", f),
+			reasons.PreconditionNotMet,
+			"This feature is incomplete and is intentionally not switchable on.",
+			"It becomes available once it is marked ready in a future release.")
 	}
 	return errx.Decorate(
 		errorx.RejectedOperation.New("%s is an experimental feature and not supported in production", f),
