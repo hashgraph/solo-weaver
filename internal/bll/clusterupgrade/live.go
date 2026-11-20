@@ -53,7 +53,12 @@ func readLive(ctx context.Context, src LiveSources) (rsl.ClusterShape, Matrix, r
 	}
 
 	// The cluster checker falls back to recorded values, so load them first.
-	if err := src.State.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
+	var recorded *state.State
+	switch err := src.State.Refresh(); {
+	case err == nil:
+		st := src.State.State()
+		recorded = &st
+	case !errorx.IsOfType(err, state.NotFoundError):
 		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to read the recorded state")
 	}
 
@@ -85,8 +90,9 @@ func readLive(ctx context.Context, src LiveSources) (rsl.ClusterShape, Matrix, r
 		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to read the cluster")
 	}
 
-	// The plan uses only live values; the record would only mark what changed.
-	return rsl.ResolveClusterShape(live, nil, managed), m, reach, nil
+	// Live values always win; the record says what was there before, such as a
+	// release that went away.
+	return rsl.ResolveClusterShape(live, recorded, managed), m, reach, nil
 }
 
 // unreachableBlocker is the blocker for a cluster the probe could not reach. It

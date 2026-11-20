@@ -15,6 +15,7 @@ import (
 	k8sversion "k8s.io/apimachinery/pkg/version"
 
 	"github.com/hashgraph/solo-weaver/internal/reality"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -100,6 +101,26 @@ func TestPlanLive_RecomputesAfterAHop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, plan.Hops, 8)
 	assert.Equal(t, ciliumHop(StepMinor, "1.18.16", "1.19.10"), plan.Hops[0])
+}
+
+// The shape carries the record, so a release that went away since it was
+// recorded is seen.
+func TestReadLive_CarriesTheRecord(t *testing.T) {
+	recorded := v035Cluster()
+	recorded.Releases["node-exporter"] = deployed("node-exporter", "4.4.9")
+	src, _ := liveSources(t, v035Cluster())
+	st := src.State.State()
+	st.ClusterState = recorded
+	_, err := src.State.Set(st).Persist(state.ComponentCluster)
+	require.NoError(t, err)
+
+	shape, _, _, err := readLive(context.Background(), src)
+
+	require.NoError(t, err)
+	ne := shape.Charts["node-exporter"]
+	assert.True(t, ne.Missing)
+	assert.Equal(t, "4.4.9", ne.Recorded)
+	assert.Equal(t, rsl.IdentityLegacy, ne.RecordedIdentity)
 }
 
 func TestPlanLive_UnreadClusterBlocks(t *testing.T) {
