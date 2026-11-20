@@ -307,10 +307,17 @@ Cluster upgrade plan: 8 steps remaining (target: Kubernetes 1.36.5, Cilium 1.20.
           8. Kubernetes  1.35.10 -> 1.36.5   (minor)
 ```
 
-When the cluster cannot be planned, for example because it has more than one node or its Cilium
-agent and chart differ, the command lists each reason, changes nothing and exits non-zero. The
-plan needs the live cluster: with no kubeconfig (run it with `sudo`), or when the API server does
-not answer, it says so and plans nothing.
+When the cluster cannot be planned, for example because it has more than one node, its Cilium
+agent and chart differ, or a chart's last Helm revision failed or is still pending, the command
+lists each reason, changes nothing and exits non-zero. The plan needs the live cluster: with no
+kubeconfig (run it with `sudo`), or when the API server does not answer, it says so and plans
+nothing.
+
+A node-exporter swap that stopped after it removed the Bitnami chart is planned again: the state
+record still names the legacy chart. The swap checks that the `ServiceMonitor` CRD exists before it
+removes anything (`alloy cluster install` installs it). A cri-o upgrade keeps the previous release's
+config files under `/opt/solo/weaver/sandbox/backup/cri-o-before-<version>`; re-apply any change of
+your own from there.
 
 ### Uninstall
 

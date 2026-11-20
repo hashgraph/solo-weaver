@@ -251,6 +251,9 @@ func TestApply_AtTargetRecordsOnlyWhatChanged(t *testing.T) {
 	entries := historyEntries(t, dir)
 	require.Len(t, entries, 1)
 	assert.ElementsMatch(t, []state.ChangedFile{state.ComponentSystem.File(), state.ComponentCluster.File()}, entries[0].Components)
+	history := readStateFile(t, dir, "action_history.yaml")
+	assert.Contains(t, history, "component: cluster")
+	assert.Contains(t, history, "step: record")
 
 	_, err = Apply(context.Background(), src, locks, (&fakeRunner{}).run, ApplyOptions{})
 	require.NoError(t, err)

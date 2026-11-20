@@ -73,6 +73,7 @@ const (
 	BlockerUnsupportedPairing  BlockerCode = "unsupported-pairing"
 	BlockerChartUnknown        BlockerCode = "chart-unknown"
 	BlockerNoMigration         BlockerCode = "no-migration"
+	BlockerReleaseNotDeployed  BlockerCode = "release-not-deployed"
 )
 
 // Blocker is a reason the cluster cannot be planned. It is data, not an

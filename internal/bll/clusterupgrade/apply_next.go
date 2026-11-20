@@ -71,34 +71,34 @@ var (
 	applyOneHop   = ApplyHop
 )
 
+// hopKinds maps each hop kind to its executor and its pre-hop checks, so a new
+// kind is added in one place.
+var hopKinds = map[HopKind]struct {
+	apply  func(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error
+	checks func(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error)
+}{
+	KindCilium:     {ApplyCiliumHop, CiliumHopChecks},
+	KindKubernetes: {ApplyKubernetesHop, KubernetesHopChecks},
+	KindStructural: {ApplyStructuralHop, StructuralHopChecks},
+	KindCharts:     {ApplyChartsHop, ChartsHopChecks},
+}
+
 // ApplyHop runs hop with the executor for its kind.
 func ApplyHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
-	switch hop.Kind {
-	case KindCilium:
-		return ApplyCiliumHop(ctx, src, locks, run, hop)
-	case KindKubernetes:
-		return ApplyKubernetesHop(ctx, src, locks, run, hop)
-	case KindStructural:
-		return ApplyStructuralHop(ctx, src, locks, run, hop)
-	case KindCharts:
-		return ApplyChartsHop(ctx, src, locks, run, hop)
+	k, ok := hopKinds[hop.Kind]
+	if !ok {
+		return errx.Decorate(errorx.IllegalArgument.New("no executor for %q hops", hop.Kind), reasons.Internal)
 	}
-	return errx.Decorate(errorx.IllegalArgument.New("no executor for %q hops", hop.Kind), reasons.Internal)
+	return k.apply(ctx, src, locks, run, hop)
 }
 
 // HopChecks runs the pre-hop checks of hop's kind on shape.
 func HopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) {
-	switch hop.Kind {
-	case KindCilium:
-		return CiliumHopChecks(shape, m, hop)
-	case KindKubernetes:
-		return KubernetesHopChecks(shape, m, hop)
-	case KindStructural:
-		return StructuralHopChecks(shape, m, hop)
-	case KindCharts:
-		return ChartsHopChecks(shape, m, hop)
+	k, ok := hopKinds[hop.Kind]
+	if !ok {
+		return nil, errx.Decorate(errorx.IllegalArgument.New("no checks for %q hops", hop.Kind), reasons.Internal)
 	}
-	return nil, errx.Decorate(errorx.IllegalArgument.New("no checks for %q hops", hop.Kind), reasons.Internal)
+	return k.checks(shape, m, hop)
 }
 
 // DryRunResult is the next hop of the live plan and its pre-hop checks.
@@ -305,7 +305,7 @@ func recordAtTarget(ctx context.Context, src LiveSources, run WorkflowRunner) er
 		}
 	})
 	intent := models.Intent{Action: models.ActionUpgrade, Target: models.TargetCluster}
-	inputs := map[string]string{inputComponent: recordComponent}
+	inputs := map[string]string{inputComponent: string(models.TargetCluster), inputStep: recordStep}
 	return run(ctx, func() (*automa.Report, error) {
 		wf, err := automa.NewWorkflowBuilder().WithId(recordWorkflowID).Steps(
 			nodesReadyStep(),
@@ -326,7 +326,8 @@ func recordAtTarget(ctx context.Context, src LiveSources, run WorkflowRunner) er
 
 const (
 	recordWorkflowID = "record-upgraded-cluster"
-	recordComponent  = "record"
+	// recordStep is the step of the entry a run at the target leaves.
+	recordStep = "record"
 )
 
 func blockedError(blockers []Blocker) error {
