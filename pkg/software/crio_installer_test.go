@@ -66,47 +66,104 @@ func Test_crioSocketDropInPaths(t *testing.T) {
 	require.Equal(t, "/usr/lib/systemd/system/crio.service.d", getSystemCrioServiceDropInDir())
 }
 
-func TestRemoveCrioReleaseFiles(t *testing.T) {
-	restore := models.SetPaths(t.TempDir())
-	defer restore()
+// writeCrioRelease writes every cri-o release file into the sandbox with
+// content, and returns the binaries and the configs.
+func writeCrioRelease(t *testing.T, content string) (binaries, configs []string) {
+	t.Helper()
 	sandbox := models.Paths().SandboxDir
-
-	var release []string
-	for _, p := range crioInstalledBinaryPaths(sandbox) {
-		release = append(release, p)
-	}
-	for _, p := range crioReleaseConfigs(sandbox) {
-		release = append(release, p)
-	}
-	ours := []string{
-		filepath.Join(sandbox, crioConfdDir, "20-ours.conf"),
-		filepath.Join(sandbox, containersRegistriesConfdDir, "mirror.conf"),
-	}
-	for _, p := range append(append([]string{}, release...), ours...) {
+	binaries, configs = sortedPaths(crioInstalledBinaryPaths(sandbox)), sortedPaths(crioReleaseConfigs(sandbox))
+	for _, p := range append(append([]string{}, binaries...), configs...) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
-		require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
 	}
-
-	require.NoError(t, RemoveCrioReleaseFiles())
-
-	for _, p := range release {
-		assert.NoFileExists(t, p)
-	}
-	for _, p := range ours {
-		assert.FileExists(t, p)
-	}
-	require.NoError(t, RemoveCrioReleaseFiles(), "a second run finds nothing to remove")
+	return binaries, configs
 }
 
-func TestRemoveCrioReleaseFiles_FailsOnWhatItCannotRemove(t *testing.T) {
-	restore := models.SetPaths(t.TempDir())
-	defer restore()
-	blocked := crioInstalledBinaryPaths(models.Paths().SandboxDir)["conmon"]
-	require.NoError(t, os.MkdirAll(filepath.Join(blocked, "inside"), 0o755))
+func backupPath(t *testing.T, backupDir, p string) string {
+	t.Helper()
+	rel, err := filepath.Rel(models.Paths().SandboxDir, p)
+	require.NoError(t, err)
+	return filepath.Join(backupDir, rel)
+}
 
-	err := RemoveCrioReleaseFiles()
+func TestMoveCrioReleaseAside_SettleKeepsTheConfigs(t *testing.T) {
+	restorePaths := models.SetPaths(t.TempDir())
+	defer restorePaths()
+	sandbox := models.Paths().SandboxDir
+	binaries, configs := writeCrioRelease(t, "old")
+	ours := filepath.Join(sandbox, crioConfdDir, "20-ours.conf")
+	require.NoError(t, os.WriteFile(ours, []byte("ours"), 0o644))
+	backupDir := CrioReleaseBackupDir("1.34.15")
+
+	_, settle, err := MoveCrioReleaseAside(backupDir)
+	require.NoError(t, err)
+
+	for _, p := range append(append([]string{}, binaries...), configs...) {
+		assert.NoFileExists(t, p)
+		assert.FileExists(t, backupPath(t, backupDir, p))
+	}
+	assert.FileExists(t, ours, "files that are not the release's stay")
+
+	writeCrioRelease(t, "new") // the new release's install
+	require.NoError(t, settle())
+	for _, p := range binaries {
+		assert.NoFileExists(t, backupPath(t, backupDir, p), "the old binaries are not kept")
+	}
+	for _, p := range configs {
+		data, err := os.ReadFile(backupPath(t, backupDir, p))
+		require.NoError(t, err)
+		assert.Equal(t, "old", string(data), "the old configs are kept for the operator")
+	}
+}
+
+func TestMoveCrioReleaseAside_RestorePutsTheReleaseBack(t *testing.T) {
+	restorePaths := models.SetPaths(t.TempDir())
+	defer restorePaths()
+	binaries, configs := writeCrioRelease(t, "old")
+	backupDir := CrioReleaseBackupDir("1.34.15")
+
+	restore, _, err := MoveCrioReleaseAside(backupDir)
+	require.NoError(t, err)
+	// A failed install leaves part of the new release behind.
+	require.NoError(t, os.WriteFile(binaries[0], []byte("new"), 0o755))
+	require.NoError(t, restore())
+
+	for _, p := range append(append([]string{}, binaries...), configs...) {
+		data, err := os.ReadFile(p)
+		require.NoError(t, err)
+		assert.Equal(t, "old", string(data), p)
+	}
+}
+
+// A re-run after a failed install keeps the release that was there first.
+func TestMoveCrioReleaseAside_ReRunKeepsTheFirstBackup(t *testing.T) {
+	restorePaths := models.SetPaths(t.TempDir())
+	defer restorePaths()
+	binaries, _ := writeCrioRelease(t, "old")
+	backupDir := CrioReleaseBackupDir("1.34.15")
+	_, _, err := MoveCrioReleaseAside(backupDir)
+	require.NoError(t, err)
+	writeCrioRelease(t, "partial")
+
+	_, _, err = MoveCrioReleaseAside(backupDir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(backupPath(t, backupDir, binaries[0]))
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(data))
+	assert.NoFileExists(t, binaries[0])
+}
+
+func TestMoveCrioReleaseAside_FailsWhenTheBackupCannotBeWritten(t *testing.T) {
+	restorePaths := models.SetPaths(t.TempDir())
+	defer restorePaths()
+	writeCrioRelease(t, "old")
+	backupDir := CrioReleaseBackupDir("1.34.15")
+	require.NoError(t, os.MkdirAll(filepath.Dir(backupDir), 0o755))
+	require.NoError(t, os.WriteFile(backupDir, []byte("a file, not a directory"), 0o644))
+
+	_, _, err := MoveCrioReleaseAside(backupDir)
 
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalState), err.Error())
-	assert.Contains(t, err.Error(), blocked)
 }

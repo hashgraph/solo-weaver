@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,12 +77,12 @@ func newFakeNode(t *testing.T, kubeVersion, crio, to string) *fakeNode {
 	}
 
 	origHealth, origCordon, origStop, origStart, origRestart, origReload := readKubeHealth, setNodeCordon, stopService, startService, restartService, daemonReload
-	origRemove, origRegistries, origPoll, origTimeout, origInstallers, origRegistry := removeCrioRelease, installRegistries, kubePollInterval, kubeHealthTimeout, kubeHopInstallers, containerRegistryOf
+	origAside, origRegistries, origPoll, origTimeout, origInstallers, origRegistry := moveCrioAside, installRegistries, kubePollInterval, kubeHealthTimeout, kubeHopInstallers, containerRegistryOf
 	origStartTimeout := kubeStartTimeout
 	origIdentify, origScript, origVerify := identifyInstalledVersions, runBashScript, verifyExecutables
 	t.Cleanup(func() {
 		readKubeHealth, setNodeCordon, stopService, startService, restartService, daemonReload = origHealth, origCordon, origStop, origStart, origRestart, origReload
-		removeCrioRelease, installRegistries, kubePollInterval, kubeHealthTimeout, kubeHopInstallers, containerRegistryOf = origRemove, origRegistries, origPoll, origTimeout, origInstallers, origRegistry
+		moveCrioAside, installRegistries, kubePollInterval, kubeHealthTimeout, kubeHopInstallers, containerRegistryOf = origAside, origRegistries, origPoll, origTimeout, origInstallers, origRegistry
 		identifyInstalledVersions, runBashScript, verifyExecutables = origIdentify, origScript, origVerify
 		kubeStartTimeout = origStartTimeout
 	})
@@ -127,7 +128,12 @@ func newFakeNode(t *testing.T, kubeVersion, crio, to string) *fakeNode {
 		return f.event("restart " + svc)
 	}
 	daemonReload = func(context.Context) error { return f.event("daemon-reload") }
-	removeCrioRelease = func() error { return f.event("remove cri-o release files") }
+	moveCrioAside = func(string) (func() error, func() error, error) {
+		if err := f.event("move cri-o release aside"); err != nil {
+			return nil, nil, err
+		}
+		return func() error { return f.event("restore cri-o release") }, func() error { return f.event("settle cri-o release") }, nil
+	}
 	installRegistries = func(reg string) error { return f.event("registries " + reg) }
 	containerRegistryOf = func() string { return f.registry }
 	kubePollInterval, kubeHealthTimeout, kubeStartTimeout = time.Millisecond, 50*time.Millisecond, 50*time.Millisecond
@@ -197,7 +203,7 @@ func requireAllSucceeded(t *testing.T, reports []*automa.Report) {
 
 var nodeSwap = []string{
 	"stop kubelet", "stop crio",
-	"download cri-o", "extract cri-o", "remove cri-o release files", "install cri-o", "configure cri-o",
+	"download cri-o", "extract cri-o", "move cri-o release aside", "install cri-o", "configure cri-o", "settle cri-o release",
 	"download kubelet", "install kubelet", "configure kubelet",
 	"download kubectl", "install kubectl", "configure kubectl",
 	"daemon-reload", "start crio", "restart kubelet",
@@ -317,6 +323,51 @@ func TestKubernetesHop_FailedApplyStopsBeforeTheNode(t *testing.T) {
 	assert.NotContains(t, f.events, "stop kubelet")
 }
 
+// A failed cri-o install puts the previous release back, so recovery can
+// start cri-o again.
+func TestKubernetesHop_FailedCrioInstallPutsTheReleaseBack(t *testing.T) {
+	f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
+	f.failOn["install cri-o"] = assert.AnError
+
+	reports := kubeHopRun(t, "1.33.13", "1.34.13", "1.34.15")
+
+	last := reports[len(reports)-1]
+	assert.Equal(t, "upgrade-"+software.CrioArtifactName, last.Id)
+	assert.Equal(t, automa.StatusFailed, last.Status)
+	reason, _ := errx.ReasonOf(last.Error)
+	assert.Equal(t, ReasonHostCommandFailed, reason)
+	i := slicesIndex(f.events, "install cri-o")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "restore cri-o release", f.events[i+1])
+	assert.NotContains(t, f.events, "settle cri-o release")
+}
+
+// An apply that stopped after the API server moved runs again: the other
+// control-plane components are still on the start version.
+func TestKubernetesHop_PartlyAppliedControlPlaneIsAppliedAgain(t *testing.T) {
+	f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
+	f.health.APIServer = "1.34.13"
+	f.health.ControlPlane["kube-apiserver"] = staticPod{Version: "1.34.13", Ready: true}
+	f.binaries[software.KubeadmBinaryName] = "1.34.13"
+
+	requireAllSucceeded(t, kubeHopRun(t, "1.33.13", "1.34.13", "1.34.15"))
+
+	assert.Contains(t, f.events, "run "+kubeadmUpgradeApplyCommand("1.34.13"))
+}
+
+func TestHostBinaryAt_MissingBinariesAreNotAtTheVersion(t *testing.T) {
+	orig := identifyInstalledVersions
+	t.Cleanup(func() { identifyInstalledVersions = orig })
+	identifyInstalledVersions = func(string) ([]string, error) {
+		return nil, software.NewFileNotFoundError("/opt/solo/weaver/sandbox/bin/crio")
+	}
+
+	at, err := HostBinaryAt(software.CrioArtifactName, "1.34.15")
+
+	require.NoError(t, err)
+	assert.False(t, at)
+}
+
 func TestKubernetesHop_ApplyRefusesAKubeadmThatIsNotTheTarget(t *testing.T) {
 	f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
 	all := KubernetesHopSteps("1.33.13", "1.34.13", "1.34.15", func(context.Context) (*kube.Client, error) { return &kube.Client{}, nil })
@@ -414,8 +465,31 @@ func TestRecoverKubernetesHop(t *testing.T) {
 
 		RecoverKubernetesHop(context.Background(), client)
 
-		assert.Equal(t, []string{"start crio", "start kubelet", "uncordon node1"}, f.events)
+		assert.Equal(t, []string{"daemon-reload", "start crio", "start kubelet", "uncordon node1"}, f.events)
 		assert.False(t, f.health.Unschedulable)
+	})
+	t.Run("runs when the hop was cancelled", func(t *testing.T) {
+		f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
+		f.health.OurCordon = true
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := startService
+		startService = func(ctx context.Context, svc string) error {
+			require.NoError(t, ctx.Err(), "recovery must not use the cancelled context")
+			return start(ctx, svc)
+		}
+
+		RecoverKubernetesHop(ctx, client)
+
+		assert.Equal(t, []string{"daemon-reload", "start crio", "start kubelet", "uncordon node1"}, f.events)
+	})
+	t.Run("puts back the pull-through cache's registries.conf", func(t *testing.T) {
+		f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
+		f.registry = "localhost:5050"
+
+		RecoverKubernetesHop(context.Background(), client)
+
+		assert.Equal(t, []string{"registries localhost:5050", "daemon-reload", "start crio", "start kubelet"}, f.events)
 	})
 	t.Run("keeps an operator's cordon", func(t *testing.T) {
 		f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
@@ -423,7 +497,7 @@ func TestRecoverKubernetesHop(t *testing.T) {
 
 		RecoverKubernetesHop(context.Background(), client)
 
-		assert.Equal(t, []string{"start crio", "start kubelet"}, f.events)
+		assert.Equal(t, []string{"daemon-reload", "start crio", "start kubelet"}, f.events)
 		assert.True(t, f.health.Unschedulable)
 	})
 	t.Run("a start failure does not stop the rest", func(t *testing.T) {
@@ -433,7 +507,7 @@ func TestRecoverKubernetesHop(t *testing.T) {
 
 		RecoverKubernetesHop(context.Background(), client)
 
-		assert.Equal(t, []string{"start crio", "start kubelet", "uncordon node1"}, f.events)
+		assert.Equal(t, []string{"daemon-reload", "start crio", "start kubelet", "uncordon node1"}, f.events)
 	})
 }
 

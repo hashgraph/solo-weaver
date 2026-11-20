@@ -44,10 +44,11 @@ var (
 	startService        = sysos.StartService
 	restartService      = sysos.RestartService
 	daemonReload        = sysos.DaemonReload
-	removeCrioRelease   = software.RemoveCrioReleaseFiles
+	moveCrioAside       = software.MoveCrioReleaseAside
 	installRegistries   = proxy.InstallRegistriesConf
 	kubeHealthTimeout   = 5 * time.Minute
 	kubeStartTimeout    = 2 * time.Minute
+	kubeRecoverTimeout  = 2 * time.Minute
 	kubePollInterval    = 5 * time.Second
 	kubeHopInstallers   = defaultKubeHopInstallers
 	containerRegistryOf = func() string { return config.Get().Proxy.ContainerRegistryProxy }
@@ -111,10 +112,22 @@ func KubernetesHopSteps(from, to, crio string, newClient kube.ClientProviderFrom
 	}
 }
 
-// RecoverKubernetesHop is run when a hop fails: it starts cri-o and the kubelet
-// and lifts the hop's cordon, so the node keeps running what it has. Each part
-// is best effort and logged.
+// RecoverKubernetesHop is run when a hop fails: it puts back a configured
+// pull-through cache's registries.conf, starts cri-o and the kubelet and lifts
+// the hop's cordon, so the node keeps running what it has. Each part is best
+// effort and logged. It runs even when the hop's context was cancelled, with a
+// time limit of its own.
 func RecoverKubernetesHop(ctx context.Context, newClient kube.ClientProviderFromContext) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kubeRecoverTimeout)
+	defer cancel()
+	if reg := containerRegistryOf(); reg != "" {
+		if err := installRegistries(reg); err != nil {
+			logx.As().Warn().Err(err).Msg("Could not put back the pull-through cache's registries.conf after the failed hop")
+		}
+	}
+	if err := daemonReload(ctx); err != nil {
+		logx.As().Warn().Err(err).Msg("Could not reload systemd after the failed hop")
+	}
 	for _, svc := range []string{software.CrioServiceName, software.KubeletServiceName} {
 		if err := startService(ctx, svc); err != nil {
 			logx.As().Warn().Err(err).Str("service", svc).Msg("Could not start the service after the failed hop")
@@ -132,6 +145,16 @@ func RecoverKubernetesHop(ctx context.Context, newClient kube.ClientProviderFrom
 	if err := setNodeCordon(ctx, k, health.Node, false); err != nil {
 		logx.As().Warn().Err(err).Str("node", health.Node).Msg("Could not lift the upgrade cordon")
 	}
+}
+
+// controlPlaneAt reports whether every control-plane component runs version.
+func controlPlaneAt(k kubeHealth, version string) bool {
+	for _, c := range controlPlaneComponents {
+		if p, ok := k.ControlPlane[c]; !ok || p.Version != version {
+			return false
+		}
+	}
+	return true
 }
 
 // staticPod is one control-plane pod.
@@ -420,11 +443,15 @@ func (h *kubeHop) download() automa.Builder {
 
 func (h *kubeHop) upgradeArtifact(name string) automa.Builder {
 	a := h.artifact(name)
-	var before func() error
+	var aside moveAside
 	if name == software.CrioArtifactName {
-		before = removeCrioRelease
+		// Install keeps config files that exist, so the previous release's
+		// files are moved aside for the new release's to be laid down.
+		aside = func() (func() error, func() error, error) {
+			return moveCrioAside(software.CrioReleaseBackupDir(h.crio))
+		}
 	}
-	return upgradeHostBinary(a.name, a.version, a.archived, a.provider, before)
+	return upgradeHostBinary(a.name, a.version, a.archived, a.provider, aside)
 }
 
 // apply runs `kubeadm upgrade apply`. kubeadm backs up the static pod
@@ -442,7 +469,9 @@ func (h *kubeHop) apply() automa.Builder {
 				return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
 					"Check the API server: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /readyz")))
 			}
-			if health.APIServer == h.to {
+			// An apply that stopped part way can leave the API server on the
+			// target and the other components behind, so all of them are checked.
+			if controlPlaneAt(health, h.to) {
 				return automa.SkippedReport(stp, automa.WithDetail("the control plane already runs "+h.to))
 			}
 			// The recorded kubeadm version is the old one until the hop is
