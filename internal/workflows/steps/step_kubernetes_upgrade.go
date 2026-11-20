@@ -54,21 +54,40 @@ var (
 	containerRegistryOf = func() string { return config.Get().Proxy.ContainerRegistryProxy }
 )
 
-// kubeHopArtifact is one host artifact the hop moves.
+// kubeHopArtifact is one host artifact the hop moves. recordKey is its key in
+// the recorded software state.
 type kubeHopArtifact struct {
-	name     string
-	version  string
-	archived bool
-	provider func(opts ...software.InstallerOption) (software.Software, error)
+	name      string
+	recordKey string
+	version   string
+	archived  bool
+	provider  func(opts ...software.InstallerOption) (software.Software, error)
 }
 
 func defaultKubeHopInstallers(kube, crio string) []kubeHopArtifact {
 	return []kubeHopArtifact{
-		{software.KubeadmBinaryName, kube, false, software.NewKubeadmInstaller},
-		{software.CrioArtifactName, crio, true, software.NewCrioInstaller},
-		{software.KubeletBinaryName, kube, false, software.NewKubeletInstaller},
-		{software.KubectlBinaryName, kube, false, software.NewKubectlInstaller},
+		{software.KubeadmBinaryName, software.KubeadmBinaryName, kube, false, software.NewKubeadmInstaller},
+		{software.CrioArtifactName, software.CrioBinaryName, crio, true, software.NewCrioInstaller},
+		{software.KubeletBinaryName, software.KubeletBinaryName, kube, false, software.NewKubeletInstaller},
+		{software.KubectlBinaryName, software.KubectlBinaryName, kube, false, software.NewKubectlInstaller},
 	}
+}
+
+// KubernetesHostArtifact is a host artifact a Kubernetes hop moves: its
+// catalog name and its key in the recorded software state.
+type KubernetesHostArtifact struct {
+	Name, RecordKey string
+}
+
+// KubernetesHostArtifacts are the host artifacts a Kubernetes hop moves, so
+// what records them follows the hop.
+func KubernetesHostArtifacts() []KubernetesHostArtifact {
+	all := defaultKubeHopInstallers("", "")
+	out := make([]KubernetesHostArtifact, len(all))
+	for i, a := range all {
+		out[i] = KubernetesHostArtifact{Name: a.name, RecordKey: a.recordKey}
+	}
+	return out
 }
 
 // kubeHop holds what the steps of one Kubernetes hop share.
@@ -400,7 +419,10 @@ func (h *kubeHop) checkHealthyBefore() automa.Builder {
 				}
 				select {
 				case <-ctx.Done():
-					return automa.FailureReport(stp, automa.WithError(errx.Decorate(ctx.Err(), reasons.Internal)))
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(ctx.Err(), "stopped waiting for the cluster"), reasons.PreconditionNotMet,
+						"Check the node: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes,pods -n kube-system -o wide",
+						"Run the upgrade again; it continues from where the node is")))
 				case <-time.After(kubePollInterval):
 				}
 			}
@@ -583,7 +605,8 @@ func (h *kubeHop) startNodeServices() automa.Builder {
 			// configured pull-through cache needs ours again.
 			if reg := containerRegistryOf(); reg != "" {
 				if err := installRegistries(reg); err != nil {
-					return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.Internal)))
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(err, ReasonHostCommandFailed,
+						fmt.Sprintf("Check that %s/etc/containers/registries.conf.d is writable, then run the upgrade again", models.Paths().SandboxDir))))
 				}
 			}
 			if err := daemonReload(ctx); err != nil {
@@ -630,7 +653,10 @@ func (h *kubeHop) waitHealthy() automa.Builder {
 				}
 				select {
 				case <-ctx.Done():
-					return automa.FailureReport(stp, automa.WithError(errx.Decorate(ctx.Err(), reasons.Internal)))
+					return automa.FailureReport(stp, automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(ctx.Err(), "stopped waiting for the cluster"), reasons.PreconditionNotMet,
+						"Check the node: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes,pods -n kube-system -o wide",
+						"Run the upgrade again; it continues from where the node is")))
 				case <-time.After(kubePollInterval):
 				}
 			}

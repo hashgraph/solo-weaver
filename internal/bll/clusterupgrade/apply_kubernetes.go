@@ -13,6 +13,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
@@ -185,15 +186,6 @@ func ApplyKubernetesHop(ctx context.Context, src LiveSources, locks *state.HeldL
 		hopRecord(src, []state.ComponentID{state.ComponentSystem}, recordKubeBinaries))
 }
 
-// kubeHostArtifacts are the host artifacts a Kubernetes hop moves, by their key
-// in the recorded software state.
-var kubeHostArtifacts = []struct{ key, artifact string }{
-	{software.KubeadmBinaryName, software.KubeadmBinaryName},
-	{software.KubeletBinaryName, software.KubeletBinaryName},
-	{software.KubectlBinaryName, software.KubectlBinaryName},
-	{software.CrioBinaryName, software.CrioArtifactName},
-}
-
 // Seam so tests need no binaries on disk.
 var identifyHostVersions = software.IdentifyInstalledVersions
 
@@ -204,15 +196,15 @@ func recordKubeBinaries(st *state.State) {
 	if st.MachineState.Software == nil {
 		st.MachineState.Software = map[string]state.SoftwareState{}
 	}
-	for _, a := range kubeHostArtifacts {
-		found, err := identifyHostVersions(a.artifact)
+	for _, a := range steps.KubernetesHostArtifacts() {
+		found, err := identifyHostVersions(a.Name)
 		if err != nil || len(found) != 1 {
-			logx.As().Warn().Err(err).Str("software", a.artifact).Strs("matchingVersions", found).
+			logx.As().Warn().Err(err).Str("software", a.Name).Strs("matchingVersions", found).
 				Msg("Could not identify the installed version; keeping its record")
 			continue
 		}
-		cur := st.MachineState.Software[a.key]
-		cur.Name, cur.Version, cur.Installed = a.artifact, found[0], true
-		st.MachineState.Software[a.key] = cur
+		cur := st.MachineState.Software[a.RecordKey]
+		cur.Name, cur.Version, cur.Installed = a.Name, found[0], true
+		st.MachineState.Software[a.RecordKey] = cur
 	}
 }

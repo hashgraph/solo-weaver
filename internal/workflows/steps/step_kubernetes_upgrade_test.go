@@ -228,6 +228,21 @@ func TestKubernetesHop_MinorHop(t *testing.T) {
 	assert.False(t, f.health.Unschedulable)
 }
 
+// What records the hop's binaries reads this list, so it names every artifact
+// the hop installs, under its record key.
+func TestKubernetesHostArtifacts_AreTheOnesTheHopInstalls(t *testing.T) {
+	var installed []string
+	for _, a := range defaultKubeHopInstallers("1.34.13", "1.34.15") {
+		installed = append(installed, a.name)
+	}
+	var listed []string
+	for _, a := range KubernetesHostArtifacts() {
+		listed = append(listed, a.Name)
+	}
+	assert.Equal(t, installed, listed)
+	assert.Contains(t, KubernetesHostArtifacts(), KubernetesHostArtifact{Name: software.CrioArtifactName, RecordKey: software.CrioBinaryName})
+}
+
 func TestKubeadmUpgradeApplyCommand(t *testing.T) {
 	assert.Equal(t, "sudo /opt/solo/weaver/sandbox/bin/kubeadm upgrade apply v1.34.13 --yes --v=3", kubeadmUpgradeApplyCommand("1.34.13"))
 }
