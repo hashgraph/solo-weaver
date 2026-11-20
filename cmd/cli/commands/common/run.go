@@ -192,7 +192,7 @@ func finalizeWorkflowReport(report *automa.Report) error {
 
 	// Before the report is saved, so the file, the summary table and the JSON
 	// summary all carry them.
-	addReportWarnings(report, takeStateWarnings())
+	steps.AddReportWarnings(report, takeStateWarnings())
 
 	logCfg := ensureLogConfig()
 	now := time.Now()
@@ -239,25 +239,6 @@ func finalizeWorkflowReport(report *automa.Report) error {
 		return err
 	}
 	return report.Error
-}
-
-// addReportWarnings appends warnings to the report's own warning, which the
-// summary table and the JSON summary both show.
-func addReportWarnings(report *automa.Report, warnings []string) {
-	if len(warnings) == 0 {
-		return
-	}
-
-	lines := make([]string, 0, len(warnings)+1)
-	if existing := report.Metadata[models.ReportMetaWarning]; existing != "" {
-		lines = append(lines, existing)
-	}
-	lines = append(lines, warnings...)
-
-	if report.Metadata == nil {
-		report.Metadata = map[string]string{}
-	}
-	report.Metadata[models.ReportMetaWarning] = strings.Join(lines, "\n")
 }
 
 // printJSONSummary writes one compact JSON object summarising the workflow run

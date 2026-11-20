@@ -23,7 +23,7 @@ import (
 // over-match but never miss a call.
 var writerCalls = []string{
 	"Commit", "Persist", "Record", "writeUnrecorded", "RunOwning", "writeProvisionerRecord",
-	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock",
+	"RecordStartupPass", "RecordAround", "AcquireComponentLocks", "AcquireProvisionerLock", "AcquireHeldLocks",
 }
 
 // fileCalls write, remove or move a file. They count only in the files that
@@ -106,11 +106,23 @@ var stateWriters = map[string]writerRow{
 		history: "appends no entry; runRecordingCluster appends it with the files written: " +
 			"TestRunRecordingCluster_SuccessRecordsTheCluster, TestRunRecordingCluster_RecordFailureIsAWarning",
 	},
-	"cmd/cli/commands/common/cluster_record.go:RecordEntry": {
+	"internal/workflows/steps/report_outcome.go:RecordEntry": {
 		lock:    "appends to action_history.yaml only, after its caller's workflow, under its caller's locks",
 		history: "TestRecordEntry_LostEntryOfASuccessfulRunIsAWarning, TestRunRecordingCluster_FailedRunRecordsOnlyItsEntry",
 	},
 
+	"internal/bll/clusterupgrade/apply.go:hopRecord": {
+		lock: "a hop's RecordState write, under the system and cluster locks its caller holds; the executor refuses " +
+			"locks that do not cover it: TestApplyCiliumHop_RefusesLocksThatDoNotCoverIt",
+		history: "appends no entry; runHop appends it with the files written, after a failed hop too: " +
+			"TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_RecordFailureIsAWarning, " +
+			"TestApplyCiliumHop_FailedHopRecordsTheCLIItReplaced",
+	},
+
+	"internal/state/lock.go:AcquireHeldLocks": {
+		lock:    "TestAcquireHeldLocks_FailsFastWhenHeldElsewhere",
+		history: "takes locks only",
+	},
 	"cmd/cli/commands/kube/cluster/uninstall.go:lockAllState": {
 		lock:    "TestLockAllState_FailsFastOnEveryStateLock",
 		history: "takes locks only",

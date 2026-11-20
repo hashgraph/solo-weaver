@@ -62,7 +62,7 @@ func TestResolveClusterShape_CurrentCluster(t *testing.T) {
 	}, shape.Kubernetes)
 	require.Equal(t, CiliumShape{Chart: "1.20.2", Agent: "1.20.2", Recorded: "1.20.2"}, shape.Cilium)
 	require.Equal(t, ChartShape{Live: "0.16.1", ChartName: "metallb", Status: release.StatusDeployed,
-		Identity: IdentityCurrent, Recorded: "0.16.1"}, shape.Charts["metallb"])
+		Identity: IdentityCurrent, Recorded: "0.16.1", RecordedIdentity: IdentityCurrent}, shape.Charts["metallb"])
 	require.Equal(t, IdentityCurrent, shape.Charts["external-secrets"].Identity)
 	require.Equal(t, IdentityCurrent, shape.Charts["node-exporter"].Identity)
 	require.Equal(t, ChartShape{Missing: true}, shape.Charts["alloy"])
@@ -115,6 +115,24 @@ func TestResolveClusterShape_RecordedVersusLive(t *testing.T) {
 	require.True(t, charts["external-secrets"].Changed)
 	require.True(t, charts["alloy"].Changed)
 	require.True(t, charts["node-exporter"].Changed)
+}
+
+// A release that went away keeps the identity it was recorded with, so a
+// chart swap that stopped after its uninstall is told apart from a chart that
+// was never installed.
+func TestResolveClusterShape_RecordedIdentityOfAMissingRelease(t *testing.T) {
+	recorded := liveCluster()
+	recorded.ClusterState.Releases["node-exporter"] = rel("node-exporter", "4.4.9") // the Bitnami chart
+	live := liveCluster()
+	delete(live.ClusterState.Releases, "node-exporter")
+
+	ne := ResolveClusterShape(live, &recorded, shapeManaged).Charts["node-exporter"]
+	require.True(t, ne.Missing)
+	require.Equal(t, "4.4.9", ne.Recorded)
+	require.Equal(t, IdentityLegacy, ne.RecordedIdentity)
+
+	require.Equal(t, IdentityCurrent, ResolveClusterShape(live, &recorded, shapeManaged).Charts["metallb"].RecordedIdentity)
+	require.Empty(t, ResolveClusterShape(live, nil, shapeManaged).Charts["node-exporter"].RecordedIdentity)
 }
 
 // Helm keeps the record of an uninstalled release; the chart is missing, and

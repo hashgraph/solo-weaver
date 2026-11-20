@@ -34,55 +34,81 @@ type LiveSources struct {
 // the recorded cluster when the read fails: the plan must see a failed read to
 // refuse to plan from it.
 func PlanLive(ctx context.Context, src LiveSources, opts Options) (Plan, error) {
+	shape, m, reach, err := readLive(ctx, src)
+	if err != nil {
+		return Plan{}, err
+	}
+	if !reach.Observed() {
+		return blockedPlan(m, opts, unreachableBlocker(reach))
+	}
+	return Resolve(shape, m, opts)
+}
+
+// readLive reads the matrix of the embedded catalog and the live shape. When
+// the probe cannot reach the cluster it reads nothing more and returns an
+// empty shape with the probe's answer.
+func readLive(ctx context.Context, src LiveSources) (rsl.ClusterShape, Matrix, reality.ClusterReachability, error) {
 	if src.State == nil || src.Cluster == nil || src.Machine == nil || src.Managed == nil || src.Catalog == nil || src.Probe == nil {
-		return Plan{}, errorx.IllegalArgument.New("every live source must be set")
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalArgument.New("every live source must be set")
 	}
 
 	// The cluster checker falls back to recorded values, so load them first.
-	if err := src.State.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the recorded state")
+	var recorded *state.State
+	switch err := src.State.Refresh(); {
+	case err == nil:
+		st := src.State.State()
+		recorded = &st
+	case !errorx.IsOfType(err, state.NotFoundError):
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to read the recorded state")
 	}
 
 	cat, err := src.Catalog()
 	if err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to load the catalog")
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to load the catalog")
 	}
 	m, err := MatrixFromCatalog(cat)
 	if err != nil {
-		return Plan{}, err
+		return rsl.ClusterShape{}, Matrix{}, 0, err
 	}
 	// With no kubeconfig the cluster checker returns the record as read, so the
 	// plan would come from the record.
-	if r := src.Probe(); !r.Observed() {
-		return blockedPlan(m, opts, unreachableBlocker(r))
+	reach := src.Probe()
+	if !reach.Observed() {
+		return rsl.ClusterShape{}, m, reach, nil
 	}
 
 	managed, err := src.Managed()
 	if err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to list the managed releases")
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to list the managed releases")
 	}
 
 	var live state.State
 	if live.MachineState, err = src.Machine.RefreshState(ctx); err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the host")
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to read the host")
 	}
 	if live.ClusterState, err = src.Cluster.RefreshState(ctx); err != nil {
-		return Plan{}, errorx.IllegalState.Wrap(err, "failed to read the cluster")
+		return rsl.ClusterShape{}, Matrix{}, 0, errorx.IllegalState.Wrap(err, "failed to read the cluster")
 	}
 
-	// The plan uses only live values; the record would only mark what changed.
-	return Resolve(rsl.ResolveClusterShape(live, nil, managed), m, opts)
+	// Live values always win; the record says what was there before, such as a
+	// release that went away.
+	return rsl.ResolveClusterShape(live, recorded, managed), m, reach, nil
 }
 
 // unreachableBlocker is the blocker for a cluster the probe could not reach. It
 // names the cause and what to do about it.
 func unreachableBlocker(r reality.ClusterReachability) Blocker {
+	cause, remedy := unreachable(r)
+	logx.As().Warn().Msg("Cannot reach the cluster; cannot plan the cluster upgrade: " + cause)
+	return Blocker{Code: BlockerNotObserved, Detail: cause + "; " + remedy}
+}
+
+// unreachable says why the probe could not reach the cluster and what to do.
+func unreachable(r reality.ClusterReachability) (cause, remedy string) {
 	if !r.Configured() {
-		logx.As().Warn().Msg("No kubeconfig found; cannot plan the cluster upgrade")
-		return Blocker{Code: BlockerNotObserved, Detail: "no kubeconfig was found in KUBECONFIG or $HOME/.kube/config; " +
-			"run the command with sudo, or set KUBECONFIG to the cluster's admin kubeconfig"}
+		return "no kubeconfig was found in KUBECONFIG or $HOME/.kube/config",
+			"run the command with sudo, or set KUBECONFIG to the cluster's admin kubeconfig"
 	}
-	logx.As().Warn().Msg("The Kubernetes API server did not answer; cannot plan the cluster upgrade")
-	return Blocker{Code: BlockerNotObserved, Detail: "the Kubernetes API server did not answer; " +
-		"check it with 'kubectl get --raw /readyz', then run the command again"}
+	return "the Kubernetes API server did not answer",
+		"check it with 'kubectl get --raw /readyz', then run the command again"
 }

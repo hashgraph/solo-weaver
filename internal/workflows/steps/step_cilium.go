@@ -207,6 +207,16 @@ func defaultCiliumChartSpec() ciliumChartSpec {
 	}
 }
 
+// ciliumChartSpecFor is the catalog chart of a Cilium version.
+func ciliumChartSpecFor(version string) (ciliumChartSpec, error) {
+	chart := software.MustGetClusterComponent(software.CiliumComponentName)
+	v, ok := chart.Versions[software.Version(version)]
+	if !ok {
+		return ciliumChartSpec{}, errorx.IllegalArgument.New("Cilium %s is not in the catalog", version)
+	}
+	return ciliumChartSpec{Version: version, ChartRepo: chart.Repo, ChartSHA256: v.Value}, nil
+}
+
 const (
 	ciliumChartRepoAlias = "cilium"
 	ciliumChartRef       = ciliumChartRepoAlias + "/cilium"

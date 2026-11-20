@@ -77,9 +77,11 @@ type ChartShape struct {
 	Reason    string   // why the identity is not current
 	// Recorded is the chart version state recorded; Changed is set when the
 	// release appeared, went away, or runs another chart or version than the
-	// record says.
-	Recorded string
-	Changed  bool
+	// record says. RecordedIdentity is the recorded release's identity, empty
+	// when none is recorded, so a release that went away can be told apart.
+	Recorded         string
+	Changed          bool
+	RecordedIdentity Identity
 }
 
 // ResolveClusterShape builds the shape from live, the state just read from the
@@ -126,6 +128,9 @@ func ResolveClusterShape(live state.State, recorded *state.State, managed []real
 		}
 
 		chart := ChartShape{Recorded: recRel.ChartVersion, Changed: changed, Missing: !inLive, Status: cs.Releases[m.Key].Status}
+		if inRec {
+			chart.RecordedIdentity, _ = identityOf(m, recRel)
+		}
 		if inLive {
 			chart.Live = liveRel.ChartVersion
 			chart.ChartName = liveRel.ChartName

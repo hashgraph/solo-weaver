@@ -8,7 +8,6 @@ import (
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
-	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -54,7 +53,7 @@ func runRecordingCluster(ctx context.Context, sm state.Manager, intent models.In
 		return nil, err
 	}
 	report := wf.Execute(ctx)
-	RecordEntry(sm, steps.WorkflowEntry(ctx, intent, inputs, report), report)
+	steps.RecordEntry(sm, steps.WorkflowEntry(ctx, intent, inputs, report), report)
 	return report, nil
 }
 
@@ -91,21 +90,5 @@ func recordCluster(sm state.Manager) func(ctx context.Context) ([]state.ChangedF
 		st := sm.State()
 		st.ClusterState = cs
 		return sm.Set(st).Persist(state.ComponentCluster)
-	}
-}
-
-// entryRecorder appends a finished run's entry; state.Manager and
-// *rsl.RuntimeResolver satisfy it.
-type entryRecorder interface {
-	Record(entry state.ActionHistory, cause error) error
-}
-
-// RecordEntry appends entry for the run that produced report. A failed run's
-// entry that can't be appended is already a state warning; a successful
-// run's becomes a warning in report, since the run itself happened.
-func RecordEntry(rec entryRecorder, entry state.ActionHistory, report *automa.Report) {
-	if err := rec.Record(entry, steps.FailureOf(report)); err != nil {
-		addReportWarnings(report, []string{"The command's action history entry was not appended: " +
-			doctor.OperatorMessage(err) + "."})
 	}
 }
