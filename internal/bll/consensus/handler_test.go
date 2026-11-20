@@ -40,11 +40,14 @@ func TestHandlerFactory_EachIntentOwnsOnlyTheFilesItWrites(t *testing.T) {
 	owns := map[models.ActionType][]string{
 		models.ActionInstall:   {"consensus", "profile"},
 		models.ActionUninstall: {"consensus"},
+		models.ActionStart:     {"consensus"},
+		models.ActionStop:      {"consensus"},
 	}
 
 	for _, action := range []models.ActionType{
 		models.ActionSetup, models.ActionInstall, models.ActionUninstall, models.ActionReset, models.ActionDeploy,
 		models.ActionDestroy, models.ActionUpgrade, models.ActionMigrate, models.ActionReconfigure,
+		models.ActionStart, models.ActionStop,
 	} {
 		t.Run(string(action), func(t *testing.T) {
 			handler, err := h.ForAction(action)

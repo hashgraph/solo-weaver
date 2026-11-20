@@ -96,11 +96,16 @@ var uninstallCmd = &cobra.Command{
 // validateUninstallFlags rejects a missing --node-id (0 is a valid ID, so the default
 // cannot mean "not set"), a negative ID, and an empty --namespace.
 func validateUninstallFlags(nodeIdSet bool, namespace string, nodeId int64) error {
+	return validateNodeSelectorFlags(nodeIdSet, namespace, nodeId, "uninstall")
+}
+
+// validateNodeSelectorFlags is validateUninstallFlags for any command that acts on one node.
+func validateNodeSelectorFlags(nodeIdSet bool, namespace string, nodeId int64, verb string) error {
 	if !nodeIdSet {
 		return errx.Decorate(
 			errorx.IllegalArgument.New("--node-id is required"),
 			reasons.InvalidArgument,
-			"Pass the ID of the node to uninstall, e.g. --node-id 0",
+			fmt.Sprintf("Pass the ID of the node to %s, e.g. --node-id 0", verb),
 			fmt.Sprintf("List the nodes: kubectl -n %s get consensuscapsules", namespace))
 	}
 	if nodeId < 0 {

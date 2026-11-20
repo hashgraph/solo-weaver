@@ -66,6 +66,8 @@ func init() {
 	nodeCmd.PersistentFlags().Int64Var(&flagNodeId, "node-id", 0, "Consensus node ID (0-based)")
 	nodeCmd.AddCommand(installCmd)
 	nodeCmd.AddCommand(uninstallCmd)
+	nodeCmd.AddCommand(startCmd)
+	nodeCmd.AddCommand(stopCmd)
 }
 
 // GetCmd returns the consensus node command group.

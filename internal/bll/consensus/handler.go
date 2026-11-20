@@ -4,6 +4,7 @@ package consensus
 
 import (
 	"github.com/automa-saga/errx"
+	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -15,6 +16,8 @@ import (
 type Handlers struct {
 	install   *InstallHandler
 	uninstall *UninstallHandler
+	start     *RunStateHandler
+	stop      *RunStateHandler
 }
 
 // NewHandlerFactory validates dependencies and returns a Handlers with all handlers initialized.
@@ -41,20 +44,29 @@ func NewHandlerFactory(runtime *rsl.RuntimeResolver) (*Handlers, error) {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create InstallHandler")
 	}
 
-	// Uninstall writes only the consensus state, so it does not lock or rewrite profile.yaml.
-	uninstallBase, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
+	// Uninstall, start and stop write only the consensus state, so they do not lock or rewrite profile.yaml.
+	consensusOnlyBase, err := bll.NewBaseHandler[models.ConsensusNodeInputs](runtime, models.TargetConsensusNode,
 		bll.WithManagedComponents[models.ConsensusNodeInputs](bll.ConsensusNode),
 	)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "failed to create uninstall BaseHandler")
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create consensus-only BaseHandler")
 	}
 
-	uninstallHandler, err := NewUninstallHandler(uninstallBase)
+	uninstallHandler, err := NewUninstallHandler(consensusOnlyBase)
 	if err != nil {
 		return nil, errorx.IllegalArgument.Wrap(err, "failed to create UninstallHandler")
 	}
 
-	return &Handlers{install: installHandler, uninstall: uninstallHandler}, nil
+	startHandler, err := NewRunStateHandler(consensusOnlyBase, operatorv1alpha1.RunStateRunning)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create start handler")
+	}
+	stopHandler, err := NewRunStateHandler(consensusOnlyBase, operatorv1alpha1.RunStateStopped)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to create stop handler")
+	}
+
+	return &Handlers{install: installHandler, uninstall: uninstallHandler, start: startHandler, stop: stopHandler}, nil
 }
 
 // ForAction returns the appropriate IntentHandler for the given action.
@@ -64,10 +76,14 @@ func (h *Handlers) ForAction(action models.ActionType) (bll.IntentHandler[models
 		return h.install, nil
 	case models.ActionUninstall:
 		return h.uninstall, nil
+	case models.ActionStart:
+		return h.start, nil
+	case models.ActionStop:
+		return h.stop, nil
 	default:
 		return nil, errx.Decorate(
 			errorx.IllegalArgument.New("unsupported action %q for consensus node", action),
 			reasons.InvalidArgument,
-			"Supported actions for consensus node: install, uninstall")
+			"Supported actions for consensus node: install, uninstall, start, stop")
 	}
 }

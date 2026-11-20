@@ -105,6 +105,47 @@ func (c *Client) ApplyTyped(ctx context.Context, obj runtime.Object) error {
 	return nil
 }
 
+// ApplyFieldsAs server-side applies obj under fieldManager. obj must hold only the
+// fields this manager owns: SSA removes owned fields that obj leaves out.
+func (c *Client) ApplyFieldsAs(ctx context.Context, fieldManager string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if fieldManager == "" {
+		return nil, errorx.IllegalArgument.New("field manager must not be empty")
+	}
+	gvk := obj.GroupVersionKind()
+	if gvk.Empty() {
+		return nil, errorx.IllegalArgument.New("object has no GVK set; set apiVersion and kind")
+	}
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, errorx.IllegalArgument.Wrap(err, "failed to get REST mapping for %s", gvk.String())
+	}
+
+	var dr dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		dr = c.Dyn.Resource(mapping.Resource).Namespace(obj.GetNamespace())
+	} else {
+		dr = c.Dyn.Resource(mapping.Resource)
+	}
+
+	data, err := obj.MarshalJSON()
+	if err != nil {
+		return nil, errorx.InternalError.Wrap(err, "failed to marshal %s/%s for server-side apply", gvk.Kind, obj.GetName())
+	}
+
+	force := true
+	live, err := dr.Patch(ctx, obj.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
+		FieldManager: fieldManager,
+		Force:        &force,
+	})
+	if err != nil {
+		if kerrors.IsForbidden(err) || kerrors.IsUnauthorized(err) {
+			return nil, errorx.RejectedOperation.New("%s", admissionMessage(err))
+		}
+		return nil, errorx.InternalError.Wrap(err, "failed to apply %s/%s", gvk.Kind, obj.GetName())
+	}
+	return live, nil
+}
+
 // admissionMessage returns the Kubernetes Status message for a rejected request
 // (the admission-webhook / RBAC denial text), which is the operator-actionable
 // part of a ValidatingAdmissionPolicy rejection. It falls back to err.Error()

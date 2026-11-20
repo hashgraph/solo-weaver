@@ -258,15 +258,14 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 				// bare phase. Best-effort: a list error just omits the annotation.
 				podList, _ := kc.List(ctx, kube.KindPod, namespace, kube.WaitOptions{})
 
-				// Only Auto-start nodes are expected to come up on their own after
-				// genesis. Manual-start nodes stay in Stopped until `consensus node
-				// start`, so they are excluded from the wait (reported, not blocked).
+				// Nodes held stopped (Manual without a start, or `consensus node stop`)
+				// are reported, not awaited; see consensusStopIntended.
 				// A node is ready only at phase Active (pod Ready + platform ACTIVE);
 				// Running is transient (pod up, e.g. the uc sidecar started) and would
 				// be a false positive while the main container is still pulling.
-				autoTotal := 0
+				expected := 0
 				ready := 0
-				manual := 0
+				held := 0
 				var failed []string
 				details := make([]string, 0, len(list.Items))
 				for i := range list.Items {
@@ -277,17 +276,15 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 						phase = string(operatorv1alpha1.PhasePending)
 					}
 					policy, _, _ := unstructured.NestedString(item.Object, "spec", "startPolicy")
-					if policy == "" {
-						policy = string(operatorv1alpha1.StartPolicyAuto) // CRD default is Auto
-					}
+					desired, _, _ := unstructured.NestedString(item.Object, "spec", "desiredRunState")
 
-					if operatorv1alpha1.StartPolicy(policy) == operatorv1alpha1.StartPolicyManual {
-						manual++
-						details = append(details, fmt.Sprintf("%s=%s(manual)", name, phase))
+					if consensusStopIntended(policy, desired) {
+						held++
+						details = append(details, fmt.Sprintf("%s=%s(held stopped)", name, phase))
 						continue
 					}
 
-					autoTotal++
+					expected++
 					detail := fmt.Sprintf("%s=%s", name, phase)
 					switch operatorv1alpha1.Phase(phase) {
 					case operatorv1alpha1.PhaseActive:
@@ -302,7 +299,7 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 					details = append(details, detail)
 				}
 				sort.Strings(details)
-				notify.As().StepDetail(ctx, stp, fmt.Sprintf("auto nodes ready %d/%d (manual %d) — %s", ready, autoTotal, manual, strings.Join(details, " ")))
+				notify.As().StepDetail(ctx, stp, fmt.Sprintf("nodes ready %d/%d (held stopped %d) — %s", ready, expected, held, strings.Join(details, " ")))
 
 				if len(failed) > 0 {
 					sort.Strings(failed)
@@ -312,12 +309,12 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 						fmt.Sprintf("Inspect the failed node(s): kubectl -n %s describe consensuscapsule %s", namespace, failed[0]),
 						"Check the solo-operator logs and the consensus node pod logs in that namespace")))
 				}
-				// Ready when every Auto node is up. All-Manual (autoTotal==0) settles
-				// immediately — nothing auto-starts, so there is nothing to wait for.
-				if ready == autoTotal {
+				// Ready when every node meant to run is up. All held stopped
+				// (expected==0) settles at once: there is nothing to wait for.
+				if ready == expected {
 					return true, automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
-						"nodesReady":  fmt.Sprintf("%d", ready),
-						"manualNodes": fmt.Sprintf("%d", manual),
+						"nodesReady":       fmt.Sprintf("%d", ready),
+						"heldStoppedNodes": fmt.Sprintf("%d", held),
 					}))
 				}
 				return false, nil
@@ -344,7 +341,7 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 							fmt.Sprintf("Check node status: kubectl -n %s get consensuscapsules", namespace),
 							fmt.Sprintf("Inspect a stuck node's pod: kubectl -n %s get pods; kubectl -n %s describe pod <pod>", namespace, namespace),
 							"A node stuck pulling images needs a registry pull secret; increase --ready-timeout if it just needs more time (image pull, event replay)",
-							"Only Auto-start nodes are awaited; a Manual-start node stays Stopped until 'consensus node start'")))
+							"Nodes held stopped (Manual start policy, or 'consensus node stop') are not awaited; start one with 'consensus node start'")))
 					}
 				}
 			}
@@ -357,8 +354,21 @@ func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, t
 			notify.As().StepFailure(ctx, stp, rpt, "Consensus nodes did not all become ready")
 		}).
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "All consensus nodes are Active")
+			notify.As().StepCompletion(ctx, stp, rpt, networkReadyMessage(rpt))
 		})
+}
+
+// networkReadyMessage names the held-stopped nodes, so an all-stopped network
+// does not read as "all Active".
+func networkReadyMessage(rpt *automa.Report) string {
+	if rpt == nil {
+		return "All consensus nodes are Active"
+	}
+	held := rpt.Metadata["heldStoppedNodes"]
+	if held == "" || held == "0" {
+		return "All consensus nodes are Active"
+	}
+	return fmt.Sprintf("Consensus nodes Active: %s (held stopped: %s, not awaited)", rpt.Metadata["nodesReady"], held)
 }
 
 // podContainerIssues returns a compact summary of the not-healthy container states

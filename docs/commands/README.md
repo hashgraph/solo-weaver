@@ -10,7 +10,7 @@ Every `solo-provisioner` command, by stack.
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
 | `daemon service` | [below](#daemon-service) | The `solo-provisioner-daemon` systemd service |
-| `consensus node` | [below](#consensus-node) | Install and uninstall a consensus node (experimental) |
+| `consensus node` | [below](#consensus-node) | Install, uninstall, start and stop a consensus node (experimental) |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
 | `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
 | `version` | [below](#utilities) | Version information |
@@ -102,6 +102,8 @@ sudo solo-provisioner daemon service start|stop
 # CONSENSUS NODE (experimental: needs --experimental)
 sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>]
 sudo solo-provisioner consensus node uninstall --experimental --namespace=<ns> --node-id=<id> [--force]
+sudo solo-provisioner consensus node start     --experimental --namespace=<ns> --node-id=<id> [--ready-timeout=<duration>]
+sudo solo-provisioner consensus node stop      --experimental --namespace=<ns> --node-id=<id> [--ready-timeout=<duration>]
 
 # CONSENSUS MIGRATION SOAK
 sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
@@ -488,6 +490,58 @@ flags skip the confirmation prompt.
 > **The node stops.** Deleting the ConsensusCapsule removes the node's pod. The Secrets, PVC data
 > and hostPath data stay. To remove them, delete them manually. emptyDir data (the default volume
 > type) is deleted with the pod.
+
+### Start and stop
+
+`consensus node start` and `consensus node stop` start and stop the consensus process of an
+installed node. The pod and its sidecars stay up. The commands do not start or stop the process
+themselves. They set `spec.desiredRunState` on the node's ConsensusCapsule, and the solo-operator
+starts or stops the process:
+
+| Command | `spec.desiredRunState` | The command waits until |
+|---|---|---|
+| `start` | `Running` | the capsule phase is `Running` or `Active` |
+| `stop` | `Stopped` | `status.runState` and the capsule phase are `Stopped` |
+
+Each command does these steps:
+
+1. It makes sure that the node is installed. `start` also makes sure that the node is not offline
+   (`spec.offline`) and that the namespace has a network genesis (the `genesis-config` ConfigMap).
+2. It sets `spec.desiredRunState` with server-side apply, under its own field manager
+   `solo-weaver-runstate`. The apply sends only this field, so it does not change the rest of the
+   capsule. A later `consensus node install --force` keeps the value.
+3. It waits until the solo-operator has read the change (`status.observedGeneration`) and acted on
+   it, then it shows the phase and the run state. If the phase becomes `Failed`, the command fails
+   immediately.
+
+The commands work for both start policies (`Auto` and `Manual`). The value stays on the capsule. If
+the pod of a stopped `Auto` node restarts, the process starts at boot, and then the solo-operator stops
+it again. `consensus network genesis` does not wait for a node that is stopped.
+
+When the value is already correct, the command changes nothing and succeeds. `stop` before the
+network genesis, or on an offline node, sets the value and does not wait, because no process runs.
+
+```bash
+# Stop node 0, then start it again
+sudo solo-provisioner consensus node stop  --experimental --namespace hiero-network-1 --node-id 0
+sudo solo-provisioner consensus node start --experimental --namespace hiero-network-1 --node-id 0
+
+# Set the value and do not wait
+sudo solo-provisioner consensus node stop --experimental --namespace hiero-network-1 --node-id 0 --ready-timeout 0
+```
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--node-id` | yes | Consensus node ID (0-based). |
+| `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
+| `--ready-timeout` (`start`) | no | How long to wait for the node to reach phase Running or Active (0 disables the wait). Default `5m`. |
+| `--ready-timeout` (`stop`) | no | How long to wait for the operator to stop the consensus process (0 disables the wait). Default `5m`. |
+
+If the wait times out, `spec.desiredRunState` stays set and the solo-operator continues to act on
+it. Examine the capsule with `kubectl -n <ns> get consensuscapsule <name> -o yaml`.
+
+If a `stop` timed out because the consensus process did not stop (phase still `Active`), a
+later `start` succeeds immediately. The phase `Active` comes from the process that did not stop.
 
 ---
 

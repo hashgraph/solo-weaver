@@ -45,6 +45,14 @@ const (
 	// creating the NetworkGenesis CR so the operator produces genesis-network.json.
 	// It is idempotent: re-running against an existing genesis is a no-op.
 	ActionGenesis ActionType = "genesis"
+
+	// ActionStart sets a deployed component's desired run state to running.
+	// Re-running it on a running component is a no-op.
+	ActionStart ActionType = "start"
+
+	// ActionStop sets a deployed component's desired run state to stopped.
+	// Re-running it on a stopped component is a no-op.
+	ActionStop ActionType = "stop"
 )
 
 type TargetType string
@@ -102,6 +110,8 @@ var allowedOperations = map[ActionType][]TargetType{
 	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionReconfigure: {TargetBlockNode},
 	ActionGenesis:     {TargetConsensusNetwork},
+	ActionStart:       {TargetConsensusNode},
+	ActionStop:        {TargetConsensusNode},
 }
 
 // Intent defines the desired action to be performed given certain parameters and configuration.
