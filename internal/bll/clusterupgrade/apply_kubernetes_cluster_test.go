@@ -7,11 +7,13 @@ package clusterupgrade
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/automa-saga/automa"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
@@ -40,15 +42,23 @@ func TestWithCluster_ApplyKubernetesHop(t *testing.T) {
 		Machine: checkers.Machine,
 		Managed: reality.ManagedReleases,
 		Catalog: software.LoadInfrastructureCatalog,
+		Probe:   checkers.Probe,
 	}
-	run := func(ctx context.Context, wb *automa.WorkflowBuilder) error {
-		wf, err := wb.Build()
+	run := func(_ context.Context, fn func() (*automa.Report, error)) error {
+		report, err := fn()
 		if err != nil {
 			return err
 		}
-		return steps.FailureOf(wf.Execute(ctx))
+		return steps.FailureOf(report)
 	}
+	locks, err := state.AcquireHeldLocks(filepath.Dir(sm.State().StateFile),
+		[]state.ComponentID{state.ComponentSystem, state.ComponentCluster}, 0)
+	require.NoError(t, err)
+	defer locks.Release()
+	client, err := kube.NewClient()
+	require.NoError(t, err)
+	ctx := kube.WithKubeClient(context.Background(), client)
 
-	require.NoError(t, ApplyKubernetesHop(context.Background(), src, run,
+	require.NoError(t, ApplyKubernetesHop(ctx, src, locks, run,
 		Hop{Kind: KindKubernetes, Step: HopStep(step), Component: "kubernetes", From: from, To: to}))
 }

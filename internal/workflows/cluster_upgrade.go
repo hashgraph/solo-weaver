@@ -30,8 +30,8 @@ func KubernetesHopWorkflow(from, to, crio string) *automa.WorkflowBuilder {
 	return automa.NewWorkflowBuilder().
 		WithId("kubernetes-hop").
 		WithExecutionMode(automa.StopOnError).
-		Steps(steps.KubernetesHopSteps(from, to, crio, kube.NewClient)...).
+		Steps(steps.KubernetesHopSteps(from, to, crio, kube.ClientFromContext)...).
 		WithOnFailure(func(ctx context.Context, _ automa.Step, _ *automa.Report) {
-			steps.RecoverKubernetesHop(ctx, kube.NewClient)
+			steps.RecoverKubernetesHop(ctx, kube.ClientFromContext)
 		})
 }

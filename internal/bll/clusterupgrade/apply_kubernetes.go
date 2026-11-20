@@ -6,13 +6,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
-	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -23,19 +24,20 @@ var kubernetesHopWorkflow = workflows.KubernetesHopWorkflow
 // plane is checked by the first step of the hop.
 func KubernetesHopChecks(shape rsl.ClusterShape, m Matrix, hop Hop) (Checks, error) {
 	if hop.Kind != KindKubernetes || (hop.Step != StepPatch && hop.Step != StepMinor && hop.Step != StepResume) {
-		return nil, errorx.IllegalArgument.New("%s %s is not a Kubernetes patch, minor or resume hop", hop.Kind, hop.Step)
+		return nil, errx.Decorate(errorx.IllegalArgument.New("%s %s is not a Kubernetes patch, minor or resume hop", hop.Kind, hop.Step),
+			reasons.Internal)
 	}
 	from, err := parseVersion(hop.From)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "hop start")
+		return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "hop start"), reasons.Internal)
 	}
 	to, err := parseVersion(hop.To)
 	if err != nil {
-		return nil, errorx.IllegalArgument.Wrap(err, "hop target")
+		return nil, errx.Decorate(errorx.IllegalArgument.Wrap(err, "hop target"), reasons.Internal)
 	}
 	c, err := m.compile()
 	if err != nil {
-		return nil, errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix")
+		return nil, errx.Decorate(errorx.IllegalFormat.Wrap(err, "invalid upgrade matrix"), reasons.Internal)
 	}
 
 	k := shape.Kubernetes
@@ -135,16 +137,21 @@ func crioFor(cat *software.InfrastructureCatalog, kube string) (string, error) {
 	return best.String(), nil
 }
 
-// ApplyKubernetesHop moves the cluster by one Kubernetes hop. It reads the
-// cluster, does nothing when the hop is already applied, refuses when a check
-// fails, then runs the hop under the system and cluster locks, records the new
-// host binary versions and the cluster, and leaves an entry in the action
-// history.
-func ApplyKubernetesHop(ctx context.Context, src LiveSources, run WorkflowRunner, hop Hop) error {
+// ApplyKubernetesHop moves the cluster by one Kubernetes hop. The caller holds
+// the system and cluster locks in locks for the whole run. It reads the
+// cluster, does nothing when the hop is already applied, and refuses when a
+// check fails. Otherwise one workflow runs the hop, waits for the cluster to
+// settle and records the host binaries and the cluster, and one entry goes to
+// the action history. A failed hop still records the host binaries it may
+// have replaced.
+func ApplyKubernetesHop(ctx context.Context, src LiveSources, locks *state.HeldLocks, run WorkflowRunner, hop Hop) error {
 	if run == nil {
-		return errorx.IllegalArgument.New("a workflow runner must be set")
+		return errx.Decorate(errorx.IllegalArgument.New("a workflow runner must be set"), reasons.Internal)
 	}
-	shape, m, err := readLive(ctx, src)
+	if err := heldFor(src, locks, state.ComponentSystem, state.ComponentCluster); err != nil {
+		return err
+	}
+	shape, m, err := readHopLive(ctx, src)
 	if err != nil {
 		return err
 	}
@@ -154,7 +161,7 @@ func ApplyKubernetesHop(ctx context.Context, src LiveSources, run WorkflowRunner
 	}
 	cat, err := src.Catalog()
 	if err != nil {
-		return errorx.IllegalState.Wrap(err, "failed to load the catalog")
+		return errx.Decorate(errorx.IllegalState.Wrap(err, "failed to load the catalog"), reasons.Internal)
 	}
 	crio, crioErr := crioFor(cat, hop.To)
 	k := shape.Kubernetes
@@ -166,22 +173,16 @@ func ApplyKubernetesHop(ctx context.Context, src LiveSources, run WorkflowRunner
 		return err
 	}
 	if crioErr != nil {
-		return crioErr
+		return errx.Decorate(crioErr, reasons.Internal)
 	}
 
-	inputs := map[string]string{"component": "kubernetes", "step": string(hop.Step), "from": hop.From, "to": hop.To, "cri-o": crio}
-	ran := false
-	err = recordHop(ctx, src, inputs,
-		[]state.ComponentID{state.ComponentSystem, state.ComponentCluster},
-		func() error {
-			ran = true
-			return run(ctx, kubernetesHopWorkflow(hop.From, hop.To, crio))
-		},
-		recordKubeBinaries)
-	if err != nil && ran {
-		recordBinariesAfterFailure(ctx, src)
-	}
-	return err
+	inputs := map[string]string{inputComponent: componentKubernetes, inputStep: string(hop.Step),
+		inputFrom: hop.From, inputTo: hop.To, inputCrio: crio}
+	logx.As().Info().Str("step", string(hop.Step)).Str("from", hop.From).Str("to", hop.To).Str("cri-o", crio).
+		Msg("Applying the Kubernetes hop")
+	return runHop(ctx, src, run, inputs, kubernetesHopWorkflow(hop.From, hop.To, crio),
+		hopRecord(src, []state.ComponentID{state.ComponentSystem, state.ComponentCluster}, recordKubeBinaries),
+		hopRecord(src, []state.ComponentID{state.ComponentSystem}, recordKubeBinaries))
 }
 
 // kubeHostArtifacts are the host artifacts a Kubernetes hop moves, by their key
@@ -213,22 +214,5 @@ func recordKubeBinaries(st *state.State) {
 		cur := st.MachineState.Software[a.key]
 		cur.Name, cur.Version, cur.Installed = a.artifact, found[0], true
 		st.MachineState.Software[a.key] = cur
-	}
-}
-
-// recordBinariesAfterFailure records the host binaries a failed hop may have
-// replaced. Other commands verify a binary against its recorded version, so a
-// stale record would make them refuse it, uninstall included.
-func recordBinariesAfterFailure(ctx context.Context, src LiveSources) {
-	entry := state.NewEntry(ctx, models.Intent{Action: models.ActionUpgrade, Target: models.TargetCluster},
-		map[string]string{"component": "kubernetes", "record": "host binaries after a failed hop"})
-	err := state.RunOwning(src.State, entry, []state.ComponentID{state.ComponentSystem},
-		func() error { return nil },
-		func(st *state.State) error {
-			recordKubeBinaries(st)
-			return nil
-		})
-	if err != nil {
-		logx.As().Warn().Err(err).Msg("Could not record the host binaries after the failed hop")
 	}
 }

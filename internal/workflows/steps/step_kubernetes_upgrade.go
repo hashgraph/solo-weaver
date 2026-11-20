@@ -73,7 +73,7 @@ func defaultKubeHopInstallers(kube, crio string) []kubeHopArtifact {
 // kubeHop holds what the steps of one Kubernetes hop share.
 type kubeHop struct {
 	from, to, crio string
-	newClient      kube.ClientProvider
+	newClient      kube.ClientProviderFromContext
 	artifacts      []kubeHopArtifact
 }
 
@@ -93,7 +93,7 @@ func (h *kubeHop) artifact(name string) kubeHopArtifact {
 // the live state first, so a re-run finishes a hop that stopped part way and
 // a done hop changes nothing. A resume hop is the same steps: the control plane
 // is already at the target, so the apply skips.
-func KubernetesHopSteps(from, to, crio string, newClient kube.ClientProvider) []automa.Builder {
+func KubernetesHopSteps(from, to, crio string, newClient kube.ClientProviderFromContext) []automa.Builder {
 	h := &kubeHop{from: from, to: to, crio: crio, newClient: newClient, artifacts: kubeHopInstallers(to, crio)}
 	return []automa.Builder{
 		h.checkHealthyBefore(),
@@ -114,13 +114,13 @@ func KubernetesHopSteps(from, to, crio string, newClient kube.ClientProvider) []
 // RecoverKubernetesHop is run when a hop fails: it starts cri-o and the kubelet
 // and lifts the hop's cordon, so the node keeps running what it has. Each part
 // is best effort and logged.
-func RecoverKubernetesHop(ctx context.Context, newClient kube.ClientProvider) {
+func RecoverKubernetesHop(ctx context.Context, newClient kube.ClientProviderFromContext) {
 	for _, svc := range []string{software.CrioServiceName, software.KubeletServiceName} {
 		if err := startService(ctx, svc); err != nil {
 			logx.As().Warn().Err(err).Str("service", svc).Msg("Could not start the service after the failed hop")
 		}
 	}
-	k, err := newClient()
+	k, err := newClient(ctx)
 	if err != nil {
 		logx.As().Warn().Err(err).Msg("Could not reach the cluster to lift the upgrade cordon")
 		return
@@ -305,8 +305,8 @@ func defaultSetNodeCordon(ctx context.Context, k *kube.Client, node string, cord
 	return nil
 }
 
-func (h *kubeHop) client(stp automa.Step) (*kube.Client, *automa.Report) {
-	k, err := h.newClient()
+func (h *kubeHop) client(ctx context.Context, stp automa.Step) (*kube.Client, *automa.Report) {
+	k, err := h.newClient(ctx)
 	if err != nil {
 		return nil, automa.FailureReport(stp, automa.WithError(errx.Decorate(err, reasons.K8sAPIFailed,
 			"Check that the admin kubeconfig works: sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes")))
@@ -330,7 +330,7 @@ func (h *kubeHop) done(ctx context.Context, k *kube.Client) bool {
 }
 
 func (h *kubeHop) skipDone(ctx context.Context, stp automa.Step) *automa.Report {
-	k, rpt := h.client(stp)
+	k, rpt := h.client(ctx, stp)
 	if rpt != nil {
 		return rpt
 	}
@@ -353,7 +353,7 @@ func (h *kubeHop) checkHealthyBefore() automa.Builder {
 	return automa.NewStepBuilder().WithId("check-kubernetes-healthy").
 		WithPrepare(detail("checking the cluster before the upgrade...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -433,7 +433,7 @@ func (h *kubeHop) apply() automa.Builder {
 	return automa.NewStepBuilder().WithId("kubeadm-upgrade-apply").
 		WithPrepare(detail("upgrading the control plane to " + h.to + "...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -478,7 +478,7 @@ func (h *kubeHop) cordon() automa.Builder {
 	return automa.NewStepBuilder().WithId("cordon-node").
 		WithPrepare(detail("cordoning the node...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -520,7 +520,7 @@ func (h *kubeHop) stopNodeServices() automa.Builder {
 	return automa.NewStepBuilder().WithId("stop-node-services").
 		WithPrepare(detail("stopping the kubelet and cri-o...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -546,7 +546,7 @@ func (h *kubeHop) startNodeServices() automa.Builder {
 			if rpt := h.skipDone(ctx, stp); rpt != nil {
 				return rpt
 			}
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -583,7 +583,7 @@ func (h *kubeHop) waitHealthy() automa.Builder {
 	return automa.NewStepBuilder().WithId("wait-kubernetes-healthy").
 		WithPrepare(detail("waiting for Kubernetes " + h.to + " to be healthy...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}
@@ -618,7 +618,7 @@ func (h *kubeHop) uncordon() automa.Builder {
 	return automa.NewStepBuilder().WithId("uncordon-node").
 		WithPrepare(detail("uncordoning the node...")).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			k, rpt := h.client(stp)
+			k, rpt := h.client(ctx, stp)
 			if rpt != nil {
 				return rpt
 			}

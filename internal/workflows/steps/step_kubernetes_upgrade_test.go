@@ -183,7 +183,7 @@ func newFakeNode(t *testing.T, kubeVersion, crio, to string) *fakeNode {
 
 func kubeHopRun(t *testing.T, from, to, crio string) []*automa.Report {
 	t.Helper()
-	return runSteps(t, KubernetesHopSteps(from, to, crio, func() (*kube.Client, error) { return &kube.Client{}, nil }))
+	return runSteps(t, KubernetesHopSteps(from, to, crio, func(context.Context) (*kube.Client, error) { return &kube.Client{}, nil }))
 }
 
 func requireAllSucceeded(t *testing.T, reports []*automa.Report) {
@@ -319,7 +319,7 @@ func TestKubernetesHop_FailedApplyStopsBeforeTheNode(t *testing.T) {
 
 func TestKubernetesHop_ApplyRefusesAKubeadmThatIsNotTheTarget(t *testing.T) {
 	f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")
-	all := KubernetesHopSteps("1.33.13", "1.34.13", "1.34.15", func() (*kube.Client, error) { return &kube.Client{}, nil })
+	all := KubernetesHopSteps("1.33.13", "1.34.13", "1.34.15", func(context.Context) (*kube.Client, error) { return &kube.Client{}, nil })
 	for _, r := range runSteps(t, all[:3]) { // check, download, upgrade kubeadm
 		require.Equal(t, automa.StatusSuccess, r.Status, r.Id)
 	}
@@ -406,7 +406,7 @@ func TestKubernetesHop_UnhealthyAfterFails(t *testing.T) {
 }
 
 func TestRecoverKubernetesHop(t *testing.T) {
-	client := func() (*kube.Client, error) { return &kube.Client{}, nil }
+	client := func(context.Context) (*kube.Client, error) { return &kube.Client{}, nil }
 
 	t.Run("lifts the hop's cordon", func(t *testing.T) {
 		f := newFakeNode(t, "1.33.13", "1.33.13", "1.34.13")

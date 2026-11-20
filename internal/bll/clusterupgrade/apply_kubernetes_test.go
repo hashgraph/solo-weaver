@@ -4,17 +4,23 @@ package clusterupgrade
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 	k8sversion "k8s.io/apimachinery/pkg/version"
 
+	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -100,6 +106,8 @@ func TestKubernetesHopChecks_RejectsOtherHops(t *testing.T) {
 		_, err := KubernetesHopChecks(clusterShape("1.33.4", "1.18.16"), fixtureMatrix(), hop)
 		require.Error(t, err)
 		assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument), err.Error())
+		reason, _ := errx.ReasonOf(err)
+		assert.Equal(t, reasons.Internal, reason)
 	}
 }
 
@@ -134,16 +142,17 @@ func TestCrioFor(t *testing.T) {
 // onDisk is what the stubbed hashing finds for each host artifact.
 type onDisk map[string][]string
 
-func stubKubernetesApply(t *testing.T, found onDisk) {
+// stubKubernetesApply stubs the binary hashing and the hop workflow, whose
+// step fails when fail is set.
+func stubKubernetesApply(t *testing.T, found onDisk, fail bool) {
 	t.Helper()
+	stubHopFinish(t)
 	orig, origIdentify := kubernetesHopWorkflow, identifyHostVersions
 	t.Cleanup(func() { kubernetesHopWorkflow, identifyHostVersions = orig, origIdentify })
 	identifyHostVersions = func(artifact string) ([]string, error) { return found[artifact], nil }
 	kubernetesHopWorkflow = func(from, to, crio string) *automa.WorkflowBuilder {
 		return automa.NewWorkflowBuilder().WithId("kube-" + from + "-" + to + "-" + crio).
-			Steps(automa.NewStepBuilder().WithId("noop").WithExecute(func(_ context.Context, stp automa.Step) *automa.Report {
-				return automa.SuccessReport(stp)
-			}))
+			Steps(noopStep("kubernetes-upgrade", fail))
 	}
 }
 
@@ -196,26 +205,33 @@ func pick(m map[string]any, keys ...string) map[string]any {
 func kubePatch() Hop { return kubeHop(StepPatch, "1.33.4", "1.33.13") }
 
 func TestApplyKubernetesHop_RunsTheHopAndRecords(t *testing.T) {
-	stubKubernetesApply(t, at("1.33.13", "1.33.13"))
+	stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
 	src, dir := liveSources(t, v035Node())
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyKubernetesHop(context.Background(), src, r.run, kubePatch()))
+	require.NoError(t, ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch()))
 
-	assert.Equal(t, []string{"kube-1.33.4-1.33.13-1.33.13"}, r.ran)
+	assert.Equal(t, []string{"kube-1.33.4-1.33.13-1.33.13"}, r.ran())
+	assert.Equal(t, []string{"kubernetes-upgrade", NodesReadyStepID, steps.WaitClusterReadableStepID, steps.RecordStateStepID},
+		r.stepIDs(t))
 	sw := recordedSoftware(t, dir)
 	for _, name := range []string{"kubeadm", "kubelet", "kubectl"} {
 		assert.Equal(t, map[string]any{"name": name, "version": "1.33.13", "installed": true}, pick(sw[name], "name", "version", "installed"), name)
 	}
 	assert.Equal(t, map[string]any{"name": "cri-o", "version": "1.33.13", "installed": true}, pick(sw["crio"], "name", "version", "installed"))
 	assert.Contains(t, readStateFile(t, dir, "cluster.yaml"), "kubeletVersion")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeSucceeded, entries[0].Outcome)
+	assert.ElementsMatch(t, []state.ChangedFile{state.ComponentSystem.File(), state.ComponentCluster.File()}, entries[0].Components)
 	history := readStateFile(t, dir, "action_history.yaml")
-	assert.Contains(t, history, "component: kubernetes")
-	assert.Contains(t, history, "to: 1.33.13")
+	for _, want := range []string{"component: kubernetes", "step: patch", "from: 1.33.4", "to: 1.33.13", "cri-o: 1.33.13"} {
+		assert.Contains(t, history, want)
+	}
 }
 
 func TestApplyKubernetesHop_DoneHopDoesNothing(t *testing.T) {
-	stubKubernetesApply(t, at("1.33.13", "1.33.13"))
+	stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
 	cs := v035Node()
 	cs.ServerVersion = k8sversion.Info{GitVersion: "v1.33.13"}
 	cs.KubeletVersion = "1.33.13"
@@ -223,9 +239,9 @@ func TestApplyKubernetesHop_DoneHopDoesNothing(t *testing.T) {
 	src, dir := liveSources(t, cs)
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyKubernetesHop(context.Background(), src, r.run, kubePatch()))
+	require.NoError(t, ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch()))
 
-	assert.Empty(t, r.ran)
+	assert.Empty(t, r.ran())
 	assert.Empty(t, stateFiles(t, dir))
 }
 
@@ -239,80 +255,150 @@ func TestApplyKubernetesHop_FailedCheckChangesNothing(t *testing.T) {
 		{"target not in the catalog", kubeHop(StepPatch, "1.33.4", "1.33.12"), "the target is a catalog version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stubKubernetesApply(t, at("1.33.13", "1.33.13"))
+			stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
 			src, dir := liveSources(t, v035Node())
 			r := &fakeRunner{}
 
-			err := ApplyKubernetesHop(context.Background(), src, r.run, tc.hop)
+			err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, tc.hop)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.check)
-			assert.Empty(t, r.ran)
+			reason, _ := errx.ReasonOf(err)
+			assert.Equal(t, reasons.PreconditionNotMet, reason)
+			assert.Empty(t, r.ran())
 			assert.Empty(t, stateFiles(t, dir))
 		})
 	}
 }
 
+// A failed hop may have replaced host binaries; other commands verify a binary
+// against its record, so the record must follow what is on disk.
 func TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced(t *testing.T) {
 	found := at("1.33.4", "1.33.4")
 	found["kubeadm"] = []string{"1.33.13"} // replaced before the apply failed
-	stubKubernetesApply(t, found)
+	stubKubernetesApply(t, found, true)
 	src, dir := liveSources(t, v035Node())
-	r := &fakeRunner{err: errorx.ExternalError.New("kubeadm upgrade apply failed")}
+	r := &fakeRunner{}
 
-	err := ApplyKubernetesHop(context.Background(), src, r.run, kubePatch())
+	err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch())
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kubernetes-upgrade failed")
 	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
 	sw := recordedSoftware(t, dir)
 	assert.Equal(t, "1.33.13", sw["kubeadm"]["version"])
 	assert.Equal(t, "1.33.4", sw["kubelet"]["version"])
 	assert.Equal(t, "1.33.4", sw["crio"]["version"])
-	entries, err := state.ReadActionHistory(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1, "the failure and what it recorded are one entry")
 	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
-	assert.Equal(t, state.OutcomeSucceeded, entries[1].Outcome)
-	assert.Contains(t, readStateFile(t, dir, "action_history.yaml"), "host binaries after a failed hop")
+	assert.Equal(t, []state.ChangedFile{state.ComponentSystem.File()}, entries[0].Components)
+	assert.False(t, entries[0].NotPersisted)
+}
+
+func TestApplyKubernetesHop_UnrecordedBinariesAfterAFailureAreAWarning(t *testing.T) {
+	stubKubernetesApply(t, at("1.33.13", "1.33.4"), true)
+	src, dir := liveSources(t, v035Node())
+	src.State = failingPersist{src.State}
+	r := &fakeRunner{}
+
+	err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kubernetes-upgrade failed")
+	require.Len(t, r.reports, 1)
+	assert.Contains(t, r.reports[0].Metadata[models.ReportMetaWarning], "What the failed hop changed was not recorded: disk full")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+	assert.True(t, entries[0].NotPersisted)
 }
 
 func TestApplyKubernetesHop_UnidentifiedBinaryKeepsItsRecord(t *testing.T) {
 	found := at("1.33.13", "1.33.13")
 	found["kubectl"] = nil // matches no catalog version
-	stubKubernetesApply(t, found)
+	stubKubernetesApply(t, found, false)
 	src, dir := liveSources(t, v035Node())
 	r := &fakeRunner{}
 
-	require.NoError(t, ApplyKubernetesHop(context.Background(), src, r.run, kubePatch()))
+	require.NoError(t, ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch()))
 
 	sw := recordedSoftware(t, dir)
 	assert.Equal(t, "1.33.13", sw["kubelet"]["version"])
 	assert.NotContains(t, sw, "kubectl")
 }
 
-func TestApplyKubernetesHop_FailsFastOnEachLock(t *testing.T) {
-	for _, id := range []state.ComponentID{state.ComponentSystem, state.ComponentCluster} {
-		t.Run(string(id), func(t *testing.T) {
-			stubKubernetesApply(t, at("1.33.13", "1.33.13"))
-			src, dir := liveSources(t, v035Node())
-			release, err := state.AcquireComponentLocks(dir, []state.ComponentID{id}, 0)
+// A cluster that cannot be fully read after the hop fails it, so it is never
+// recorded from a cluster that is still settling.
+func TestApplyKubernetesHop_UnsettledClusterFailsTheHop(t *testing.T) {
+	stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
+	unread := v035Node()
+	unread.Unobserved = true
+	src, dir := liveSources(t, v035Node())
+	src.Cluster = &settlingChecker{first: v035Node(), then: unread}
+	r := &fakeRunner{}
+
+	err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not be fully read")
+	assert.NotContains(t, stateFiles(t, dir), "cluster.yaml")
+	entries := historyEntries(t, dir)
+	require.Len(t, entries, 1)
+	assert.Equal(t, state.OutcomeFailed, entries[0].Outcome)
+}
+
+func TestApplyKubernetesHop_RefusesLocksThatDoNotCoverIt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		locks func(t *testing.T, dir string) *state.HeldLocks
+	}{
+		{"no locks", func(*testing.T, string) *state.HeldLocks { return nil }},
+		{"only the system lock", func(t *testing.T, dir string) *state.HeldLocks {
+			l, err := state.AcquireHeldLocks(dir, []state.ComponentID{state.ComponentSystem}, 0)
 			require.NoError(t, err)
-			defer release()
+			t.Cleanup(l.Release)
+			return l
+		}},
+		{"locks in another directory", func(t *testing.T, _ string) *state.HeldLocks { return holdLocks(t, t.TempDir()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
+			src, dir := liveSources(t, v035Node())
 			r := &fakeRunner{}
 
-			require.Error(t, ApplyKubernetesHop(context.Background(), src, r.run, kubePatch()))
+			err := ApplyKubernetesHop(context.Background(), src, tc.locks(t, dir), r.run, kubePatch())
 
-			assert.Empty(t, r.ran, "no workflow may run without the lock")
-			entries, err := state.ReadActionHistory(dir)
-			require.NoError(t, err)
-			assert.Empty(t, entries)
+			require.Error(t, err)
+			reason, _ := errx.ReasonOf(err)
+			assert.Equal(t, reasons.Internal, reason)
+			assert.Empty(t, r.ran(), "no workflow may run without the locks")
+			assert.Empty(t, historyEntries(t, dir))
 		})
 	}
 }
 
+func TestApplyKubernetesHop_UnreachableClusterIsRefused(t *testing.T) {
+	stubKubernetesApply(t, at("1.33.13", "1.33.13"), false)
+	src, dir := liveSources(t, v035Node())
+	src.Probe = probeReturns(reality.Unobservable)
+	r := &fakeRunner{}
+
+	err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), r.run, kubePatch())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not answer")
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, _ := errx.Hints(err)
+	assert.Contains(t, strings.Join(hints, " "), "readyz")
+	assert.Empty(t, r.ran())
+	assert.Empty(t, historyEntries(t, dir))
+}
+
 func TestApplyKubernetesHop_NeedsARunner(t *testing.T) {
-	src, _ := liveSources(t, v035Node())
-	err := ApplyKubernetesHop(context.Background(), src, nil, kubePatch())
+	src, dir := liveSources(t, v035Node())
+	err := ApplyKubernetesHop(context.Background(), src, holdLocks(t, dir), nil, kubePatch())
 	require.Error(t, err)
 	assert.True(t, errorx.IsOfType(err, errorx.IllegalArgument))
 }

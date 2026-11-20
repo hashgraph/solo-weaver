@@ -75,9 +75,11 @@ type WorkflowRunner func(ctx context.Context, run func() (*automa.Report, error)
 // Keys of a hop's action history inputs.
 const (
 	inputComponent = "component"
+	inputStep      = "step"
 	inputFrom      = "from"
 	inputTo        = "to"
 	inputCiliumCLI = "cilium-cli"
+	inputCrio      = "cri-o"
 )
 
 // NodesReadyStepID is the id of the step that checks the node after a hop.
