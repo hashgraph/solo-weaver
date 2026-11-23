@@ -32,6 +32,10 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 		cmd.Hidden = true
 	case gatekit.Beta:
 		cmd.Short = strings.TrimSpace(cmd.Short) + " [beta]"
+	case "":
+		// Uncatalogued feature (a wiring bug): hide the command; requireFeatureEnabled
+		// refuses it at run time so it never ships open.
+		cmd.Hidden = true
 	}
 
 	installExperimentalFlag(cmd)
@@ -63,6 +67,23 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 		flag = cmd.Flags().Lookup(flagName)
 	}
 	if flag == nil {
+		// Wiring bug: the flag isn't registered, so there is nothing to gate. Fail
+		// closed — refuse the command rather than silently leaving the flag ungated.
+		prev := cmd.PersistentPreRunE
+		cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
+			if prev != nil {
+				if err := prev(c, args); err != nil {
+					return err
+				}
+			} else if err := RunPersistentPreRun(c, args); err != nil {
+				return err
+			}
+			return errx.Decorate(
+				errorx.IllegalState.New("feature-gate wiring: flag %q is not registered on %q", flagName, cmd.Name()),
+				reasons.Internal,
+				"This is a feature-gate wiring bug.",
+				"Register the flag before gating it with GateFeatureFlag.")
+		}
 		return
 	}
 
@@ -129,7 +150,17 @@ func installExperimentalFlag(cmd *cobra.Command) {
 // resolved gate on the command context so business code (featuregate.Gate(ctx)) resolves
 // the feature the same way.
 func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
-	if featuregate.MaturityOf(f) != gatekit.Alpha {
+	maturity := featuregate.MaturityOf(f)
+	if maturity == "" {
+		// Wiring bug: a command is gated on a feature that is not in the catalog. Fail
+		// closed so it never runs open (the command is also hidden by GateFeature).
+		return errx.Decorate(
+			errorx.IllegalState.New("feature %q is gated but not registered in the catalog", f),
+			reasons.Internal,
+			"This is a feature-gate wiring bug.",
+			"Add the feature to internal/featuregate/registry.go (and features.go).")
+	}
+	if maturity != gatekit.Alpha {
 		return nil
 	}
 

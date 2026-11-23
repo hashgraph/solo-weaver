@@ -5,6 +5,7 @@ package common
 import (
 	"testing"
 
+	gatekit "github.com/automa-saga/gatekit"
 	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,28 @@ func TestGateFeature_HidesAlphaAndInstallsFlag(t *testing.T) {
 	f := cmd.PersistentFlags().Lookup(experimentalFlagName)
 	require.NotNil(t, f)
 	require.True(t, f.Hidden)
+}
+
+// A command gated on a feature that is not in the catalog (a wiring bug) fails closed:
+// it is hidden and refuses to run, rather than silently running for everyone.
+func TestGateFeature_UncataloguedFeatureFailsClosed(t *testing.T) {
+	// A no-op parent pre-run so the gate chains onto it, not the real root pre-run.
+	cmd := &cobra.Command{Use: "demo", Short: "Demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateFeature(cmd, gatekit.Feature("NotInCatalog"))
+
+	require.True(t, cmd.Hidden, "an uncatalogued gated command must be hidden")
+	require.Error(t, cmd.PersistentPreRunE(cmd, nil), "it must refuse to run")
+}
+
+// Gating a flag that is not registered (a wiring bug) fails closed: the command
+// refuses to run, rather than silently leaving the flag ungated.
+func TestGateFeatureFlag_UnregisteredFlagFailsClosed(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateFeatureFlag(cmd, "nope", featuregate.ConsensusNodeOperatorManaged) // "nope" not registered
+
+	require.Error(t, cmd.PersistentPreRunE(cmd, nil))
 }
 
 // An alpha command is refused until opted in; --experimental enables it even
