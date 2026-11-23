@@ -163,14 +163,19 @@ func (h *UpgradeHandler) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.Report, error) {
-	base := patchBlockNodeState()
-	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h,
-		func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
-			if h.shapingCleanupDone {
-				st.BlockNodeState.TrafficShapingCleanupPending = false
-			}
-			return base(st, effectiveInputs, report)
-		})
+	return h.BaseHandler.HandleIntent(ctx, intent, inputs, h, h.stateCallback())
+}
+
+// stateCallback records what the upgrade deployed: the plugin preset it named,
+// and the cleared shaping cleanup mark once the cleanup ran.
+func (h *UpgradeHandler) stateCallback() bll.StateCallback[models.BlockNodeInputs] {
+	base := patchBlockNodeStateRecordingPlugins()
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
+		if h.shapingCleanupDone {
+			st.BlockNodeState.TrafficShapingCleanupPending = false
+		}
+		return base(st, effectiveInputs, report)
+	}
 }
 
 // planShapingCleanup reports whether this upgrade must remove traffic shaping

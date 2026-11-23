@@ -7,6 +7,7 @@ package blocknode
 import (
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/config"
@@ -34,7 +35,7 @@ func deployedState() *state.State {
 // the operator moves from a custom plugin list to a chart-backed preset (or "none"), the
 // stale custom list must be cleared from state so it never sits beside the new preset.
 func TestPatch_ClearsStaleCustomPluginListOnSwitch(t *testing.T) {
-	patch := patchBlockNodeState()
+	patch := patchBlockNodeStateRecordingPlugins()
 
 	for _, preset := range []string{bnpkg.PresetTier1LFH, bnpkg.PresetTier1RFH, bnpkg.PresetNone} {
 		t.Run(preset, func(t *testing.T) {
@@ -60,7 +61,7 @@ func TestPatch_PreservesStoredPluginsWhenPresetUnset(t *testing.T) {
 	st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
 	st.BlockNodeState.PluginList = "facility-messaging,health"
 
-	require.NoError(t, patchBlockNodeState()(st, models.UserInputs[models.BlockNodeInputs]{}, nil))
+	require.NoError(t, patchBlockNodeStateRecordingPlugins()(st, models.UserInputs[models.BlockNodeInputs]{}, nil))
 
 	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
 	assert.Equal(t, "facility-messaging,health", st.BlockNodeState.PluginList)
@@ -72,7 +73,7 @@ func TestPatch_PersistsCustomPluginList(t *testing.T) {
 	inputs := models.UserInputs[models.BlockNodeInputs]{
 		Custom: models.BlockNodeInputs{PluginPreset: bnpkg.PresetCustom, PluginList: "a,b,c"},
 	}
-	require.NoError(t, patchBlockNodeState()(st, inputs, nil))
+	require.NoError(t, patchBlockNodeStateRecordingPlugins()(st, inputs, nil))
 
 	assert.Equal(t, bnpkg.PresetCustom, st.BlockNodeState.PluginPreset)
 	assert.Equal(t, "a,b,c", st.BlockNodeState.PluginList)
@@ -259,4 +260,70 @@ func TestPatch_ExplicitShapeOverridesReplaceRecord(t *testing.T) {
 	assert.NotContains(t, st.BlockNodeState.Shaping.ShapeOverrides, "partner",
 		"an explicit --shape run records only what it asked for")
 	assert.Equal(t, "200mbit", st.BlockNodeState.Shaping.ShapeOverrides["public"].Rate)
+}
+
+// Reset and uninstall render no Helm values, so whatever plugin flags they were
+// given, they leave the plugin record the refresh carried over.
+func TestPatch_RunsThatRenderNoValuesKeepThePluginRecord(t *testing.T) {
+	for _, preset := range []string{"", "tier1-lfh"} {
+		st := deployedState()
+		st.BlockNodeState.PluginPreset = "tier1-rfh"
+		st.BlockNodeState.PluginList = "a,b"
+		inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{PluginPreset: preset}}
+
+		require.NoError(t, patchBlockNodeState()(st, inputs, nil))
+
+		assert.Equal(t, "tier1-rfh", st.BlockNodeState.PluginPreset, "preset %q", preset)
+		assert.Equal(t, "a,b", st.BlockNodeState.PluginList, "preset %q", preset)
+	}
+}
+
+// Install, upgrade and reconfigure render the plugins, so they record the
+// preset and list the run named; a run that names none keeps the record.
+func TestPatch_RunsThatRenderValuesRecordThePluginsTheyName(t *testing.T) {
+	withHostConfig(t, models.HostConfig{Disabled: true})
+	patches := map[string]func() bll.StateCallback[models.BlockNodeInputs]{
+		"upgrade":               patchBlockNodeStateRecordingPlugins,
+		"install / reconfigure": patchBlockNodeStateWithTrafficShaping,
+	}
+	for name, patch := range patches {
+		for _, tc := range []struct {
+			preset, list         string
+			wantPreset, wantList string
+		}{
+			{"", "", bnpkg.PresetCustom, "a,b"},
+			{bnpkg.PresetNone, "", bnpkg.PresetNone, ""},
+			{bnpkg.PresetRFH, "", bnpkg.PresetRFH, ""},
+			{bnpkg.PresetCustom, "x,y", bnpkg.PresetCustom, "x,y"},
+		} {
+			t.Run(name+"/"+tc.preset, func(t *testing.T) {
+				st := deployedState()
+				st.BlockNodeState.PluginPreset = bnpkg.PresetCustom
+				st.BlockNodeState.PluginList = "a,b"
+				inputs := models.UserInputs[models.BlockNodeInputs]{
+					Custom: models.BlockNodeInputs{PluginPreset: tc.preset, PluginList: tc.list},
+				}
+
+				require.NoError(t, patch()(st, inputs, nil))
+
+				assert.Equal(t, tc.wantPreset, st.BlockNodeState.PluginPreset)
+				assert.Equal(t, tc.wantList, st.BlockNodeState.PluginList)
+			})
+		}
+	}
+}
+
+// A release that isn't deployed (a failed or pending run) keeps the record:
+// nothing says what it runs.
+func TestPatch_ReleaseNotDeployedKeepsThePluginRecord(t *testing.T) {
+	st := deployedState()
+	st.BlockNodeState.ReleaseInfo.Status = release.StatusFailed
+	st.BlockNodeState.PluginPreset = "tier1-rfh"
+	st.BlockNodeState.PluginList = "a,b"
+	inputs := models.UserInputs[models.BlockNodeInputs]{Custom: models.BlockNodeInputs{PluginPreset: "tier1-lfh", PluginList: "x"}}
+
+	require.NoError(t, patchBlockNodeStateRecordingPlugins()(st, inputs, nil))
+
+	assert.Equal(t, "tier1-rfh", st.BlockNodeState.PluginPreset)
+	assert.Equal(t, "a,b", st.BlockNodeState.PluginList)
 }

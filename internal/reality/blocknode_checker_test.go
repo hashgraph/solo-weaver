@@ -11,6 +11,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -140,11 +141,13 @@ type fakeHelmManager struct {
 
 func (f fakeHelmManager) ListAll() ([]*release.Release, error) { return f.releases, nil }
 
-// fakeKubeClient returns an empty PV list so populateStorageFromPVs is a no-op.
-type fakeKubeClient struct{}
+// fakeKubeClient returns pvs from List; with none set, populateStorageFromPVs is a no-op.
+type fakeKubeClient struct {
+	pvs []unstructured.Unstructured
+}
 
 func (f fakeKubeClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
-	return &unstructured.UnstructuredList{}, nil
+	return &unstructured.UnstructuredList{Items: f.pvs}, nil
 }
 
 // TestRefreshState_PreservesTrafficShapingDecision verifies that the weaver-only
@@ -372,4 +375,236 @@ metadata:
 		t.Errorf("ChartRef must be preserved across a reality refresh: want %q, got %q",
 			persisted.ReleaseInfo.ChartRef, got.ReleaseInfo.ChartRef)
 	}
+}
+
+const blockNodeManifest = `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`
+
+// deployedRelease is a deployed block-node release installed with values.
+func deployedRelease(values map[string]any) *release.Release {
+	return &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.28.0", AppVersion: "0.28.0"},
+		},
+		Config:   values,
+		Manifest: blockNodeManifest,
+	}
+}
+
+// refresh runs RefreshState against persisted, a cluster holding re and pvs.
+func refresh(t *testing.T, persisted state.BlockNodeState, re *release.Release, pvs ...unstructured.Unstructured) state.BlockNodeState {
+	t.Helper()
+	full := state.State{}
+	full.BlockNodeState = persisted
+	checker := &blockNodeChecker{
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: []*release.Release{re}}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{pvs: pvs}, nil },
+		probe:   func() ClusterReachability { return Reachable },
+	}
+	got, err := checker.RefreshState(context.Background())
+	require.NoError(t, err)
+	return got
+}
+
+// The fields Diff marks Observable are exactly the ones the checker reads back
+// from the cluster: a release and PVs carrying every value the
+// checker reads make each observable field, and nothing else, differ from a
+// persisted state that records none of them.
+func TestRefreshState_ReadsEveryObservableField(t *testing.T) {
+	re := deployedRelease(map[string]any{
+		"blockNode": map[string]any{"config": map[string]any{
+			"FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD": "1000",
+			"FILES_RECENT_BLOCK_RETENTION_THRESHOLD":   "100",
+		}},
+		"service": map[string]any{"annotations": map[string]any{
+			"metallb.io/address-pool": "public-address-pool",
+		}},
+	})
+	pvs := []unstructured.Unstructured{
+		makePV("block-node", "live-storage-pvc", "100Gi", "/mnt/live"),
+		makePV("block-node", "archive-storage-pvc", "200Gi", "/mnt/archive"),
+		makePV("block-node", "log-storage-pvc", "10Gi", "/mnt/log"),
+		makePV("block-node", "verification-storage-pvc", "20Gi", "/mnt/verification"),
+		makePV("block-node", "plugins-storage-pvc", "5Gi", "/mnt/plugins"),
+		makePV("block-node", "application-state-storage-pvc", "50Gi", "/mnt/app-state"),
+	}
+	// Known exposure values on the persisted side, opposite to the release's,
+	// since an unknown one is never compared.
+	noPool := false
+	persisted := state.BlockNodeState{ServiceTopology: state.ServiceTopologySplit, MetalLBPool: &noPool}
+
+	got := refresh(t, persisted, re, pvs...)
+
+	var fields []string
+	for _, d := range persisted.Diff(got) {
+		fields = append(fields, d.Field)
+	}
+	require.ElementsMatch(t, state.BlockNodeObservableFields(), fields)
+}
+
+func TestRefreshState_ReadsServiceExposure(t *testing.T) {
+	pool := map[string]any{"metallb.io/address-pool": "public-address-pool"}
+	cases := []struct {
+		name     string
+		values   map[string]any
+		topology string
+		pool     bool
+	}{
+		{
+			name:     "pool annotation on the main service",
+			values:   map[string]any{"service": map[string]any{"type": "LoadBalancer", "annotations": pool}},
+			topology: state.ServiceTopologySingle,
+			pool:     true,
+		},
+		{
+			name:     "no pool annotation",
+			values:   map[string]any{"service": map[string]any{"type": "LoadBalancer"}},
+			topology: state.ServiceTopologySingle,
+		},
+		{
+			name:     "pool annotation set to null",
+			values:   map[string]any{"service": map[string]any{"annotations": map[string]any{"metallb.io/address-pool": nil}}},
+			topology: state.ServiceTopologySingle,
+		},
+		{
+			name:     "pool annotation set to an empty string",
+			values:   map[string]any{"service": map[string]any{"annotations": map[string]any{"metallb.io/address-pool": ""}}},
+			topology: state.ServiceTopologySingle,
+		},
+		{
+			name:     "no values",
+			values:   nil,
+			topology: state.ServiceTopologySingle,
+		},
+		{
+			name:     "split topology with a pool on the external service",
+			values:   map[string]any{"loadBalancer": map[string]any{"enabled": true, "annotations": pool}},
+			topology: state.ServiceTopologySplit,
+			pool:     true,
+		},
+		{
+			name: "split topology enabled as a quoted string, pool only on the main service",
+			values: map[string]any{
+				"loadBalancer": map[string]any{"enabled": "true"},
+				"service":      map[string]any{"annotations": pool},
+			},
+			topology: state.ServiceTopologySplit,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := refresh(t, state.BlockNodeState{}, deployedRelease(tc.values))
+
+			require.Equal(t, tc.topology, got.ServiceTopology)
+			require.NotNil(t, got.MetalLBPool)
+			require.Equal(t, tc.pool, *got.MetalLBPool)
+		})
+	}
+}
+
+// A refresh that cannot read the cluster keeps the recorded block node. It marks
+// it unobserved only when a kubeconfig exists: with none there is no cluster to
+// act on either. The mark is set both ways, so one left on the in-memory state
+// by an earlier refresh does not survive.
+func TestRefreshState_UnreadClusterKeepsTheRecordMarkedUnobserved(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		probe      ClusterReachability
+		unobserved bool
+	}{
+		{name: "no kubeconfig", probe: NotConfigured, unobserved: false},
+		{name: "API server not answering", probe: Unobservable, unobserved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorded := state.NewBlockNodeState()
+			recorded.ReleaseInfo.Name = "block-node"
+			recorded.ReleaseInfo.Status = release.StatusDeployed
+			recorded.Unobserved = !tc.unobserved
+			full := state.State{}
+			full.BlockNodeState = recorded
+
+			checker := &blockNodeChecker{
+				sm: fakeStateManager{st: full},
+				newHelm: func() (HelmManager, error) {
+					t.Fatal("an unread cluster must not be listed")
+					return nil, nil
+				},
+				newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+				probe:   func() ClusterReachability { return tc.probe },
+			}
+
+			got, err := checker.RefreshState(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, "block-node", got.ReleaseInfo.Name)
+			require.Equal(t, tc.unobserved, got.Unobserved)
+		})
+	}
+}
+
+// pluginRecordChecker returns a checker whose recorded block node carries a
+// plugin preset and list, with the given release found (or none).
+func pluginRecordChecker(re *release.Release) *blockNodeChecker {
+	recorded := state.NewBlockNodeState()
+	recorded.ReleaseInfo.Name = "block-node"
+	recorded.ReleaseInfo.Status = release.StatusDeployed
+	recorded.PluginPreset = "tier1-rfh"
+	recorded.PluginList = "a,b"
+	full := state.State{}
+	full.BlockNodeState = recorded
+
+	var releases []*release.Release
+	if re != nil {
+		releases = []*release.Release{re}
+	}
+	return &blockNodeChecker{
+		sm:      fakeStateManager{st: full},
+		newHelm: func() (HelmManager, error) { return fakeHelmManager{releases: releases}, nil },
+		newKube: func() (KubeClient, error) { return fakeKubeClient{}, nil },
+		probe:   func() ClusterReachability { return Reachable },
+	}
+}
+
+// The plugin preset and list are weaver-only records the release can't give
+// back, so a refresh that rebuilds the block node from its release keeps them;
+// otherwise a reset, which renders no values, records them as lost.
+func TestRefreshState_KeepsThePluginRecordWhileTheReleaseExists(t *testing.T) {
+	re := &release.Release{
+		Name:      "block-node",
+		Namespace: "block-node",
+		Info:      &release.Info{Status: release.StatusDeployed},
+		Chart:     &chart.Chart{Metadata: &chart.Metadata{Name: "block-node-server", Version: "0.44.3", AppVersion: "0.44.3"}},
+		Manifest: `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: block-node-block-node-server
+  namespace: block-node
+  labels:
+    app.kubernetes.io/instance: block-node
+`,
+	}
+
+	got, err := pluginRecordChecker(re).RefreshState(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "tier1-rfh", got.PluginPreset)
+	require.Equal(t, "a,b", got.PluginList)
+}
+
+// Plugins go with the release: once it is gone, so is the record.
+func TestRefreshState_DropsThePluginRecordWithTheRelease(t *testing.T) {
+	got, err := pluginRecordChecker(nil).RefreshState(context.Background())
+
+	require.NoError(t, err)
+	require.Empty(t, got.PluginPreset)
+	require.Empty(t, got.PluginList)
 }

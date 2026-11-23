@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -48,8 +49,16 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	now := htime.Now()
 	bn := b.sm.State().BlockNodeState
 
-	if !b.probe().Observed() {
-		logx.As().Debug().Msg("Kubernetes cluster is not observable, skipping BlockNodeState check")
+	// A kubeconfig that gave no usable answer may still hide a release, so the
+	// kept record is marked unobserved. With no kubeconfig there is no cluster
+	// to act on either.
+	if r := b.probe(); !r.Observed() {
+		if r.Configured() {
+			logx.As().Warn().Msg("Could not read the Kubernetes cluster; keeping the recorded block node state")
+		} else {
+			logx.As().Debug().Msg("No kubeconfig on this host; keeping the recorded block node state")
+		}
+		bn.Unobserved = r.Configured()
 		return bn, nil
 	}
 
@@ -88,6 +97,10 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	// release has none. Two callers do exactly that: the upgrade handler's
 	// chart-switch warning and the reconfigure handler's chart-change guard.
 	chartRef := bn.ReleaseInfo.ChartRef
+	// The plugin preset and list are weaver-only records too. They go with the
+	// release, so the release-missing branch above drops them; while it exists,
+	// keep them, or a run that renders no values (reset) records them as lost.
+	pluginPreset, pluginList := bn.PluginPreset, bn.PluginList
 	bn = state.BlockNodeState{
 		ReleaseInfo: state.HelmReleaseInfo{
 			Name:          re.Name,
@@ -102,6 +115,8 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 			Status:        re.Info.Status,
 		},
 		Storage:                      models.BlockNodeStorage{},
+		PluginPreset:                 pluginPreset,
+		PluginList:                   pluginList,
 		TrafficShapingEnabled:        trafficShapingEnabled,
 		TrafficShapingCleanupPending: cleanupPending,
 		Shaping:                      shaping,
@@ -109,6 +124,12 @@ func (b *blockNodeChecker) RefreshState(ctx context.Context) (state.BlockNodeSta
 	}
 
 	b.populateRetentionFromHelmValues(re.Config, &bn)
+	split, metallbPool := blocknode.ServiceExposureFromValues(re.Config)
+	bn.ServiceTopology = state.ServiceTopologySingle
+	if split {
+		bn.ServiceTopology = state.ServiceTopologySplit
+	}
+	bn.MetalLBPool = &metallbPool
 
 	// PersistentVolumes are cluster-scoped; pass empty namespace.
 	k8s, err := b.newKube()

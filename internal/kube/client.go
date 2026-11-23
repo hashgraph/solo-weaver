@@ -1655,8 +1655,9 @@ func ProbeCluster() (configured, reachable bool) {
 	// ── Stage 2: short-deadline API probe ────────────────────────────────────
 	cfg, err := loadKubeConfig()
 	if err != nil {
-		// Config cannot be parsed (corrupted / missing context) — no cluster.
-		logx.As().Debug().Err(err).Msg("Failed to load kubeconfig; cluster does not exist")
+		// Config cannot be parsed (corrupted / missing context): a cluster is
+		// configured but cannot be read.
+		logx.As().Debug().Err(err).Msg("Failed to load kubeconfig; the cluster could not be read")
 		return true, false
 	}
 
@@ -1666,14 +1667,14 @@ func ProbeCluster() (configured, reachable bool) {
 
 	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
-		logx.As().Debug().Err(err).Msg("Failed to create discovery client; cluster does not exist")
+		logx.As().Debug().Err(err).Msg("Failed to create discovery client; the cluster could not be read")
 		return true, false
 	}
 
 	if _, err = disco.ServerVersion(); err != nil {
 		// Any error here (timeout, connection refused, TLS failure) means the
 		// cluster is not reachable right now — not a hard error for callers.
-		logx.As().Debug().Err(err).Msg("API server probe failed; cluster does not exist or is unreachable")
+		logx.As().Debug().Err(err).Msg("API server probe failed; the cluster could not be read")
 		return true, false
 	}
 
