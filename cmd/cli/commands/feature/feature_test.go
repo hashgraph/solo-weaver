@@ -66,6 +66,20 @@ func TestRunList_JSON(t *testing.T) {
 	require.NotEmpty(t, got.Features)
 }
 
+// Machine output must go to stdout, not stderr, so `... -o json | jq` works.
+func TestRunList_JSON_GoesToStdout(t *testing.T) {
+	cmd := GetCmd()
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("output", "json"))
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	require.NoError(t, cmd.RunE(cmd, nil))
+
+	require.Empty(t, errOut.String(), "JSON must not be written to stderr")
+	require.NotEmpty(t, out.String())
+}
+
 func TestFilters_Apply(t *testing.T) {
 	gate, err := featuregate.NewDefault()
 	require.NoError(t, err)

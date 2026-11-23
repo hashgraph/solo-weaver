@@ -154,9 +154,11 @@ func runList(cmd *cobra.Command, _ []string) error {
 		if mErr != nil {
 			return mErr
 		}
-		cmd.Println(string(out))
+		// Write to stdout, not stderr: cobra's cmd.Print* use OutOrStderr, which
+		// would break `feature-gate list -o json | jq`.
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 	case "", "text":
-		cmd.Print(render(data))
+		fmt.Fprint(cmd.OutOrStdout(), render(data))
 	default:
 		return errorx.IllegalFormat.New("unsupported format %q (want text or json)", format)
 	}
