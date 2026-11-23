@@ -91,3 +91,33 @@ func TestDeleteTable_OtherFailurePropagates(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Operation not permitted")
 }
+
+func TestListTable_PrintsTheLiveTable(t *testing.T) {
+	listing := "table inet weaver-host-firewall {\n\tset mgmt_addrs {\n\t\ttype ipv4_addr\n\t}\n}\n"
+	out, present, err := ListTable(context.Background(), nfttest.FakeNft(t, listing, 0), testTable)
+	require.NoError(t, err)
+	assert.True(t, present)
+	assert.Equal(t, listing, out)
+}
+
+func TestListTable_NoSuchTableIsAbsenceNotFailure(t *testing.T) {
+	bin := nfttest.FakeNftStderr(t, "", "Error: No such file or directory\nlist table inet weaver-host-firewall\n", 1)
+	out, present, err := ListTable(context.Background(), bin, testTable)
+	require.NoError(t, err)
+	assert.False(t, present)
+	assert.Empty(t, out)
+}
+
+func TestListTable_OtherFailureIsAnErrorNotAbsence(t *testing.T) {
+	bin := nfttest.FakeNftStderr(t, "", "Error: Operation not permitted\n", 1)
+	_, present, err := ListTable(context.Background(), bin, testTable)
+	require.Error(t, err)
+	assert.False(t, present)
+	assert.Contains(t, err.Error(), "Operation not permitted")
+}
+
+func TestListTable_UnrunnableBinaryIsAnError(t *testing.T) {
+	_, present, err := ListTable(context.Background(), filepath.Join(t.TempDir(), "absent-nft"), testTable)
+	require.Error(t, err)
+	assert.False(t, present)
+}
