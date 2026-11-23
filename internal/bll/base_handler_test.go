@@ -47,6 +47,8 @@ type host struct {
 	teleportProbe reality.ClusterProbe
 	clusterProbe  reality.ClusterProbe // when set, the real cluster checker reads the cluster
 	software      map[string]state.SoftwareState
+	firewall      *state.HostFirewallObservation // when set, the firewall reader returns it
+	firewallReads int                            // how many times the firewall reader ran
 }
 
 type noReleases struct{}
@@ -205,6 +207,12 @@ func handleIntentWithCallback(t *testing.T, stateFile string, h *host, intent In
 		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) {
 			return h.teleport, nil
 		}),
+	}
+	if h.firewall != nil {
+		checkers.Firewall = func(context.Context) *state.HostFirewallObservation {
+			h.firewallReads++
+			return h.firewall
+		}
 	}
 	if h.teleportProbe != nil {
 		checkers.Teleport, err = reality.NewTeleportChecker(sm,

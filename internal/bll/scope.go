@@ -3,7 +3,10 @@
 package bll
 
 import (
+	"context"
+
 	"github.com/hashgraph/solo-weaver/internal/drift"
+	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 )
 
@@ -27,6 +30,12 @@ type Component struct {
 	// producer reports this component's out-of-band drift, or nil when the
 	// component has no drift producer yet.
 	producer drift.Producer
+	// observe reads what the producer needs that the refresh does not, into
+	// the pre-workflow state only; nil for most components.
+	observe func(ctx context.Context, rt *rsl.RuntimeResolver, s *state.State)
+	// advise names the commands that repair this component's changes among
+	// the run's out-of-band changes; nil for most components.
+	advise func(changes []drift.Change) []string
 }
 
 // The managed components. Each pairs a component's internal/state.ComponentID
@@ -38,11 +47,17 @@ var (
 	Teleport      = Component{id: state.ComponentTeleport, producer: drift.Teleport}
 	// Profile, Firewall and System are the host components: the deployment
 	// profile, the host-firewall decision, and the host's installed software
-	// and hardware. None has a drift producer yet.
+	// and hardware. Only Firewall has a drift producer.
 	Profile  = Component{id: state.ComponentProfile}
-	Firewall = Component{id: state.ComponentFirewall}
+	Firewall = Component{id: state.ComponentFirewall, producer: drift.Firewall, observe: observeHostFirewall, advise: drift.FirewallAdvice}
 	System   = Component{id: state.ComponentSystem}
 )
+
+// observeHostFirewall reads the host firewall for drift.Firewall. The refresh
+// does not, so commands that don't own the firewall never run nft.
+func observeHostFirewall(ctx context.Context, rt *rsl.RuntimeResolver, s *state.State) {
+	s.MachineState.FirewallObserved = rt.ObserveHostFirewall(ctx)
+}
 
 // producersOf returns the drift producers of the managed components that have one.
 func producersOf(managed []Component) []drift.Producer {

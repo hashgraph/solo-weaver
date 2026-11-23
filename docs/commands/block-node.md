@@ -296,6 +296,8 @@ Worth knowing:
   take names, but an unresolvable one is refused on every path in the block list rather than
   warned about — losing an entry there stops denying a host instead of stopping admitting one.
   See [Domain names in address lists](network/firewall.md#domain-names-in-address-lists).
+- **Hand edits are reported.** `install`, `reconfigure` and `upgrade` warn when the live
+  firewall differs from its config. See [Out-of-band changes](#out-of-band-changes).
 
 Full command surface: [Network commands](network/) — [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md).
 
@@ -483,7 +485,7 @@ A reconfigure that does not pass the flag never changes what is enabled.
 
 | Switch | Seeded from |
 |---|---|
-| `--firewall-enabled` | The firewall's **current on-host state**. A live `inet weaver-host-firewall` table always seeds **enabled**, even one you created by hand with `network firewall create` |
+| `--firewall-enabled` | The firewall's **current on-host state**. A live `inet weaver-host-firewall` table always seeds **enabled**, even one you created by hand with `network firewall create`. If the record says disabled, every run also warns about it ([Out-of-band changes](#out-of-band-changes)) |
 | `--traffic-shaping-enabled` | The **persisted install decision** |
 
 Teardown only happens on an explicit toggle — passing `=false`, or answering **No** to the
@@ -728,6 +730,25 @@ sudo solo-provisioner block node tc-attach --veth lxc1a2b3c --detach
 Find a pod's veth with `ip link` or `tc qdisc show`.
 
 ---
+
+## Out-of-band changes
+
+`install`, `reconfigure` and `upgrade` check the components they manage for changes made
+outside solo-provisioner before they run, and list them as warnings. The run then goes ahead.
+For the host firewall, one more line points to the repair steps and warns that any change to
+the table drops entries that are only live. What is compared and how to repair it is in
+[network firewall](network/firewall.md#changes-made-outside-solo-provisioner-are-reported).
+
+| Command | Host firewall read | What the run then does with the firewall |
+|---|---|---|
+| `install` | Yes, once the host has a state file | Creates the table if the firewall is enabled and it is missing; keeps an existing table as it is |
+| `reconfigure` | Yes, once the host has a state file | Re-renders the table from the resolved settings, or removes it when they resolve to disabled. The settings hold IPv4 addresses, single ports and one pod CIDR, so IPv6 addresses, port ranges and a second pod CIDR in the management, blocked and in-cluster sets are dropped |
+| `upgrade` | Yes, once the host has a state file | As `install` |
+| `reset`, `uninstall` | No | Nothing |
+
+The warning describes the host as the run found it. With traffic shaping on, `install` and
+`upgrade` can restart the nft unit, which reloads the table from its rendered file, so a raw
+`nft` edit does not survive the run even where the table is otherwise kept.
 
 ## See also
 

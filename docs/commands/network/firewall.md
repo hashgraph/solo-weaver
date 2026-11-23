@@ -30,7 +30,7 @@ Membership (the addresses and ports inside a rule) is always editable from the C
 | Path | Contents |
 |---|---|
 | `/etc/solo-provisioner/network-weaver-host-firewall.yaml` | The config currently applied |
-| `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The generation before it |
+| `/etc/solo-provisioner/network-weaver-host-firewall.yaml.prev` | The config before the last apply. Absent until a second apply; removed by `delete --all` |
 | `/etc/solo-provisioner/network-weaver-host-firewall.nft` | The rendered ruleset replayed at boot |
 | `/etc/solo-provisioner/network-weaver-host-firewall.dns.json` | The addresses each domain name has recently resolved to, and when each was last seen |
 
@@ -412,6 +412,94 @@ agrees with what you did here:
   result straight out of the persisted YAML, so an urgent `add --name mgmt --cidr …` is not
   reverted by the next reconfigure.
 
+### Changes made outside solo-provisioner are reported
+
+On a host that already has a state file, `block node install`, `reconfigure` and `upgrade`
+read the host firewall once before they change anything, and warn about each difference they
+find. A first install, with no state file yet, reads nothing.
+
+```text
+firewall disabled differs from persisted state: recorded "true", live "false"
+firewall configFile differs from persisted state: recorded "present", live "absent"
+firewall configFile.mgmt.cidrs differs from persisted state: recorded "1 in both", live "203.0.113.7/32, 1 in both"
+firewall configFile.allow[admin] differs from persisted state: recorded "present", live "absent"
+```
+
+- **What is compared.**
+  - The recorded decision (`firewall.disabled`) with whether the table is live.
+  - Whether the host has a config (the YAML, or the rendered `.nft` without it) with whether
+    the table is live.
+  - The addresses and ports of each reserved block and allow rule in the YAML config with the
+    live sets, once both are reduced to the fewest prefixes and ranges, since nft merges what
+    you wrote. A domain name counts as the addresses the last apply used; a name added to the
+    YAML but never applied shows on the config side.
+- **What is not compared.** Protocols, `icmp_echo`, and the rules and chains themselves. A rule
+  changed with raw `nft` is not reported, and is gone the next time the table is reloaded.
+  When the record says disabled, no table is expected, so the content is not compared either.
+- **How to read a line.** Each side lists only what the other lacks, then how many entries both
+  hold. A side is cut after 5 entries, and a run shows at most 10 lines, then one
+  `configFile.other` line naming the rest. The debug log has every list in full: look for
+  `Host firewall as read`.
+- **It only warns.** The run goes ahead and saves nothing from the warning: the record keeps
+  your decision. The line repeats on every run, and in `ownedDrift` in the
+  [action history](../../dev/action-history.md), until the two sides agree again: the live
+  table and the config for a `configFile` line, the live table and the recorded decision for
+  the `disabled` line.
+- **When the table cannot be read**, because nft failed or the shared apply lock was held for
+  5 seconds (by a `network firewall` or `network policy` command, or by the daemon re-applying
+  the ruleset), a host with a config gets
+  `firewall configFile could not be read from the live system` instead, with the cause in the
+  log at WARN. On a host recorded as disabled the line names `disabled` instead. A YAML
+  config that does not parse gives the `configFile` line too.
+- **To repair**, start from the line the run prints after the warnings, which points here.
+  Before changing anything:
+  - **Look at the table as it is now** with `network firewall show`. The run that warned may
+    already have replaced it: `reconfigure` always re-renders it, and `install` and `upgrade`
+    reload it from the `.nft` when traffic shaping restarts the nft unit.
+  - **Know what replaces the live table.** Every `network firewall` command that applies a table
+    replaces all of it. So does every start of `solo-provisioner-network-nft.service`, which
+    reloads the `.nft`: a reboot, or a restart of `nftables`, `ufw` or `firewalld`, which it is
+    `PartOf`. An entry that is only in the live table is lost then.
+  - **Management addresses first.** If a `configFile.mgmt.cidrs` or `.ports` line shows entries
+    on the live side that you still need, add them to the config with
+    `add --name mgmt --cidr …` or `--port …` before `reapply` or any other change. Only a change
+    that empties the list is refused. One that drops a single address goes through, and new
+    SSH sessions from that address are then refused.
+
+  Then, by the line you got:
+  - **A `configFile.*` line** (the live sets differ from the config):
+    [`reapply`](#reapply--re-assert-the-persisted-config) re-renders the table from the config,
+    which drops the live-only entries and applies the config-only ones. To keep live-only
+    entries, put them in the config with
+    [`add` or `set`](#add--remove--set--change-a-rules-addresses-and-ports) or
+    `create-allow-rule`. To drop config-only ones, use `remove` or `delete --name`.
+  - **`configFile` recorded `present`, live `absent`** (a config but no table):
+    [`network reassert`](reassert.md) reloads the table from the `.nft` as it is, allow rules
+    included, and writes no config. If it reports `host-firewall` as `not-provisioned`, the
+    `.nft` is gone too, and `reapply` re-renders the table from the YAML. Do not run `reapply` on
+    a host that has the `.nft` but no YAML: it rebuilds only the reserved blocks, overwrites the
+    `.nft`, and every named allow rule is lost. To remove the firewall instead, `delete --all`.
+  - **`configFile` recorded `absent`, live `present`** (a table but no config): `reapply` has
+    nothing to restore from. To keep the table, write its rules in the
+    [`--from-file` format](#create---from-file--declare-the-whole-table), reading them from
+    `show`, and apply that file with `create --from-file <file> --force`. To remove it,
+    `delete --all`.
+  - **The `disabled` line** (a live table on a host recorded as disabled): to keep the table and
+    record it as enabled, check the config with
+    `create --check --from-file /etc/solo-provisioner/network-weaver-host-firewall.yaml`, then
+    run it again without `--check`. Without `--force` it records the decision and leaves a live
+    table as it is; it logs that the flags were not applied. If there is no YAML, or it does not
+    parse, write one as for a table with no config. To remove the table, `delete --all`. Avoid
+    `block node reconfigure` for this: any reconfigure that keeps the firewall enabled, with or
+    without `--firewall-enabled=true`, re-renders the management, blocked and in-cluster sets
+    from flag-shaped settings, which drop IPv6 addresses, port ranges and any second pod CIDR,
+    and rewrites the config to match, so the next run does not report the loss.
+  - **A `could not be read` line:** the cause is in the log at WARN. If the config does not
+    parse, see [Recovering a corrupt config](#recovering-a-corrupt-config).
+- **Between block node runs nothing is reported.** A restart of the nft unit (any `network
+  firewall` change, a DNS refresh that moves an address, a reboot) replaces the live table
+  from the rendered file without a log line.
+
 ## Domain names in address lists
 
 `--mgmt-cidrs`, `--blocked-cidrs`, and `--cidr`/`--cidrs` on any of those or on a declared
@@ -667,25 +755,40 @@ reloads the kernel whether anything changed or not.
 
 ### Recovering a corrupt config
 
-Every apply retains the generation it replaces, so repair is two steps and **keeps the named
-allow rules**:
+A config that does not parse stops every verb that loads it. In order of preference:
 
-```bash
-sudo cp /etc/solo-provisioner/network-weaver-host-firewall.yaml.prev \
-        /etc/solo-provisioner/network-weaver-host-firewall.yaml
-sudo solo-provisioner network firewall reapply
-```
+1. **Fix the file by hand.** The error names the problem. `show` prints the live table, which
+   is the last config applied unless something has replaced the table since. Check the fix
+   with `create --check --from-file /etc/solo-provisioner/network-weaver-host-firewall.yaml`,
+   then run `reapply`.
+2. **Start from the retained copy**, if there is one. It is the config from *before the last
+   apply*, so restoring it undoes that apply. Compare it with `show` first, management
+   addresses above all: restoring a config from before a change to `mgmt` refuses new SSH
+   sessions from the addresses that change added. Then:
 
-What that retained copy is and is not:
+   ```bash
+   sudo cp /etc/solo-provisioner/network-weaver-host-firewall.yaml.prev \
+           /etc/solo-provisioner/network-weaver-host-firewall.yaml
+   sudo solo-provisioner network firewall reapply
+   ```
 
-- **One generation deep.** It is a recovery artifact, not version history. Keep history in
-  your own repository, holding the output of `show --output yaml`.
+3. **As a last resort**, move the config aside and run `reapply`. With no config it re-parses
+   the rendered `.nft`, which recovers the three reserved blocks but **loses every named allow
+   rule**, and domain names come back as the addresses they last resolved to.
+
+What the retained copy is and is not:
+
+- **One generation deep, and not always there.** The first apply retains nothing, so a host
+  whose firewall was applied once (by a single `block node install`, say) has no copy. It is a
+  recovery artifact, not version history. Keep history in your own repository, holding the
+  output of `show --output yaml`.
 - **Always loadable.** It is only written when the config it replaces parses, so it is never
-  itself corrupt. Recovering from it does not consume it — the bad config is not promoted over
-  the good one.
-- **Not the last line of defence.** Without it, a lost config falls through to re-parsing the
-  rendered `.nft`, which recovers the three reserved blocks but **loses every named allow
-  rule**. That fallback still exists; the retained copy is what keeps you from needing it.
+  itself corrupt. Recovering from it does not consume it, and the bad config is not promoted
+  over the good one.
+- **Older than you may expect after a `block node reconfigure`.** A reconfigure over a config
+  that does not parse re-renders the table without the allow rules it could not read, writes a
+  new config, and keeps the older retained copy. That copy is then the generation before the
+  last good config.
 
 `delete --all` removes the retained copy along with the config and the `.nft`.
 

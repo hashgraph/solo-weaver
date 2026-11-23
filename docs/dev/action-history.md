@@ -78,10 +78,16 @@ name `machine`, and entries written before outcomes were recorded have no `outco
 Each record names the component and field, its persisted and live values, and:
 
 - `destroyAllowed`: the drift guard let the run go ahead over a change its action destroys;
-- `destroyed`: the run's own read after the workflow no longer finds the change;
+- `destroyed`: the run was allowed to destroy the change (`destroyAllowed`) and its own read
+  after the workflow no longer finds it. A run that converges over a change without being
+  allowed to destroy it, such as a block node run over host firewall drift, records `false`
+  even when it overwrote the change;
 - `unconfirmed`: the run was allowed to destroy the change, but its read after the workflow
   failed, so whether the change is gone is unknown;
 - `unobserved`: the run could not read the live value at all.
+
+A record that keeps the operator's decision, such as the host firewall's, is never replaced by
+what the host shows, so the same drift is recorded again on every run until it is repaired.
 
 ## Which files each target can change
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -143,4 +144,33 @@ func populatedState() state.State {
 	s.ConsensusNodes = map[string]state.ConsensusNodeState{"node1": {NodeId: 1}}
 	s.TeleportState.NodeAgent = state.TeleportNodeAgentState{Installed: true}
 	return s
+}
+
+// A block node command never stops on host firewall drift: it converges the
+// firewall, and an unread table would otherwise stop every run with no flag
+// past it (drift_guard.go). Holds for any handler that learns to destroy drift.
+func TestHandlers_FirewallDriftNeverStopsARun(t *testing.T) {
+	h := newTestHandlers(t)
+	changes := []drift.Change{
+		{Component: "firewall", Field: "disabled", Persisted: "true", Live: "false"},
+		{Component: "firewall", Field: "disabled", Persisted: "true", Unobserved: true},
+		{Component: "firewall", Field: "configFile", Persisted: "present", Live: "absent", Removed: true},
+		{Component: "firewall", Field: "configFile", Persisted: "absent", Live: "present"},
+		{Component: "firewall", Field: "configFile", Persisted: "present", Unobserved: true},
+		{Component: "firewall", Field: "configFile.mgmt.cidrs", Persisted: "1 in both", Live: "203.0.113.7/32, 1 in both"},
+		{Component: "firewall", Field: "configFile.allow[admin]", Persisted: "present", Live: "absent", Removed: true},
+		{Component: "firewall", Field: "configFile.other", Persisted: "configFile.allow[x]", Live: "see the debug log"},
+	}
+	for name, handler := range map[string]any{
+		"install": h.install, "installWithCluster": h.installWithCluster, "upgrade": h.upgrade,
+		"reconfigure": h.reconfigure, "reset": h.reset, "uninstall": h.uninstall,
+	} {
+		destroyer, ok := handler.(bll.DriftDestroyer[models.BlockNodeInputs])
+		if !ok {
+			continue
+		}
+		for _, c := range changes {
+			require.Falsef(t, destroyer.DestroysDrift(models.UserInputs[models.BlockNodeInputs]{}, c), "%s destroys %s", name, c.Field)
+		}
+	}
 }
