@@ -53,5 +53,18 @@ runs:
           fi
         fi
 
+        # How big this VM's disk grew is the number to size the host's disk and the
+        # VM cap against.
+        echo "VM working directory size at teardown: $(du -sh "${VM_DIR}" 2>/dev/null | cut -f1)"
+
         echo "Removing VM working directory..."
         rm -rf "${VM_DIR}"
+
+    - name: Report host health
+      if: always()
+      shell: bash
+      run: |
+        HEALTH="${GITHUB_WORKSPACE}/scripts/kvm-runner/health-check.sh"
+        if [ -x "${HEALTH}" ]; then
+          "${HEALTH}" --annotations --summary || true
+        fi
