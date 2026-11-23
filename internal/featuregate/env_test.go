@@ -39,6 +39,17 @@ func TestEnvOverride_EnablesAlphaFeature(t *testing.T) {
 	require.False(t, g3.Enabled(featuregate.ConsensusNodeOperatorManaged))
 }
 
+// An env off-request (=0) is a kill switch: it wins over an explicit override such as
+// the --experimental opt-in, so a feature an operator disabled cannot be resurrected.
+func TestEnvOffRequest_WinsOverOverride(t *testing.T) {
+	t.Setenv(featuregate.OverrideEnvVar(featuregate.KubeClusterUpgrade), "0")
+	g, err := featuregate.New(featuregate.Options{
+		Overrides: map[gatekit.Feature]bool{featuregate.KubeClusterUpgrade: true}, // like --experimental
+	})
+	require.NoError(t, err)
+	require.False(t, g.Enabled(featuregate.KubeClusterUpgrade))
+}
+
 // A mistyped opt-in var that matches no feature fails fast (error-and-stop).
 func TestEnvOverride_UnknownVarErrors(t *testing.T) {
 	t.Setenv("SOLO_PROVISIONER_ENABLE_NOPE", "1")

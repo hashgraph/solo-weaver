@@ -85,9 +85,10 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 		return nil, err
 	}
 	overrides := map[gatekit.Feature]bool{}
+
+	// 1. Env on-requests, readiness-gated: a not-ready feature stays dormant.
 	for f, on := range envReq {
 		if !on {
-			overrides[f] = false // an off-request is a kill switch — always honoured
 			continue
 		}
 		ready, err := experimentalReadyAt(f, current)
@@ -97,14 +98,20 @@ func New(o Options) (*gatekit.FeatureGate, error) {
 		if ready {
 			overrides[f] = true
 		}
-		// A not-ready feature stays dormant: the on-request is dropped.
 	}
 
-	// Explicit Options.Overrides win over env (applied last — last-writer). This is the
-	// raw seam: the command layer's --experimental opt-in (already readiness-checked),
-	// and programmatic/test forcing.
+	// 2. Explicit Options.Overrides: the raw seam — the command layer's --experimental
+	// opt-in (already readiness-checked) and programmatic/test forcing.
 	for f, v := range o.Overrides {
 		overrides[f] = v
+	}
+
+	// 3. Env off-requests last, so =0 is a true kill switch: it wins over an on-request
+	// AND over --experimental — a feature an operator disabled cannot be resurrected.
+	for f, on := range envReq {
+		if !on {
+			overrides[f] = false
+		}
 	}
 
 	// WithSupportWindow pins W (the N/N+1 window) to the one value the registry lints
