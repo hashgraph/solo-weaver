@@ -26,11 +26,6 @@ func TestBuild_ResolvesStateAndMaturity(t *testing.T) {
 		by[r.Feature] = r
 	}
 
-	// GA feature is on at the floor; maturity is gatekit's canonical upper case.
-	np := by[string(featuregate.NetworkPolicy)]
-	require.Equal(t, "GA", np.Maturity)
-	require.True(t, np.Enabled)
-
 	// Alpha feature is listed, tagged ALPHA, and off by default.
 	bn := by[string(featuregate.ConsensusNodeOperatorManaged)]
 	require.Equal(t, "ALPHA", bn.Maturity)
@@ -102,21 +97,22 @@ func TestFilters_Apply(t *testing.T) {
 	}
 
 	// by maturity (upper-cased internally)
-	ga := filters{maturity: "GA"}.apply(all)
-	require.NotEmpty(t, ga)
-	for _, r := range ga {
-		require.Equal(t, "GA", r.Maturity)
+	alpha := filters{maturity: "ALPHA"}.apply(all)
+	require.NotEmpty(t, alpha)
+	for _, r := range alpha {
+		require.Equal(t, "ALPHA", r.Maturity)
 	}
 
-	// by enabled
-	on := true
-	enabled := filters{enabled: &on}.apply(all)
-	require.NotEmpty(t, enabled)
-	for _, r := range enabled {
-		require.True(t, r.Enabled)
+	// by enabled: nothing is on by default (alphas need an opt-in), so disabled = all.
+	off := false
+	disabled := filters{enabled: &off}.apply(all)
+	require.NotEmpty(t, disabled)
+	for _, r := range disabled {
+		require.False(t, r.Enabled)
 	}
 
 	// Alpha + enabled is empty today (alpha is off by default).
+	on := true
 	require.Empty(t, filters{maturity: "ALPHA", enabled: &on}.apply(all))
 }
 

@@ -14,15 +14,6 @@ import (
 // axis (ActiveFrom vs the in-force version) and the maturity axis (Alpha needs
 // opt-in), plus per-feature overrides.
 func TestGate_VersionAndMaturityAxes(t *testing.T) {
-	t.Run("GA feature is on at the GA floor", func(t *testing.T) {
-		g, err := featuregate.New(featuregate.Options{Current: 1})
-		require.NoError(t, err)
-		require.True(t, g.Enabled(featuregate.NetworkPolicy))
-		require.True(t, g.Enabled(featuregate.NetworkFirewall))
-		require.True(t, g.Enabled(featuregate.NetworkTrafficShaping))
-		require.True(t, g.Enabled(featuregate.EsoSecretManagement))
-	})
-
 	t.Run("Alpha feature is off without an opt-in", func(t *testing.T) {
 		g, err := featuregate.New(featuregate.Options{Current: 1})
 		require.NoError(t, err)
@@ -39,8 +30,6 @@ func TestGate_VersionAndMaturityAxes(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
-		// A GA feature is unaffected by the opt-in.
-		require.True(t, g.Enabled(featuregate.NetworkPolicy))
 	})
 }
 

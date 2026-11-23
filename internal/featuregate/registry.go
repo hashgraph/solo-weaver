@@ -20,44 +20,10 @@ import gatekit "github.com/automa-saga/gatekit"
 // graduates in place: raise its Maturity (ALPHA -> GA) at the same ActiveFrom.
 func Catalog() gatekit.Registry {
 	return gatekit.Registry{
-		// --- Activation version 1: the GA floor (shipped, default-on) ---
-		NetworkPolicy: {
-			Description: "Cilium network-policy management (`network policy`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-		NetworkFirewall: {
-			Description: "Declarative host firewall management (`network firewall`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-		NetworkTrafficShaping: {
-			Description: "tc/HTB traffic shaping for the block-node network (`network shape`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-		EsoSecretManagement: {
-			Description: "External-secrets operator and secret management (`eso`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-		KubeOperatorManagement: {
-			Description: "Manage the solo-operator lifecycle: install, uninstall, and upgrade (`kube operator`).",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-		BlockNodeProvisionerManaged: {
-			Description: "Manage block node lifecycle through solo-provisioner.",
-			Specs: gatekit.VersionedSpecs{
-				{ActiveFrom: 1, Default: true, Maturity: gatekit.GA},
-			},
-		},
-
+		// The catalog holds only genuinely gated behaviours. A stable (GA) capability
+		// is not a gate — nothing branches on it and it always runs — so it has no
+		// entry here; it is discoverable through `--help`, not `feature-gate list`.
+		//
 		// --- Activation version 1: the alpha opt-in cohort (dev gates) ---
 		// ALPHA dev gates live at the CURRENT activation version (1), not a future
 		// one: solo does not need rolling-upgrade coordinated activation, so a dev

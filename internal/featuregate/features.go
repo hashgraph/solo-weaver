@@ -13,18 +13,10 @@ package featuregate
 
 import gatekit "github.com/automa-saga/gatekit"
 
-// Feature constants. A feature names a gated *behavior*, namespaced by the
-// command area it lives under — not a command itself. Most stable commands need
-// no entry here; they are the GA floor.
+// Feature constants. A feature names a gated *behavior*, namespaced by the command
+// area it lives under — not a command itself. A stable (GA) capability has no entry:
+// nothing branches on it, so there is nothing to gate.
 const (
-	// BlockNodeProvisionerManaged is the direct-Helm block-node deployment model
-	// managed by solo-provisioner itself — today's GA default.
-	BlockNodeProvisionerManaged gatekit.Feature = "BlockNodeProvisionerManaged"
-
-	// Not yet in main — uncommented by their implementing PR (see registry.go):
-	//   BlockNodeOperatorManaged (operator HelmCapsule path) -> PR #1364.
-	// BlockNodeOperatorManaged gatekit.Feature = "BlockNodeOperatorManaged"
-
 	// ConsensusNodeOperatorManaged gates consensus-node lifecycle via solo-operator
 	// against the legacy path.
 	ConsensusNodeOperatorManaged gatekit.Feature = "ConsensusNodeOperatorManaged"
@@ -33,27 +25,11 @@ const (
 	// (`kube cluster upgrade`), still experimental.
 	KubeClusterUpgrade gatekit.Feature = "KubeClusterUpgrade"
 
-	// KubeOperatorManagement covers the solo-operator lifecycle managed by
-	// solo-provisioner: install, uninstall, and upgrade (`kube operator ...`).
-	KubeOperatorManagement gatekit.Feature = "KubeOperatorManagement"
-
-	// NetworkTrafficShaping gates the tc/HTB traffic shaper (`network shape`).
-	NetworkTrafficShaping gatekit.Feature = "NetworkTrafficShaping"
-
-	// NetworkPolicy gates Cilium network-policy management (`network policy`).
-	NetworkPolicy gatekit.Feature = "NetworkPolicy"
-
-	// NetworkFirewall gates declarative host firewall management
-	// (`network firewall`).
-	NetworkFirewall gatekit.Feature = "NetworkFirewall"
-
-	// EsoSecretManagement gates the external-secrets operator and secret
-	// handling (`eso`).
-	EsoSecretManagement gatekit.Feature = "EsoSecretManagement"
-
 	// Not yet in main — uncommented by their implementing PR (see registry.go):
+	//   BlockNodeOperatorManaged (operator HelmCapsule path) -> PR #1364.
 	//   ConsensusNodeMigrationSoak (`consensus migration soak` watcher).
 	//   SelfUpgrade (paired CLI/daemon self-upgrade, #500).
+	// BlockNodeOperatorManaged   gatekit.Feature = "BlockNodeOperatorManaged"
 	// ConsensusNodeMigrationSoak gatekit.Feature = "ConsensusNodeMigrationSoak"
 	// SelfUpgrade                gatekit.Feature = "SelfUpgrade"
 )
