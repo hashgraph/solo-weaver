@@ -127,6 +127,12 @@ func NetworkFirewallCreate(reconcile bool) *automa.StepBuilder {
 			}
 			createdByThisStep := changed && !existedBefore
 			stp.State().Local().Set(FirewallCreatedByThisStep, createdByThisStep)
+			outcome := "Host firewall kept as it was"
+			if changed {
+				outcome = "Host firewall applied from the effective config"
+			}
+			logx.As().Debug().Str("component", "firewall").Bool("changed", changed).
+				Bool("existedBefore", existedBefore).Bool("reconcile", reconcile).Msg(outcome)
 
 			meta := map[string]string{FirewallCreatedByThisStep: strconv.FormatBool(createdByThisStep)}
 			return automa.SuccessReport(stp, automa.WithMetadata(meta))

@@ -3,6 +3,7 @@
 package common
 
 import (
+	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
@@ -55,6 +56,10 @@ func resolveFeatureGate(cmd *cobra.Command, args []string, f gatedFeature, seedE
 
 	// Seeded from the caller-supplied default, overridden by the flag when set.
 	enabled := effectiveBool(cmd, f.GateFlag, seedEnabled)
+	source := "seed"
+	if cmd.Flags().Changed(f.GateFlag) {
+		source = "flag"
+	}
 
 	// Prompt for the enable/disable choice only when it wasn't already decided
 	// on the CLI. Declining here skips the feature's content prompts entirely —
@@ -65,7 +70,10 @@ func resolveFeatureGate(cmd *cobra.Command, args []string, f gatedFeature, seedE
 			return false, err
 		}
 		enabled = confirmed
+		source = "prompt"
 	}
+	logx.As().Debug().Str("feature", f.Noun).Str("source", source).Bool("enabled", enabled).
+		Msg("Decided whether to apply the feature")
 
 	// Non-interactive callers that supply the feature's content flags without
 	// also passing its gate flag would otherwise have those flags silently

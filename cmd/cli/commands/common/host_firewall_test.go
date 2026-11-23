@@ -126,18 +126,22 @@ func TestResolveFirewallSeed(t *testing.T) {
 		persisted *models.HostConfig
 		active    bool
 		want      bool
+		source    string
 	}{
-		{"nothing recorded, table live", nil, true, true},
-		{"nothing recorded, no table", nil, false, false},
-		{"recorded disabled, table live", disabled, true, true},
-		{"recorded disabled, no table", disabled, false, false},
-		{"recorded enabled, no table", enabled, false, true},
-		{"recorded enabled, table live", enabled, true, true},
+		{"nothing recorded, table live", nil, true, true, "live"},
+		{"nothing recorded, no table", nil, false, false, "none"},
+		{"recorded disabled, table live", disabled, true, true, "live"},
+		{"recorded disabled, no table", disabled, false, false, "recorded"},
+		{"recorded enabled, no table", enabled, false, true, "recorded"},
+		{"recorded enabled, table live", enabled, true, true, "recorded"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			logs := captureLogs(t)
 			stubFirewallManager(t, tt.active, nil)
 			assert.Equal(t, tt.want, ResolveFirewallSeed(context.Background(), tt.persisted))
+			// The log says what decided, so a kept or removed firewall can be traced.
+			assert.Contains(t, logs.String(), `"source":"`+tt.source+`"`)
 		})
 	}
 }
@@ -289,9 +293,13 @@ func TestResolveFirewallSeed_UnanswerableProbeFallsBackToRecordedState(t *testin
 			stubFirewallManagerWithRunner(t, &probeRunner{existsErr: probeErr},
 				dir, filepath.Join(dir, "network-weaver-host-firewall.yaml"))
 
+			logs := captureLogs(t)
 			// A broken probe must never panic or propagate: the seed has no error
 			// return, so its only safe answer is the recorded decision.
 			assert.Equal(t, tt.want, ResolveFirewallSeed(context.Background(), tt.persisted))
+			if tt.persisted == nil || tt.persisted.Disabled {
+				assert.Contains(t, logs.String(), `"source":"probe-failed"`)
+			}
 		})
 	}
 }

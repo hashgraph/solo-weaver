@@ -307,6 +307,7 @@ var newHostFirewallManager = func() *firewall.Manager { return firewall.NewManag
 func ResolveFirewallSeed(ctx context.Context, persisted *models.HostConfig) bool {
 	recorded := persisted != nil && !persisted.Disabled
 	if recorded {
+		logx.As().Debug().Str("source", "recorded").Bool("enabled", true).Msg("Seeded the host firewall decision")
 		return true
 	}
 
@@ -314,15 +315,22 @@ func ResolveFirewallSeed(ctx context.Context, persisted *models.HostConfig) bool
 	if err != nil {
 		// Not fatal: an unreadable probe just means we fall back to what state
 		// recorded, which is the pre-#1003 behaviour.
-		logx.As().Debug().Err(err).Msg("could not probe the live host firewall; seeding from persisted state only")
+		logx.As().Debug().Err(err).Str("source", "probe-failed").Bool("enabled", recorded).
+			Msg("could not probe the live host firewall; seeding from persisted state only")
 		return recorded
 	}
 	if active {
 		logx.As().Info().Msg(
 			"a host firewall (inet weaver-host-firewall) is active but the block node has no record of enabling it; " +
 				"keeping it enabled — pass --firewall-enabled=false to remove it deliberately")
+		logx.As().Debug().Str("source", "live").Bool("enabled", true).Msg("Seeded the host firewall decision")
 		return true
 	}
+	source := "recorded"
+	if persisted == nil {
+		source = "none"
+	}
+	logx.As().Debug().Str("source", source).Bool("enabled", recorded).Msg("Seeded the host firewall decision")
 	return recorded
 }
 
@@ -551,7 +559,12 @@ func SeedHostFirewallFromState() error {
 	}
 
 	config.OverrideHostConfig(cfg)
+	source := "recorded"
+	if configHasContent {
+		source = "config"
+	}
 	logx.As().Debug().
+		Str("source", source).
 		Bool("disabled", cfg.Disabled).
 		Bool("configHasContent", configHasContent).
 		Int("managementCidrs", len(cfg.ManagementCIDRs)).
