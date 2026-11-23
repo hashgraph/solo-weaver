@@ -269,17 +269,6 @@ func (b *BlockNodeState) Diff(reality BlockNodeState) []FieldDiff {
 	return diffs
 }
 
-// Equal returns true if no observable field differs between the two values:
-// weaver-only records, which a refresh cannot rebuild, are ignored.
-func (b *BlockNodeState) Equal(other BlockNodeState) bool {
-	for _, d := range b.Diff(other) {
-		if d.Observable {
-			return false
-		}
-	}
-	return true
-}
-
 // Equal returns true if two ConsensusNodeManagedSpec values describe the same
 // managed shape. It compares the stable hash (which covers every field, including
 // the Volumes map and the pull-secret selector), so a nil and an empty-but-non-nil
