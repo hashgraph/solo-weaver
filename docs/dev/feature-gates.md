@@ -155,8 +155,26 @@ I want to gate a behaviour.
 
 ## Feature lifecycle — define and promote
 
+A feature gate is **transitional scaffolding**, not a permanent switch. Its maturity
+climbs until the feature is stable — and then the gate is **removed**: the code path
+becomes unconditional and the gate row disappears. (Kubernetes works the same way — it
+deletes a feature gate a few releases after it reaches GA.)
+
+```text
+  Alpha   →   Beta   →   GA    →   (gate removed)
+  off,        more        on,       code path becomes unconditional;
+  opt-in      baked       locked    the gate row + the old `else` branch deleted
+```
+
+So **GA is a hand-off waypoint, not a home.** A GA gate is on by default and briefly
+locked on — a rollback tripwire during the transition — and once the new path is proven
+and the old `else` branch is deleted, the gate is removed. The catalog should never
+accumulate permanent always-on GA rows: a stable capability that no longer toggles
+anything has **no gate at all** (it's just how the product works, discoverable via
+`--help`).
+
 A development gate's whole life happens at one activation version — only the
-`Maturity` and `Default` change:
+`Maturity` and `Default` change (Beta is an optional step):
 
 ```text
 How one feature moves through its life — the activation version stays at 1:
@@ -357,9 +375,12 @@ unprivileged.
 - **Graduate a compatibility gate** — see
   [Compatibility gates in depth](#compatibility-gates-in-depth): the new era is a spec
   at `current + 1`, activated by `finalize`.
-- **Remove (contract step)** — delete the `else` branch and the old code, and mark any
-  superseded model `DEPRECATED`. The code carries at most two eras at once; deleting
-  the old side each cycle is the whole point.
+- **Remove (contract step)** — once GA is stable, delete the `else` branch, the old
+  code, **and the gate row itself**, and mark any superseded model `DEPRECATED`. This
+  is not optional cleanup: a gate exists only while two code paths coexist, so a stable
+  GA feature should end with its gate removed, never left as a permanent always-on row.
+  The code carries at most two eras at once; deleting the old side each cycle is the
+  whole point.
 
 ## Compatibility gates in depth
 
