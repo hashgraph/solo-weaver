@@ -78,7 +78,7 @@ func TestRunStartupMigrations_PersistsVersionAndStopsRerun(t *testing.T) {
 	ctx := context.Background()
 
 	// Run 1: absent state.yaml → "" → 0.0.0 baseline → boundary applies → runs once.
-	require.NoError(t, RunStartupMigrations(ctx))
+	require.NoError(t, RunStartupMigrations(ctx, ""))
 	assert.Equal(t, 1, *applied, "run 1 must execute the boundary migration once")
 
 	// The orchestrator recorded the running version at the reader's path.
@@ -88,7 +88,7 @@ func TestRunStartupMigrations_PersistsVersionAndStopsRerun(t *testing.T) {
 
 	// Run 2: the reader now returns the recorded version → not the baseline → the
 	// boundary no longer applies, so the migration is not re-run.
-	require.NoError(t, RunStartupMigrations(ctx))
+	require.NoError(t, RunStartupMigrations(ctx, ""))
 	assert.Equal(t, 1, *applied, "run 2 must NOT re-execute the migration")
 }
 
@@ -102,7 +102,7 @@ func TestRunStartupMigrations_SkipsPersistWhenKubernetesAbsent(t *testing.T) {
 
 	ctx := context.Background()
 
-	require.NoError(t, RunStartupMigrations(ctx))
+	require.NoError(t, RunStartupMigrations(ctx, ""))
 	assert.Equal(t, 1, *applied, "run 1 still runs the migration")
 
 	// Gate closed: nothing recorded, so the reader still sees an empty version.
@@ -111,7 +111,7 @@ func TestRunStartupMigrations_SkipsPersistWhenKubernetesAbsent(t *testing.T) {
 	assert.Empty(t, recorded, "version must NOT be persisted on a non-provisioned host")
 
 	// Without a recorded version the boundary applies again on the next run.
-	require.NoError(t, RunStartupMigrations(ctx))
+	require.NoError(t, RunStartupMigrations(ctx, ""))
 	assert.Equal(t, 2, *applied, "without a recorded version the migration re-runs")
 }
 
@@ -133,7 +133,7 @@ func TestRunStartupMigrations_PersistsVersionWhenNoMigrationApplies(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, before)
 
-	require.NoError(t, RunStartupMigrations(context.Background()))
+	require.NoError(t, RunStartupMigrations(context.Background(), ""))
 
 	recorded, err := state.ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 
 	// The migration applies (baseline crosses the boundary) and the persist fails —
 	// RunStartupMigrations must swallow the error and still return nil.
-	require.NoError(t, RunStartupMigrations(context.Background()),
+	require.NoError(t, RunStartupMigrations(context.Background(), ""),
 		"a failed version record must not fail startup")
 	assert.Equal(t, 1, persistCalled, "the version record must have been attempted")
 	assert.Equal(t, 1, *applied, "the migration must still have executed despite the persist failure")
@@ -193,9 +193,16 @@ func TestRunStartupMigrations_FailureKeepsReasonAndHints(t *testing.T) {
 	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
 	workflows.KubernetesInstalled = func() bool { return true }
 
-	err := RunStartupMigrations(context.Background())
+	buf := captureLogs(t)
+	const command = "solo-provisioner kube"
+	err := RunStartupMigrations(context.Background(), command)
 
 	require.ErrorIs(t, err, cause)
+	failed := logLinesByMessage(t, buf)["Startup migrations failed"]
+	require.NotNil(t, failed, "the pass must log its own failure line: %s", buf.String())
+	assert.Equal(t, command, failed["command"])
+	assert.Contains(t, failed, "elapsed")
+	assert.NotEmpty(t, failed["failed"])
 	reason, ok := errx.ReasonOf(err)
 	require.True(t, ok)
 	assert.Equal(t, reasons.PreconditionNotMet, reason)
@@ -240,7 +247,7 @@ func TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce(t *testing.T) 
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- RunStartupMigrations(context.Background())
+			errs <- RunStartupMigrations(context.Background(), "")
 		}()
 	}
 	close(start)
@@ -278,8 +285,8 @@ func TestRunStartupMigrations_RecordsThePass(t *testing.T) {
 	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
 	workflows.KubernetesInstalled = func() bool { return true }
 
-	require.NoError(t, RunStartupMigrations(context.Background()))
-	require.NoError(t, RunStartupMigrations(context.Background()))
+	require.NoError(t, RunStartupMigrations(context.Background(), ""))
+	require.NoError(t, RunStartupMigrations(context.Background(), ""))
 
 	b, err := os.ReadFile(state.ActionHistoryFilePath(models.Paths().StateDir))
 	require.NoError(t, err)

@@ -24,7 +24,7 @@ var selfInstallCmd = &cobra.Command{
 		// the install command, so we invoke it explicitly here. This ensures
 		// startup-scoped migrations such as LegacyBinaryMigration run even when
 		// the user is installing or re-installing.
-		if err := common.RunStartupMigrations(cmd.Context()); err != nil {
+		if err := common.RunStartupMigrations(cmd.Context(), cmd.CommandPath()); err != nil {
 			return err
 		}
 
