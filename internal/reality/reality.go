@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/hashgraph/solo-weaver/internal/kube"
+	"github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	helm2 "github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
@@ -29,6 +30,9 @@ type Checkers struct {
 	// Probe is the probe the checkers use, for callers that must know why the
 	// cluster could not be read.
 	Probe ClusterProbe
+	// Firewall reads the host firewall for the drift producer. Nil in a
+	// Checkers built by hand, so a unit test never runs nft; NewCheckers sets it.
+	Firewall FirewallReader
 }
 
 // ---------------------------------------------------------------------------
@@ -179,5 +183,6 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		Consensus: consensus,
 		Teleport:  teleport,
 		Probe:     cc.probe,
+		Firewall:  firewallReader(firewall.NewManager().ObserveDrift),
 	}, nil
 }

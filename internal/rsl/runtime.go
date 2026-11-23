@@ -27,6 +27,9 @@ type RuntimeResolver struct {
 	ClusterRuntime   Resolver[state.ClusterState, models.ClusterInputs]
 	MachineRuntime   Resolver[state.MachineState, models.MachineInputs]
 	TeleportRuntime  Resolver[state.TeleportState, models.TeleportNodeInputs]
+	// firewall reads the host firewall on request only; nil when the checkers
+	// have no reader.
+	firewall reality.FirewallReader
 }
 
 // NewRuntimeResolver creates a RuntimeResolver by constructing each runtime from the supplied
@@ -74,7 +77,18 @@ func NewRuntimeResolver(
 		ConsensusRuntime: consensusRuntime,
 		MachineRuntime:   machineRuntime,
 		TeleportRuntime:  teleportRuntime,
+		firewall:         realityChecker.Firewall,
 	}, nil
+}
+
+// ObserveHostFirewall reads the host firewall as it is, or returns nil when
+// there is no reader or the host could not be read. Unlike Refresh, it runs
+// only when asked: only a command that owns the host firewall needs it.
+func (r *RuntimeResolver) ObserveHostFirewall(ctx context.Context) *state.HostFirewallObservation {
+	if r == nil || r.firewall == nil {
+		return nil
+	}
+	return r.firewall(ctx)
 }
 
 // Refresh forces all runtimes to refresh their state from reality, bypassing any caching or staleness checks.
