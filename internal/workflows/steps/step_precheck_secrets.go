@@ -9,7 +9,7 @@ import (
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
-	"github.com/hashgraph/solo-weaver/internal/kube"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -18,17 +18,21 @@ import (
 
 const PrecheckConsensusSecretsStepId = "precheck-consensus-secrets"
 
-func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder {
+func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(PrecheckConsensusSecretsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			// A consensus node needs exactly two secrets: gossip signing keys and
-			// the gRPC TLS key/cert.
-			secrets := map[string]string{
-				"--grpc-tls-secret": inputs.GrpcTlsSecret,
-				"--signing-secret":  inputs.SigningSecret,
+			// the gRPC TLS key/cert. Each must hold the entries the capsule references.
+			secrets := []struct {
+				flag    string
+				name    string
+				entries []string
+			}{
+				{"--grpc-tls-secret", inputs.GrpcTlsSecret, []string{cnkeys.FileGrpcKey, cnkeys.FileGrpcCert}},
+				{"--signing-secret", inputs.SigningSecret, []string{cnkeys.FileGossipPrivate, cnkeys.FileGossipCert}},
 			}
 
-			kc, err := kube.NewClient()
+			kc, err := provider(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
@@ -36,7 +40,8 @@ func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder 
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			for flag, name := range secrets {
+			for _, sec := range secrets {
+				flag, name := sec.flag, sec.name
 				exists, err := kc.ResourceExists(ctx, "v1", "Secret", inputs.Namespace, name)
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
@@ -51,6 +56,9 @@ func PrecheckConsensusSecrets(inputs models.ConsensusNodeInputs) automa.Builder 
 							name, flag, inputs.Namespace),
 						reasons.PreconditionNotMet,
 						fmt.Sprintf("Create the required Kubernetes Secret %q in namespace %s (e.g. via 'solo-provisioner eso secret create') before installing", name, inputs.Namespace))))
+				}
+				if err := requireSecretEntries(ctx, kc, inputs.Namespace, name, flag, sec.entries...); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 				logx.As().Info().Str("secret", name).Str("flag", flag).Msg("Secret exists")
 			}

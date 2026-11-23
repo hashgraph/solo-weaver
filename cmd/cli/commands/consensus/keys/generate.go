@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package keys
+
+import (
+	"fmt"
+	"net"
+	"strings"
+
+	"github.com/automa-saga/errx"
+	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
+	corekeys "github.com/hashgraph/solo-weaver/pkg/consensus/keys"
+	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/hashgraph/solo-weaver/pkg/sanity"
+	"github.com/joomcode/errorx"
+	"github.com/spf13/cobra"
+)
+
+var (
+	readGrpcFlags func() (corekeys.GrpcOptions, error)
+
+	flagKeysDir           string
+	flagIdentity          string
+	flagMachineID         string
+	flagGossip            bool
+	flagTLS               bool
+	flagGenerateOverwrite bool
+)
+
+var generateCmd = &cobra.Command{
+	Args:  cobra.NoArgs,
+	Use:   "generate",
+	Short: "Generate one node's key material into a folder",
+	Long: "Generate the gossip signing key and gRPC TLS key for one node into " +
+		"--keys-dir as enhanced PEM. Generation is node-id-free: the gossip certificate CN is the " +
+		"machine UUID and the gRPC certificate CN is localhost, so the material is valid before the " +
+		"network assigns a node-id during a DAB join.\n\n" +
+		"--keys-dir is one node's folder — make it node-specific. For a genesis network, run generate " +
+		"once per node into its own --keys-dir.\n\n" +
+		"The command prints the gRPC certificate hash (the one join input not written as a file) to " +
+		"stdout. The gossip certificate is written as PEM and as DER (" + cnkeys.FileGossipCertDER + ", the form " +
+		"nodeCreate takes). The node admin key is not generated here: create it in " +
+		"an external wallet and provide only its public key. To also create the Kubernetes " +
+		"secrets in one step, use `consensus keys init`.",
+	RunE: runGenerate,
+}
+
+func init() {
+	generateCmd.Flags().StringVar(&flagKeysDir, "keys-dir", models.Paths().ConsensusKeysDir, "Directory for this node's key material; make it node-specific")
+	generateCmd.Flags().StringVar(&flagIdentity, "identity", "", "Optional human-readable label recorded in the gossip certificate OU/SAN (e.g. operator or host name)")
+	generateCmd.Flags().StringVar(&flagMachineID, "machine-id", "", "Override the gossip certificate CN; defaults to the host machine UUID (/etc/machine-id)")
+	generateCmd.Flags().BoolVar(&flagGossip, "gossip", false, "Generate the gossip signing key (default: generate all types when no selector is given)")
+	generateCmd.Flags().BoolVar(&flagTLS, "tls", false, "Generate the gRPC TLS key (default: generate all types when no selector is given)")
+	readGrpcFlags = addGrpcFlags(generateCmd)
+	generateCmd.Flags().BoolVar(&flagGenerateOverwrite, "overwrite", false, "Replace existing key files in --keys-dir with new keys. This gives the node a new network identity and a new gRPC certificate hash")
+}
+
+func runGenerate(cmd *cobra.Command, _ []string) error {
+	if strings.TrimSpace(flagKeysDir) == "" {
+		return errx.Decorate(
+			errorx.IllegalArgument.New("--keys-dir must not be empty"),
+			reasons.InvalidArgument,
+			"pass --keys-dir <dir> (a node-specific directory) for the key material")
+	}
+
+	grpcOpts, err := readGrpcFlags()
+	if err != nil {
+		return err
+	}
+
+	requested := cnkeys.Selectors{Gossip: flagGossip, Grpc: flagTLS}
+	toGen, need := planGeneration(cmd, flagKeysDir, requested, flagGenerateOverwrite)
+	if !need {
+		cmd.Printf("All selected key material already exists in %s; nothing to generate (pass --overwrite to replace it).\n", flagKeysDir)
+		return nil
+	}
+
+	set, err := cnkeys.Generate(cnkeys.GenerateOptions{
+		Selectors: toGen,
+		Identity:  flagIdentity,
+		MachineID: flagMachineID,
+		Grpc:      grpcOpts,
+	})
+	if err != nil {
+		return errx.Decorate(err, reasons.Internal)
+	}
+
+	if err := set.WriteToDir(flagKeysDir); err != nil {
+		return errx.Decorate(err, reasons.Internal,
+			fmt.Sprintf("ensure %q is writable and has enough space", flagKeysDir))
+	}
+
+	logx.As().Info().Str("keysDir", flagKeysDir).Msg("Generated consensus node key material")
+	printSummary(cmd, flagKeysDir, set)
+	return nil
+}
+
+// addGrpcFlags registers the gRPC certificate flags on cmd and returns a reader
+// that validates them. Fresh vars per command avoid shared-flag clobbering.
+func addGrpcFlags(cmd *cobra.Command) func() (corekeys.GrpcOptions, error) {
+	dns := cmd.Flags().StringSlice("grpc-dns", nil, "Extra fully qualified DNS SAN for the gRPC TLS certificate, added to localhost (repeatable)")
+	ips := cmd.Flags().StringSlice("grpc-ip", nil, "Extra IP SAN for the gRPC TLS certificate, added to the loopback addresses (repeatable)")
+	cn := cmd.Flags().String("grpc-cn", "", "Common name (subject and issuer) of the gRPC TLS certificate; default is localhost")
+	org := cmd.Flags().String("grpc-org", "", "Organization (subject and issuer O) of the gRPC TLS certificate; omitted by default")
+	days := cmd.Flags().Int("grpc-validity-days", 0, fmt.Sprintf("gRPC TLS certificate lifetime in days (1-%d); default is 100 years", corekeys.MaxGrpcValidityDays))
+	return func() (corekeys.GrpcOptions, error) {
+		opts := corekeys.GrpcOptions{ValidityDays: *days}
+		if *cn != "" {
+			name, err := corekeys.NormalizeGrpcCommonName(*cn)
+			if err != nil {
+				return opts, errx.Decorate(err, reasons.InvalidArgument,
+					fmt.Sprintf("pass a non-blank --grpc-cn of at most %d characters without control characters", corekeys.MaxSubjectFieldLength))
+			}
+			opts.CommonName = name
+		}
+		if *org != "" {
+			name, err := corekeys.NormalizeGrpcOrganization(*org)
+			if err != nil {
+				return opts, errx.Decorate(err, reasons.InvalidArgument,
+					fmt.Sprintf("pass a non-blank --grpc-org of at most %d characters without control characters", corekeys.MaxSubjectFieldLength))
+			}
+			opts.Organization = name
+		}
+		for _, d := range *dns {
+			d = strings.TrimSpace(d)
+			if err := sanity.ValidateFQDN(d); err != nil {
+				return opts, errx.Decorate(err, reasons.InvalidArgument, "pass a fully qualified host name (with at least one dot) to --grpc-dns, e.g. node0.example.org")
+			}
+			opts.DNSNames = append(opts.DNSNames, d)
+		}
+		for _, raw := range *ips {
+			ip := net.ParseIP(strings.TrimSpace(raw))
+			if ip == nil {
+				return opts, errx.Decorate(
+					errorx.IllegalArgument.New("invalid --grpc-ip %q", raw),
+					reasons.InvalidArgument, "pass an IPv4 or IPv6 address, e.g. 10.1.2.3")
+			}
+			opts.IPAddresses = append(opts.IPAddresses, ip)
+		}
+		if *days < 0 || *days > corekeys.MaxGrpcValidityDays {
+			return opts, errx.Decorate(
+				errorx.IllegalArgument.New("--grpc-validity-days must be between 1 and %d, got %d", corekeys.MaxGrpcValidityDays, *days),
+				reasons.InvalidArgument, "omit the flag for the default 100-year lifetime")
+		}
+		return opts, nil
+	}
+}
+
+// planGeneration decides which requested key types to (re)generate into keysDir.
+// Generation is idempotent: an existing type is skipped (with a warning) unless
+// overwrite is set. The bool is false when nothing needs generating.
+func planGeneration(cmd *cobra.Command, keysDir string, requested cnkeys.Selectors, overwrite bool) (cnkeys.Selectors, bool) {
+	requested = cnkeys.NormalizeSelectors(requested)
+	requested.Admin = false // the admin key is never generated
+	if overwrite {
+		return requested, requested.Any()
+	}
+	toGen := requested.Minus(cnkeys.ExistingSelectors(keysDir))
+	kept := requested.Minus(toGen)
+	warnSkipped(keysDir, kept)
+	if kept.Any() {
+		hintRootForce(cmd)
+	}
+	return toGen, toGen.Any()
+}
+
+// hintRootForce tells an operator who passed the root --force (skip prompts)
+// that it does not replace existing keys; only --overwrite does.
+func hintRootForce(cmd *cobra.Command) {
+	if force, err := common.FlagForce().Value(cmd, nil); err == nil && force {
+		cmd.PrintErrln("--force does not replace existing key material; pass --overwrite to replace it (this gives the node a new network identity)")
+	}
+}
+
+// warnSkipped logs a warning for each already-present key type that is being kept.
+func warnSkipped(keysDir string, skipped cnkeys.Selectors) {
+	for _, k := range []struct {
+		on   bool
+		name string
+	}{{skipped.Gossip, "gossip"}, {skipped.Grpc, "grpc"}} {
+		if k.on {
+			logx.As().Warn().Str("keysDir", keysDir).Str("keyType", k.name).
+				Msg("Keeping existing key material (pass --overwrite to replace it)")
+		}
+	}
+}
+
+// printSummary writes copy-pasteable guidance to stdout, including the gRPC
+// certificate hash (the one join input not written as a file).
+func printSummary(cmd *cobra.Command, dir string, set *cnkeys.NodeKeySet) {
+	cmd.Printf("Generated key material in %s\n", dir)
+
+	if set.Gossip != nil {
+		cmd.Printf("  gossip signing key: %s, %s, %s\n", cnkeys.FileGossipPrivate, cnkeys.FileGossipCert, cnkeys.FileGossipCertDER)
+	}
+	if set.Grpc != nil {
+		cmd.Printf("  gRPC TLS key:       %s, %s\n", cnkeys.FileGrpcKey, cnkeys.FileGrpcCert)
+		cmd.Printf("  gRPC cert hash (SHA-384): %s\n", set.Grpc.CertHashSHA384())
+	}
+
+	cmd.Println()
+	cmd.Println("Next steps:")
+	cmd.Println("  - Genesis / known id:  consensus keys import --node-id <N> --keys-dir " + dir)
+	cmd.Println("  - DAB join:            submit nodeCreate off-cluster using the gossip cert (" + cnkeys.FileGossipCertDER + "),")
+	cmd.Println("                         the gRPC cert hash above, and the admin public key from your wallet,")
+	cmd.Println("                         then import with the assigned id")
+}

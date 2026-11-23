@@ -5,6 +5,7 @@ package node
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,8 +14,10 @@ import (
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	cnbll "github.com/hashgraph/solo-weaver/internal/bll/consensus"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -62,15 +65,15 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		// Derive per-node secret defaults from the (possibly prompted) node ID.
-		// A consensus node needs exactly two secrets: gossip signing keys and the
-		// gRPC TLS key/cert.
-		scope := models.ConsensusNodeScope(flagNodeId)
-		if flagGrpcTlsSecret == "" {
-			flagGrpcTlsSecret = scope + "-grpc-tls-keys"
+		if err := checkNodeAdminKeys(flagDeploymentPkgDir, flagAllowGenesisAdminKey, prompt.ShouldPrompt(force), confirmGenesisAdminKey); err != nil {
+			return err
 		}
-		if flagSigningSecret == "" {
-			flagSigningSecret = scope + "-gossip-keys"
+
+		// The key secret names are resolved later, from the node's labelled secrets
+		// (see the install handler), unless --signing-secret, --grpc-tls-secret or
+		// --admin-key-secret name them. The account id defaults from the node ID.
+		if flagAccountId == "" {
+			flagAccountId = models.ConsensusDefaultAccountId(flagNodeId)
 		}
 
 		// --profile sizes the host hardware floor when this install has to
@@ -152,6 +155,7 @@ var installCmd = &cobra.Command{
 				DeploymentPackageDir:      flagDeploymentPkgDir,
 				GrpcTlsSecret:             flagGrpcTlsSecret,
 				SigningSecret:             flagSigningSecret,
+				AdminKeySecret:            flagAdminKeySecret,
 				ImagePullSecrets:          pullSecrets,
 				RegistrySelectionStrategy: registryStrategy,
 				Profile:                   flagProfile,
@@ -198,6 +202,56 @@ var installCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func init() {
+	installCmd.Flags().StringVar(&flagAccountId, "account-id", "", "Node account ID (e.g. 0.0.3); defaults to 0.0.(3 + node-id)")
+	installCmd.Flags().IntVar(&flagWeight, "weight", models.ConsensusDefaultWeight, "Consensus weight for this node")
+	installCmd.Flags().StringVar(&flagLedgerId, "ledger-id", "", "Hex ledger identity (e.g. 0x00 for mainnet, 0x01 for local/dev) — extracted from deployment package if not set")
+	installCmd.Flags().StringVar(&flagChainId, "chain-id", "", "Decimal EVM chain ID (e.g. 295 for mainnet, 298 for local/dev) — extracted from deployment package if not set")
+	installCmd.Flags().StringVar(&flagImageRepo, "image-repo", "", "Consensus node container image repository — extracted from deployment package if not set")
+	installCmd.Flags().StringVar(&flagImageTag, "image-tag", "", "Consensus node container image tag — extracted from deployment package if not set")
+	installCmd.Flags().StringVar(&flagUCImageRepo, "uc-image-repo", models.ConsensusDefaultUCImageRepo, "UC (Update Coordinator) sidecar image repository (the operator's own image; no operator default)")
+	installCmd.Flags().StringVar(&flagUCImageTag, "uc-image-tag", models.ConsensusDefaultUCImageTag, "UC sidecar image tag (tracks the solo-operator version)")
+	installCmd.Flags().StringVar(&flagDeploymentPkgDir, "deployment-package-dir", "", "Path to extracted HIP-1494 deployment package — config files at well-known paths override embedded defaults")
+	installCmd.Flags().StringVar(&flagGrpcTlsSecret, "grpc-tls-secret", "", "Name of K8s Secret containing gRPC TLS key/cert (keys: hedera.key, hedera.crt)")
+	installCmd.Flags().StringVar(&flagAdminKeySecret, "admin-key-secret", "", "Name of K8s Secret containing the node admin public key (key: admin.pub); defaults to node<N>-admin-pubkey when that Secret exists")
+	installCmd.Flags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: s-private.pem, s-public.pem)")
+	installCmd.Flags().StringArrayVar(&flagImagePullSecret, "image-pull-secret", []string{models.ConsensusDefaultImagePullSecret}, "Map a docker-registry Secret to a registry for pulling private consensus/UC images. Repeatable. Bare NAME applies to all registries (default private-registry-creds); keyed HOST=NAME overrides one registry host (e.g. ghcr.io=ghcr-creds). Empty (\"\") disables (public images). Registries come from the deployment manifest; each Secret must already exist in the namespace")
+	installCmd.Flags().StringVar(&flagRegistryStrategy, "registry-selection-strategy", "", "Order the operator probes candidate registries for a multi-registry image: Random or Sequential. Empty uses the weaver default (Sequential — manifest primary first, deterministic failover). Pass Random to spread probe traffic. Applies only when the manifest yields multiple registries")
+
+	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
+	// the explicit Java heap is required or the node stalls on startup.
+	installCmd.Flags().StringVar(&flagContainerName, "container-name", models.ConsensusDefaultContainerName, "Consensus-node container name")
+	installCmd.Flags().StringVar(&flagJavaHeapMin, "java-heap-min", models.ConsensusDefaultJavaHeapMin, "JVM minimum heap (-Xms) for the consensus node")
+	installCmd.Flags().StringVar(&flagJavaHeapMax, "java-heap-max", models.ConsensusDefaultJavaHeapMax, "JVM maximum heap (-Xmx) for the consensus node")
+	installCmd.Flags().StringVar(&flagJavaOpts, "java-opts", models.ConsensusDefaultJavaOpts, "Additional JVM options for the consensus node")
+	installCmd.Flags().StringVar(&flagCPULimit, "cpu-limit", models.ConsensusDefaultCPULimit, "Consensus-node CPU limit (Kubernetes quantity, e.g. 2)")
+	installCmd.Flags().StringVar(&flagCPURequest, "cpu-request", models.ConsensusDefaultCPURequest, "Consensus-node CPU request (e.g. 250m)")
+	installCmd.Flags().StringVar(&flagMemoryLimit, "memory-limit", models.ConsensusDefaultMemoryLimit, "Consensus-node memory limit (e.g. 5Gi)")
+	installCmd.Flags().StringVar(&flagMemoryRequest, "memory-request", models.ConsensusDefaultMemoryRequest, "Consensus-node memory request (e.g. 1Gi)")
+	installCmd.Flags().BoolVar(&flagProvisionerDaemon, "provisioner-daemon", false, "Deploy the Orbit in mainnet mode: the UC sidecar defers the execute phase to a host-level solo-provisioner-daemon (Orbit.spec.consensus.provisionerDaemonEnabled). Default false = cluster-only (the in-pod UC runs execute)")
+
+	// Volume backing. Each data volume (upgrade/logs/stats/saved/state/blocks/records/
+	// events) can be emptyDir, hostPath, or a PVC. --default-* set fallbacks; --volume
+	// overrides one volume; --volumes-file supplies the same as YAML (flags win).
+	installCmd.Flags().StringVar(&flagDefaultVolumeType, "default-volume-type", "", "Default backing for all data volumes: emptydir|hostpath|pvc (empty = emptydir)")
+	installCmd.Flags().StringVar(&flagDefaultPVCSize, "default-pvc-size", "", "Default PVC size for pvc-backed volumes when size= is omitted (empty = per-volume default)")
+	installCmd.Flags().StringVar(&flagDefaultPVCStorageClass, "default-pvc-storage-class", "", "Default StorageClass for pvc-backed volumes (empty = cluster default)")
+	installCmd.Flags().StringVar(&flagDefaultPVCAccessMode, "default-pvc-access-mode", "", "Default access mode for pvc-backed volumes: ReadWriteOnce|ReadWriteOncePod (empty = ReadWriteOnce). A consensus node is a single writer; ReadWriteMany/ReadOnlyMany are rejected")
+	installCmd.Flags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
+	installCmd.Flags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
+	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
+	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
+	// value is the trusted "2000" constant, so the error can't fire).
+	hederaUID, _ := strconv.Atoi(config.HederaUserId())
+	hederaGID, _ := strconv.Atoi(config.HederaGroupId())
+	installCmd.Flags().IntVar(&flagHostPathUID, "hostpath-uid", hederaUID, "Owner UID for hostPath volume dirs (the hedera user the pod runs as)")
+	installCmd.Flags().IntVar(&flagHostPathGID, "hostpath-gid", hederaGID, "Owner GID for hostPath volume dirs (the hedera group the pod runs as)")
+
+	// flagProfile is a binding target for Cobra; install reads it after the prompts.
+	common.FlagProfile().SetVarP(installCmd, &flagProfile, false)
+	installCmd.Flags().BoolVar(&flagAllowGenesisAdminKey, "allow-genesis-admin-key", false, "Install even when the deployment package has no data/config/node-admin-keys.json; the node then uses the genesis key as its admin key (local dev/test only)")
 }
 
 // resolveVolumeConfig builds the merged volume configuration: the --volumes-file
@@ -255,6 +309,55 @@ func resolveVolumeConfig() (models.ConsensusVolumeConfig, error) {
 	return cfg, nil
 }
 
+// nodeAdminKeysPath is where a deployment package sets each genesis node's admin
+// key. Without it, consensus node v0.74.2+ uses the genesis key as admin key.
+var nodeAdminKeysPath = cnkeys.NodeAdminKeysPath
+
+// checkNodeAdminKeys requires node-admin-keys.json in the deployment package. When
+// it is missing, it continues only if allow is set or the operator confirms.
+// The admin key cannot be changed after genesis yet (NodeUpdate needs a freeze upgrade).
+func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (bool, error)) error {
+	pkgDir = strings.TrimSpace(pkgDir)
+	if pkgDir == "" {
+		return nil
+	}
+	path := filepath.Join(pkgDir, nodeAdminKeysPath)
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
+			return nil
+		}
+	}
+
+	if !allow {
+		if !interactive {
+			return errx.Decorate(
+				errorx.IllegalState.New("deployment package has no %s", nodeAdminKeysPath),
+				reasons.FileMissing,
+				fmt.Sprintf("Add %s with the node admin public keys (Ed25519) to the deployment package", path),
+				"For local dev/test only, pass --allow-genesis-admin-key to use the genesis key as the admin key")
+		}
+		ok, err := confirm()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errorx.IllegalState.New("aborted: consensus node not installed")
+		}
+	}
+
+	logx.As().Warn().Str("path", path).
+		Msg("node-admin-keys.json is missing; the node will use the genesis key as its admin key (local dev/test only)")
+	return nil
+}
+
+func confirmGenesisAdminKey() (bool, error) {
+	return prompt.RunConfirm(
+		"Use the genesis key as the node admin key?",
+		"The deployment package has no "+nodeAdminKeysPath+", so the node gets the genesis key as its admin key. "+
+			"The admin key cannot be changed after genesis yet. Use this for local dev/test only.",
+		false)
+}
+
 // printConsensusInstallNextSteps writes the post-install guidance to stdout after
 // the workflow TUI has closed and restored the terminal, so it persists in the
 // scrollback (unlike a transient step-detail line).
@@ -274,6 +377,9 @@ func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string
 	cmd.Println("     Choose one:")
 	cmd.Println("     a) Discovery (recommended for a fresh in-cluster network — operator writes cluster-DNS endpoints):")
 	cmd.Printf("          %s\n", base)
+	if strings.TrimSpace(pkgDir) != "" {
+		cmd.Println("        Needs nodes.gossipFqdnRestricted=false in the package's data/config/application.properties.")
+	}
 	cmd.Println("     b) From a deployment package (mainnet/testnet/... — its genesis-network.json is applied verbatim):")
 	cmd.Printf("          %s --deployment-package-dir %s\n", base, pkg)
 	cmd.Println("     c) From a custom genesis file:")

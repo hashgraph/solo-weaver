@@ -121,6 +121,9 @@ func NewCrioInstaller(opts ...InstallerOption) (Software, error) {
 	return ci, nil
 }
 
+// crioPathBinaries are the cri-o binaries symlinked into models.SystemBinDir.
+var crioPathBinaries = []string{"crio", "crictl"}
+
 // crioInstalledBinaryPaths maps each cri-o binary basename to its install path
 // under destDir: runtime helpers under libexec/crio, crio/pinns/crictl under the
 // bin dir. Shared by Install and VerifyExecutables so their layouts never drift.
@@ -379,6 +382,10 @@ func (ci *crioInstaller) Configure() error {
 		return err
 	}
 
+	if err = ci.linkCrioToHost(); err != nil {
+		return err
+	}
+
 	// Record configured state
 	return ci.recordConfigured()
 }
@@ -485,6 +492,58 @@ func CrioInstalled() (bool, error) {
 	ci := installer.(*crioInstaller)
 	_, exists, err := ci.fileManager.PathExists(filepath.Join(userSystemdDir, CrioServiceFile))
 	return exists, err
+}
+
+// linkCrioToHost puts crio and crictl on PATH and links the crictl config to
+// /etc/crictl.yaml, which crictl reads by default. pinns is internal to cri-o
+// (pinns_path), so it is not linked. Safe to re-run.
+func (ci *crioInstaller) linkCrioToHost() error {
+	sandboxDir := models.Paths().SandboxDir
+	for _, name := range crioPathBinaries {
+		err := ci.fileManager.CreateSymbolicLink(
+			filepath.Join(sandboxDir, binDir, name), filepath.Join(models.SystemBinDir, name), true)
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to create %s symlink in %s", name, models.SystemBinDir)
+		}
+	}
+
+	err := ci.fileManager.CreateSymbolicLink(
+		filepath.Join(sandboxDir, etcDir, CrictlYamlFile), filepath.Join(etcDir, CrictlYamlFile), true)
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create /etc/%s symlink", CrictlYamlFile)
+	}
+	return nil
+}
+
+// CrioHostLinksPresent reports whether the crio and crictl PATH symlinks and the
+// /etc/crictl.yaml link all exist, so the migration is idempotent. See issue #1026.
+func CrioHostLinksPresent() (bool, error) {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return false, err
+	}
+	ci := installer.(*crioInstaller)
+	paths := []string{filepath.Join(etcDir, CrictlYamlFile)}
+	for _, name := range crioPathBinaries {
+		paths = append(paths, filepath.Join(models.SystemBinDir, name))
+	}
+	for _, p := range paths {
+		_, exists, err := ci.fileManager.PathExists(p)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// LinkCrioToHost adds the missing crio/crictl host links on already-provisioned
+// clusters whose IsConfigured guard would otherwise skip Configure(). See issue #1026.
+func LinkCrioToHost() error {
+	installer, err := NewCrioInstaller()
+	if err != nil {
+		return err
+	}
+	return installer.(*crioInstaller).linkCrioToHost()
 }
 
 // CrioSocketBridgePresent reports whether the cAdvisor socket-bridge drop-in host
@@ -729,9 +788,21 @@ func (ci *crioInstaller) Uninstall() error {
 // RemoveConfiguration removes symlinks and restores the configuration files
 // This reverses the operations performed by Configure()
 func (ci *crioInstaller) RemoveConfiguration() error {
+	sandboxDir := models.Paths().SandboxDir
+	for _, name := range crioPathBinaries {
+		_, err := ci.fileManager.RemoveSymbolicLinkIfTarget(filepath.Join(models.SystemBinDir, name), filepath.Join(sandboxDir, binDir, name))
+		if err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to remove %s symlink", name)
+		}
+	}
+	_, err := ci.fileManager.RemoveSymbolicLinkIfTarget(filepath.Join(etcDir, CrictlYamlFile), filepath.Join(sandboxDir, etcDir, CrictlYamlFile))
+	if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to remove /etc/%s symlink", CrictlYamlFile)
+	}
+
 	// Remove CRI-O service symlink
 	systemdServicePath := filepath.Join(userSystemdDir, "crio.service")
-	err := ci.fileManager.RemoveAll(systemdServicePath)
+	err = ci.fileManager.RemoveAll(systemdServicePath)
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to remove CRI-O service symlink")
 	}
@@ -749,7 +820,6 @@ func (ci *crioInstaller) RemoveConfiguration() error {
 	}
 
 	// Remove /etc/default/crio configuration file from sandbox
-	sandboxDir := models.Paths().SandboxDir
 	etcDefaultCrioPath := filepath.Join(sandboxDir, "etc", "default", CrioDefaultConfigFile)
 	err = ci.fileManager.RemoveAll(etcDefaultCrioPath)
 	if err != nil {

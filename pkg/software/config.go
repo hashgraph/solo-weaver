@@ -6,25 +6,36 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io/fs"
 	"runtime"
 	"sort"
 	"sync"
 	"text/template"
 
 	"github.com/joomcode/errorx"
-	"gopkg.in/yaml.v3"
 
-	"github.com/hashgraph/solo-weaver/pkg/deps"
 	"github.com/hashgraph/solo-weaver/pkg/semver"
 )
 
-//go:embed infrastructure-catalog.yaml
-var infrastructureCatalogFS embed.FS
+//go:embed catalog/*.yaml
+var catalogFS embed.FS
+
+// catalogDir is the embedded directory holding the catalog files.
+const catalogDir = "catalog"
 
 // SoloOperatorComponentName is the cluster-component name of the solo-operator
 // Helm chart in the catalog. Its default version is injected from
 // deps.SOLO_OPERATOR_VERSION at load time rather than pinned in the YAML.
 const SoloOperatorComponentName = "solo-operator"
+
+// CiliumComponentName is the catalog name of the Cilium agent chart.
+const CiliumComponentName = "cilium"
+
+// Catalog names of the charts the cluster upgrade migrates from older charts.
+const (
+	NodeExporterComponentName    = "node-exporter"
+	ExternalSecretsComponentName = "external-secrets"
+)
 
 // ChartType identifies how a Helm chart is distributed.
 type ChartType string
@@ -71,13 +82,12 @@ func (si *ArtifactMetadata) getPlatform() platformProvider {
 	return *si.platform
 }
 
-// InfrastructureCatalog is the root structure of the embedded
-// infrastructure-catalog.yaml file shipped inside the solo-provisioner
-// binary. It groups infrastructure components by where they run: `host:`
-// for binaries installed on the host, `cluster:` for Helm charts
-// installed into Kubernetes. The catalog's `default:` field is the
-// single source of truth for which version of each component gets
-// installed at runtime.
+// InfrastructureCatalog is the merged content of the catalog files embedded
+// from pkg/software/catalog/ (see its README.md). It groups infrastructure
+// components by where they run: `host:` for binaries installed on the host,
+// `cluster:` for Helm charts installed into Kubernetes. Each entry's Default,
+// set from defaults.yaml, is the single source of truth for which version of
+// each component gets installed at runtime.
 //
 // A separate file named `manifests/infrastructure-versions.yaml`
 // (shipped inside the CN release package, minimal `name`+`version`
@@ -91,8 +101,9 @@ func (si *ArtifactMetadata) getPlatform() platformProvider {
 // catalog already declares. See docs/dev/chart-checksums.md
 // ("Future overrides") for details.
 type InfrastructureCatalog struct {
-	Host    []ArtifactMetadata `yaml:"host"`
-	Cluster []ChartMetadata    `yaml:"cluster"`
+	Host       []ArtifactMetadata `yaml:"host"`
+	Cluster    []ChartMetadata    `yaml:"cluster"`
+	Kubernetes []KubernetesMinor  `yaml:"kubernetes,omitempty"`
 }
 
 // ChartMetadata describes a Helm chart entry under `cluster:`. A chart has
@@ -102,14 +113,22 @@ type InfrastructureCatalog struct {
 // — the Kubernetes namespace the chart deploys into and the Helm release
 // name used to track it.
 type ChartMetadata struct {
-	Name      string               `yaml:"name"`
-	Type      ChartType            `yaml:"type"`
-	Repo      string               `yaml:"repo,omitempty"`
-	Chart     string               `yaml:"chart"`
-	Namespace string               `yaml:"namespace"`
-	Release   string               `yaml:"release"`
-	Default   Version              `yaml:"default"`
-	Versions  map[Version]Checksum `yaml:"versions"`
+	Name      string                   `yaml:"name"`
+	Type      ChartType                `yaml:"type"`
+	Repo      string                   `yaml:"repo,omitempty"`
+	Chart     string                   `yaml:"chart"`
+	Namespace string                   `yaml:"namespace"`
+	Release   string                   `yaml:"release"`
+	Default   Version                  `yaml:"default"`
+	Versions  map[Version]ChartVersion `yaml:"versions"`
+}
+
+// ChartVersion is the integrity record of one chart version, plus the
+// Kubernetes minors it supports where the catalog records them.
+type ChartVersion struct {
+	Algorithm  string           `yaml:"algorithm"`
+	Value      string           `yaml:"checksum"`
+	Kubernetes *KubernetesRange `yaml:"kubernetes,omitempty"`
 }
 
 // ArtifactMetadata represents a single software artifact  configuration
@@ -335,42 +354,25 @@ func ResetCatalogCacheForTest() {
 	loadCatalogOnce = sync.Once{}
 }
 
-// LoadInfrastructureCatalog loads, parses, and validates the embedded
-// infrastructure-catalog.yaml configuration. The result is cached for the
-// lifetime of the process — the catalog is embedded in the binary and
-// immutable, so callers must not mutate the returned value.
+// LoadInfrastructureCatalog loads, merges, and validates the embedded catalog
+// files under catalog/. The result is cached for the lifetime of the process —
+// the catalog is embedded in the binary and immutable, so callers must not
+// mutate the returned value.
 func LoadInfrastructureCatalog() (*InfrastructureCatalog, error) {
 	loadCatalogOnce.Do(func() {
-		data, err := infrastructureCatalogFS.ReadFile("infrastructure-catalog.yaml")
+		fsys, err := fs.Sub(catalogFS, catalogDir)
 		if err != nil {
 			cachedCatalogErr = NewConfigLoadError(err)
 			return
 		}
 
-		var catalog InfrastructureCatalog
-		if err := yaml.Unmarshal(data, &catalog); err != nil {
+		catalog, err := loadCatalog(fsys)
+		if err != nil {
 			cachedCatalogErr = NewConfigLoadError(err)
 			return
 		}
 
-		// The solo-operator chart version is owned by pkg/deps.SOLO_OPERATOR_VERSION
-		// — the single source of truth it shares with the UC sidecar tag — so inject
-		// it as the catalog default instead of duplicating a version string in the
-		// YAML. Injecting before validate() preserves the "default must exist in
-		// versions" invariant, which guarantees a checksum entry exists for this
-		// exact version (otherwise the catalog fails to load, loud and early).
-		for i := range catalog.Cluster {
-			if catalog.Cluster[i].Name == SoloOperatorComponentName {
-				catalog.Cluster[i].Default = Version(deps.SOLO_OPERATOR_VERSION)
-			}
-		}
-
-		if err := catalog.validate(); err != nil {
-			cachedCatalogErr = NewConfigLoadError(err)
-			return
-		}
-
-		cachedCatalog = &catalog
+		cachedCatalog = catalog
 	})
 	return cachedCatalog, cachedCatalogErr
 }
@@ -433,7 +435,7 @@ func (c *InfrastructureCatalog) ClusterNames() []string {
 }
 
 // validate enforces the catalog schema invariants documented in
-// infrastructure-catalog.yaml: every entry must declare an explicit default
+// pkg/software/catalog/README.md: every entry must declare an explicit default
 // that resolves to a known version, cluster entries must declare a valid
 // type, classic entries must carry a repo (and oci entries must not), and
 // every chart version must have a non-empty algorithm and checksum.
@@ -465,7 +467,7 @@ func (c *InfrastructureCatalog) validate() error {
 			return errorx.IllegalFormat.Wrap(err, "cluster[%s]", chart.Name)
 		}
 	}
-	return nil
+	return c.validateKubernetes()
 }
 
 // validate enforces ChartMetadata invariants. It is called by
@@ -520,6 +522,14 @@ func (cm *ChartMetadata) validate() error {
 		}
 		if details.Value == "" {
 			return errorx.IllegalFormat.New("version %s: empty checksum", version)
+		}
+		if details.Kubernetes == nil {
+			// The upgrade planner reads the supported minors of every Cilium version.
+			if cm.Name == CiliumComponentName {
+				return errorx.IllegalFormat.New("version %s: no kubernetes range", version)
+			}
+		} else if err := details.Kubernetes.validate(); err != nil {
+			return errorx.IllegalFormat.Wrap(err, "version %s", version)
 		}
 	}
 	if _, err := cm.GetDefaultVersion(); err != nil {

@@ -40,8 +40,12 @@ func TestWriteChecksums(t *testing.T) {
 	digests := map[string]map[string]string{
 		"solo-operator": {"0.6.0": "NEWDIGEST"},
 	}
-	if err := writeChecksums(p, digests); err != nil {
+	changed, err := writeChecksums(p, digests)
+	if err != nil {
 		t.Fatalf("writeChecksums: %v", err)
+	}
+	if !changed {
+		t.Error("writeChecksums reported no change after updating a checksum")
 	}
 
 	out, err := os.ReadFile(p)
@@ -61,5 +65,23 @@ func TestWriteChecksums(t *testing.T) {
 	}
 	if !strings.Contains(s, "# keep this comment") {
 		t.Errorf("comments must be preserved:\n%s", s)
+	}
+}
+
+// TestWriteChecksums_UnchangedFileNotRewritten covers a file holding none of the
+// charts in digests, such as a host-binary catalog file.
+func TestWriteChecksums_UnchangedFileNotRewritten(t *testing.T) {
+	catalog := "host:\n- name: helm\n  versions:\n    3.22.1:\n      checksum: 'HOST'\n"
+	p := filepath.Join(t.TempDir(), "host-tools.yaml")
+	if err := os.WriteFile(p, []byte(catalog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := writeChecksums(p, map[string]map[string]string{"alloy": {"1.4.0": "NEW"}})
+	if err != nil {
+		t.Fatalf("writeChecksums: %v", err)
+	}
+	if changed {
+		t.Error("writeChecksums reported a change for a file holding none of the charts")
 	}
 }

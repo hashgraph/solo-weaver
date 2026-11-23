@@ -4,6 +4,7 @@ package models
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -25,6 +26,9 @@ const (
 	// consensus deployment (sourced from pkg/deps alongside the other install-plan
 	// defaults). Deploy multiple networks by using a distinct namespace per orbit.
 	ConsensusDefaultNamespace = deps.CONSENSUS_NODE_NAMESPACE
+
+	// Default node weight for --weight; --account-id defaults per node (ConsensusDefaultAccountId).
+	ConsensusDefaultWeight = 500
 
 	ConsensusDefaultContainerName = "consensus-node"
 	ConsensusDefaultJavaHeapMin   = "512m"
@@ -247,6 +251,11 @@ type ConsensusNodeInputs struct {
 	GrpcTlsSecret string `json:"grpcTlsSecret,omitempty"`
 	SigningSecret string `json:"signingSecret,omitempty"`
 
+	// AdminKeySecret names the Secret holding the node admin PUBLIC key, which the
+	// operator reads when it builds genesis-network.json. Empty uses the default
+	// "node<N>-admin-pubkey" when that Secret exists; a name set explicitly must exist.
+	AdminKeySecret string `json:"adminKeySecret,omitempty"`
+
 	// Consensus-node container sizing + JVM tuning. Empty values fall back to the
 	// ConsensusDefault* constants (mirroring the solo-operator reference example).
 	// The explicit Java heap is essential — without -Xmx the 0.74 node stalls on
@@ -338,6 +347,40 @@ var consensusConfigCRSuffix = map[string]string{
 	ConfigKeyBlockNodes:          "block-nodes",
 }
 
+// consensusConfigCRKinds maps each config key to the solo-operator CR kind that carries it, in a fixed order.
+var consensusConfigCRKinds = []struct{ key, kind string }{
+	{ConfigKeyLog4j2, "Log4j2Config"},
+	{ConfigKeySettings, "NodeSettings"},
+	{ConfigKeyAppProperties, "ApplicationProperties"},
+	{ConfigKeyAppOverride, "ApplicationOverrideProperties"},
+	{ConfigKeyApiPermission, "ApiPermissionProperties"},
+	{ConfigKeyBootstrap, "BootstrapProperties"},
+	{ConfigKeyNodeProperties, "NodePropertiesConfig"},
+	{ConfigKeyFeeSchedules, "FeeSchedules"},
+	{ConfigKeySimpleFeesSchedules, "SimpleFeesSchedules"},
+	{ConfigKeyThrottles, "ThrottlesConfig"},
+	{ConfigKeyBlockNodes, "BlockNodesConfig"},
+}
+
+// ConsensusConfigKeys returns every config key, in a fixed order.
+func ConsensusConfigKeys() []string {
+	keys := make([]string, 0, len(consensusConfigCRKinds))
+	for _, c := range consensusConfigCRKinds {
+		keys = append(keys, c.key)
+	}
+	return keys
+}
+
+// ConsensusConfigCRKind returns the solo-operator CR kind for a config key, or "" for an unknown key.
+func ConsensusConfigCRKind(configKey string) string {
+	for _, c := range consensusConfigCRKinds {
+		if c.key == configKey {
+			return c.kind
+		}
+	}
+	return ""
+}
+
 // ConsensusConfigCRName returns the config CR / managed ConfigMap / capsule ref
 // name for a config key on a node, e.g.
 // ConsensusConfigCRName("node0", ConfigKeyAppProperties) == "node0-application-properties".
@@ -359,6 +402,24 @@ func ConsensusNodeScope(nodeId int64) string {
 	return fmt.Sprintf("node%d", nodeId)
 }
 
+// ConsensusDefaultAccountId returns the node account id the operator's genesis
+// assigns by default: 0.0.(3 + nodeId).
+func ConsensusDefaultAccountId(nodeId int64) string {
+	return fmt.Sprintf("0.0.%d", 3+nodeId)
+}
+
+// consensusAccountIdPattern matches a Hedera account id: shard.realm.num.
+var consensusAccountIdPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ValidateConsensusAccountId rejects an account id that is not shard.realm.num
+// (e.g. 0.0.3), such as a bare node number.
+func ValidateConsensusAccountId(s string) error {
+	if !consensusAccountIdPattern.MatchString(s) {
+		return errorx.IllegalArgument.New("invalid account ID %q: expected shard.realm.num, e.g. 0.0.3", s)
+	}
+	return nil
+}
+
 // ConsensusNodeStateKey returns the orbit-qualified key for solo-weaver's local
 // state and reality maps (e.g. "hiero-network-1/node0"). Because the same
 // nodeId can be deployed into multiple orbits in one cluster, the local state
@@ -374,13 +435,27 @@ func ConsensusCapsuleName(orbitName string, nodeId int64) string {
 	return fmt.Sprintf("%s-consensus-%d", orbitName, nodeId)
 }
 
-// Validate checks that required fields are present.
+// Validate checks the fields that every action requires.
 func (c *ConsensusNodeInputs) Validate() error {
 	if c.Namespace == "" {
 		return errorx.IllegalArgument.New("--namespace is required")
 	}
+	return nil
+}
+
+// ValidateFor also checks the fields that the action requires. Only install sets the node identity.
+func (c *ConsensusNodeInputs) ValidateFor(action ActionType) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if action != ActionInstall {
+		return nil
+	}
 	if c.AccountId == "" {
 		return errorx.IllegalArgument.New("--account-id is required")
+	}
+	if err := ValidateConsensusAccountId(c.AccountId); err != nil {
+		return err
 	}
 	if c.Weight <= 0 {
 		return errorx.IllegalArgument.New("--weight must be positive")

@@ -272,7 +272,7 @@ rebuilt `BlockNodeState` from the Helm release and blanked `ReleaseInfo.ChartRef
 because Helm does not record it.  Every `currentState` reaching a handler after a
 refresh therefore reported no deployed chart, and both the warning and the
 reconfigure guard above were dead branches.  The checker now carries the persisted
-ref across a refresh, alongside `TrafficShapingDisabled` and `Shaping`, which are
+ref across a refresh, alongside `TrafficShapingEnabled` and `Shaping`, which are
 weaver-only records in the same class.
 
 ## `BlockNodeRuntimeResolver`

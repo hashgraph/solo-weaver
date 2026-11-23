@@ -341,7 +341,7 @@ func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubePro
 // freshly-rendered values are deep-merged on top of the deployed spec.values
 // (weaver-managed keys win, operator extras persist); when false, only the fresh
 // render is applied. Install passes false; upgrade/reconfigure pass the flag.
-func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func() ([]byte, error), reuseValues bool, provider CapsuleKubeProvider) automa.Builder {
+func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context.Context) ([]byte, error), reuseValues bool, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodeCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
@@ -352,7 +352,7 @@ func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func() ([]by
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			valuesYAML, err := valuesFn()
+			valuesYAML, err := valuesFn(ctx)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 					errorx.IllegalState.Wrap(err, "failed to render block node Helm values"),

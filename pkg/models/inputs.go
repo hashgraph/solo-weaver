@@ -42,7 +42,14 @@ type WorkflowExecutionOptions struct {
 }
 
 type CommonInputs struct {
-	Force            bool
+	Force bool
+	// OverrideDrift lets a destructive action run over owned drift it would
+	// destroy (--override-drift).
+	OverrideDrift bool `yaml:",omitempty"`
+	// NonInteractive is set for --non-interactive and --output json by the
+	// commands that call ExtractDriftGuardFlags (the teleport uninstalls). A
+	// destructive action then runs over owned drift and records it.
+	NonInteractive   bool `yaml:",omitempty"`
 	NodeType         string
 	ExecutionOptions WorkflowExecutionOptions
 }
@@ -80,7 +87,7 @@ type BlockNodeInputs struct {
 	LoadBalancerEnabled bool   // true = inject metallb.io/address-pool annotation via Helm values
 	HistoricRetention   string // FILES_HISTORIC_BLOCK_RETENTION_THRESHOLD (0 = unlimited)
 	RecentRetention     string // FILES_RECENT_BLOCK_RETENTION_THRESHOLD (~96000 default)
-	PluginPreset        string // preset ID (e.g. "tier1-lfh"), "custom", or "none" (no override); empty/"none" = use --values or chart default
+	PluginPreset        string // preset ID (e.g. "lfh"), "custom", or "none" (no override); empty/"none" = use --values or chart default
 	PluginList          string // resolved comma-separated plugin list injected into plugins.names
 	// TrafficShapingEnabled gates the BN workload network-policy plane (inet
 	// weaver classification) and tc HTB traffic shaping (from
@@ -160,6 +167,23 @@ func (u *UserInputs[T]) Validate() error {
 	}
 
 	return nil
+}
+
+// ActionValidator is implemented by custom inputs whose required fields depend on the action.
+type ActionValidator interface {
+	ValidateFor(action ActionType) error
+}
+
+// ValidateFor validates the inputs for one action. Custom inputs without ActionValidator use Validate.
+func (u *UserInputs[T]) ValidateFor(action ActionType) error {
+	validator, ok := any(&u.Custom).(ActionValidator)
+	if !ok {
+		return u.Validate()
+	}
+	if err := u.Common.Validate(); err != nil {
+		return err
+	}
+	return validator.ValidateFor(action)
 }
 
 // Validate validates all common inputs fields to ensure they are safe and secure.

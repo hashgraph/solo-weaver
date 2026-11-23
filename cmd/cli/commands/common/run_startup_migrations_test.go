@@ -3,9 +3,13 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/automa-saga/errx"
@@ -18,6 +22,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeStartupMigration applies only at the 0.0.0 baseline and counts each Execute.
@@ -152,9 +157,9 @@ func TestRunStartupMigrations_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+	persistProvisionerVersion = func() (bool, error) {
 		persistCalled++
-		return errors.New("simulated persist failure")
+		return false, errors.New("simulated persist failure")
 	}
 
 	// The migration applies (baseline crosses the boundary) and the persist fails —
@@ -200,4 +205,98 @@ func TestRunStartupMigrations_FailureKeepsReasonAndHints(t *testing.T) {
 	recorded, rerr := state.ReadProvisionerVersionFromDisk()
 	require.NoError(t, rerr)
 	assert.Empty(t, recorded, "a failed migration must not record the version")
+}
+
+// TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce starts several
+// invocations at once on a host with a legacy state.yaml. The split deletes
+// and renames state files, so without serialization the losers fail reading a
+// state.yaml the winner already renamed, or clear files the winner just wrote.
+// Every invocation must succeed and the split must land intact.
+func TestRunStartupMigrations_ConcurrentInvocationsSplitStateOnce(t *testing.T) {
+	migration.ClearRegistry()
+	t.Cleanup(migration.ClearRegistry)
+	home := t.TempDir()
+	t.Cleanup(models.SetPaths(home))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, state.StateFileName), []byte(`state:
+  machineState:
+    profile: mainnet
+  blockNodeState:
+    name: block-node
+`), 0o644))
+	migration.Register(migration.ScopeStartup, state.NewPerComponentStateMigration())
+
+	origK8s := workflows.KubernetesInstalled
+	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
+	workflows.KubernetesInstalled = func() bool { return false }
+
+	const invocations = 8
+	errs := make(chan error, invocations)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < invocations; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- RunStartupMigrations(context.Background())
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	_, err := os.Stat(filepath.Join(dir, state.StateFileName))
+	require.True(t, os.IsNotExist(err), "state.yaml must be split and moved out of the way")
+	_, err = os.Stat(filepath.Join(dir, state.StateFileName+".legacy"))
+	require.NoError(t, err, "the split must have kept its backup")
+	diverged, err := filepath.Glob(filepath.Join(dir, state.StateFileName+".diverged-*"))
+	require.NoError(t, err)
+	require.Empty(t, diverged)
+
+	read := func(id state.ComponentID) state.State {
+		b, err := os.ReadFile(state.ComponentFilePath(dir, id))
+		require.NoError(t, err, "%s state file must exist", id)
+		var s state.State
+		require.NoError(t, yaml.Unmarshal(b, &s))
+		return s
+	}
+	assert.Equal(t, "mainnet", read(state.ComponentProfile).MachineState.Profile)
+	assert.Equal(t, "block-node", read(state.ComponentBlockNode).BlockNodeState.ReleaseInfo.Name)
+}
+
+// TestRunStartupMigrations_RecordsThePass: a pass that ran a migration and
+// stamped the version leaves one migrate/system entry naming the migration it
+// ran and provisioner.yaml; a later invocation with nothing to do adds none.
+func TestRunStartupMigrations_RecordsThePass(t *testing.T) {
+	registerFakeStartupMigration(t)
+	origK8s := workflows.KubernetesInstalled
+	t.Cleanup(func() { workflows.KubernetesInstalled = origK8s })
+	workflows.KubernetesInstalled = func() bool { return true }
+
+	require.NoError(t, RunStartupMigrations(context.Background()))
+	require.NoError(t, RunStartupMigrations(context.Background()))
+
+	b, err := os.ReadFile(state.ActionHistoryFilePath(models.Paths().StateDir))
+	require.NoError(t, err)
+	var entry struct {
+		Intent     models.Intent       `yaml:"intent"`
+		Outcome    state.Outcome       `yaml:"outcome"`
+		Inputs     state.StartupPass   `yaml:"inputs"`
+		Components []state.ChangedFile `yaml:"components"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	require.NoError(t, dec.Decode(&entry))
+	require.Equal(t, models.Intent{Action: models.ActionMigrate, Target: models.TargetSystem}, entry.Intent)
+	require.Equal(t, state.OutcomeSucceeded, entry.Outcome)
+	require.Empty(t, entry.Inputs.FromVersion, "no version was recorded on disk before the pass")
+	require.Equal(t, "1.2.3", entry.Inputs.ToVersion)
+	require.Equal(t, []string{"fake-startup-v1"}, entry.Inputs.Migrations)
+	require.Equal(t, []state.ChangedFile{state.ChangedProvisioner}, entry.Components)
+	var next map[string]any
+	require.ErrorIs(t, dec.Decode(&next), io.EOF, "the second invocation had nothing to record")
 }

@@ -241,6 +241,28 @@ func FlagForce() FlagDefinition[bool] {
 	}
 }
 
+// FlagOverrideDrift is registered on the commands that can destroy owned drift
+// (teleport node and cluster uninstall), and read through ExtractDriftGuardFlags.
+func FlagOverrideDrift() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "override-drift",
+		ShortName:   "",
+		Description: "Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history",
+		Default:     false,
+	}
+}
+
+// FlagRecoverPartialUninstall is registered on eso operator install, so the
+// global --force keeps its meaning there.
+func FlagRecoverPartialUninstall() FlagDefinition[bool] {
+	return FlagDefinition[bool]{
+		Name:        "recover-partial-uninstall",
+		ShortName:   "",
+		Description: "Reinstall over a partial uninstall: one that removed the Helm release but left the External Secrets Operator CRDs being deleted",
+		Default:     false,
+	}
+}
+
 func FlagLogLevel() FlagDefinition[string] {
 	return FlagDefinition[string]{
 		Name:        "log-level",

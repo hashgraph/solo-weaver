@@ -3,13 +3,17 @@
 package cluster
 
 import (
+	"context"
 	"strings"
 
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/sanity"
@@ -86,14 +90,63 @@ var installCmd = &cobra.Command{
 			return errorx.IllegalArgument.New("expected MachineRuntime to be *rsl.MachineRuntimeResolver but got %T", sr.Runtime.MachineRuntime)
 		}
 
+		// Setting up Kubernetes installs host binaries and the cluster charts,
+		// so this command owns the system and cluster records: it holds their
+		// locks for the whole run, then records what the host and cluster now
+		// have.
+		owned := []state.ComponentID{state.ComponentSystem, state.ComponentCluster}
+		release, err := state.AcquireComponentLocks(sr.Runtime.StateDir(), owned, 0)
+		if err != nil {
+			return err
+		}
+		defer release()
+
 		wb := workflows.WithWorkflowExecutionMode(workflows.InstallClusterWorkflow(skipHardwareChecks, mr, profile, sizingNodeType), opts)
-		if err := common.RunWorkflowBuilder(cmd.Context(), wb); err != nil {
+		intent := models.Intent{Action: models.ActionInstall, Target: models.TargetCluster}
+		inputs := map[string]any{"profile": profile, "nodeType": nodeType, "skipHardwareChecks": skipHardwareChecks}
+		wb.Steps(steps.RecordState(recordClusterInstall(sr.Runtime, owned)))
+		if err := common.RunWorkflow(cmd.Context(), installRun(cmd.Context(), wb, sr.Runtime, intent, inputs)); err != nil {
 			return err
 		}
 
 		logx.As().Info().Msg("Successfully installed Kubernetes Cluster")
 		return nil
 	},
+}
+
+// installRun is the RunWorkflow function of installCmd. It appends the run's
+// entry once the workflow has finished, before its report is saved and
+// summarised, so a warning about the entry shows in the summary.
+func installRun(ctx context.Context, wb automa.Builder, rt clusterRecorder, intent models.Intent, inputs any) func() (*automa.Report, error) {
+	return func() (*automa.Report, error) {
+		wf, err := wb.Build()
+		if err != nil {
+			return nil, err
+		}
+		report := wf.Execute(ctx)
+		common.RecordEntry(rt, steps.WorkflowEntry(ctx, intent, inputs, report), report)
+		return report, nil
+	}
+}
+
+// clusterRecorder is what installCmd needs of the runtime to record the
+// install; *rsl.RuntimeResolver satisfies it.
+type clusterRecorder interface {
+	RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error)
+	Persist(currentState state.State, ids ...state.ComponentID) ([]state.ChangedFile, error)
+	Record(entry state.ActionHistory, cause error) error
+}
+
+// recordClusterInstall is the RecordState write of kube cluster install: what
+// the host and cluster now have, in the owned records.
+func recordClusterInstall(rt clusterRecorder, owned []state.ComponentID) func(ctx context.Context) ([]state.ChangedFile, error) {
+	return func(ctx context.Context) ([]state.ChangedFile, error) {
+		live, err := rt.RefreshMachineAndCluster(ctx, true)
+		if err != nil {
+			return nil, errorx.IllegalState.Wrap(err, "failed to refresh state after cluster install")
+		}
+		return rt.Persist(live, owned...)
+	}
 }
 
 func init() {

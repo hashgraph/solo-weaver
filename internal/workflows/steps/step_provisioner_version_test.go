@@ -13,23 +13,25 @@ import (
 	"github.com/automa-saga/version"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// the cluster install tail step writes a state.yaml whose provisioner.version is
-// the running binary's version, which the next invocation's reader then observes
-// instead of synthesising the 0.0.0 baseline.
+// TestRecordProvisionerVersion_WritesStateFile: the Kubernetes setup tail step
+// writes a provisioner.yaml holding the running binary's version, which the
+// next invocation's reader then observes instead of synthesising the 0.0.0
+// baseline.
 func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	home := t.TempDir()
 	t.Cleanup(models.SetPaths(home))
-	// A provisioned host has the state dir (created at install) but no state.yaml.
+	// A provisioned host has the state dir (created at install) but no recorded version.
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
 
-	stateFile := filepath.Join(models.Paths().StateDir, state.StateFileName)
-	_, statErr := os.Stat(stateFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: state file must not exist yet")
+	provisionerFile := filepath.Join(models.Paths().StateDir, state.ProvisionerFileName)
+	_, statErr := os.Stat(provisionerFile)
+	require.True(t, os.IsNotExist(statErr), "precondition: provisioner.yaml must not exist yet")
 
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
@@ -37,8 +39,8 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 	require.NotNil(t, report)
 	require.NoError(t, report.Error, "step must succeed")
 
-	_, statErr = os.Stat(stateFile)
-	require.NoError(t, statErr, "state file should now exist")
+	_, statErr = os.Stat(provisionerFile)
+	require.NoError(t, statErr, "provisioner.yaml should now exist")
 
 	recorded, err := state.ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
@@ -48,15 +50,15 @@ func TestRecordProvisionerVersion_WritesStateFile(t *testing.T) {
 
 // TestRecordProvisionerVersion_PersistFailureIsNonFatal: recording the version is
 // best-effort — a failure is logged, not fatal. The cluster install must not fail
-// just because state.yaml could not be written. Regression guard: returning the
+// just because provisioner.yaml could not be written. Regression guard: returning the
 // error here (instead of swallowing it) would abort `kube cluster install`.
 func TestRecordProvisionerVersion_PersistFailureIsNonFatal(t *testing.T) {
 	origPersist := persistProvisionerVersion
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 	persistCalled := 0
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
+	persistProvisionerVersion = func() (bool, error) {
 		persistCalled++
-		return errors.New("simulated persist failure")
+		return false, errors.New("simulated persist failure")
 	}
 
 	step, err := RecordProvisionerVersion().Build()
@@ -87,8 +89,8 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	t.Cleanup(func() { persistProvisionerVersion = origPersist })
 
 	// Failure path: the completion message must signal the miss.
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error {
-		return errors.New("simulated persist failure")
+	persistProvisionerVersion = func() (bool, error) {
+		return false, errors.New("simulated persist failure")
 	}
 	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
@@ -99,14 +101,44 @@ func TestRecordProvisionerVersion_CompletionMessageReflectsPersistOutcome(t *tes
 	assert.Contains(t, gotMsg, "not recorded",
 		"the completion message must not claim the version was recorded")
 
-	// Success path: the completion message reports the version recorded.
-	gotMsg = ""
-	persistProvisionerVersion = func(_ ...state.ManagerOption) error { return nil }
-	step, err = RecordProvisionerVersion().Build()
+	// Success path: the completion message reports the version recorded, and
+	// the report says it changed the file only when it did.
+	for _, changed := range []bool{true, false} {
+		gotMsg = ""
+		persistProvisionerVersion = func() (bool, error) { return changed, nil }
+		step, err = RecordProvisionerVersion().Build()
+		require.NoError(t, err)
+		report = step.Execute(context.Background())
+		require.NoError(t, report.Error)
+		assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
+			"a successful persist must not flag a miss")
+		assert.Equal(t, changed, ProvisionerVersionPersisted(report),
+			"version_persisted is true only when the file changed")
+		assert.Equal(t, "Provisioner version recorded", gotMsg)
+	}
+}
+
+// TestRecordProvisionerVersion_UnsyncedVersionIsRecorded: a version written but
+// not synced counts as recorded, and the completion line says it is not synced,
+// since in TUI mode the step's log line reaches only the log file.
+func TestRecordProvisionerVersion_UnsyncedVersionIsRecorded(t *testing.T) {
+	origHandler := notify.As().StepCompletion
+	t.Cleanup(func() { notify.SetDefault(&notify.Handler{StepCompletion: origHandler}) })
+	var gotMsg string
+	notify.SetDefault(&notify.Handler{
+		StepCompletion: func(_ context.Context, _ automa.Step, _ *automa.Report, msg string, _ ...interface{}) {
+			gotMsg = msg
+		},
+	})
+	origPersist := persistProvisionerVersion
+	t.Cleanup(func() { persistProvisionerVersion = origPersist })
+	persistProvisionerVersion = func() (bool, error) { return true, fsx.FileSyncError.New("disk gone") }
+
+	step, err := RecordProvisionerVersion().Build()
 	require.NoError(t, err)
-	report = step.Execute(context.Background())
+	report := step.Execute(context.Background())
+
 	require.NoError(t, report.Error)
-	assert.NotEqual(t, "false", report.Metadata[metaVersionPersisted],
-		"a successful persist must not flag a miss")
-	assert.Equal(t, "Provisioner version recorded", gotMsg)
+	assert.True(t, ProvisionerVersionPersisted(report), "the version is on disk")
+	assert.Equal(t, "Provisioner version recorded, but not synced to disk", gotMsg)
 }

@@ -4,11 +4,12 @@
 //
 // The HandlerRegistry receives a models.Intent, delegates workflow construction
 // to the appropriate per-action handler, executes the workflow, and flushes
-// state to disk via BaseHandler.FlushState.
+// state to disk via BaseHandler.HandleIntent.
 package teleport
 
 import (
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -44,12 +45,19 @@ func NewHandlerFactory(
 		return nil, errorx.IllegalArgument.New("expected TeleportRuntime to be *rsl.TeleportRuntimeResolver but got %T", runtime.TeleportRuntime)
 	}
 
-	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode)
+	// Both targets manage the one Teleport component, but each records only its
+	// own agent: the other stays as it was on disk. The node agent is also a
+	// host binary, so the node target writes the system record too.
+	nodeBase, err := bll.NewBaseHandler[models.TeleportNodeInputs](runtime, models.TargetTeleportNode,
+		bll.WithManagedComponents[models.TeleportNodeInputs](bll.Teleport, bll.System),
+		bll.WithKeptAtBaseline[models.TeleportNodeInputs](keepClusterAgent, drift.OnTeleportClusterAgent))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create node BaseHandler: %v", err)
 	}
 
-	clusterBase, err := bll.NewBaseHandler[models.TeleportClusterInputs](runtime, models.TargetTeleportCluster)
+	clusterBase, err := bll.NewBaseHandler[models.TeleportClusterInputs](runtime, models.TargetTeleportCluster,
+		bll.WithManagedComponents[models.TeleportClusterInputs](bll.Teleport),
+		bll.WithKeptAtBaseline[models.TeleportClusterInputs](keepNodeAgent, drift.OnTeleportNodeAgent))
 	if err != nil {
 		return nil, errorx.IllegalArgument.New("failed to create cluster BaseHandler: %v", err)
 	}
@@ -88,4 +96,16 @@ func (h *HandlerRegistry) ForClusterAction(
 	default:
 		return nil, errorx.IllegalArgument.New("unsupported action %q for teleport cluster", action)
 	}
+}
+
+// keepClusterAgent keeps the cluster agent as it was on disk when a node
+// command flushes.
+func keepClusterAgent(live *state.State, baseline state.State) {
+	live.TeleportState.ClusterAgent = baseline.TeleportState.ClusterAgent
+}
+
+// keepNodeAgent keeps the node agent as it was on disk when a cluster command
+// flushes.
+func keepNodeAgent(live *state.State, baseline state.State) {
+	live.TeleportState.NodeAgent = baseline.TeleportState.NodeAgent
 }

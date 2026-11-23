@@ -5,15 +5,10 @@
 package state
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/hashgraph/solo-weaver/pkg/reasons"
-	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -71,13 +66,19 @@ func TestPersistedSnapshot_IsolatedFromMutationOfTheSource(t *testing.T) {
 	require.Equal(t, "abc", snapshot.ConsensusNodes["node1"].ConfigHashes["app"].Hash)
 }
 
-// A Refresh decodes the file onto a shallow Clone, writing through pointers the
-// previous State() copy still holds. The snapshot must not see that write.
+// Per-component Refresh always unmarshals a found
+// component's file onto a fresh zero-valued State, then replaces that
+// component's whole section in the composed state — it never decodes onto an
+// existing non-nil pointer the way the single-file version's
+// Clone-then-unmarshal-in-place did. So a plain State() copy taken before a
+// later Refresh is no longer mutated by it either, on top of
+// PersistedSnapshot's existing isolation. Both are asserted here so a
+// regression in either mechanism is caught.
 func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.yaml")
 	sm, err := NewStateManager(WithState(nestedState(stateFile)), WithFileManager(newTestFileManager(t)))
 	require.NoError(t, err)
-	require.NoError(t, sm.FlushState())
+	require.NoError(t, sm.Commit(ActionHistory{}, AllComponentIDs...))
 	require.NoError(t, sm.Refresh())
 
 	plainCopy := sm.State()
@@ -86,35 +87,11 @@ func TestPersistedSnapshot_SurvivesRefreshOfAChangedFile(t *testing.T) {
 
 	changed := sm.State()
 	changed.BlockNodeState.Shaping = &ShapingState{EgressInterface: "eth9"}
-	b, err := yaml.Marshal(changed)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(stateFile, b, 0o600))
+	require.NoError(t, sm.Set(changed).Commit(ActionHistory{}, ComponentBlockNode))
 	require.NoError(t, sm.Refresh())
 
-	require.Equal(t, "eth9", plainCopy.BlockNodeState.Shaping.EgressInterface,
-		"precondition: a plain copy of State() aliases the refreshed state")
+	require.Equal(t, "eth0", plainCopy.BlockNodeState.Shaping.EgressInterface,
+		"a plain copy of State() taken before a later Refresh is not mutated by it")
 	require.Equal(t, "eth0", snapshot.BlockNodeState.Shaping.EgressInterface)
 	require.Contains(t, snapshot.BlockNodeState.Shaping.ShapeOverrides, "publisher")
-}
-
-type failingMarshaler struct{}
-
-func (failingMarshaler) MarshalYAML() (any, error) { return nil, errors.New("boom") }
-
-// PersistedSnapshot is an exported boundary: its internal failures carry
-// reasons.Internal and no hints, on an unchanged InternalError.
-func TestPersistedSnapshot_MarshalFailureIsAnInternalError(t *testing.T) {
-	s := NewState("/tmp/state.yaml")
-	s.LastAction.Inputs = failingMarshaler{}
-
-	_, err := s.PersistedSnapshot()
-
-	require.Error(t, err)
-	require.True(t, errorx.IsOfType(err, errorx.InternalError))
-	require.Contains(t, err.Error(), "failed to marshal state for snapshot")
-	reason, ok := errx.ReasonOf(err)
-	require.True(t, ok)
-	require.Equal(t, reasons.Internal, reason)
-	_, hasHints := errx.Hints(err)
-	require.False(t, hasHints)
 }

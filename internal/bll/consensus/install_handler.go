@@ -93,6 +93,24 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		}
 	}
 
+	// Apply namespace=orbit convention. The key lookup below needs it to find the
+	// node's live ConsensusCapsule.
+	custom.OrbitName = custom.Namespace
+
+	// Find the key secrets the operator did not name, by their labels.
+	ctx, cancel := lookupContext()
+	defer cancel()
+	cluster, err := newKeyCluster()
+	if err != nil {
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "cannot connect to the Kubernetes cluster"),
+			reasons.PreconditionNotMet,
+			"Verify your kubeconfig and that 'kubectl get nodes' works")
+	}
+	if err := resolveKeySecrets(ctx, cluster, custom); err != nil {
+		return nil, err
+	}
+
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
 
@@ -119,9 +137,6 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	if err := validateConsensusPullSecretHosts(custom); err != nil {
 		return nil, err
 	}
-
-	// Apply namespace=orbit convention
-	custom.OrbitName = custom.Namespace
 
 	l.Info().
 		Str("imageRepo", custom.ConsensusImageRepo).
@@ -201,7 +216,7 @@ func (h *InstallHandler) BuildWorkflow(
 		// The solo-operator is installed separately by `kube operator install`, not
 		// here — consensus install is a pure consumer. These prechecks are the hard
 		// guard that the operator is present and the right version.
-		steps.PrecheckConsensusSecrets(ins),
+		steps.PrecheckConsensusSecrets(ins, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorCRDs(steps.ConsensusNodeCRDs...),
 		steps.PrecheckConsensusNotInstalled(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
 		steps.PrecheckOperatorRunning(),
@@ -263,8 +278,8 @@ func (h *InstallHandler) HandleIntent(
 
 // patchConsensusNodeState returns a callback that persists the consensus node
 // state into the full state map after workflow execution.
-func patchConsensusNodeState() func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
-	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs]) error {
+func patchConsensusNodeState() bll.StateCallback[models.ConsensusNodeInputs] {
+	return func(full *state.State, effInputs models.UserInputs[models.ConsensusNodeInputs], _ *automa.Report) error {
 		ins := effInputs.Custom
 		stateKey := models.ConsensusNodeStateKey(ins.Namespace, ins.NodeId)
 
@@ -308,21 +323,22 @@ func patchConsensusNodeState() func(full *state.State, effInputs models.UserInpu
 		managedSpec := buildConsensusNodeManagedSpec(ins)
 
 		full.ConsensusNodes[stateKey] = state.ConsensusNodeState{
-			Namespace:     ins.Namespace,
-			OrbitName:     ins.OrbitName,
-			NodeId:        ins.NodeId,
-			AccountId:     ins.AccountId,
-			Weight:        ins.Weight,
-			ImageRepo:     ins.ConsensusImageRepo,
-			ImageTag:      ins.ConsensusImageTag,
-			LedgerId:      ins.LedgerId,
-			ChainId:       ins.ChainId,
-			DeploymentPkg: ins.DeploymentPackageDir,
-			GrpcTlsSecret: ins.GrpcTlsSecret,
-			SigningSecret: ins.SigningSecret,
-			ConfigHashes:  configHashes,
-			ManagedSpec:   managedSpec,
-			LastSync:      now,
+			Namespace:      ins.Namespace,
+			OrbitName:      ins.OrbitName,
+			NodeId:         ins.NodeId,
+			AccountId:      ins.AccountId,
+			Weight:         ins.Weight,
+			ImageRepo:      ins.ConsensusImageRepo,
+			ImageTag:       ins.ConsensusImageTag,
+			LedgerId:       ins.LedgerId,
+			ChainId:        ins.ChainId,
+			DeploymentPkg:  ins.DeploymentPackageDir,
+			GrpcTlsSecret:  ins.GrpcTlsSecret,
+			SigningSecret:  ins.SigningSecret,
+			AdminKeySecret: ins.AdminKeySecret,
+			ConfigHashes:   configHashes,
+			ManagedSpec:    managedSpec,
+			LastSync:       now,
 		}
 
 		// The Orbit is shared; record its baseline once. EnsureOrbit has already

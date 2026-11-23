@@ -29,18 +29,46 @@ func unmarshalStateDoc(data []byte, doc interface{}) error {
 	return nil
 }
 
-// readStateFileBytes returns the raw bytes of the on-disk state file.
-// If the file does not exist it returns (nil, nil) so callers can
-// treat a missing file as "empty state" without error handling.
-func readStateFileBytes() ([]byte, error) {
-	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
+// readComponentOrLegacyBytes returns id's persisted file if it exists, else
+// falls back to a legacy single state.yaml so these readers also work on a
+// host that has not run the per-component split migration yet. The two files
+// share the same YAML shape (both marshal a State), so parsing either with the
+// same doc type works unchanged.
+func readComponentOrLegacyBytes(id ComponentID) ([]byte, error) {
+	data, err := readComponentFileBytes(id)
+	if err != nil || data != nil {
+		return data, err
+	}
+	return readLegacyStateFileBytes()
+}
 
-	data, err := os.ReadFile(stateFile)
+// readComponentFileBytes returns the raw bytes of one component's persisted
+// file. If the file does not exist it returns (nil, nil) so callers can treat
+// an unrecorded component as "empty state" without error handling.
+func readComponentFileBytes(id ComponentID) ([]byte, error) {
+	path := componentFilePath(models.Paths().StateDir, id)
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, errorx.InternalError.Wrap(err, "failed to read state file at %s", stateFile)
+		return nil, errorx.InternalError.Wrap(err, "failed to read %s state file at %s", id, path)
+	}
+	return data, nil
+}
+
+// readLegacyStateFileBytes returns the raw bytes of the pre-split single state
+// file, or (nil, nil) if it doesn't exist.
+func readLegacyStateFileBytes() ([]byte, error) {
+	path := filepath.Join(models.Paths().StateDir, StateFileName)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, errorx.InternalError.Wrap(err, "failed to read legacy state file at %s", path)
 	}
 	return data, nil
 }
@@ -50,12 +78,13 @@ func readStateFileBytes() ([]byte, error) {
 // tests can reuse the exact same struct definitions and YAML tags, preventing
 // drift between production code and test assertions.
 
-// ProvisionerVersionDoc is the minimal YAML shape for extracting the provisioner version.
+// ProvisionerVersionDoc is the YAML shape of the provisioner fields that a
+// legacy single state.yaml kept inside its state record. They now live in
+// provisioner.yaml.
 type ProvisionerVersionDoc struct {
 	State struct {
-		Provisioner struct {
-			Version string `yaml:"version"`
-		} `yaml:"provisioner"`
+		Version     string          `yaml:"version"`
+		Provisioner ProvisionerInfo `yaml:"provisioner"`
 	} `yaml:"state"`
 }
 
@@ -76,15 +105,15 @@ type PromptDefaultsDoc struct {
 			} `yaml:"firewall"`
 		} `yaml:"machineState"`
 		BlockNodeState struct {
-			Name                   string `yaml:"name"`
-			Namespace              string `yaml:"namespace"`
-			ChartVersion           string `yaml:"version"`
-			HistoricRetention      string `yaml:"historicRetention"`
-			RecentRetention        string `yaml:"recentRetention"`
-			PluginPreset           string `yaml:"pluginPreset"`
-			PluginList             string `yaml:"pluginList"`
-			TrafficShapingDisabled bool   `yaml:"trafficShapingDisabled"`
-			Shaping                *struct {
+			Name                  string `yaml:"name"`
+			Namespace             string `yaml:"namespace"`
+			ChartVersion          string `yaml:"version"`
+			HistoricRetention     string `yaml:"historicRetention"`
+			RecentRetention       string `yaml:"recentRetention"`
+			PluginPreset          string `yaml:"pluginPreset"`
+			PluginList            string `yaml:"pluginList"`
+			TrafficShapingEnabled bool   `yaml:"trafficShapingEnabled"`
+			Shaping               *struct {
 				EgressInterface string `yaml:"egressInterface"`
 				LinkRate        string `yaml:"linkRate"`
 			} `yaml:"shaping"`
@@ -117,10 +146,21 @@ type SoftwareVersionsDoc struct {
 	} `yaml:"state"`
 }
 
-// ReadProvisionerVersionFromDisk extracts the provisioner version from the on-disk state file
-// without loading the full state into memory. Returns an empty string when no state file exists.
+// ReadProvisionerVersionFromDisk returns the CLI version recorded in
+// provisioner.yaml, or "" when nothing is recorded. It is read to decide which
+// startup migrations apply — including the per-component split itself —
+// before any of them has run, so on a host the split has not reached yet it
+// falls back to the legacy single state.yaml.
 func ReadProvisionerVersionFromDisk() (string, error) {
-	data, err := readStateFileBytes()
+	rec, ok, err := readProvisionerRecord(models.Paths().StateDir)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return rec.CLI.Version, nil
+	}
+
+	data, err := readLegacyStateFileBytes()
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -134,10 +174,11 @@ func ReadProvisionerVersionFromDisk() (string, error) {
 }
 
 // ReadSoftwareVersionFromDisk reads a single host component's recorded version
-// (by catalog artifact name) from the on-disk state file without loading the
-// full state. Returns an empty string when the state file or component is absent.
+// (by catalog artifact name) from the on-disk system state file without
+// loading the full state. Returns an empty string when that file or the
+// component is absent.
 func ReadSoftwareVersionFromDisk(name string) (string, error) {
-	data, err := readStateFileBytes()
+	data, err := readComponentOrLegacyBytes(ComponentSystem)
 	if err != nil || data == nil {
 		return "", err
 	}
@@ -180,14 +221,14 @@ func softwareVersionFromDoc(doc SoftwareVersionsDoc, name string) string {
 // inside BlockNodeState, so its keys (name, namespace, version) live
 // directly under blockNodeState in the YAML.
 type BlockNodeSummary struct {
-	ReleaseName            string
-	Namespace              string
-	ChartVersion           string
-	HistoricRetention      string
-	RecentRetention        string
-	PluginPreset           string
-	PluginList             string
-	TrafficShapingDisabled bool
+	ReleaseName           string
+	Namespace             string
+	ChartVersion          string
+	HistoricRetention     string
+	RecentRetention       string
+	PluginPreset          string
+	PluginList            string
+	TrafficShapingEnabled bool
 	// EgressInterface and LinkRate are the last-persisted traffic-shaping content
 	// from blockNodeState.shaping, empty when shaping was never configured. They
 	// seed the reconfigure egress prompts so a default-accept keeps the operator's
@@ -209,24 +250,39 @@ type PromptDefaults struct {
 	Firewall *models.HostConfig
 }
 
-// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields from the
-// on-disk state file in a single read + YAML parse.  This avoids the overhead
-// of reading and parsing the same file twice when both BlockNodeSelectPrompts
-// and BlockNodeInputPrompts run in the same prompt flow.
-// Returns a zero-value struct when no state file exists.
+// ReadPromptDefaultsFromDisk extracts all prompt-relevant fields with one
+// read + YAML parse per component file (profile, firewall, and block node for
+// the rest). Each file is decoded into its own PromptDefaultsDoc — not a
+// shared one — because every component file is a marshaled State, so each
+// file's non-owned sections are present too, just zero-valued. Decoding the
+// files into one doc would let a later unmarshal silently overwrite what an
+// earlier one loaded. A component whose file does not exist leaves its doc at
+// its zero value, so this returns a zero-value struct only when none of the
+// files exists.
 func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
-	data, err := readStateFileBytes()
-	if err != nil || data == nil {
-		return PromptDefaults{}, err
-	}
+	var profileDoc, firewallDoc, blockNodeDoc PromptDefaultsDoc
 
-	var doc PromptDefaultsDoc
-	if err := unmarshalStateDoc(data, &doc); err != nil {
-		return PromptDefaults{}, err
+	for _, f := range []struct {
+		id  ComponentID
+		doc *PromptDefaultsDoc
+	}{
+		{ComponentProfile, &profileDoc},
+		{ComponentFirewall, &firewallDoc},
+		{ComponentBlockNode, &blockNodeDoc},
+	} {
+		data, err := readComponentOrLegacyBytes(f.id)
+		if err != nil {
+			return PromptDefaults{}, err
+		}
+		if data != nil {
+			if err := unmarshalStateDoc(data, f.doc); err != nil {
+				return PromptDefaults{}, err
+			}
+		}
 	}
 
 	var firewall *models.HostConfig
-	if fw := doc.State.MachineState.Firewall; fw != nil {
+	if fw := firewallDoc.State.MachineState.Firewall; fw != nil {
 		firewall = &models.HostConfig{
 			Disabled:        fw.Disabled,
 			ManagementCIDRs: fw.ManagementCIDRs,
@@ -237,26 +293,26 @@ func ReadPromptDefaultsFromDisk() (PromptDefaults, error) {
 		}
 	}
 
-	bn := doc.State.BlockNodeState
+	bn := blockNodeDoc.State.BlockNodeState
 	var egressInterface, linkRate string
 	if bn.Shaping != nil {
 		egressInterface = bn.Shaping.EgressInterface
 		linkRate = bn.Shaping.LinkRate
 	}
 	return PromptDefaults{
-		Profile:  doc.State.MachineState.Profile,
+		Profile:  profileDoc.State.MachineState.Profile,
 		Firewall: firewall,
 		BlockNode: BlockNodeSummary{
-			ReleaseName:            bn.Name,
-			Namespace:              bn.Namespace,
-			ChartVersion:           bn.ChartVersion,
-			HistoricRetention:      bn.HistoricRetention,
-			RecentRetention:        bn.RecentRetention,
-			PluginPreset:           bn.PluginPreset,
-			PluginList:             bn.PluginList,
-			TrafficShapingDisabled: bn.TrafficShapingDisabled,
-			EgressInterface:        egressInterface,
-			LinkRate:               linkRate,
+			ReleaseName:           bn.Name,
+			Namespace:             bn.Namespace,
+			ChartVersion:          bn.ChartVersion,
+			HistoricRetention:     bn.HistoricRetention,
+			RecentRetention:       bn.RecentRetention,
+			PluginPreset:          bn.PluginPreset,
+			PluginList:            bn.PluginList,
+			TrafficShapingEnabled: bn.TrafficShapingEnabled,
+			EgressInterface:       egressInterface,
+			LinkRate:              linkRate,
 			Storage: models.BlockNodeStorage{
 				BasePath:             bn.Storage.BasePath,
 				ArchivePath:          bn.Storage.ArchivePath,

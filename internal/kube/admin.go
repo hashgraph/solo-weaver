@@ -53,21 +53,46 @@ func (m *KubeConfigManager) SetKubeDir(dir string) {
 // and the weaver service account's home. This allows kubectl to be used without
 // requiring root privileges and ensures the config is available for all relevant users.
 func (m *KubeConfigManager) Configure() error {
-	if err := m.configureRootKubeConfig(); err != nil {
+	return m.configure(false)
+}
+
+// ConfigureMissing is Configure, except that a destination that already has a
+// kubeconfig is left as it is, along with its directory's ownership.
+func (m *KubeConfigManager) ConfigureMissing() error {
+	return m.configure(true)
+}
+
+func (m *KubeConfigManager) configure(keepExisting bool) error {
+	if err := m.configureRootKubeConfig(keepExisting); err != nil {
 		return err
 	}
-	if err := m.configureCurrentUserKubeConfig(); err != nil {
+	if err := m.configureCurrentUserKubeConfig(keepExisting); err != nil {
 		return err
 	}
-	if err := m.configureWeaverKubeConfig(); err != nil {
+	if err := m.configureWeaverKubeConfig(keepExisting); err != nil {
 		return err
 	}
 	return nil
 }
 
+// keep reports whether dest is to be left alone: keepExisting is set and dest exists.
+func (m *KubeConfigManager) keep(keepExisting bool, dest string) (bool, error) {
+	if !keepExisting {
+		return false, nil
+	}
+	_, exists, err := m.fsManager.PathExists(dest)
+	if err != nil {
+		return false, errorx.IllegalState.Wrap(err, "failed to check %s", dest)
+	}
+	return exists, nil
+}
+
 // configureRootKubeConfig installs kubeconfig in the root user's home directory.
-func (m *KubeConfigManager) configureRootKubeConfig() error {
+func (m *KubeConfigManager) configureRootKubeConfig(keepExisting bool) error {
 	rootKubeDir := "/root/.kube"
+	if keep, err := m.keep(keepExisting, path.Join(rootKubeDir, "config")); err != nil || keep {
+		return err
+	}
 
 	// Create root .kube directory
 	err := m.fsManager.CreateDirectory(rootKubeDir, false)
@@ -105,7 +130,7 @@ func (m *KubeConfigManager) configureRootKubeConfig() error {
 // Uses config.WeaverHomeDir() directly rather than user.HomeDir() so it works correctly on
 // existing hosts where /etc/passwd still records home=/ from an older install.
 // Skips gracefully if the weaver user has not been provisioned yet.
-func (m *KubeConfigManager) configureWeaverKubeConfig() error {
+func (m *KubeConfigManager) configureWeaverKubeConfig(keepExisting bool) error {
 	weaverUser, err := m.principalManager.LookupUserByName(config.WeaverUserName())
 	if err != nil {
 		if !errorx.IsOfType(err, principal.UserNotFoundError) {
@@ -122,6 +147,9 @@ func (m *KubeConfigManager) configureWeaverKubeConfig() error {
 	kubeDir := m.kubeDir
 	if kubeDir == "" {
 		kubeDir = path.Join(config.WeaverHomeDir(), ".kube")
+	}
+	if keep, err := m.keep(keepExisting, path.Join(kubeDir, "config")); err != nil || keep {
+		return err
 	}
 
 	if err := m.fsManager.CreateDirectory(kubeDir, false); err != nil {
@@ -143,7 +171,7 @@ func (m *KubeConfigManager) configureWeaverKubeConfig() error {
 // configureCurrentUserKubeConfig installs kubeconfig in the current user's home directory.
 // This is particularly useful when the application is run with sudo, as it copies the config
 // to the original user's home directory (obtained from SUDO_USER environment variable).
-func (m *KubeConfigManager) configureCurrentUserKubeConfig() error {
+func (m *KubeConfigManager) configureCurrentUserKubeConfig(keepExisting bool) error {
 	// Get the current user from SUDO_USER environment variable
 	// This contains the username of the user who invoked sudo
 	sudoUser := os.Getenv("SUDO_USER")
@@ -174,6 +202,9 @@ func (m *KubeConfigManager) configureCurrentUserKubeConfig() error {
 
 	// Determine kubeconfig directory using the validated user's home directory
 	currentUserKubeDir := path.Join(currentUser.HomeDir(), ".kube")
+	if keep, err := m.keep(keepExisting, path.Join(currentUserKubeDir, "config")); err != nil || keep {
+		return err
+	}
 
 	// Create .kube directory
 	err = m.fsManager.CreateDirectory(currentUserKubeDir, false)

@@ -11,8 +11,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 )
 
 // ResetHandler handles the ActionReset intent for a block node.
@@ -34,17 +32,14 @@ func (h *ResetHandler) PrepareEffectiveInputs(
 	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
-// BuildWorkflow validates that the block node is deployed and returns the
+// BuildWorkflow validates that the block node is installed and returns the
 // reset workflow.
 func (h *ResetHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
-		return nil, errorx.IllegalState.New(
-			"block node is not installed; cannot reset").
-			WithProperty(models.ErrPropertyResolution, "use 'solo-provisioner block node install' to install the "+
-				"block node first, or pass --force to continue")
+	if err := requireInstalled(currentState.BlockNodeState.ReleaseInfo, "reset", inputs.Common.Force); err != nil {
+		return nil, err
 	}
 
 	plan, err := planStorage(currentState, inputs.Custom)

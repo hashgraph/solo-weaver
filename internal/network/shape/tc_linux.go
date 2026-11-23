@@ -77,13 +77,9 @@ func (r *execTCRunner) QdiscAddFqCodel(ctx context.Context, nic, minor, handle s
 }
 
 func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]ClassStat, error) {
-	cmd := exec.CommandContext(ctx, tcBin, "-s", "-j", "class", "show", "dev", dev)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := tcOutput(ctx, "-s", "-j", "class", "show", "dev", dev)
 	if err != nil {
-		return nil, errorx.ExternalError.Wrap(err,
-			"tc -s -j class show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+		return nil, err
 	}
 
 	var raw []tcClassJSON
@@ -118,38 +114,12 @@ func (r *execTCRunner) ClassStats(ctx context.Context, dev string) (map[string]C
 	return stats, nil
 }
 
-// tcQdiscJSON is the subset of `tc -j qdisc show` output the probe reads.
-// iproute2 emits "root": true or "parent", never "root": false.
-type tcQdiscJSON struct {
-	Kind   string `json:"kind"`
-	Handle string `json:"handle"`
-	Parent string `json:"parent"`
-	Root   *bool  `json:"root"`
-}
-
-// isWeaverRoot reports whether this entry is weaver's `root handle 1: htb`
-// qdisc, not a foreign hierarchy's child HTB that happens to reuse handle 1:.
-func (q tcQdiscJSON) isWeaverRoot() bool {
-	if q.Kind != "htb" || strings.TrimSuffix(q.Handle, ":") != "1" {
-		return false
-	}
-	if q.Parent != "" {
-		return false
-	}
-	// A missing "root" is tolerated for iproute2 builds that omit the field.
-	return q.Root == nil || *q.Root
-}
-
 // QdiscRootExists implements TCRunner.
 func (r *execTCRunner) QdiscRootExists(ctx context.Context, dev string) (bool, error) {
-	cmd := exec.CommandContext(ctx, tcBin, "-j", "qdisc", "show", "dev", dev)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := tcOutput(ctx, "-j", "qdisc", "show", "dev", dev)
 	if err != nil {
 		// A missing device lands here: "cannot determine", not "no qdisc".
-		return false, errorx.ExternalError.Wrap(err,
-			"tc -j qdisc show dev %s failed: %s", dev, strings.TrimSpace(stderr.String()))
+		return false, err
 	}
 
 	return qdiscRootPresent(out, dev)

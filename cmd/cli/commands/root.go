@@ -164,6 +164,10 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, state.NewUnifiedStateMigration())
 	migration.Register(migration.ScopeStartup, state.NewHelmReleaseSchemaV2Migration())
 	migration.Register(migration.ScopeStartup, state.NewMgmtPortsV1Migration())
+	migration.Register(migration.ScopeStartup, state.NewTrafficShapingEnabledV1Migration())
+	// Must run after every migration above: those still assume and rewrite the
+	// single-file legacy state.yaml this one splits apart.
+	migration.Register(migration.ScopeStartup, state.NewPerComponentStateMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewLegacyBinaryMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAccelerationMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewCiliumAgentRestartMigration())
@@ -173,6 +177,7 @@ func RegisterMigrations() {
 	migration.Register(migration.ScopeStartup, workflows.NewNetworkShaperUnitMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewShellCompletionMigration())
 	migration.Register(migration.ScopeStartup, workflows.NewSysctlNetworkTuningMigration())
+	migration.Register(migration.ScopeStartup, workflows.NewCrioHostLinksMigration())
 
 	// ── Block-node upgrade migrations (run during block node upgrade workflow) ─
 	migration.Register(migration.ScopeBlockNode, blocknode.NewVerificationStorageMigration())
@@ -206,6 +211,10 @@ func Execute(ctx context.Context) error {
 
 	// execute the root command
 	_, err := rootCmd.ExecuteContextC(ctx)
+	// Here and not in a post-run hook: cobra skips those when the command or a
+	// pre-run fails, and a failing startup pass is that case. A workflow's run
+	// summary takes the warnings queued before it renders; this prints the rest.
+	common.PrintStateWarnings(os.Stderr, state.TakeWarnings())
 	if err != nil {
 		return errorx.IllegalState.Wrap(err, "failed to execute command")
 	}

@@ -34,6 +34,9 @@ func SwapOn(_ string, _ int) error { return errSwapUnsupported }
 // SwapOnAll is unsupported on non-Linux platforms.
 func SwapOnAll() error { return errSwapUnsupported }
 
+// SwapInUse is unsupported on non-Linux platforms.
+func SwapInUse() (bool, error) { return false, errSwapUnsupported }
+
 // DisableSwap is unsupported on non-Linux platforms.
 func DisableSwap() error { return errSwapUnsupported }
 

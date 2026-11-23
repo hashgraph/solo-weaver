@@ -587,6 +587,17 @@ func (m *unixManager) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 
+func (m *unixManager) RemoveSymbolicLinkIfTarget(path string, target string) (bool, error) {
+	dest, err := os.Readlink(path)
+	if err != nil || dest != target {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return false, FileSystemError.New("failed to remove symbolic link %q", path).WithUnderlyingErrors(err)
+	}
+	return true, nil
+}
+
 func (m *unixManager) RemoveContents(path string) error {
 	// Verify the path exists and is a directory
 	fi, exists, err := m.PathExists(path)

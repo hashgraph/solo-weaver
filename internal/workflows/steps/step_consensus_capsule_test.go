@@ -13,13 +13,16 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // fakeCapsuleClient is an in-memory CapsuleKubeClient for testing the config-CR
 // apply policy without a cluster. `existing` maps CR name -> deployed content;
-// `applied` records the CR names passed to ApplyTyped, in order.
+// `applied` records the CR names passed to ApplyTyped, in order; `deleted`
+// records the CR names DeleteResource removed, in order. `pvcs` answers a PVC
+// List; `released` records the PVCs RemoveOwnerReference changed.
 type fakeCapsuleClient struct {
 	existing    map[string]string
 	nested      map[string]map[string]interface{}
@@ -27,6 +30,8 @@ type fakeCapsuleClient struct {
 	appliedObjs []runtime.Object
 	deleted     []string
 	listResult  *unstructured.UnstructuredList
+	pvcs        []unstructured.Unstructured
+	released    []string
 }
 
 func (f *fakeCapsuleClient) ResourceExists(_ context.Context, _, _, _, name string) (bool, error) {
@@ -50,18 +55,41 @@ func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) er
 	return nil
 }
 
-func (f *fakeCapsuleClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
-	_, ok := f.existing[name]
-	delete(f.existing, name)
-	f.deleted = append(f.deleted, name)
-	return ok, nil
-}
-
-func (f *fakeCapsuleClient) List(_ context.Context, _ kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+func (f *fakeCapsuleClient) List(_ context.Context, kind kube.ResourceKind, _ string, _ kube.WaitOptions) (*unstructured.UnstructuredList, error) {
+	if kind == kube.KindPVC {
+		return &unstructured.UnstructuredList{Items: f.pvcs}, nil
+	}
 	if f.listResult != nil {
 		return f.listResult, nil
 	}
 	return &unstructured.UnstructuredList{}, nil
+}
+
+func (f *fakeCapsuleClient) DeleteResource(_ context.Context, _, _, _, name string) (bool, error) {
+	if _, ok := f.existing[name]; !ok {
+		return false, nil
+	}
+	delete(f.existing, name)
+	f.deleted = append(f.deleted, name)
+	return true, nil
+}
+
+func (f *fakeCapsuleClient) RemoveOwnerReference(_ context.Context, _ kube.ResourceKind, _, name, ownerKind, ownerName string) (bool, error) {
+	for i := range f.pvcs {
+		if f.pvcs[i].GetName() != name {
+			continue
+		}
+		var kept []metav1.OwnerReference
+		for _, r := range f.pvcs[i].GetOwnerReferences() {
+			if r.Kind != ownerKind || r.Name != ownerName {
+				kept = append(kept, r)
+			}
+		}
+		f.pvcs[i].SetOwnerReferences(kept)
+		f.released = append(f.released, name)
+		return true, nil
+	}
+	return false, nil
 }
 
 func (f *fakeCapsuleClient) provider() CapsuleKubeProvider {
@@ -707,4 +735,71 @@ func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
 			}
 		})
 	}
+}
+
+func capsuleSecretsFor(t *testing.T, fake *fakeCapsuleClient, in models.ConsensusNodeInputs) (*operatorv1alpha1.ConsensusSecretResources, automa.TypeStatus, error) {
+	t.Helper()
+	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	require.NoError(t, err)
+	report := step.Execute(context.Background())
+	if report.Status != automa.StatusSuccess {
+		return nil, report.Status, report.Error
+	}
+	return findCapsule(t, fake.appliedObjs).Spec.Secrets.SecretResources, report.Status, nil
+}
+
+func secretInputs() models.ConsensusNodeInputs {
+	return models.ConsensusNodeInputs{
+		Namespace:          "hiero-network-1",
+		OrbitName:          "hiero-network-1",
+		NodeId:             2,
+		AccountId:          "0.0.5",
+		Weight:             500,
+		ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+		ConsensusImageTag:  "0.74.2",
+		GrpcTlsSecret:      "node2-grpc-tls-keys",
+		SigningSecret:      "node2-gossip-keys",
+	}
+}
+
+// The capsule must reference the neutral, index-free inner keys that
+// `consensus keys import` writes, and the admin public key secret when one was
+// resolved.
+func TestCreateConsensusCapsule_NeutralKeyNamesAndAdminKey(t *testing.T) {
+	in := secretInputs()
+	in.SigningSecret = "node2-gossip-keys-20261101-3fa9c2e1"
+	in.GrpcTlsSecret = "node2-grpc-tls-keys-20261101-b71e04aa"
+	in.AdminKeySecret = "node2-admin-pubkey-9c0d1e2f"
+	fake := &fakeCapsuleClient{existing: map[string]string{in.AdminKeySecret: "x"}}
+	sr, status, err := capsuleSecretsFor(t, fake, in)
+	require.Equal(t, automa.StatusSuccess, status, err)
+
+	assert.Equal(t, in.SigningSecret, sr.SigningPrivateKey.SecretName)
+	assert.Equal(t, "s-private.pem", sr.SigningPrivateKey.KeyName)
+	assert.Equal(t, "s-public.pem", sr.SigningPublicCertificate.KeyName)
+	assert.Equal(t, in.GrpcTlsSecret, sr.GrpcTlsPrivateKey.SecretName)
+	assert.Equal(t, "hedera.key", sr.GrpcTlsPrivateKey.KeyName)
+	assert.Equal(t, "hedera.crt", sr.GrpcTlsPublicCertificate.KeyName)
+	require.NotNil(t, sr.AdminPublicKey)
+	assert.Equal(t, in.AdminKeySecret, sr.AdminPublicKey.SecretName)
+	assert.Equal(t, "admin.pub", sr.AdminPublicKey.KeyName)
+}
+
+func TestCreateConsensusCapsule_NoAdminKeyWhenNoneResolved(t *testing.T) {
+	sr, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{}}, secretInputs())
+	require.Equal(t, automa.StatusSuccess, status, err)
+	assert.Nil(t, sr.AdminPublicKey)
+}
+
+func TestCreateConsensusCapsule_MissingAdminKeySecretFails(t *testing.T) {
+	in := secretInputs()
+	in.AdminKeySecret = "my-admin"
+
+	_, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{}}, in)
+	assert.NotEqual(t, automa.StatusSuccess, status, "a named admin secret that is missing must fail")
+	require.Error(t, err)
+
+	sr, status, err := capsuleSecretsFor(t, &fakeCapsuleClient{existing: map[string]string{"my-admin": "x"}}, in)
+	require.Equal(t, automa.StatusSuccess, status, err)
+	assert.Equal(t, "my-admin", sr.AdminPublicKey.SecretName)
 }

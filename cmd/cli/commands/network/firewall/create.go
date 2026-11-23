@@ -58,16 +58,19 @@ var createCmd = &cobra.Command{
 			return err
 		}
 
-		changed, err := newManager().Create(cmd.Context(), t, force)
-		if err != nil {
-			return err
-		}
-
 		// Record the enable decision even when the create was a no-op (the table
 		// already existed and --force was not passed): "this host wants a host
 		// firewall" is true either way, and it is the decision — not the ruleset —
 		// that a later `block node reconfigure` seeds its enable/disable choice from.
-		recordHostFirewallDecision(false)
+		var changed bool
+		inputs := map[string]any{"config": fw.FileConfigFromTable(t), "force": force}
+		if err := applyHostFirewallChange(cmd.Context(), false, inputs, func() error {
+			var err error
+			changed, err = newManager().Create(cmd.Context(), t, force)
+			return err
+		}); err != nil {
+			return err
+		}
 
 		if changed {
 			logx.As().Info().Msg("inet weaver-host-firewall firewall is in the desired state")

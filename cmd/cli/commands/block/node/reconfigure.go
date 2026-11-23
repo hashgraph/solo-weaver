@@ -46,7 +46,7 @@ var (
 			// no-flag / default-accept reconfigure keeps whatever is already deployed
 			// and only an explicit toggle enables or tears a feature down. Both features
 			// read the persisted install/reconfigure decision (#947): traffic shaping
-			// from BlockNodeState.TrafficShapingDisabled, the host firewall from
+			// from BlockNodeState.TrafficShapingEnabled, the host firewall from
 			// MachineState.Firewall — except that the firewall's seed also consults the
 			// live inet table, because the standalone `network firewall` verbs can create
 			// one without the block node ever recording a decision (#1003). On an
@@ -60,7 +60,7 @@ var (
 			currentTrafficShaping := true
 			if err == nil {
 				firewallSeed = common.ResolveFirewallSeed(cmd.Context(), stateDefaults.Firewall)
-				currentTrafficShaping = !stateDefaults.BlockNode.TrafficShapingDisabled
+				currentTrafficShaping = stateDefaults.BlockNode.TrafficShapingEnabled
 			}
 
 			// Host firewall is prompted first (before the traffic-shaper question) so

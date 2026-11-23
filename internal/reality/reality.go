@@ -26,6 +26,9 @@ type Checkers struct {
 	BlockNode Checker[state.BlockNodeState]
 	Consensus Checker[map[string]state.ConsensusNodeState]
 	Teleport  Checker[state.TeleportState]
+	// Probe is the probe the checkers use, for callers that must know why the
+	// cluster could not be read.
+	Probe ClusterProbe
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +50,9 @@ type KubeClient interface {
 // Reachable means the cluster was observed. For the other two a checker falls
 // back as it would for no cluster, and must not record what it could not see
 // as gone: no kubeconfig on this host does not prove a cluster was removed.
+// Unobservable proves nothing either way: the Teleport checker marks the agent
+// it keeps then as unobserved, so a destructive action doesn't take it for
+// unchanged.
 type ClusterReachability int
 
 const (
@@ -90,6 +96,7 @@ type checkerConfig struct {
 	stateDir      string
 	newHelm       func() (HelmManager, error)
 	newKube       func() (KubeClient, error)
+	newReader     func() (ClusterReader, error)
 	probe         ClusterProbe
 }
 
@@ -112,6 +119,10 @@ func WithKubeFactory(fn func() (KubeClient, error)) CheckerOption {
 	return func(c *checkerConfig) { c.newKube = fn }
 }
 
+func WithClusterReaderFactory(fn func() (ClusterReader, error)) CheckerOption {
+	return func(c *checkerConfig) { c.newReader = fn }
+}
+
 func WithClusterProbe(fn ClusterProbe) CheckerOption {
 	return func(c *checkerConfig) { c.probe = fn }
 }
@@ -124,16 +135,17 @@ func WithClusterProbe(fn ClusterProbe) CheckerOption {
 // Production defaults are applied; use CheckerOption to override for tests.
 func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 	cc := &checkerConfig{
-		sm:      sm,
-		newHelm: func() (HelmManager, error) { return helm2.NewManager() },
-		newKube: func() (KubeClient, error) { return kube.NewClient() },
-		probe:   probeCluster,
+		sm:        sm,
+		newHelm:   func() (HelmManager, error) { return helm2.NewManager() },
+		newKube:   func() (KubeClient, error) { return kube.NewClient() },
+		newReader: newKubeClusterReader,
+		probe:     probeCluster,
 	}
 	for _, o := range opts {
 		o(cc)
 	}
 
-	cluster, err := NewClusterChecker(cc.sm, cc.probe)
+	cluster, err := NewClusterChecker(cc.sm, cc.newHelm, cc.newReader, cc.probe)
 	if err != nil {
 		return Checkers{}, errorx.IllegalState.Wrap(err, "failed to create cluster checker")
 	}
@@ -166,5 +178,6 @@ func NewCheckers(sm state.Manager, opts ...CheckerOption) (Checkers, error) {
 		BlockNode: blocknode,
 		Consensus: consensus,
 		Teleport:  teleport,
+		Probe:     cc.probe,
 	}, nil
 }

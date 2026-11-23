@@ -7,13 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 
 	"github.com/automa-saga/logx"
-	"github.com/automa-saga/version"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/joomcode/errorx"
 	"gopkg.in/yaml.v3"
@@ -26,7 +27,7 @@ import (
 type Reader interface {
 	// State returns a snapshot of the current in-memory state.
 	State() State
-	// HasPersistedState reports whether a state file already exists on disk.
+	// HasPersistedState reports whether any component already has a persisted file on disk.
 	HasPersistedState() (os.FileInfo, bool, error)
 }
 
@@ -34,25 +35,36 @@ type Reader interface {
 // Consumers that record side-effects (e.g. the BLL after a workflow run) should
 // depend on this narrow interface so that their dependencies are explicit.
 //
-// Set and AddActionHistory return Writer (not DefaultStateManager) so that
+// Set returns Writer (not DefaultStateManager) so that
 // callers depending only on Writer can chain calls without importing the full
 // DefaultStateManager type.
 type Writer interface {
 	// Set replaces the entire in-memory state and returns the Writer for chaining.
 	Set(s State) Writer
-	// AddActionHistory appends an entry to the pending action log and updates
-	// State.LastAction. Entries are flushed to disk on the next Flush() call.
-	// Returns the Writer for chaining.
-	AddActionHistory(entry ActionHistory) Writer
-	// FlushState persists the current state without flushing the action history.
-	// An fsx.FileSyncError means the new state is on disk but not synced; still flush the history after it.
-	FlushState() error
-	// FlushActionHistory persists only the pending action history to disk without flushing the full state.
-	// An fsx.FileSyncError means the entries were appended but not synced.
-	FlushActionHistory() error
-	// FlushAll persists both state and action history
-	// An fsx.FileSyncError means both are on disk, but not all of it is synced.
-	FlushAll() error
+	// Commit persists only the listed components' state, leaving every other
+	// component's file untouched — not read, not rewritten, not reverted — then
+	// appends entry to action_history.yaml. A component with no prior baseline
+	// (first write) is written outright. entry.Components gains the listed
+	// files whose content changed. entry is appended even when a file did not
+	// land, marked NotPersisted with the error. An entry that can't be
+	// appended is a state warning, never Commit's error: the action already
+	// ran. Commit returns the write error, where an fsx.FileSyncError means the
+	// files landed but are not synced; for a failed action it returns nil, and
+	// an unsynced write is a state warning too, so the command reports the
+	// action's own failure.
+	Commit(entry ActionHistory, ids ...ComponentID) error
+	// Persist writes ids' state like Commit but appends no entry, for an
+	// action that records its own entry once it has finished. It returns the
+	// files whose content changed, which that entry names. An
+	// fsx.FileSyncError means they landed but are not synced.
+	Persist(ids ...ComponentID) ([]ChangedFile, error)
+	// Record appends entry to action_history.yaml for an action that changed
+	// the host but writes no state through Commit. cause, when not nil, is the
+	// action's failure: it is recorded as the entry's error, and an append that
+	// fails is a state warning rather than an error, so the action's own error
+	// stays the one the command returns. Without a cause, an fsx.FileSyncError
+	// means the entry was appended but not synced.
+	Record(entry ActionHistory, cause error) error
 }
 
 // Persister groups lifecycle operations (load + save) that are needed at the
@@ -60,6 +72,8 @@ type Writer interface {
 type Persister interface {
 	// Refresh reloads the persisted state from disk, overwriting in-memory state.
 	Refresh() error
+	// RefreshScoped reloads only the listed components' files.
+	RefreshScoped(ids ...ComponentID) error
 	// FileManager returns the underlying file-system abstraction.
 	FileManager() fsx.Manager
 }
@@ -76,13 +90,23 @@ type Manager interface {
 
 // DefaultStateManager encapsulates a State and all IO operations (flush/refresh).
 type stateManager struct {
-	mu            sync.Mutex
-	flushMu       sync.Mutex // serializes Flush() calls
-	state         State
-	actions       []ActionHistory
-	fm            fsx.Manager
-	stateFile     string
-	lastStateHash string // canonical hash of state as last read from / written to disk
+	mu        sync.Mutex
+	flushMu   sync.Mutex // serializes Flush() calls
+	state     State
+	actions   []ActionHistory
+	fm        fsx.Manager
+	stateFile string
+	// baselineHash is the canonical hash of each component's file as last read
+	// from or written to disk. A component with no entry has never been
+	// persisted by this manager (either no file exists yet, or Refresh has not
+	// been called) and is written outright on its next flush.
+	baselineHash map[ComponentID]string
+}
+
+// dir returns the directory holding every component's file and the shared
+// action_history.yaml, derived from the configured state file's parent.
+func (m *stateManager) dir() string {
+	return filepath.Dir(m.state.StateFile)
 }
 
 type ManagerOption func(*stateManager) error
@@ -114,6 +138,10 @@ func WithStateFile(path string) ManagerOption {
 // NewStateManager creates a Manager with the provided options.
 // Caller must call Refresh() to load the persisted state from disk before accessing the state.
 func NewStateManager(opts ...ManagerOption) (Manager, error) {
+	return newStateManager(opts...)
+}
+
+func newStateManager(opts ...ManagerOption) (*stateManager, error) {
 	m := &stateManager{
 		actions: []ActionHistory{},
 	}
@@ -137,32 +165,6 @@ func NewStateManager(opts ...ManagerOption) (Manager, error) {
 	}
 
 	return m, nil
-}
-
-// PersistProvisionerVersion records the running binary's version in the on-disk
-// state file so version-boundary startup migrations are not re-evaluated — and
-// non-idempotent ones (e.g. the Cilium agent restart) not re-run — on the next
-// invocation.
-//
-// It Refresh()es first, so any existing reality-detected software/cluster/
-// block-node fields are preserved and the optimistic-concurrency baseline is set;
-// on a host with no state file it writes a minimal one from NewState defaults. A
-// missing file is not an error. Call only after a successful startup-migration
-// pass and only on a provisioned host, so a genuinely fresh machine keeps having
-// no state file.
-func PersistProvisionerVersion(opts ...ManagerOption) error {
-	sm, err := NewStateManager(opts...)
-	if err != nil {
-		return err
-	}
-
-	if err := sm.Refresh(); err != nil && !errorx.IsOfType(err, NotFoundError) {
-		return err
-	}
-
-	s := sm.State()
-	s.ProvisionerState.Version = version.Get().Version
-	return sm.Set(s).FlushState()
 }
 
 // State returns a copy of the current in-memory state (thread-safe).
@@ -189,8 +191,25 @@ func (m *stateManager) FileManager() fsx.Manager {
 	return m.fm
 }
 
-// Refresh reloads the persisted state from disk with write lock
+// Refresh reloads every component's persisted file from disk with write lock.
+// A component whose file is missing keeps its current in-memory value (its
+// defaults from NewState, or whatever a prior Refresh/Set left it at) — the
+// same "no file on disk, keep initial state" behavior the single-file version
+// had, applied per component instead of to the whole state.
 func (m *stateManager) Refresh() error {
+	return m.refresh(AllComponentIDs, false)
+}
+
+// RefreshScoped reloads only ids' files, keeping every other component's
+// in-memory value and baseline, so a file the caller neither reads nor writes
+// cannot fail it.
+func (m *stateManager) RefreshScoped(ids ...ComponentID) error {
+	return m.refresh(DedupeComponentIDs(ids), true)
+}
+
+// refresh reads ids' files onto a clone of the in-memory state. keepOthers
+// keeps every other component's baseline; otherwise only ids' survive.
+func (m *stateManager) refresh(ids []ComponentID, keepOthers bool) error {
 	// Prevent Refresh from interleaving with an in-progress FlushState.
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
@@ -198,178 +217,324 @@ func (m *stateManager) Refresh() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	b, err := m.fm.ReadFile(m.state.StateFile, -1)
-	if err != nil {
-		if !errorx.IsOfType(err, fsx.FileNotFound) {
-			m.lastStateHash = "" // no file on disk
-			return errorx.InternalError.Wrap(err, "failed to read state file from %s", m.state.StateFile)
-		}
-		return nil // no file on disk, keep initial state
-	}
-
-	newState, err := m.state.Clone()
+	composed, err := m.state.Clone()
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to clone current state for refresh")
 	}
 
-	if err = yaml.Unmarshal(b, newState); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to unmarshal state from YAML")
-	}
-
-	// Use the stored hash as the baseline if available (written by FlushState).
-	// Fall back to recomputing for hand-edited or legacy files without a hash.
-	if newState.Hash != "" {
-		m.lastStateHash = newState.Hash
-	} else {
-		canonical, err := canonicalJSON(newState.Hashable())
-		if err != nil {
-			return errorx.InternalError.Wrap(err, "failed to canonicalize refreshed state for baseline hash")
+	baseline := make(map[ComponentID]string, len(AllComponentIDs))
+	if keepOthers {
+		baseline = maps.Clone(m.baselineHash)
+		if baseline == nil {
+			baseline = make(map[ComponentID]string, len(ids))
 		}
-		sum := sha256.Sum256(canonical)
-		m.lastStateHash = hex.EncodeToString(sum[:])
+		for _, id := range ids {
+			delete(baseline, id)
+		}
+	}
+	dir := m.dir()
+
+	for _, id := range ids {
+		b, readErr := m.fm.ReadFile(componentFilePath(dir, id), -1)
+		if readErr != nil {
+			if errorx.IsOfType(readErr, fsx.FileNotFound) {
+				continue // never persisted; this component keeps its current in-memory value
+			}
+			return errorx.InternalError.Wrap(readErr, "failed to read %s state file from %s", id, componentFilePath(dir, id))
+		}
+
+		var fileState State
+		if err := yaml.Unmarshal(b, &fileState); err != nil {
+			return errorx.InternalError.Wrap(err, "failed to parse the %s state file %s", id, componentFilePath(dir, id))
+		}
+		applyComponentSection(composed, id, fileState)
+
+		hash, err := stateContentHash(fileState)
+		if err != nil {
+			return errorx.InternalError.Wrap(err, "failed to canonicalize refreshed %s state for baseline hash", id)
+		}
+		baseline[id] = hash
 	}
 
-	// Stamp the current CLI version so the provisioner.version field on disk
-	// always reflects the binary that last ran, establishing the two-value
-	// invariant used by startup migrations:
-	//   lastCLIVersion  = the version read from disk before this Refresh()
-	//   currentCLIVersion = version.Get().Version (the running binary)
-	newState.ProvisionerState.Version = version.Get().Version
-
-	newState.LastAction = m.state.LastAction
-
-	m.state = *newState
+	m.state = *composed
+	m.baselineHash = baseline
 
 	return nil
 }
 
-// FlushState persists the current state to disk with canonical hashing and atomic write.
-func (m *stateManager) FlushState() error {
+func (m *stateManager) Commit(entry ActionHistory, ids ...ComponentID) error {
 	m.flushMu.Lock()
 	defer m.flushMu.Unlock()
 
-	return m.flushState()
-}
-
-func (m *stateManager) FlushActionHistory() error {
-	m.flushMu.Lock()
-	defer m.flushMu.Unlock()
-	return m.flushActionHistory()
-}
-
-func (m *stateManager) FlushAll() error {
-	m.flushMu.Lock()
-	defer m.flushMu.Unlock()
-
-	// A FileSyncError leaves the new state on disk, so its history is still appended.
-	stateErr := m.flushState()
-	if stateErr != nil && !errorx.IsOfType(stateErr, fsx.FileSyncError) {
-		return stateErr
+	changed, writeErr := m.flushComponents(ids)
+	files := make([]ChangedFile, 0, len(changed)+len(entry.Components))
+	for _, id := range changed {
+		files = append(files, id.File())
+	}
+	entry.Components = append(files, entry.Components...)
+	// A FileSyncError leaves the new state on disk, so the files landed.
+	landed := writeErr == nil || errorx.IsOfType(writeErr, fsx.FileSyncError)
+	if !landed {
+		entry.NotPersisted = true
+		entry = entry.WithError(writeErr)
 	}
 
-	if err := m.flushActionHistory(); err != nil {
-		if stateErr != nil {
-			logx.As().Warn().Err(stateErr).Msg("Failed to sync the state file")
+	m.addActionHistory(entry)
+	if appendErr := m.flushActionHistory(); appendErr != nil {
+		warnRecordFailure(m.dir(), appendErr)
+	}
+	switch {
+	case !landed:
+		return writeErr
+	case entry.Outcome == OutcomeFailed:
+		// The action's own failure is what the command reports.
+		if writeErr != nil {
+			warnUnsynced(m.dir(), writeErr)
 		}
-		return err
+		return nil
 	}
-
-	return stateErr
+	return writeErr
 }
 
-func (m *stateManager) flushState() error {
-	// Capture state and pending actions under lock, then release before I/O.
+func (m *stateManager) Record(entry ActionHistory, cause error) error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	if cause != nil {
+		entry = entry.WithError(cause)
+	}
+	m.addActionHistory(entry)
+	err := m.flushActionHistory()
+	if err != nil && cause != nil {
+		warnRecordFailure(m.dir(), err)
+		return nil
+	}
+	return err
+}
+
+func (m *stateManager) Persist(ids ...ComponentID) ([]ChangedFile, error) {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	changed, err := m.flushComponents(ids)
+	files := make([]ChangedFile, 0, len(changed))
+	for _, id := range changed {
+		files = append(files, id.File())
+	}
+	return files, err
+}
+
+// writeUnrecorded persists ids' state like Commit but appends no entry: only
+// for a startup migration, whose pass records one entry for all its writes.
+func (m *stateManager) writeUnrecorded(ids ...ComponentID) error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+
+	_, err := m.flushComponents(ids)
+	return err
+}
+
+// warnUnsynced tells the operator that state was written but its sync to disk
+// failed, when the command reports something else.
+func warnUnsynced(dir string, err error) {
+	logx.As().Warn().Err(err).Msg("Failed to sync the state file")
+	addWarning("The state was written but not synced to disk: " + doctor.OperatorMessage(err) +
+		". Check the disk holding " + dir + ".")
+}
+
+// warnRecordFailure tells the operator that an entry could not be appended,
+// without failing the command: the action already ran, and its own result is
+// what the command reports. An fsx.FileSyncError means the entry was appended
+// but not synced.
+func warnRecordFailure(dir string, err error) {
+	logx.As().Warn().Err(err).Msg("Failed to append the action history entry")
+	if errorx.IsOfType(err, fsx.FileSyncError) {
+		addWarning("The command's action history entry was appended but not synced to disk: " +
+			doctor.OperatorMessage(err) + ".")
+		return
+	}
+	addWarning("The command's action history entry was not appended: " + doctor.OperatorMessage(err) +
+		". Check that " + ActionHistoryFilePath(dir) + " is writable.")
+}
+
+// preparedComponentFlush is one component's validated, ready-to-write output:
+// everything flushComponents needs to know the write is safe to make, computed
+// without touching disk.
+type preparedComponentFlush struct {
+	id       ComponentID
+	path     string
+	bytes    []byte
+	toWrite  State
+	newHash  string
+	baseline string // "" when the component had no baseline
+}
+
+// flushComponents writes every listed component's file. It validates every
+// component's optimistic-concurrency precondition first, before writing any of
+// them (prepareComponentFlush), then writes them all (commitComponentFlush).
+// That ordering matters: writing one at a time, interleaved with each one's own
+// hash check, could write component A successfully and then fail component B's
+// check — leaving A on disk referencing an action whose effects never reached
+// B or the action history. Checking everything first makes a hash-check
+// failure fail cleanly with nothing written, which is the realistic failure
+// mode this protects against; it does not make the set of writes atomic
+// against a crash between two of the writes below.
+//
+// changed lists the components written whose content moved from their
+// baseline, including first writes; on an error it holds those written before
+// it.
+func (m *stateManager) flushComponents(ids []ComponentID) (changed []ComponentID, err error) {
+	prepared := make([]preparedComponentFlush, 0, len(ids))
+	for _, id := range ids {
+		p, err := m.prepareComponentFlush(id)
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, p)
+	}
+
+	// A FileSyncError leaves that component on disk, so the remaining components
+	// are still written; the first such error is returned after all of them.
+	var syncErr error
+	for _, p := range prepared {
+		err := m.commitComponentFlush(p)
+		if err != nil && !errorx.IsOfType(err, fsx.FileSyncError) {
+			return changed, err
+		}
+		if p.newHash != p.baseline {
+			changed = append(changed, p.id)
+		}
+		if err == nil {
+			continue
+		}
+		if syncErr == nil {
+			syncErr = err
+		}
+	}
+	return changed, syncErr
+}
+
+// prepareComponentFlush computes id's canonical hash and marshaled bytes and
+// validates its optimistic-concurrency precondition against disk, without
+// writing anything. It is the per-component equivalent of the single-file
+// flushState this package had before splitting into per-component files; both
+// a per-file hash check here and a per-file flock in AcquireComponentLocks
+// exist side by side because they protect against different things — the lock
+// stops two callers of this manager racing each other, while this check
+// catches a change made by anything else (a hand edit, a process that
+// bypassed the lock) regardless of whether the lock was ever involved.
+func (m *stateManager) prepareComponentFlush(id ComponentID) (preparedComponentFlush, error) {
+	// Capture state and baseline under lock, then release before I/O.
 	m.mu.Lock()
-	snapshot := m.state
-	lastStateHash := m.lastStateHash
+	full := m.state
+	baseline := m.baselineHash[id] // "" when this component has no prior baseline
 	m.mu.Unlock()
 
-	logx.As().Debug().Any("snapshot", snapshot).Msg("Flushing state to disk")
+	path := componentFilePath(m.dir(), id)
+	projected := projectComponentSection(full, id)
 
-	// Compute deterministic canonical JSON over only the domain record (envelope
-	// fields and all LastSync timestamps are excluded by Hashable()).
-	canonical, err := canonicalJSON(snapshot.Hashable())
+	// Round-trip through YAML before hashing: yaml.v3 turns a nil map into a
+	// non-nil empty one on unmarshal (among other such normalizations), so a
+	// hash taken from the raw in-memory value — which still has nil maps for
+	// every zeroed-out section this component doesn't own — would never match
+	// the hash recomputed from this same content after it's written and later
+	// read back. Normalizing first makes the embedded hash and the baseline
+	// both reflect what a future read of this file will actually see.
+	normalized, err := roundTripThroughYAML(projected)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to create canonical representation of state for hashing")
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to normalize %s state before hashing", id)
 	}
-	sum := sha256.Sum256(canonical)
-	newHashHex := hex.EncodeToString(sum[:])
+
+	newHashHex, err := stateContentHash(normalized)
+	if err != nil {
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to create canonical representation of %s state for hashing", id)
+	}
 
 	// Attach computed hash and real LastSync to the copy we will write.
-	toWrite := snapshot
+	toWrite := normalized
 	toWrite.Hash = newHashHex
 	toWrite.HashAlgo = "sha256"
-	now := htime.Now()
-	toWrite.LastSync = now
+	toWrite.LastSync = htime.Now()
 
 	// Marshal YAML to write to disk.
 	b, err := yaml.Marshal(toWrite)
 	if err != nil {
-		return errorx.InternalError.Wrap(err, "failed to marshal state to YAML")
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to marshal %s state to YAML", id)
 	}
 
 	// Optimistic concurrency: compare on-disk state against the BASELINE (what we
-	// last read/wrote), not against the new state. This detects external changes
-	// without false-positives after Refresh() + Set() cycles.
-	if _, exists, err := m.fm.PathExists(snapshot.StateFile); err != nil {
-		return errorx.InternalError.Wrap(err, "failed to stat state file before flush")
+	// last read/wrote for this component), not against the new state. This
+	// detects external changes without false-positives after Refresh() + Set()
+	// cycles.
+	if _, exists, err := m.fm.PathExists(path); err != nil {
+		return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to stat %s state file before flush", id)
 	} else if exists {
-		if lastStateHash == "" {
-			return errorx.IllegalState.New("cannot flush without a baseline; call Refresh() first")
+		if baseline == "" {
+			return preparedComponentFlush{}, errorx.IllegalState.New("cannot flush %s without a baseline; call Refresh() first", id)
 		}
 
-		existing, err := m.fm.ReadFile(snapshot.StateFile, -1)
+		existing, err := m.fm.ReadFile(path, -1)
 		if err != nil {
-			return errorx.InternalError.Wrap(err, "failed to read state file before flush")
+			return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to read %s state file before flush", id)
 		}
 
 		var existingState State
 		if err := yaml.Unmarshal(existing, &existingState); err != nil {
-			return errorx.IllegalState.New("state file at %s is not parseable YAML; aborting flush to avoid overwrite", snapshot.StateFile)
+			return preparedComponentFlush{}, errorx.IllegalState.New("%s state file at %s is not parseable YAML; aborting flush to avoid overwrite", id, path)
 		}
 
-		var diskHash string
-		if existingState.Hash != "" {
-			diskHash = existingState.Hash
-		} else {
-			// Fallback for hand-edited or legacy files without a stored hash.
-			canonicalExisting, err := canonicalJSON(existingState.Hashable())
-			if err != nil {
-				return errorx.InternalError.Wrap(err, "failed to canonicalize existing state on disk")
-			}
-			sumExisting := sha256.Sum256(canonicalExisting)
-			diskHash = hex.EncodeToString(sumExisting[:])
+		// Always recompute from content rather than trusting existingState's own
+		// Hash field: a hand edit that changes content but leaves that field
+		// untouched would otherwise compare equal to a stale baseline and be
+		// silently overwritten — exactly what this check exists to catch.
+		diskHash, err := stateContentHash(existingState)
+		if err != nil {
+			return preparedComponentFlush{}, errorx.InternalError.Wrap(err, "failed to canonicalize existing %s state on disk", id)
 		}
 
 		// Compare on-disk hash against baseline, NOT against the new hash.
-		if diskHash != lastStateHash {
-			return errorx.IllegalState.New(
-				"state file changed externally on disk at %s (expected baseline %s, found %s); aborting flush to avoid overwrite",
-				snapshot.StateFile, lastStateHash, diskHash,
+		if diskHash != baseline {
+			return preparedComponentFlush{}, errorx.IllegalState.New(
+				"%s state file changed externally on disk at %s (expected baseline %s, found %s); aborting flush to avoid overwrite",
+				id, path, baseline, diskHash,
 			)
 		}
 	}
 
+	return preparedComponentFlush{id: id, path: path, bytes: b, toWrite: toWrite, newHash: newHashHex, baseline: baseline}, nil
+}
+
+// commitComponentFlush writes a prepared component's file and advances its
+// in-memory state and baseline hash. Called only after every component in the
+// batch has already passed prepareComponentFlush.
+func (m *stateManager) commitComponentFlush(p preparedComponentFlush) error {
+	logx.As().Debug().Str("component", string(p.id)).Any("state", p.toWrite).Msg("Flushing component state to disk")
+
 	// Atomic write: write to temp file in same directory and rename.
-	err = atomicWriteFile(snapshot.StateFile, b)
+	err := atomicWriteFile(p.path, p.bytes)
 	if err != nil && !errorx.IsOfType(err, fsx.FileSyncError) {
-		return errorx.InternalError.Wrap(err, "failed to write state file to %s", snapshot.StateFile)
+		return errorx.InternalError.Wrap(err, "failed to write %s state file to %s", p.id, p.path)
 	}
 
-	// The new state is on disk, after a FileSyncError too: it becomes the in-memory state and the baseline.
+	// The new state is on disk, after a FileSyncError too: it becomes this component's in-memory section and baseline.
 	m.mu.Lock()
-	m.state = toWrite
-	m.lastStateHash = newHashHex
+	applyComponentSection(&m.state, p.id, p.toWrite)
+	if m.baselineHash == nil {
+		m.baselineHash = make(map[ComponentID]string, len(AllComponentIDs))
+	}
+	m.baselineHash[p.id] = p.newHash // the new state is now this component's on-disk baseline
 	m.mu.Unlock()
 
 	return err
 }
 
 func (m *stateManager) flushActionHistory() error {
+	// An append takes the queued entries, and a failed one loses them, which
+	// its caller reports. Entries queued meanwhile wait for the next append.
 	m.mu.Lock()
 	snapshot := m.state
-	pendingActions := make([]ActionHistory, len(m.actions))
-	copy(pendingActions, m.actions)
+	pendingActions := m.actions
+	m.actions = nil
 	m.mu.Unlock()
 
 	if len(pendingActions) == 0 {
@@ -377,7 +542,7 @@ func (m *stateManager) flushActionHistory() error {
 	}
 
 	// Append action history entries.
-	actionHistoryFile := filepath.Join(filepath.Dir(snapshot.StateFile), "action_history.yaml")
+	actionHistoryFile := ActionHistoryFilePath(filepath.Dir(snapshot.StateFile))
 	// Start on a new line, so an entry a full disk cut short doesn't run into this one.
 	docs := []byte("\n")
 	for _, entry := range pendingActions {
@@ -394,13 +559,40 @@ func (m *stateManager) flushActionHistory() error {
 		return errorx.InternalError.Wrap(appendErr, "failed to append action history entries to %s", actionHistoryFile)
 	}
 
-	// Update in-memory state. A FileSyncError still appended the entries; any added
-	// since the snapshot stay pending.
-	m.mu.Lock()
-	m.actions = m.actions[len(pendingActions):]
-	m.mu.Unlock()
-
 	return appendErr
+}
+
+// roundTripThroughYAML marshals s to YAML and decodes it into a fresh State,
+// normalizing representational differences YAML's own encode/decode cycle
+// introduces (notably: a nil map becomes a non-nil empty map) so a value that
+// has never touched disk hashes the same way a value just read back from disk
+// will.
+func roundTripThroughYAML(s State) (State, error) {
+	b, err := yaml.Marshal(s)
+	if err != nil {
+		return State{}, err
+	}
+	var normalized State
+	if err := yaml.Unmarshal(b, &normalized); err != nil {
+		return State{}, err
+	}
+	return normalized, nil
+}
+
+// stateContentHash returns the sha256 hex digest of s's canonical content
+// (Hashable(), which excludes envelope fields and reconciliation timestamps).
+// Always recomputed from content — never trust a State's own stored Hash
+// field as a stand-in for this, including one just read from disk: a hand
+// edit that changes content without updating that field would otherwise
+// compare equal to a stale baseline and be silently overwritten, which is
+// exactly what the optimistic-concurrency check exists to catch.
+func stateContentHash(s State) (string, error) {
+	canonical, err := canonicalJSON(s.Hashable())
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // canonicalJSON returns a deterministic JSON encoding of v where object keys are sorted.
@@ -491,24 +683,33 @@ func encodeCanonical(buf *bytes.Buffer, iface interface{}) error {
 	return nil
 }
 
-// HasPersistedState checks if the state file exists on disk
+// HasPersistedState reports whether any component has a persisted file yet.
+// A host can have some components persisted and others not (e.g. a cluster
+// installed but no block node yet), so this is "any", not "all".
 func (m *stateManager) HasPersistedState() (os.FileInfo, bool, error) {
 	m.mu.Lock()
-	stateFile := m.state.StateFile
+	dir := m.dir()
 	m.mu.Unlock()
-	return m.fm.PathExists(stateFile)
+
+	for _, id := range AllComponentIDs {
+		fi, exists, err := m.fm.PathExists(componentFilePath(dir, id))
+		if err != nil {
+			return nil, false, err
+		}
+		if exists {
+			return fi, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
-// AddActionHistory adds an entry to the in-memory action history and updates the last action in the state.
-// The action history is flushed to disk as part of the Flush() operation, and is stored in a separate history file to
-// avoid unbounded growth of the main state file.
-// The timestamp of the entry is set to the current time when adding to history to ensure consistency.
-func (m *stateManager) AddActionHistory(entry ActionHistory) Writer {
-	entry.Timestamp = htime.Now() // force the timestamp to be set to the current time when adding to history to ensure consistency
+// addActionHistory queues entry for the next append to action_history.yaml,
+// which is kept apart from the state files so they don't grow without bound.
+// The timestamp is set here, so every entry carries the time it was recorded.
+func (m *stateManager) addActionHistory(entry ActionHistory) {
+	entry.Timestamp = htime.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.actions = append(m.actions, entry)
-	m.state.LastAction = entry
 	logx.As().Debug().Any("entry", entry).Msg("Added action history entry")
-	return m
 }

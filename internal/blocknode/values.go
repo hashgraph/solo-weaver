@@ -3,6 +3,7 @@
 package blocknode
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -48,8 +49,8 @@ const ConfigHashAnnotation = kube.SoloOperatorGroup + "/config-hash"
 // Retention thresholds and plugin/service-annotation injections follow.
 //
 // NOTE: Defense-in-depth path validation is applied even though the CLI layer also validates.
-func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, error) {
-	valuesContent, err := m.ComputeValues(profile, valuesFile)
+func (m *Manager) ComputeValuesFile(ctx context.Context, profile string, valuesFile string) (string, error) {
+	valuesContent, err := m.ComputeValues(ctx, profile, valuesFile)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +74,15 @@ func (m *Manager) ComputeValuesFile(profile string, valuesFile string) (string, 
 // Order matches `helm install -f`: render the profile base, deep-merge any
 // operator --values on top (operator keys win), then unconditionally inject the
 // weaver-managed persistence, retention, plugin, and service-annotation overrides.
-func (m *Manager) ComputeValues(profile string, valuesFile string) ([]byte, error) {
+func (m *Manager) ComputeValues(ctx context.Context, profile string, valuesFile string) ([]byte, error) {
+	// Resolve the plugin list first: a chart-backed preset (tier1-lfh/tier1-rfh) is
+	// read from the pulled chart's plugin-profile override, unless the operator
+	// overrode it via --plugins or a --values plugins.names. This must run before
+	// renderDefaultValues, whose storage decision keys off the resolved PluginList.
+	if err := m.resolvePluginList(ctx, valuesFile); err != nil {
+		return nil, err
+	}
+
 	valuesContent, err := m.renderDefaultValues(profile)
 	if err != nil {
 		return nil, err
@@ -266,12 +275,6 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		}
 	}
 
-	// The base template's plugins.names default must go through the same
-	// version-boundary registry as an explicit --plugin-preset (PluginListForPreset),
-	// or a no-preset install/upgrade keeps requesting plugin names the target chart
-	// version no longer registers (e.g. "verification", removed in chart 0.41.0).
-	defaultPluginNames := PluginListForPreset(PresetTier1LFH, m.blockNodeInputs.ChartVersion)
-
 	valuesTemplatePath := ValuesPath
 	if profile == models.ProfileLocal {
 		valuesTemplatePath = NanoValuesPath
@@ -293,7 +296,6 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		IncludePlugins          bool
 		IncludeApplicationState bool
 		HealthPort              string
-		DefaultPluginNames      string
 	}{
 		IncludeVerification:     includeVerification,
 		IncludePlugins:          includePlugins,
@@ -302,8 +304,7 @@ func (m *Manager) renderDefaultValues(profile string) ([]byte, error) {
 		// the port solo-weaver drops off-node (bn-health) and dials for statusz always
 		// matches the port the BN listens on, even if the upstream chart default
 		// changes underneath us.
-		HealthPort:         DefaultBlockNodeHealthPort,
-		DefaultPluginNames: defaultPluginNames,
+		HealthPort: DefaultBlockNodeHealthPort,
 	})
 	if err != nil {
 		return nil, errorx.InternalError.Wrap(err, "failed to render block node values template")

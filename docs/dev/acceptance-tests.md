@@ -352,7 +352,7 @@ sudo solo-provisioner block node install -p local \
 ```bash
 solo-provisioner version                # Shows released version
 kubectl get pods -n block-node          # Running
-cat /opt/solo/weaver/state/state.yaml   # State file exists with current schema
+sudo cat /opt/solo/weaver/state/state.yaml   # A released CLI up to v0.34.0 keeps one state file
 ```
 
 ```bash
@@ -375,7 +375,8 @@ sudo solo-provisioner block node upgrade -p local \
 **Verify:**
 ```bash
 kubectl get pods -n block-node          # Running with updated version
-cat /opt/solo/weaver/state/state.yaml   # State file version matches current schema
+sudo cat /opt/solo/weaver/state/provisioner.yaml   # cli.version is the new CLI; cli.stateVersion the current schema
+sudo ls /opt/solo/weaver/state/        # One file per component; state.yaml is now state.yaml.legacy
 # Check logs for migration messages:
 grep -i migration /opt/solo/weaver/logs/solo-provisioner.log
 ```
@@ -407,13 +408,19 @@ in place first:
 - The consensus-namespace secrets must exist *before* `consensus node install`.
 
 These four steps are identical whether you deploy one node or many — only the
-install/genesis steps in F1/F2 below differ.
+keys/install/genesis steps in F1/F2 below differ.
 
 ```bash
 # Pick a namespace (also the Orbit name). Use a distinct one per network in a
 # shared cluster: hiero-network-1, hiero-network-2, ...
 export NS=hiero-network-2
 export PKG=./test/data/build-v0.74.2   # extracted HIP-1494 deployment package
+export KEYS=/opt/solo/cn-keys          # node key material; survives a VM reboot (not /tmp)
+
+# Discovery genesis writes cluster-DNS gossip endpoints, so the package's
+# application.properties must allow them (`network genesis` fails otherwise).
+grep -q '^nodes.gossipFqdnRestricted' "${PKG}/data/config/application.properties" ||
+  printf '\nnodes.gossipFqdnRestricted=false\n' >> "${PKG}/data/config/application.properties"
 
 # 1. Helm auth for the private operator chart (no cluster needed; run once per VM).
 task uat:registry:login:ghcr
@@ -421,9 +428,8 @@ task uat:registry:login:ghcr
 # 2. Install the cluster only (no operator). --node-type sizes the host with --profile.
 sudo solo-provisioner kube cluster install --profile local --node-type consensus
 
-# 3. Create ALL secrets in one shot: the ghcr pull secret in both the operator and
-#    consensus namespaces, plus the consensus gossip/gRPC secrets for node0..node4.
-#    (Same registry, one credential; NODE= unset means all nodes.)
+# 3. Create the ghcr pull secret in both the operator and consensus namespaces.
+#    F1/F2 create the node keys with `consensus keys init`.
 task uat:secrets NS="${NS}"
 
 # 4. Install the solo-operator (pulls private images via --image-pull-secret, default private-registry-creds).
@@ -437,19 +443,24 @@ sudo solo-provisioner kube operator install
 
 ### F1. Single consensus node
 
-Install one node, then generate genesis. With defaults it is `node-id 0` /
-`account-id 0.0.3`; its secrets (`node0-gossip-keys`, `node0-grpc-tls-keys`) were
-created by step 3.
+Create the node keys, install one node, then generate genesis. With defaults it is
+`node-id 0` / `account-id 0.0.3`.
 
 ```bash
-# 5. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+# 5. Generate node0's gossip/gRPC keys and create their labelled secrets.
+sudo solo-provisioner consensus keys init --experimental \
+  --namespace "${NS}" --node-id 0 --keys-dir "${KEYS}/node0"
+
+# 6. Create the ConsensusCapsule (non-blocking; reports status, does not wait for Active).
+#    No --signing-secret/--grpc-tls-secret: install finds the labelled secrets.
 sudo solo-provisioner consensus node install \
   --experimental \
   --namespace "${NS}" \
   --profile local \
-  --deployment-package-dir "${PKG}"
+  --deployment-package-dir "${PKG}" \
+  --allow-genesis-admin-key
 
-# 6. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
+# 7. Apply genesis and wait for the node to reach Active (discovery — roster from the one capsule).
 sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
@@ -459,10 +470,17 @@ There is no node-count flag: **run `consensus node install` once per node into t
 same namespace**, each with a distinct `--node-id` and `--account-id`, then run
 `consensus network genesis` **once**. In discovery mode the operator builds the
 roster from *all* ConsensusCapsules in the namespace. Account IDs follow the Hedera
-convention `0.0.(3 + node-id)`. Step 3 already created secrets for `node0..node4`.
+convention `0.0.(3 + node-id)`. Each node needs its own keys, so run
+`consensus keys init` once per node first.
 
 ```bash
-# 5. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
+# 5. Generate each node's keys into its own folder and create their labelled secrets.
+for i in 0 1 2 3; do
+  sudo solo-provisioner consensus keys init --experimental \
+    --namespace "${NS}" --node-id "${i}" --keys-dir "${KEYS}/node${i}"
+done
+
+# 6. Install N nodes (node0..node3 -> accounts 0.0.3..0.0.6) into the SAME namespace.
 for i in 0 1 2 3; do
   sudo solo-provisioner consensus node install \
     --experimental \
@@ -473,12 +491,17 @@ for i in 0 1 2 3; do
     --deployment-package-dir "${PKG}"
 done
 
-# 6. One genesis for the whole network — operator discovers all 4 capsules.
+# 7. One genesis for the whole network — operator discovers all 4 capsules.
 sudo solo-provisioner consensus network genesis --experimental --namespace "${NS}"
 ```
 
 Expected (both F1 and F2):
 - Cluster install completes without touching the operator/registry.
+- `keys init` creates two labelled secrets per node (gossip and gRPC TLS):
+  ```bash
+  kubectl -n "${NS}" get secret -l solo.hiero.org/node=node0 --show-labels
+  ```
+- `consensus node install` passes with no `--signing-secret`/`--grpc-tls-secret`.
 - `kube operator install` reaches *Installing Solo Operator* and succeeds; the
   operator pod pulls its private image (`kubectl -n solo-operator get pods`).
 - Consensus pods pull the private images with no ServiceAccount patching:
@@ -490,6 +513,53 @@ Expected (both F1 and F2):
   multi-node network, confirm the full roster is present and healthy:
   ```bash
   kubectl -n "${NS}" get consensuscapsules   # -> N capsules, all Active
+  ```
+
+### F3. Uninstall consensus nodes
+
+`consensus node uninstall` removes one node. It keeps the Secrets, the PVC data and the hostPath
+data. emptyDir data (the default volume type) is deleted with the pod. It deletes
+the Orbit only together with the last node in the namespace. The solo-operator then also deletes
+the orbit's `NetworkGenesis` CR. The genesis ConfigMaps that it generated (for example
+`genesis-config`) stay.
+
+```bash
+# 7. Uninstall node 0. On a multi-node network (F2), the Orbit stays.
+sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id 0 --force
+
+# 8. Run it again: a no-op success.
+sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id 0 --force
+
+# 9. F2 only: uninstall the other nodes. The last uninstall deletes the Orbit.
+for i in 1 2 3; do
+  sudo solo-provisioner consensus node uninstall --experimental --namespace "${NS}" --node-id "${i}" --force
+done
+```
+
+Expected:
+- After step 7, the capsule and the config CRs of node 0 are gone:
+  ```bash
+  kubectl -n "${NS}" get consensuscapsule "${NS}-consensus-0"   # -> NotFound
+  kubectl -n "${NS}" get log4j2config node0-log4j2              # -> NotFound
+  ```
+- On F2, the Orbit stays until the last node is gone. On F1, step 7 deletes it:
+  ```bash
+  kubectl get orbit "${NS}"   # F2 after step 7 -> found; F1 after step 7, or F2 after step 9 -> NotFound
+  ```
+- The Secrets stay:
+  ```bash
+  kubectl -n "${NS}" get secret node0-gossip-keys node0-grpc-tls-keys   # -> both found
+  ```
+- PVCs stay when the node used PVC volumes (`--default-volume-type pvc`). They have no owner, so a
+  later delete of an Orbit or a capsule does not remove them:
+  ```bash
+  kubectl -n "${NS}" get pvc   # -> the PVCs of node 0 are still listed
+  kubectl -n "${NS}" get pvc -o custom-columns=NAME:.metadata.name,OWNERS:.metadata.ownerReferences
+  # -> OWNERS is <none> for each PVC of node 0
+  ```
+- `state.yaml` no longer lists the node. The Orbit entry goes only with the last node:
+  ```bash
+  sudo grep -A3 -E 'consensusNodes|consensusOrbits' /opt/solo/weaver/state/state.yaml
   ```
 
 ### Notes / gotchas
@@ -509,13 +579,18 @@ Expected (both F1 and F2):
 - Genesis precedence: `--genesis-file` > `--deployment-package-dir` > discovery. Use
   discovery genesis when the packaged genesis pins IP gossip endpoints that do not
   match the pod IPs.
+- A pre-built genesis must give each node an Ed25519 admin key, in
+  `data/config/node-admin-keys.json` or in the genesis `adminKey`. If not,
+  `consensus network genesis` stops before it creates the `NetworkGenesis` CR.
 - **Multi-node:** for an in-cluster discovery network, do **not** pass
   `--deployment-package-dir` to `consensus network genesis` — that applies the
   package's single-node `genesis-network.json` verbatim and bypasses roster
   discovery. Leave it off so the operator builds the roster from the capsules.
-- **Max nodes = 5** (`node0..node4`) with the sample secrets from `task uat:secrets`.
-  In discovery mode the gossip keys come from those K8s secrets (not the package's
-  `data/keys/*.pem`), so more nodes need additional gossip/gRPC secrets.
+- In discovery mode the gossip keys come from the K8s secrets that `keys init`
+  creates (not the package's `data/keys/*.pem`). There is no fixed node limit: run
+  `keys init` for each node id.
+- `keys init` creates no admin key secret unless `admin.pub` is in `--keys-dir`.
+  The admin key is optional for these steps.
 - Identity flags (`--ledger-id`, `--chain-id`, `--image-repo`/`--image-tag`) are
   extracted from the deployment package, so they stay identical across nodes and do
   not need to be repeated per node.
@@ -605,7 +680,8 @@ task -d docs/dev/daemon prep \
   SOLO_OPERATOR_REF=chore/update-beacon-examples \
   CN_SELECTION_STRATEGY=Random
 task -d docs/dev/daemon sync
-# Reinstall the node (uninstall first, or use a fresh namespace).
+# Reinstall the node. Uninstall it first, or use a fresh namespace:
+#   sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0 --force
 ```
 
 ```bash
@@ -622,6 +698,7 @@ Same package (manifest says `Random`), override on install:
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
   --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key \
   --registry-selection-strategy Sequential
 ```
 
@@ -671,7 +748,8 @@ task -d docs/dev/daemon sync
 # Inside the VM:
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
-  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0
+  --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key
 ```
 
 Expected: install fails at manifest parse with
@@ -805,6 +883,7 @@ Install, routing the private registry's secret by host and keeping the default
 sudo solo-provisioner consensus node install \
   --namespace hiero-network-1 --node-id 0 --account-id 0.0.3 --profile local \
   --deployment-package-dir /mnt/solo-weaver/test/data/build-v0.74.0 \
+  --allow-genesis-admin-key \
   --image-pull-secret private-registry-creds \
   --image-pull-secret 10.96.100.100:5000=patch-registry-creds
 ```

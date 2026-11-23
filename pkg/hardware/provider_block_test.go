@@ -45,13 +45,13 @@ func TestBlockNodeProvider_TestnetLFH(t *testing.T) {
 	}
 }
 
-// TestBlockNodeProvider_TestnetRFH verifies testnet RFH (tier1-rfh preset): c3d-standard-8, 150 GB.
+// TestBlockNodeProvider_TestnetRFH verifies testnet RFH (rfh preset): c3d-standard-8, 150 GB.
 func TestBlockNodeProvider_TestnetRFH(t *testing.T) {
 	p := &blockNodeProvider{}
 	spec := DeploymentSpec{
 		NodeType: models.NodeTypeBlock,
 		Profile:  models.ProfileTestnet,
-		Options:  map[string]any{"preset": "tier1-rfh"},
+		Options:  map[string]any{"preset": "rfh"},
 	}
 	reqs, err := p.Compute(spec)
 	if err != nil {
@@ -103,13 +103,13 @@ func TestBlockNodeProvider_PreviewnetLFH(t *testing.T) {
 	}
 }
 
-// TestBlockNodeProvider_PreviewnetRFH verifies previewnet RFH (tier1-rfh preset): c3d-standard-8, 150 GB.
+// TestBlockNodeProvider_PreviewnetRFH verifies previewnet RFH (rfh preset): c3d-standard-8, 150 GB.
 func TestBlockNodeProvider_PreviewnetRFH(t *testing.T) {
 	p := &blockNodeProvider{}
 	spec := DeploymentSpec{
 		NodeType: models.NodeTypeBlock,
 		Profile:  models.ProfilePreviewnet,
-		Options:  map[string]any{"preset": "tier1-rfh"},
+		Options:  map[string]any{"preset": "rfh"},
 	}
 	reqs, err := p.Compute(spec)
 	if err != nil {
@@ -133,7 +133,7 @@ func TestBlockNodeProvider_MainnetCloud(t *testing.T) {
 	spec := DeploymentSpec{
 		NodeType: models.NodeTypeBlock,
 		Profile:  models.ProfileMainnet,
-		Options:  map[string]any{"preset": "tier1-rfh"},
+		Options:  map[string]any{"preset": "rfh"},
 	}
 	reqs, err := p.Compute(spec)
 	if err != nil {
@@ -255,7 +255,7 @@ func TestReduceSumSemantics(t *testing.T) {
 
 // TestNotPredicate verifies the not combinator inverts a predicate.
 func TestNotPredicate(t *testing.T) {
-	rfh := presetPredicate("tier1-rfh")
+	rfh := presetPredicate("rfh")
 	notRFH := not(rfh)
 
 	noPreset := DeploymentSpec{}
@@ -263,8 +263,8 @@ func TestNotPredicate(t *testing.T) {
 		t.Error("not(rfh) should be true when no preset is set")
 	}
 
-	withRFH := DeploymentSpec{Options: map[string]any{"preset": "tier1-rfh"}}
+	withRFH := DeploymentSpec{Options: map[string]any{"preset": "rfh"}}
 	if notRFH(withRFH) {
-		t.Error("not(rfh) should be false when preset is tier1-rfh")
+		t.Error("not(rfh) should be false when preset is rfh")
 	}
 }

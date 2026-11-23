@@ -728,7 +728,7 @@ func TestKubeConfigManager_ConfigureCurrentUserKubeConfig(t *testing.T) {
 			}
 
 			// Call configureCurrentUserKubeConfig
-			err := mgr.configureCurrentUserKubeConfig()
+			err := mgr.configureCurrentUserKubeConfig(false)
 
 			// Verify results
 			if tt.expectError {
@@ -748,5 +748,47 @@ func TestKubeConfigManager_ConfigureCurrentUserKubeConfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKubeConfigManager_ConfigureMissing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fm := fsx.NewMockManager(ctrl)
+	pm := principal.NewMockManager(ctrl)
+	_ = os.Unsetenv("SUDO_USER")
+
+	// root already has a kubeconfig: no copy, no ownership change.
+	fm.EXPECT().PathExists("/root/.kube/config").Return(nil, true, nil)
+
+	// weaver's is missing: copied as Configure would.
+	mockWeaverUser := principal.NewMockUser(ctrl)
+	mockWeaverGroup := principal.NewMockGroup(ctrl)
+	pm.EXPECT().LookupUserByName("weaver").Return(mockWeaverUser, nil)
+	pm.EXPECT().LookupGroupByName("weaver").Return(mockWeaverGroup, nil)
+	fm.EXPECT().PathExists("/home/weaver/.kube/config").Return(nil, false, nil)
+	fm.EXPECT().CreateDirectory("/home/weaver/.kube", false).Return(nil)
+	fm.EXPECT().CopyFile(kubeConfigSourcePath, "/home/weaver/.kube/config", true).Return(nil)
+	fm.EXPECT().WriteOwner("/home/weaver/.kube", mockWeaverUser, mockWeaverGroup, true).Return(nil)
+
+	mgr := KubeConfigManager{fsManager: fm, principalManager: pm}
+	if err := mgr.ConfigureMissing(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestKubeConfigManager_ConfigureMissing_CheckFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fm := fsx.NewMockManager(ctrl)
+	pm := principal.NewMockManager(ctrl)
+	_ = os.Unsetenv("SUDO_USER")
+
+	fm.EXPECT().PathExists("/root/.kube/config").Return(nil, false, errors.New("permission denied"))
+
+	mgr := KubeConfigManager{fsManager: fm, principalManager: pm}
+	err := mgr.ConfigureMissing()
+	if err == nil || !strings.Contains(err.Error(), "failed to check /root/.kube/config") {
+		t.Fatalf("expected check failure, got %v", err)
 	}
 }

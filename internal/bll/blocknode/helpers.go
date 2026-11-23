@@ -3,7 +3,11 @@
 package blocknode
 
 import (
+	"fmt"
+
+	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/bll"
 	bnpkg "github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -14,19 +18,68 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
+// requireInstalled is the precondition shared by upgrade, reconfigure, reset and
+// uninstall. A failed release passes because Helm upgrades from it.
+//
+// --force bypasses the absent check. It bypasses a stuck release (pending-* or
+// uninstalling) only for uninstall: Helm refuses every other operation on it, and
+// uninstall is the only recovery from pending-install.
+func requireInstalled(info state.HelmReleaseInfo, verb string, force bool) error {
+	switch {
+	case info.Installed():
+		if info.Status == release.StatusFailed {
+			logx.As().Warn().Str("release", info.Name).Str("namespace", info.Namespace).
+				Msgf("The last block node operation failed (Helm status %q); continuing with %s", info.Status, verb)
+		}
+		return nil
+	case info.Absent():
+		if force {
+			return nil
+		}
+		return errorx.IllegalState.New("block node is not installed; cannot %s", verb).
+			WithProperty(models.ErrPropertyResolution,
+				"use 'solo-provisioner block node install' to install the block node first, or pass --force to continue")
+	case force && verb == "uninstall":
+		return nil
+	default:
+		return stuckReleaseError(info, verb)
+	}
+}
+
+// stuckReleaseError reports a release whose last Helm operation never finished.
+func stuckReleaseError(info state.HelmReleaseInfo, verb string) error {
+	rel, ns := info.Name, info.Namespace
+	var hint string
+	switch info.Status {
+	case release.StatusPendingUpgrade, release.StatusPendingRollback:
+		hint = fmt.Sprintf("if no other solo-provisioner or helm command is running, find the last deployed revision "+
+			"with 'helm history %s -n %s', roll back to it with 'helm rollback %s <revision> -n %s', then re-run",
+			rel, ns, rel, ns)
+	case release.StatusPendingInstall:
+		hint = "if no other solo-provisioner or helm command is running, remove the partial install with " +
+			"'solo-provisioner block node uninstall --force', then install again"
+	default:
+		hint = fmt.Sprintf("inspect the release with 'helm history %s -n %s'; "+
+			"'solo-provisioner block node uninstall --force' removes it", rel, ns)
+	}
+	return errorx.IllegalState.New("block node Helm release %s in namespace %s is in state %q; cannot %s",
+		rel, ns, info.Status, verb).
+		WithProperty(models.ErrPropertyResolution, hint)
+}
+
 // patchBlockNodeState persists fields that cannot be recovered from the Helm
 // release or PersistentVolumes into the runtime state before flushing to disk.
 //
 //   - ChartRef: the OCI / repo reference is not stored in Helm release metadata.
 //   - Storage.BasePath: a weaver concept; Kubernetes only knows the individual PV
 //     hostPaths that the reality checker reads back. Without this patch, BasePath
-//     is lost after every FlushState → Refresh cycle, and the next interactive
+//     is lost after every flushState → Refresh cycle, and the next interactive
 //     prompt would re-fill the PV-derived individual paths instead of the
 //     operator-chosen base path.
 //
-// Profile persistence is handled centrally by BaseHandler.FlushState via ProfileExtractor.
-func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
-	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+// Profile persistence is handled centrally by BaseHandler.flushState via ProfileExtractor.
+func patchBlockNodeState() bll.StateCallback[models.BlockNodeInputs] {
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], _ *automa.Report) error {
 		if st.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
 			return nil
 		}
@@ -40,11 +93,24 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 				Msg("Persisted block node storage base path into runtime state")
 			st.BlockNodeState.Storage.BasePath = effectiveInputs.Custom.Storage.BasePath
 		}
-		if effectiveInputs.Custom.PluginPreset != "" {
-			logx.As().Debug().Str("pluginPreset", effectiveInputs.Custom.PluginPreset).
+		if preset := effectiveInputs.Custom.PluginPreset; preset != "" {
+			logx.As().Debug().Str("pluginPreset", preset).
 				Msg("Persisted block node plugin preset into runtime state")
-			st.BlockNodeState.PluginPreset = effectiveInputs.Custom.PluginPreset
+			st.BlockNodeState.PluginPreset = preset
+			// Switching to a non-custom preset clears any previously stored custom list:
+			// a chart-backed preset (tier1-lfh/tier1-rfh) or "none" owns the plugin set
+			// (chart profile or chart default), so state must not keep a stale custom list
+			// beside the new preset. A preset left empty (e.g. a reconfigure that does not
+			// touch plugins) preserves whatever is stored.
+			if preset != bnpkg.PresetCustom {
+				st.BlockNodeState.PluginList = ""
+			}
 		}
+		// Persist the plugin list only when non-empty, which is the custom case: the
+		// explicit --plugins list is the operator's bespoke choice and cannot be
+		// re-derived from a preset. Chart-backed presets (tier1-lfh/tier1-rfh) leave
+		// PluginList empty here — they are re-resolved from the chart at each deploy,
+		// so no name snapshot is stored for them.
 		if effectiveInputs.Custom.PluginList != "" {
 			logx.As().Debug().Str("pluginList", effectiveInputs.Custom.PluginList).
 				Msg("Persisted block node plugin list into runtime state")
@@ -55,9 +121,9 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 }
 
 // patchBlockNodeStateWithTrafficShaping extends patchBlockNodeState with the
-// TrafficShapingDisabled field, persisting the caller's resolved
-// TrafficShapingEnabled decision. It is used by the two commands that resolve a
-// real traffic-shaping target: `block node install` and `block node reconfigure`.
+// caller's resolved TrafficShapingEnabled decision. It is used by the two
+// commands that resolve a real traffic-shaping target: `block node install` and
+// `block node reconfigure`.
 //
 // It must NOT be used by upgrade/reset/uninstall — those do not resolve
 // TrafficShapingEnabled, so their effectiveInputs.Custom value is the unset zero
@@ -65,28 +131,29 @@ func patchBlockNodeState() func(st *state.State, effectiveInputs models.UserInpu
 // Upgrade in particular reads the persisted decision (via
 // currentState.BlockNodeState) to drive its silent convergence and therefore keeps
 // the plain patchBlockNodeState, which leaves this field untouched.
-func patchBlockNodeStateWithTrafficShaping() func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
+func patchBlockNodeStateWithTrafficShaping() bll.StateCallback[models.BlockNodeInputs] {
 	base := patchBlockNodeState()
-	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs]) error {
-		st.BlockNodeState.TrafficShapingDisabled = !effectiveInputs.Custom.TrafficShapingEnabled
-		logx.As().Debug().Bool("trafficShapingDisabled", st.BlockNodeState.TrafficShapingDisabled).
+	return func(st *state.State, effectiveInputs models.UserInputs[models.BlockNodeInputs], report *automa.Report) error {
+		st.BlockNodeState.TrafficShapingEnabled = effectiveInputs.Custom.TrafficShapingEnabled
+		st.BlockNodeState.TrafficShapingCleanupPending = false
+		logx.As().Debug().Bool("trafficShapingEnabled", st.BlockNodeState.TrafficShapingEnabled).
 			Msg("Persisted block node traffic-shaping decision into runtime state")
 
 		// Persist the host-firewall decision + content (host-scoped) so a later
 		// reconfigure/upgrade can re-assert the inet weaver-host-firewall table without the operator
 		// re-supplying the allowlist. Written even when the block node is not (yet)
-		// deployed, mirroring TrafficShapingDisabled — the firewall is host-scoped and
+		// deployed, mirroring TrafficShapingEnabled — the firewall is host-scoped and
 		// its application is independent of the Helm release status.
 		patchMachineFirewallFromConfig(st)
 
 		// Persist the traffic-shaping content only when it was enabled and a real
 		// target was resolved, so upgrade/reconfigure re-assert the same NIC/rate/
 		// overrides instead of auto-detecting. When disabled we leave any prior
-		// Shaping record intact (the decision on TrafficShapingDisabled governs re-assert).
+		// Shaping record intact (the decision on TrafficShapingEnabled governs re-assert).
 		if effectiveInputs.Custom.TrafficShapingEnabled {
 			patchBlockNodeShaping(st, effectiveInputs.Custom)
 		}
-		return base(st, effectiveInputs)
+		return base(st, effectiveInputs, report)
 	}
 }
 
@@ -433,11 +500,11 @@ type storagePlan struct {
 // the existing PVs/PVCs cannot be mutated in place and wiping the requested
 // paths would leave the deployed data orphaned on disk.
 //
-// A block node that is not deployed has nothing on disk to reason about and is
+// A block node that is not installed has nothing on disk to reason about and is
 // only reachable with --force, so the comparison is skipped and the requested
-// paths are used as-is.
+// paths are used as-is. A failed release is installed: its PVs are still bound.
 func planStorage(currentState state.State, ins models.BlockNodeInputs) (storagePlan, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed {
+	if !currentState.BlockNodeState.ReleaseInfo.Installed() {
 		return storagePlan{purgeIns: ins, recreate: ins.PurgeStorage}, nil
 	}
 

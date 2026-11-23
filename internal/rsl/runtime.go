@@ -4,12 +4,16 @@ package rsl
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -121,6 +125,61 @@ func (r *RuntimeResolver) persistedBaseline() *state.State {
 	return &baseline
 }
 
+// RefreshMachine refreshes the persisted state and the machine runtime alone,
+// for a caller that writes only machine-owned files. It never reaches the
+// cluster, so an API server that is still settling cannot fail it.
+func (r *RuntimeResolver) RefreshMachine(ctx context.Context, force bool) (state.State, error) {
+	if err := r.refreshPersisted(); err != nil {
+		return state.State{}, err
+	}
+	if r.MachineRuntime == nil {
+		return state.State{}, errorx.IllegalState.New("machine runtime is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultRefreshTimeout)
+	defer cancel()
+	if err := r.MachineRuntime.RefreshState(ctx, force); err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to refresh machine state: %v", err)
+	}
+	machineState, err := r.MachineRuntime.CurrentState()
+	if err != nil {
+		return state.State{}, errorx.IllegalState.New("failed to read machine state: %v", err)
+	}
+
+	current := r.sm.State()
+	current.MachineState = machineState
+	return current, nil
+}
+
+// RefreshMachineAndCluster is RefreshMachine plus the cluster runtime, for a
+// caller that writes the system and cluster files. A failed cluster refresh
+// keeps the persisted cluster record instead of failing: right after the
+// cluster is set up its API server may still be settling, and the system
+// record must land regardless.
+func (r *RuntimeResolver) RefreshMachineAndCluster(ctx context.Context, force bool) (state.State, error) {
+	current, err := r.RefreshMachine(ctx, force)
+	if err != nil {
+		return state.State{}, err
+	}
+	if r.ClusterRuntime == nil {
+		return state.State{}, errorx.IllegalState.New("cluster runtime is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultRefreshTimeout)
+	defer cancel()
+	if err := r.ClusterRuntime.RefreshState(ctx, force); err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to refresh cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	clusterState, err := r.ClusterRuntime.CurrentState()
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Failed to read cluster state; keeping the recorded cluster")
+		return current, nil
+	}
+	current.ClusterState = clusterState
+	return current, nil
+}
+
 func (r *RuntimeResolver) refreshPersisted() error {
 	if err := r.sm.Refresh(); err != nil && !errorx.IsOfType(err, state.NotFoundError) {
 		return errorx.IllegalState.Wrap(err, "failed to refresh state")
@@ -224,14 +283,44 @@ func (r *RuntimeResolver) CurrentState() (state.State, error) {
 	return currentState, nil
 }
 
-func (r *RuntimeResolver) AddActionHistory(entry state.ActionHistory) state.Writer {
-	return r.sm.AddActionHistory(entry)
+// Commit persists only the listed components' state from currentState, then
+// appends entry to the action history; see state.Writer.Commit. State that
+// landed but was not synced (fsx.FileSyncError) keeps its type, with the
+// reason and hint the operator needs; any other failure is "failed to
+// persist state".
+func (r *RuntimeResolver) Commit(currentState state.State, entry state.ActionHistory, ids ...state.ComponentID) error {
+	return r.persistError(r.sm.Set(currentState).Commit(entry, ids...))
 }
 
-func (r *RuntimeResolver) FlushAll(currentState state.State) error {
-	if err := r.sm.Set(currentState).FlushAll(); err != nil {
-		return errorx.IllegalState.New("failed to flush state to disk: %v", err)
-	}
+// Persist writes only the listed components' state from currentState and
+// appends no entry; see state.Writer.Persist. Its errors are those of Commit.
+func (r *RuntimeResolver) Persist(currentState state.State, ids ...state.ComponentID) ([]state.ChangedFile, error) {
+	files, err := r.sm.Set(currentState).Persist(ids...)
+	return files, r.persistError(err)
+}
 
-	return nil
+func (r *RuntimeResolver) persistError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errorx.IsOfType(err, fsx.FileSyncError):
+		return errx.Decorate(
+			errorx.Decorate(err, "the state was saved but not synced to disk"),
+			reasons.StateOperationFailed,
+			"Check the disk holding "+r.StateDir()+".")
+	}
+	return errorx.IllegalState.Wrap(err, "failed to persist state")
+}
+
+// Record appends entry to the action history for an action whose state never
+// reached Commit; see state.Writer.Record.
+func (r *RuntimeResolver) Record(entry state.ActionHistory, cause error) error {
+	return r.sm.Record(entry, cause)
+}
+
+// StateDir returns the directory holding every component's persisted file, for
+// callers (BaseHandler) that need to acquire per-component locks before a
+// command runs.
+func (r *RuntimeResolver) StateDir() string {
+	return filepath.Dir(r.sm.State().StateFile)
 }

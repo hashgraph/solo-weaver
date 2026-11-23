@@ -105,9 +105,11 @@ var blockNodesEntry = kindEntry{gvr: configGVR("blocknodesconfigs"), kind: "Bloc
 // ignoredConfigFilenames legitimately ship in data/config/ but are NOT turned into
 // ConsensusConfig CRs (the operator manages them another way). Skipped, not rejected,
 // so genuinely unknown files still hard-abort. genesis-network.json is the genesis
-// roster, produced by the NetworkGenesis flow.
+// roster, produced by the NetworkGenesis flow. node-admin-keys.json is read only at
+// genesis, so an upgrade does not apply it.
 var ignoredConfigFilenames = map[string]struct{}{
 	"genesis-network.json": {},
+	"node-admin-keys.json": {},
 }
 
 // knownConfigFilenames returns the recognised filenames, sorted, for error hints.

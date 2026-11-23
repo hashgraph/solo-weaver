@@ -46,12 +46,12 @@ const (
 // in the install handler's preflight, mirroring the consensus-node install.
 func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	valuesFn := func() ([]byte, error) {
+	valuesFn := func(ctx context.Context) ([]byte, error) {
 		manager, err := blockNodeManagerProvider()
 		if err != nil {
 			return nil, err
 		}
-		return manager.ComputeValues(inputs.Profile, inputs.ValuesFile)
+		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
 	}
 
 	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
@@ -354,12 +354,12 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 // breaking chart upgrade are tracked as follow-up work.
 func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	valuesFn := func() ([]byte, error) {
+	valuesFn := func(ctx context.Context) ([]byte, error) {
 		manager, err := blockNodeManagerProvider()
 		if err != nil {
 			return nil, err
 		}
-		return manager.ComputeValues(inputs.Profile, inputs.ValuesFile)
+		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
 	}
 
 	// Service-shape guard (#619): record the deployed Service shape before the patch,

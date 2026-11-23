@@ -102,7 +102,7 @@ state:
 	if got.BlockNodeState.Shaping != nil {
 		t.Errorf("expected nil Shaping for old file, got %+v", got.BlockNodeState.Shaping)
 	}
-	if !got.BlockNodeState.TrafficShapingDisabled {
-		t.Error("expected existing TrafficShapingDisabled to still parse as true")
+	if got.BlockNodeState.TrafficShapingEnabled {
+		t.Error("expected an old opt-out file to read as traffic shaping off")
 	}
 }

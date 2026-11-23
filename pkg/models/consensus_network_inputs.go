@@ -24,6 +24,9 @@ type ConsensusNetworkInputs struct {
 	// GenesisFile or DeploymentPackageDir); empty means discover the roster from
 	// the ConsensusCapsules in the namespace.
 	GenesisNetworkJSON string
+	// NodeAdminKeysJSON is the deployment package's node-admin-keys.json; empty
+	// when there is no package or the package has no such file.
+	NodeAdminKeysJSON string
 
 	// ReadyTimeout is how long to wait for the operator to generate the genesis
 	// ConfigMap and for the consensus nodes to become Active (0 disables the wait).

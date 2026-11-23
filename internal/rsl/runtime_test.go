@@ -8,17 +8,21 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/hashgraph/solo-weaver/pkg/security/principal"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 type funcChecker[T any] func() (T, error)
@@ -50,7 +54,7 @@ func writePersistedState(t *testing.T, stateFile string) state.Manager {
 	s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth0"}
 	writer, err := state.NewStateManager(state.WithState(s), state.WithFileManager(fm))
 	require.NoError(t, err)
-	require.NoError(t, writer.FlushState())
+	require.NoError(t, writer.Commit(state.ActionHistory{}, state.AllComponentIDs...))
 
 	sm, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
 	require.NoError(t, err)
@@ -130,9 +134,7 @@ func TestRefreshWithBaseline_BaselineSurvivesARefreshDuringTheRuntimeRefresh(t *
 		s := sm.State()
 		s.BlockNodeState.Shaping = &state.ShapingState{EgressInterface: "eth9"}
 		s.TeleportState = state.TeleportState{}
-		b, err := yaml.Marshal(s)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(stateFile, b, 0o600))
+		require.NoError(t, sm.Set(s).Commit(state.ActionHistory{}, state.ComponentBlockNode, state.ComponentTeleport))
 	}
 	r := newResolver(t, sm, liveTeleport(), rewrite)
 
@@ -156,4 +158,171 @@ func TestRefreshWithBaseline_NoStateFileHasNoBaseline(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, baseline)
 	require.Equal(t, liveTeleport().NodeAgent, current.TeleportState.NodeAgent)
+}
+
+// TestCommit_PreservesUnderlyingErrorCause verifies Commit wraps
+// (rather than stringifies via %v) the state manager's error, so the
+// underlying errorx cause — here, the per-file hash-conflict error — survives
+// in the error chain for diagnostics instead of being flattened to text.
+func TestCommit_PreservesUnderlyingErrorCause(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, sm, liveTeleport(), nil)
+	fm := newFileManager(t)
+
+	// A second, independent manager on the same file writes teleport after sm
+	// last refreshed, so sm's baseline is now stale.
+	other, err := state.NewStateManager(state.WithState(state.NewState(stateFile)), state.WithFileManager(fm))
+	require.NoError(t, err)
+	require.NoError(t, other.Refresh())
+	otherState := other.State()
+	otherState.TeleportState.NodeAgent.Configured = false // flips from persistedTeleport()'s true
+	require.NoError(t, other.Set(otherState).Commit(state.ActionHistory{}, state.ComponentTeleport))
+
+	staleState := sm.State()
+	staleState.TeleportState.NodeAgent.Configured = false
+	err = r.Commit(staleState, state.ActionHistory{}, state.ComponentTeleport)
+	require.Error(t, err)
+
+	// errorx.Wrap is opaque to errors.Is/As/Unwrap by design (see the errorx
+	// doc comment on Type.Wrap) — the cause is reachable only via .Cause() on
+	// the errorx.Error, which is exactly what diagnostics walk. New("...: %v",
+	// err) would discard the cause object entirely, leaving only its string
+	// baked into the outer message with no way back to the original error.
+	cause := errorx.Cast(err).Cause()
+	require.NotNil(t, cause, "the underlying errorx cause must still be reachable via .Cause(), not flattened to text by %%v")
+	require.Contains(t, cause.Error(), "changed externally on disk")
+}
+
+// RefreshMachine must not reach the cluster: right after `kube cluster install`
+// the API server may still be settling, and only the system record is written.
+func TestRefreshMachine_IgnoresUnreachableClusterRuntimes(t *testing.T) {
+	sm := writePersistedState(t, filepath.Join(t.TempDir(), "state.yaml"))
+	unreachable := func() (state.ClusterState, error) {
+		return state.ClusterState{}, errorx.ExternalError.New("connection refused")
+	}
+	checkers := reality.Checkers{
+		Cluster: funcChecker[state.ClusterState](unreachable),
+		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
+			ms := sm.State().MachineState
+			ms.Software["kubeadm"] = state.SoftwareState{Name: "kubeadm", Version: "1.36.5", Installed: true}
+			return ms, nil
+		}),
+		BlockNode: funcChecker[state.BlockNodeState](func() (state.BlockNodeState, error) {
+			return state.BlockNodeState{}, errorx.ExternalError.New("connection refused")
+		}),
+		Consensus: funcChecker[map[string]state.ConsensusNodeState](func() (map[string]state.ConsensusNodeState, error) {
+			return nil, errorx.ExternalError.New("connection refused")
+		}),
+		Teleport: funcChecker[state.TeleportState](func() (state.TeleportState, error) {
+			return state.TeleportState{}, errorx.ExternalError.New("connection refused")
+		}),
+	}
+	r, err := NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
+	require.NoError(t, err)
+
+	_, err = r.Refresh(context.Background(), true)
+	require.Error(t, err, "precondition: a full refresh fails on the unreachable runtimes")
+
+	current, err := r.RefreshMachine(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, current.MachineState.Software["kubeadm"].Installed)
+	require.Equal(t, persistedTeleport().NodeAgent, current.TeleportState.NodeAgent, "other sections keep their persisted value")
+}
+
+// A cluster the refresh could not read keeps the persisted cluster record, so
+// committing the result never saves the cluster as gone.
+func TestRefreshMachineAndCluster_UnobservedClusterKeepsTheRecord(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	st := sm.State()
+	st.ClusterState = state.ClusterState{Created: true, ClusterInfo: models.ClusterInfo{Host: "https://10.0.0.1:6443"}}
+	require.NoError(t, sm.Set(st).Commit(state.ActionHistory{}, state.ComponentCluster))
+
+	cluster, err := reality.NewClusterChecker(sm,
+		func() (reality.HelmManager, error) { return nil, errorx.IllegalState.New("not called") },
+		func() (reality.ClusterReader, error) { return nil, errorx.IllegalState.New("not called") },
+		func() reality.ClusterReachability { return reality.Unobservable })
+	require.NoError(t, err)
+	checkers := reality.Checkers{
+		Cluster: cluster,
+		Machine: funcChecker[state.MachineState](func() (state.MachineState, error) {
+			return sm.State().MachineState, nil
+		}),
+	}
+	r, err := NewRuntimeResolver(models.Config{}, sm, checkers, time.Minute)
+	require.NoError(t, err)
+
+	current, err := r.RefreshMachineAndCluster(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, current.ClusterState.Created)
+	require.Equal(t, "https://10.0.0.1:6443", current.ClusterState.Host)
+	require.True(t, current.ClusterState.Unobserved)
+}
+
+// unsyncedCommits is a state.Manager whose commits land but report a failed
+// sync.
+type unsyncedCommits struct{ state.Manager }
+
+func (u unsyncedCommits) Set(s state.State) state.Writer {
+	u.Manager.Set(s)
+	return u
+}
+
+func (u unsyncedCommits) Commit(entry state.ActionHistory, ids ...state.ComponentID) error {
+	if err := u.Manager.Commit(entry, ids...); err != nil {
+		return err
+	}
+	return fsx.FileSyncError.New("disk gone")
+}
+
+// requireStateOperationFailed checks err's reason and that one of its hints
+// contains hint.
+func requireStateOperationFailed(t *testing.T, err error, hint string) {
+	t.Helper()
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason on %v", err)
+	require.Equal(t, reasons.StateOperationFailed, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, strings.Join(hints, "\n"), hint)
+}
+
+// TestCommit_LandedStateWithALostEntryIsAWarning: state that landed with its
+// entry lost is a success, and the operator is warned to check the history.
+func TestCommit_LandedStateWithALostEntryIsAWarning(t *testing.T) {
+	state.TakeWarnings()
+	t.Cleanup(func() { state.TakeWarnings() })
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, sm, liveTeleport(), nil)
+	history := state.ActionHistoryFilePath(filepath.Dir(stateFile))
+	require.NoError(t, os.RemoveAll(history))
+	require.NoError(t, os.Mkdir(history, 0o755)) // appending to a directory fails
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	require.NoError(t, r.Commit(s, state.ActionHistory{}, state.ComponentTeleport))
+
+	warnings := state.TakeWarnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "action history entry was not appended")
+	require.Contains(t, warnings[0], history+" is writable")
+}
+
+// TestCommit_UnsyncedStateSaysSo: state written but not synced keeps
+// FileSyncError and says it was saved but not synced.
+func TestCommit_UnsyncedStateSaysSo(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.yaml")
+	sm := writePersistedState(t, stateFile)
+	r := newResolver(t, unsyncedCommits{sm}, liveTeleport(), nil)
+
+	s := sm.State()
+	s.TeleportState.NodeAgent.Configured = false
+	err := r.Commit(s, state.ActionHistory{}, state.ComponentTeleport)
+
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	require.Contains(t, doctor.OperatorMessage(err), "the state was saved but not synced to disk")
+	requireStateOperationFailed(t, err, "Check the disk holding "+filepath.Dir(stateFile))
 }

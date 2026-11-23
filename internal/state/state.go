@@ -6,11 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 
-	"github.com/automa-saga/logx"
-	"github.com/automa-saga/version"
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"helm.sh/helm/v3/pkg/release"
 	htime "helm.sh/helm/v3/pkg/time"
@@ -27,29 +25,27 @@ const StateFileName = "state.yaml"
 //
 //	hash: "e3b0c4..."
 //	hashAlgo: sha256
-//	stateFile: /opt/solo/weaver/state/state.yaml
 //	lastSync: "2026-03-17T..."
 //	state:
-//	  version: v2
 //	  machineState:
 //	    profile: mainnet
 //	    ...
 //	  clusterState: ...
 //	  blockNodeState: ...
 //
-// Go field promotion still applies — all StateRecord fields (Version,
-// MachineState, …) are accessible directly as state.Version, state.MachineState,
-// etc. without going through state.StateRecord.
+// Go field promotion still applies — all StateRecord fields (MachineState,
+// ClusterState, …) are accessible directly as state.MachineState,
+// state.ClusterState, etc. without going through state.StateRecord.
 type State struct {
 	// Envelope — excluded from hash; never add domain data here
 	Hash      string     `yaml:"hash,omitempty"     json:"hash,omitempty"`     // digest of StateRecord
 	HashAlgo  string     `yaml:"hashAlgo,omitempty" json:"hashAlgo,omitempty"` // algorithm used for Hash (e.g. "sha256")
-	StateFile string     `yaml:"stateFile"          json:"stateFile"`          // path to the state file on disk
+	StateFile string     `yaml:"-"                  json:"-"`                  // path to the state file on disk; never persisted
 	LastSync  htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was flushed to disk
 
 	// Domain content — serialised as a nested "state" object for readability.
-	// The named YAML/JSON tag does not affect Go field promotion: state.Version,
-	// state.MachineState, etc. all still resolve directly.
+	// The named YAML/JSON tag does not affect Go field promotion: state.MachineState,
+	// state.ClusterState, etc. all still resolve directly.
 	StateRecord `yaml:"state" json:"state"`
 }
 
@@ -60,23 +56,38 @@ type State struct {
 // intentionally excluded from hashing because they are bookkeeping metadata,
 // not provisioning state.
 type StateRecord struct {
-	Version          string                         `yaml:"version" json:"version"`
-	ProvisionerState ProvisionerInfo                `yaml:"provisioner" json:"provisioner"`
-	MachineState     MachineState                   `yaml:"machineState" json:"machineState"`
-	ClusterState     ClusterState                   `yaml:"clusterState" json:"clusterState"`
-	BlockNodeState   BlockNodeState                 `yaml:"blockNodeState" json:"blockNodeState"`
-	ConsensusNodes   map[string]ConsensusNodeState  `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
-	ConsensusOrbits  map[string]ConsensusOrbitState `yaml:"consensusOrbits,omitempty" json:"consensusOrbits,omitempty"`
-	TeleportState    TeleportState                  `yaml:"teleportState" json:"teleportState"`
-	LastAction       ActionHistory                  `yaml:"lastAction,omitempty" json:"lastAction,omitempty"` // last action performed, used for tracking and debugging
+	MachineState    MachineState                   `yaml:"machineState" json:"machineState"`
+	ClusterState    ClusterState                   `yaml:"clusterState" json:"clusterState"`
+	BlockNodeState  BlockNodeState                 `yaml:"blockNodeState" json:"blockNodeState"`
+	ConsensusNodes  map[string]ConsensusNodeState  `yaml:"consensusNodes,omitempty" json:"consensusNodes,omitempty"`
+	ConsensusOrbits map[string]ConsensusOrbitState `yaml:"consensusOrbits,omitempty" json:"consensusOrbits,omitempty"`
+	TeleportState   TeleportState                  `yaml:"teleportState" json:"teleportState"`
 }
 
-// Hashable returns a deep copy of the domain StateRecord with all reconciliation
-// timestamps (LastSync) zeroed. This is the canonical input for hashing:
-//   - Envelope fields (Hash, HashAlgo, StateFile, LastSync on State) are already
-//     excluded by returning only StateRecord.
-//   - Sub-state LastSync fields are zeroed because they advance on every
-//     reconciliation cycle and do not represent meaningful provisioning changes.
+// Hashable returns the canonical input for the content hash: the domain
+// StateRecord with every piece of bookkeeping metadata stripped. Only
+// provisioning/domain data participates in the hash, so metadata that changes
+// without the provisioning intent changing never reads as a state change and
+// never trips the per-file optimistic-concurrency check in prepareComponentFlush.
+//
+// Bookkeeping metadata excluded from the content hash:
+//
+//   - Envelope fields on State — Hash, HashAlgo, StateFile, LastSync — are
+//     excluded structurally, by returning only StateRecord (the envelope never
+//     reaches this value).
+//   - Reconciliation timestamps inside StateRecord, zeroed below: the top-level
+//     MachineState/ClusterState/BlockNodeState/TeleportState LastSync; every
+//     MachineState.Software and MachineState.Hardware entry's LastSync; and every
+//     ConsensusNodes entry's LastSync plus its ConfigHashes' LastUpdate. These
+//     advance on every reconciliation cycle and carry no provisioning meaning.
+//
+// When adding a field: domain/provisioning data goes in StateRecord (hashed);
+// bookkeeping metadata (timestamps, digests, paths, provenance) goes in the
+// envelope on State or is zeroed here. A field that changes on every write but
+// is not a provisioning change must not be hashed — otherwise every write churns
+// the hash and makes concurrent writers to the same file collide. That is why
+// the former LastAction pointer was dropped from State in favour of the
+// append-only action_history.yaml; see issue #1242.
 //
 // Note: We don't want to use pointer receiver here because we don't need to modify the original state instance.
 func (s State) Hashable() StateRecord {
@@ -133,13 +144,66 @@ type ActionHistory struct {
 	Intent    models.Intent `yaml:"intent" json:"intent"` // e.g. "weaver block node init"
 	Inputs    any           `yaml:"inputs" json:"inputs"` // inputs used for this intent; any marshallable value is accepted (e.g. models.UserInputs[T])
 	Timestamp htime.Time    `yaml:"timestamp" json:"timestamp"`
+	// Outcome is what the action did. Entries written before it existed have none.
+	Outcome Outcome `yaml:"outcome" json:"outcome"`
+	// NotPersisted is set only when a state file the action meant to write did
+	// not land, so persisted state does not reflect what the action did.
+	NotPersisted bool `yaml:"notPersisted,omitempty" json:"notPersisted,omitempty"`
+	// Error is why the action failed or its state did not land, as the operator
+	// sees it; Reason is the reason code attached to that error.
+	Error  string      `yaml:"error,omitempty" json:"error,omitempty"`
+	Reason errx.Reason `yaml:"reason,omitempty" json:"reason,omitempty"`
+	// Components names the state files whose content this action changed,
+	// created or removed. The latest entry naming X is the action that last
+	// changed X. Entries written before the machine component was split name
+	// machine.
+	Components []ChangedFile `yaml:"components,omitempty" json:"components,omitempty"`
+	// OwnedDrift lists the out-of-band changes to the action's owned components
+	// that it ran over.
+	OwnedDrift []OwnedDriftRecord `yaml:"ownedDrift,omitempty" json:"ownedDrift,omitempty"`
 }
 
+// Outcome is what an action did.
+type Outcome string
+
+const (
+	OutcomeSucceeded Outcome = "succeeded"
+	OutcomeFailed    Outcome = "failed"
+)
+
+// OwnedDriftRecord is one owned out-of-band change an action ran over.
+type OwnedDriftRecord struct {
+	Component string `yaml:"component" json:"component"`
+	Field     string `yaml:"field" json:"field"`
+	Persisted string `yaml:"persisted" json:"persisted"`
+	// Live is the out-of-band value the action found.
+	Live string `yaml:"live" json:"live"`
+	// DestroyAllowed is set when the guard let the run go ahead over a change
+	// its action destroys, before the workflow ran.
+	DestroyAllowed bool `yaml:"destroyAllowed" json:"destroyAllowed"`
+	// Destroyed is set when the run was allowed to destroy the change and its
+	// own read after the workflow no longer finds it. A run can fail and still
+	// have removed it. The read matches the same field with the same live
+	// value, so a second hand change to that field during the run would also
+	// read as destroyed.
+	Destroyed bool `yaml:"destroyed" json:"destroyed"`
+	// Unconfirmed is set when the run was allowed to destroy the change but
+	// could not read the part afterwards, so Destroyed is unknown.
+	Unconfirmed bool `yaml:"unconfirmed,omitempty" json:"unconfirmed,omitempty"`
+	// Unobserved is set when the run could not read the live value, so Live is
+	// empty. No destructive run goes ahead over such a change.
+	Unobserved bool `yaml:"unobserved,omitempty" json:"unobserved,omitempty"`
+}
+
+// ProvisionerInfo describes a solo-provisioner binary, as recorded in
+// provisioner.yaml.
 type ProvisionerInfo struct {
 	Version    string `yaml:"version" json:"version"`
 	Commit     string `yaml:"commit" json:"commit"`
 	GoVersion  string `yaml:"goversion" json:"goversion"`
 	Executable string `yaml:"executable" json:"executable"` // location of the executable
+	// StateVersion is the state model version (ModelVersion) this binary writes.
+	StateVersion string `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
 }
 
 type MachineState struct {
@@ -204,14 +268,16 @@ type BlockNodeState struct {
 	RecentRetention   string                  `yaml:"recentRetention,omitempty" json:"recentRetention,omitempty"`
 	PluginPreset      string                  `yaml:"pluginPreset,omitempty" json:"pluginPreset,omitempty"`
 	PluginList        string                  `yaml:"pluginList,omitempty" json:"pluginList,omitempty"`
-	// TrafficShapingDisabled records an install-time opt-out
-	// (--traffic-shaping-enabled=false) that cannot be recovered from the Helm
-	// release or the live cluster. Negative polarity so the zero value means
-	// "enabled", matching HostConfig.Disabled's convention. Only `block node
-	// install` ever writes this (see patchBlockNodeStateAfterInstall); reconfigure
-	// and upgrade read it to durably skip re-provisioning tc shaping for a block
-	// node that was deliberately installed without it.
-	TrafficShapingDisabled bool `yaml:"trafficShapingDisabled,omitempty" json:"trafficShapingDisabled,omitempty"`
+	// TrafficShapingEnabled records the install/reconfigure decision, which cannot
+	// be recovered from the Helm release or the live cluster. A missing key reads
+	// as off, so a lost record never turns shaping on. No omitempty: the key is
+	// always written, which is what stops migration_traffic_shaping_enabled_v1
+	// from re-applying to a state file this CLI wrote.
+	TrafficShapingEnabled bool `yaml:"trafficShapingEnabled" json:"trafficShapingEnabled"`
+	// TrafficShapingCleanupPending marks a node where an older upgrade may have
+	// turned shaping on with no recorded decision. The next upgrade removes any
+	// such shaping; install and reconfigure clear the mark.
+	TrafficShapingCleanupPending bool `yaml:"trafficShapingCleanupPending,omitempty" json:"trafficShapingCleanupPending,omitempty"`
 	// Shaping records the last-resolved traffic-shaping content (egress NIC, link
 	// rate, per-class overrides) that cannot be recovered from the Helm release or
 	// the live cluster. It is written on install/reconfigure when traffic shaping is
@@ -224,7 +290,7 @@ type BlockNodeState struct {
 
 // ShapingState is the persisted record of the traffic-shaping content bundle.
 // The enable/disable decision lives separately on
-// BlockNodeState.TrafficShapingDisabled; this holds only the values needed to
+// BlockNodeState.TrafficShapingEnabled; this holds only the values needed to
 // reproduce the shaping when it is enabled.
 type ShapingState struct {
 	EgressInterface string                          `yaml:"egressInterface,omitempty" json:"egressInterface,omitempty"`
@@ -244,19 +310,20 @@ type ConfigHashEntry struct {
 
 // ConsensusNodeState represents the persisted state of a single consensus node.
 type ConsensusNodeState struct {
-	Namespace     string                     `yaml:"namespace" json:"namespace"`
-	OrbitName     string                     `yaml:"orbitName" json:"orbitName"`
-	NodeId        int64                      `yaml:"nodeId" json:"nodeId"`
-	AccountId     string                     `yaml:"accountId" json:"accountId"`
-	Weight        int                        `yaml:"weight" json:"weight"`
-	ImageRepo     string                     `yaml:"imageRepo" json:"imageRepo"`
-	ImageTag      string                     `yaml:"imageTag" json:"imageTag"`
-	LedgerId      string                     `yaml:"ledgerId" json:"ledgerId"`
-	ChainId       string                     `yaml:"chainId,omitempty" json:"chainId,omitempty"`
-	DeploymentPkg string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
-	GrpcTlsSecret string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
-	SigningSecret string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
-	ConfigHashes  map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
+	Namespace      string                     `yaml:"namespace" json:"namespace"`
+	OrbitName      string                     `yaml:"orbitName" json:"orbitName"`
+	NodeId         int64                      `yaml:"nodeId" json:"nodeId"`
+	AccountId      string                     `yaml:"accountId" json:"accountId"`
+	Weight         int                        `yaml:"weight" json:"weight"`
+	ImageRepo      string                     `yaml:"imageRepo" json:"imageRepo"`
+	ImageTag       string                     `yaml:"imageTag" json:"imageTag"`
+	LedgerId       string                     `yaml:"ledgerId" json:"ledgerId"`
+	ChainId        string                     `yaml:"chainId,omitempty" json:"chainId,omitempty"`
+	DeploymentPkg  string                     `yaml:"deploymentPackageDir,omitempty" json:"deploymentPackageDir,omitempty"`
+	GrpcTlsSecret  string                     `yaml:"grpcTlsSecret,omitempty" json:"grpcTlsSecret,omitempty"`
+	SigningSecret  string                     `yaml:"signingSecret,omitempty" json:"signingSecret,omitempty"`
+	AdminKeySecret string                     `yaml:"adminKeySecret,omitempty" json:"adminKeySecret,omitempty"`
+	ConfigHashes   map[string]ConfigHashEntry `yaml:"configHashes,omitempty" json:"configHashes,omitempty"`
 
 	// ManagedSpec records the deliberate install-time shape of the ConsensusCapsule
 	// beyond identity (sizing, JVM, images, volume backing, mode). A pointer so old
@@ -404,11 +471,48 @@ type HelmReleaseInfo struct {
 	DeletedAt htime.Time `yaml:"deletedAt,omitempty" json:"deletedAt,omitempty"`
 }
 
+// Installed reports whether the release exists in a state Helm can upgrade from.
+// A failed revision counts: Helm upgrades from it.
+func (r HelmReleaseInfo) Installed() bool {
+	return r.Status == release.StatusDeployed || r.Status == release.StatusFailed
+}
+
+// Absent reports whether no release exists. NewBlockNodeState marks a missing
+// release as StatusUnknown.
+func (r HelmReleaseInfo) Absent() bool {
+	switch r.Status {
+	case "", release.StatusUnknown, release.StatusUninstalled:
+		return true
+	}
+	return false
+}
+
 // ClusterState represents the persisted state of a Kubernetes cluster.
 type ClusterState struct {
 	models.ClusterInfo
-	Created  bool       `yaml:"created" json:"created"`                       // whether the cluster was created by the provisioner
-	LastSync htime.Time `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	Created bool `yaml:"created" json:"created"` // whether the cluster was created by the provisioner
+	// KubeletVersion and ContainerRuntimeVersion are what the node reports it
+	// runs, which can differ from the binaries on the host until the kubelet
+	// restarts. NodeCount is how many nodes the API server lists; the
+	// provisioner only creates single-node clusters.
+	KubeletVersion          string `yaml:"kubeletVersion,omitempty" json:"kubeletVersion,omitempty"`
+	ContainerRuntimeVersion string `yaml:"containerRuntimeVersion,omitempty" json:"containerRuntimeVersion,omitempty"`
+	NodeCount               int    `yaml:"nodeCount,omitempty" json:"nodeCount,omitempty"`
+	// CiliumAgentVersion is the release version of the running cilium-agent
+	// image; Releases["cilium"] holds the chart version.
+	CiliumAgentVersion string `yaml:"ciliumAgentVersion,omitempty" json:"ciliumAgentVersion,omitempty"`
+	// Releases records the Helm release of each cluster chart the provisioner
+	// manages, keyed by its catalog name, plus the Cilium agent under "cilium".
+	// The block node and the Teleport cluster agent are recorded in their own
+	// sections; the solo-operator is not recorded yet. A chart with no release
+	// has no key. A state file written before this field existed reads as
+	// nothing recorded; the next refresh of a reachable cluster fills it.
+	Releases map[string]HelmReleaseInfo `yaml:"releases,omitempty" json:"releases,omitempty"`
+	LastSync htime.Time                 `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	// Unobserved is set by a refresh that could not read all of the live
+	// cluster and kept the recorded one; a writer then keeps the recorded
+	// cluster. Never written or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 // TeleportState represents the persisted state of Teleport agents.
@@ -423,6 +527,9 @@ type TeleportNodeAgentState struct {
 	Installed  bool   `yaml:"installed" json:"installed"`
 	Configured bool   `yaml:"configured" json:"configured"`
 	Version    string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Unobserved is set by a refresh that could not read the agent and kept
+	// its recorded state instead. It is never written to disk or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 // TeleportClusterAgentState represents the persisted state of the Teleport cluster agent (Helm-based).
@@ -431,6 +538,9 @@ type TeleportClusterAgentState struct {
 	Release      string `yaml:"release,omitempty" json:"release,omitempty"`
 	Namespace    string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 	ChartVersion string `yaml:"chartVersion,omitempty" json:"chartVersion,omitempty"`
+	// Unobserved is set by a refresh that could not read the agent and kept
+	// its recorded state instead. It is never written to disk or hashed.
+	Unobserved bool `yaml:"-" json:"-"`
 }
 
 func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {
@@ -447,30 +557,16 @@ func (cs *ClusterState) Initialize(clusterInfo *models.ClusterInfo) {
 func NewState(stateFile string) State {
 	p := models.Paths().Clone()
 
-	// set provisioner state based on current version and executable path, this is informational only and does not impact any functionality
-	exePath, err := os.Executable()
-	if err != nil {
-		logx.As().Warn().Err(err).Msg("Failed to get executable path for provisioner state, using empty string")
-	}
-
 	if stateFile == "" {
 		stateFile = path.Join(p.StateDir, StateFileName)
 	}
 
-	versionInfo := version.Get()
 	return State{
 		// Envelope fields
 		StateFile: stateFile,
 		LastSync:  htime.Time{},
 		// Domain content
 		StateRecord: StateRecord{
-			Version: ModelVersion,
-			ProvisionerState: ProvisionerInfo{
-				Version:    versionInfo.Version,
-				Commit:     versionInfo.Commit,
-				GoVersion:  versionInfo.GoVersion,
-				Executable: exePath,
-			},
 			MachineState:   NewMachineState(),
 			ClusterState:   NewClusterState(),
 			BlockNodeState: NewBlockNodeState(),

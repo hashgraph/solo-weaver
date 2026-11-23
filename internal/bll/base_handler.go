@@ -11,13 +11,19 @@ package bll
 
 import (
 	"context"
+	"slices"
+	"time"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/drift"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -27,8 +33,8 @@ import (
 // needs: a StateManager for reading and writing state, the rsl Runtime, and
 // the reality Checker for live machine-state queries.
 //
-// Embed this struct in any concrete handler to inherit RefreshRuntimeState and
-// FlushState without re-implementing them.
+// Embed this struct in any concrete handler to inherit HandleIntent, with its
+// refresh and flush, without re-implementing them.
 //
 //	type BlockNodeHandler struct {
 //	    BaseHandler
@@ -41,19 +47,77 @@ type BaseHandler[T any] struct {
 	Runtime          *rsl.RuntimeResolver
 	Target           models.TargetType // expected target for intent validation
 	ProfileExtractor func(T) string    // optional; extracts profile from custom inputs (nil for handlers without profile)
+	Managed          []Component       // components this handler owns; scopes drift detection and the state flush (none by default)
+	// LockWait bounds how long HandleIntent blocks acquiring a managed
+	// component's lock before failing. Zero (the default) fails immediately
+	// rather than waiting — see WithLockWait.
+	LockWait time.Duration
+	// KeptAtBaseline, when set, puts back the parts of a managed component this
+	// handler doesn't own, as they were on disk, before the flush, and
+	// KeptChange reports the drift on those parts — see WithKeptAtBaseline.
+	KeptAtBaseline func(live *state.State, baseline state.State)
+	KeptChange     func(drift.Change) bool
 }
 
 // BaseHandlerOption is a functional option for configuring a BaseHandler.
 type BaseHandlerOption[T any] func(*BaseHandler[T])
 
 // WithProfileExtractor returns a BaseHandlerOption that sets the profile extractor function.
-// The extractor is called during FlushState to persist the deployment profile into
-// MachineState.Profile.  Handlers whose input types carry no profile (e.g. teleport)
-// should omit this option — the extractor defaults to nil, and no profile is written.
+// The extractor is called during flushState to persist the deployment profile into
+// MachineState.Profile, so the handler must also manage Profile.  Handlers whose input
+// types carry no profile (e.g. teleport) should omit this option — the extractor
+// defaults to nil, and no profile is written.
 func WithProfileExtractor[T any](fn func(T) string) BaseHandlerOption[T] {
 	return func(h *BaseHandler[T]) {
 		h.ProfileExtractor = fn
 	}
+}
+
+// WithManagedComponents returns a BaseHandlerOption that declares the components a
+// handler owns. The one declaration scopes drift detection (only managed components'
+// producers run), the locks HandleIntent holds for the whole command, and the state
+// flush (only managed components' files are written). Handlers that omit it manage
+// nothing: they report no drift, lock nothing and write no component file.
+func WithManagedComponents[T any](components ...Component) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.Managed = components
+	}
+}
+
+// WithKeptAtBaseline returns a BaseHandlerOption for a handler that shares a
+// managed component but owns only part of it, such as either Teleport agent.
+// Before the flush, keep copies the part it doesn't own from the on-disk
+// baseline into the live state, so the handler never records an out-of-band
+// change to it, and that part's own command still sees the drift. kept reports
+// the drift on that part, which the run neither guards nor records.
+func WithKeptAtBaseline[T any](
+	keep func(live *state.State, baseline state.State),
+	kept func(drift.Change) bool,
+) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.KeptAtBaseline = keep
+		h.KeptChange = kept
+	}
+}
+
+// WithLockWait returns a BaseHandlerOption that sets how long HandleIntent
+// blocks acquiring a managed component's lock before failing. The default
+// (unset, zero) fails immediately — see BaseHandler.LockWait.
+func WithLockWait[T any](wait time.Duration) BaseHandlerOption[T] {
+	return func(h *BaseHandler[T]) {
+		h.LockWait = wait
+	}
+}
+
+// ownedComponentIDs returns the internal/state.ComponentID of every managed
+// component: the files this handler locks for the whole command, then writes.
+func (h *BaseHandler[T]) ownedComponentIDs() []state.ComponentID {
+	return state.DedupeComponentIDs(componentIDsOf(h.Managed))
+}
+
+// Owns reports whether c is one of the handler's managed components.
+func (h *BaseHandler[T]) Owns(c Component) bool {
+	return slices.Contains(componentIDsOf(h.Managed), c.id)
 }
 
 // NewBaseHandler validates the required dependencies and returns a
@@ -65,6 +129,16 @@ func NewBaseHandler[T any](reg *rsl.RuntimeResolver, target models.TargetType, o
 	h := BaseHandler[T]{Runtime: reg, Target: target}
 	for _, opt := range opts {
 		opt(&h)
+	}
+	if err := state.CheckTargetOwns(target, h.ownedComponentIDs()); err != nil {
+		return BaseHandler[T]{}, errx.WithReason(err, reasons.Internal)
+	}
+	// The extractor writes MachineState.Profile, which only reaches disk when
+	// the handler flushes the profile file.
+	if h.ProfileExtractor != nil && !h.Owns(Profile) {
+		return BaseHandler[T]{}, errx.WithReason(
+			errorx.AssertionFailed.New("a handler with a profile extractor must manage the profile component"),
+			reasons.Internal)
 	}
 	return h, nil
 }
@@ -79,20 +153,26 @@ func (h *BaseHandler[T]) ValidateIntent(intent models.Intent, inputs models.User
 		return errorx.IllegalArgument.New("intent target mismatch: expected %s, got %s", target, intent.Target)
 	}
 
-	if err := inputs.Validate(); err != nil {
+	if err := inputs.ValidateFor(intent.Action); err != nil {
 		return errorx.IllegalArgument.New("invalid user inputs: %v", err)
 	}
 
 	return nil
 }
 
+// StateCallback applies per-action mutations to the full state before flush.
+// It gets the workflow report, so it can skip changes when the workflow failed.
+type StateCallback[T any] func(full *state.State, effInputs models.UserInputs[T], report *automa.Report) error
+
 // HandleIntent is the shared generic handler.
 // It performs the following steps:
 //  1. Validates the intent and user inputs.
-//  2. Sets user inputs into the runtime state for effective-value resolution.
+//  2. Locks every component this handler manages for the rest of the call, so
+//     no other command writing the same component can run concurrently.
 //  3. Refreshes the runtime state to ensure it's up-to-date before workflow execution, noting fields
 //     whose live value differs from the persisted state.
-//  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it.
+//  4. Delegates to the per-action handler to prepare effective inputs and build the workflow, then executes it,
+//     unless the action would destroy owned drift (see guardOwnedDrift).
 //  5. Flushes the updated state to disk, performing three live refreshes before persistence.
 //
 // The callback parameter is an optional function that allows per-action handlers to apply additional mutations to the
@@ -102,13 +182,21 @@ func (h *BaseHandler[T]) HandleIntent(
 	intent models.Intent,
 	inputs models.UserInputs[T],
 	ac IntentHandler[T],
-	callback func(full *state.State, effInputs models.UserInputs[T]) error, // optional callback for applying additional mutations to the full state
+	callback StateCallback[T], // optional callback for applying additional mutations to the full state
 ) (*automa.Report, error) {
 	// ── 1. Validate intent and inputs ───────────────────────────────────────────────
 	err := h.ValidateIntent(intent, inputs, h.Target)
 	if err != nil {
 		return nil, err
 	}
+
+	// Lock every managed component for the whole command, not just the flush
+	// — see internal/state.AcquireComponentLocks.
+	release, err := state.AcquireComponentLocks(h.Runtime.StateDir(), h.ownedComponentIDs(), h.LockWait)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	// ── 2. Refresh runtime state ───────────────────────────────────────────────
 	// We need to refresh runtime before preparing effective inputs
@@ -118,7 +206,7 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 	// Only this refresh can see out-of-band changes: by the flush, reality also
 	// holds the workflow's own changes.
-	outOfBand := detectOutOfBandChanges(baseline, currentState, drift.DefaultProducers()...)
+	outOfBand := detectOutOfBandChanges(baseline, currentState, producersOf(h.Managed)...)
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
 	effectiveInputs, err := ac.PrepareEffectiveInputs(intent, inputs)
@@ -137,6 +225,22 @@ func (h *BaseHandler[T]) HandleIntent(
 		return nil, errorx.IllegalState.New("failed to build workflow: %v", err)
 	}
 
+	// After the action's own preconditions, so a run that would fail anyway is
+	// not told to override.
+	destroys := func(drift.Change) bool { return false }
+	if d, ok := ac.(DriftDestroyer[T]); ok {
+		destroys = func(c drift.Change) bool { return d.DestroysDrift(*effectiveInputs, c) }
+	}
+	// Drift on a part the handler keeps at baseline isn't this run's to write.
+	owned := outOfBand
+	if h.KeptChange != nil {
+		owned = slices.DeleteFunc(slices.Clone(outOfBand), h.KeptChange)
+	}
+	driftRecords, unverified, err := guardOwnedDrift(intent, effectiveInputs.Common, destroys, owned)
+	if err != nil {
+		return nil, errx.Decorate(err, reasons.PreconditionNotMet, driftGuardHint(h.Runtime.StateDir(), unverified))
+	}
+
 	logx.As().Info().
 		Any("intent", intent).
 		Any("inputs", inputs.Redacted()).
@@ -147,35 +251,63 @@ func (h *BaseHandler[T]) HandleIntent(
 	addOutOfBandWarnings(report, outOfBand)
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
-	return h.FlushState(
+	return h.flushState(
 		ctx,
 		report,
 		intent,
 		effectiveInputs,
+		ownedDriftRun{records: driftRecords, baseline: baseline, destroys: destroys},
 		callback,
 	)
 }
 
-// FlushState is the exported generic flush used by all node handlers.
-func (h *BaseHandler[T]) FlushState(
+// unconfirmed returns the records as they stand when the run's read after the
+// workflow failed: a change the run was allowed to destroy is marked
+// Unconfirmed, since no read says whether it is gone.
+func (r ownedDriftRun) unconfirmed() []state.OwnedDriftRecord {
+	if len(r.records) == 0 {
+		return r.records
+	}
+	records := slices.Clone(r.records)
+	for i := range records {
+		records[i].Unconfirmed = records[i].DestroyAllowed
+	}
+	return records
+}
+
+// flushState is the generic flush after a run's workflow. owned is the owned
+// drift the run went ahead over: the flush's refresh confirms which records
+// were destroyed, for the action history entry. The workflow has run, so the
+// entry is appended however the flush ends, marked NotPersisted when the state
+// did not land.
+func (h *BaseHandler[T]) flushState(
 	ctx context.Context,
 	report *automa.Report,
 	intent models.Intent,
 	effectiveInputs *models.UserInputs[T],
-	callback func(full *state.State, effInputs models.UserInputs[T]) error,
+	owned ownedDriftRun,
+	callback StateCallback[T],
 ) (*automa.Report, error) {
 	if report == nil {
 		return nil, errorx.IllegalArgument.New("workflow report cannot be nil")
 	}
 
-	h.Runtime.AddActionHistory(state.ActionHistory{
-		Intent: intent,
-		Inputs: effectiveInputs,
-	})
+	entry := steps.WorkflowEntry(ctx, intent, effectiveInputs, report)
+	notPersisted := func(err error) error {
+		entry.NotPersisted = true
+		_ = h.Runtime.Record(entry, err) // with a cause, a lost entry is a state warning
+		return err
+	}
 
-	fullState, err := h.Runtime.Refresh(ctx, true)
+	baseline, fullState, err := h.Runtime.RefreshWithBaseline(ctx, true)
 	if err != nil {
-		return nil, errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err)
+		entry.OwnedDrift = owned.unconfirmed()
+		return nil, notPersisted(errorx.IllegalState.New("failed to refresh runtime state before flush: %v", err))
+	}
+
+	entry.OwnedDrift = owned.confirm(fullState, producersOf(h.Managed)...)
+	if h.KeptAtBaseline != nil && baseline != nil {
+		h.KeptAtBaseline(&fullState, *baseline)
 	}
 
 	// Persist the deployment profile when the handler carries one.
@@ -190,15 +322,18 @@ func (h *BaseHandler[T]) FlushState(
 
 	if callback != nil {
 		logx.As().Debug().Msg("Applying callback mutations to full state before flush")
-		if err := callback(&fullState, *effectiveInputs); err != nil {
-			return nil, errorx.IllegalState.New("failed to patch state after workflow execution: %v", err)
+		if err := callback(&fullState, *effectiveInputs, report); err != nil {
+			return nil, notPersisted(errorx.IllegalState.New("failed to patch state after workflow execution: %v", err))
 		}
 		logx.As().Debug().Any("fullState", fullState).Msg("State after applying callback mutations")
 	}
 
-	// flush state and action history
-	if err := h.Runtime.FlushAll(fullState); err != nil {
-		return nil, errorx.IllegalState.New("failed to persist state after workflow: %v", err)
+	// Write only the files this handler owns, then the entry.
+	if err := h.Runtime.Commit(fullState, entry, h.ownedComponentIDs()...); err != nil {
+		if errorx.IsOfType(err, fsx.FileSyncError) {
+			return nil, err // the state landed; rsl says what to check
+		}
+		return nil, errorx.IllegalState.Wrap(err, "failed to persist state after workflow")
 	}
 
 	logx.As().Info().

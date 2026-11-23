@@ -1261,3 +1261,39 @@ func TestUnixManager_AppendToFile_DirectorySyncFailure(t *testing.T) {
 	assert.NoError(readErr)
 	assert.Equal("---\nfirst\n", string(got))
 }
+
+func TestRemoveSymbolicLinkIfTarget(t *testing.T) {
+	fm, err := NewManager()
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sandbox", "bin")
+
+	ours := filepath.Join(dir, "ours")
+	require.NoError(t, os.Symlink(target, ours))
+	removed, err := fm.RemoveSymbolicLinkIfTarget(ours, target)
+	require.NoError(t, err)
+	require.True(t, removed)
+	_, err = os.Lstat(ours)
+	require.True(t, os.IsNotExist(err), "link to the target must be removed")
+
+	foreign := filepath.Join(dir, "foreign")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "other"), foreign))
+	removed, err = fm.RemoveSymbolicLinkIfTarget(foreign, target)
+	require.NoError(t, err)
+	require.False(t, removed)
+	_, err = os.Lstat(foreign)
+	require.NoError(t, err, "link to another target must be kept")
+
+	regular := filepath.Join(dir, "regular")
+	require.NoError(t, os.WriteFile(regular, []byte("x"), 0o644))
+	removed, err = fm.RemoveSymbolicLinkIfTarget(regular, target)
+	require.NoError(t, err)
+	require.False(t, removed)
+	_, err = os.Stat(regular)
+	require.NoError(t, err, "regular file must be kept")
+
+	removed, err = fm.RemoveSymbolicLinkIfTarget(filepath.Join(dir, "missing"), target)
+	require.NoError(t, err)
+	require.False(t, removed)
+}

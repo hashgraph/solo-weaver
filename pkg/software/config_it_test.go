@@ -11,11 +11,11 @@ import (
 )
 
 // Test_Config_LoadInfrastructureCatalogYAML is an integration test that verifies the
-// embedded infrastructure-catalog.yaml file can be loaded and parsed correctly into
+// embedded catalog files can be loaded and parsed correctly into
 // the InfrastructureCatalog structure.
 func Test_Config_LoadInfrastructureCatalogYAML(t *testing.T) {
 	config, err := LoadInfrastructureCatalog()
-	require.NoError(t, err, "Should be able to load infrastructure-catalog.yaml")
+	require.NoError(t, err, "Should be able to load the embedded catalog")
 	require.NotNil(t, config, "Config should not be nil")
 
 	// Verify that we have artifacts defined
@@ -127,12 +127,12 @@ func Test_Config_LoadInfrastructureCatalogYAML(t *testing.T) {
 	}
 }
 
-// Test_Config_GetSoftwareByName_Integration tests retrieving actual software from infrastructure-catalog.yaml
+// Test_Config_GetSoftwareByName_Integration tests retrieving actual software from the embedded catalog
 func Test_Config_GetSoftwareByName_Integration(t *testing.T) {
 	config, err := LoadInfrastructureCatalog()
 	require.NoError(t, err)
 
-	// Test that we can find cri-o (which is shipped under host: in infrastructure-catalog.yaml)
+	// Test that we can find cri-o (which is shipped under host: in the catalog)
 	crioSoftware, err := config.GetHostArtifact("cri-o")
 	if err == nil {
 		// If cri-o exists, validate it

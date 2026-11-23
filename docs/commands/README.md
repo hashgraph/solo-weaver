@@ -10,6 +10,7 @@ Every `solo-provisioner` command, by stack.
 | `kube cluster` | [below](#kubernetes-cluster) | The Kubernetes stack underneath everything |
 | `teleport` | [below](#teleport) | Secure SSH and kubectl access |
 | `daemon service` | [below](#daemon-service) | The `solo-provisioner-daemon` systemd service |
+| `consensus node` | [below](#consensus-node) | Install and uninstall a consensus node (experimental) |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
 | `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
 | `version` | [below](#utilities) | Version information |
@@ -44,6 +45,7 @@ sudo solo-provisioner block node tc-attach   --veth=<iface> [--detach]
 # KUBERNETES
 sudo solo-provisioner kube cluster install
 sudo solo-provisioner kube cluster uninstall
+sudo solo-provisioner kube cluster upgrade --plan --experimental [--to=<minor>]   # experimental, read-only
 sudo solo-provisioner kube operator install     # solo-operator (private images: needs pull secret)
 sudo solo-provisioner kube operator uninstall
 
@@ -82,7 +84,7 @@ sudo solo-provisioner teleport cluster install --values=<file>
 sudo solo-provisioner teleport cluster uninstall
 
 # EXTERNAL SECRETS OPERATOR (ESO)
-sudo solo-provisioner eso operator install    [--namespace=<ns>]
+sudo solo-provisioner eso operator install    [--namespace=<ns>] [--recover-partial-uninstall]
 sudo solo-provisioner eso operator uninstall  [--namespace=<ns>]
 sudo solo-provisioner eso secret create       --store=<name> --name=<secret> --namespace=<ns> --set KEY=store/path[#field]
 sudo solo-provisioner eso secret delete       --name=<secret> --namespace=<ns>
@@ -97,6 +99,10 @@ sudo solo-provisioner daemon service install --from-config=<path>
 sudo solo-provisioner daemon service uninstall
 sudo solo-provisioner daemon service check          # alias: status
 sudo solo-provisioner daemon service start|stop
+
+# CONSENSUS NODE (experimental: needs --experimental)
+sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>]
+sudo solo-provisioner consensus node uninstall --experimental --namespace=<ns> --node-id=<id> [--force]
 
 # CONSENSUS MIGRATION SOAK
 sudo solo-provisioner consensus migration soak start  --node-id=<id> --cutover-ts=<RFC-3339> --migration-plan=<path>
@@ -171,6 +177,20 @@ sudo solo-provisioner kube cluster install --rollback-on-error
 | `--rollback-on-error` | Undo completed steps if a later one fails |
 | `--continue-on-error` | Keep going past failures |
 
+### State it records
+
+Cluster install installs host binaries, so it records what the host now has in
+`/opt/solo/weaver/state/system.yaml`, and the running CLI's version in `provisioner.yaml`.
+It holds the `system` record for its whole run. While another command holds it (a
+`teleport node install` or `uninstall`, or a `block node install` that is setting up the
+cluster itself), it fails at once with `system is being modified (held by pid N)` and
+changes nothing. Re-run it once that command finishes.
+
+Each run whose workflow started adds one `install` / `cluster` entry to
+`/opt/solo/weaver/state/action_history.yaml`, even when it fails. A failed install leaves
+`system.yaml` as it was, and its entry records `outcome: failed`. See
+[Action history](../dev/action-history.md).
+
 ### Two things it deliberately does not do
 
 - **No node-specific firewall rules.** The `inet weaver-host-firewall` table is applied by the
@@ -214,6 +234,52 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 > `kube operator install` → `consensus node install`. See
 > [acceptance-tests §F](../dev/acceptance-tests.md).
 
+### Upgrade plan (experimental)
+
+> **Experimental.** `kube cluster upgrade` is hidden and runs only with `--experimental` or
+> `SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE=1`. Under `sudo`, use the flag, because `sudo` drops the
+> environment.
+
+`kube cluster upgrade --plan` reads the live cluster and lists every step left to reach the
+Kubernetes and Cilium versions this binary installs. It changes nothing and takes no lock.
+Applying the steps is not available yet; without `--plan` the command refuses to run.
+
+```bash
+sudo solo-provisioner kube cluster upgrade --plan --experimental
+sudo solo-provisioner kube cluster upgrade --plan --experimental --to=1.35
+sudo solo-provisioner kube cluster upgrade --plan --experimental --output json
+```
+
+| Flag | Description |
+|---|---|
+| `--plan` (alias `--list`) | List every remaining upgrade step and change nothing |
+| `--to` | Stop at this Kubernetes minor (1.35) or its latest patch (1.35.10); defaults to the version this binary installs |
+
+Kubernetes moves one minor at a time, and each minor step lands on that minor's latest patch.
+Cilium moves first whenever it does not run on the next Kubernetes minor. Charts that a minor
+needs are upgraded in their own step just before it. Charts the catalog no longer manages under
+their release name, such as the Bitnami node-exporter, are migrated first. A cluster on Kubernetes
+1.33.4 with Cilium 1.18.1 and MetalLB 0.15.2 gets:
+
+```text
+Cluster upgrade plan: 8 steps remaining (target: Kubernetes 1.36.5, Cilium 1.20.2)
+
+  Version ladder:
+  [next]  1. Cilium      1.18.1  -> 1.18.16  (patch)
+          2. Cilium      1.18.16 -> 1.19.10  (minor)
+          3. Kubernetes  1.33.4  -> 1.33.13  (patch)
+          4. Kubernetes  1.33.13 -> 1.34.13  (minor)
+          5. Cilium      1.19.10 -> 1.20.2   (minor)
+          6. Kubernetes  1.34.13 -> 1.35.10  (minor)
+          7. metallb     0.15.2  -> 0.16.1   (needed by Kubernetes 1.36)
+          8. Kubernetes  1.35.10 -> 1.36.5   (minor)
+```
+
+When the cluster cannot be planned, for example because it has more than one node or its Cilium
+agent and chart differ, the command lists each reason and exits non-zero. The plan needs the live
+cluster: with no kubeconfig (run it with `sudo`), or when the API server does not answer, it
+says so and plans nothing.
+
 ### Uninstall
 
 Tears down the whole Kubernetes stack — kubeadm, CRI-O, Cilium, everything — while keeping the
@@ -225,6 +291,15 @@ sudo solo-provisioner kube cluster uninstall --continue-on-error
 ```
 
 > **Every running workload stops.** This includes the block node.
+
+It also deletes everything under `/opt/solo/weaver/state/` except `action_history.yaml` and the
+`.lock` files, so it takes every state lock first. While any other solo-provisioner command holds one, it fails at
+once with `<record> is being modified (held by pid N)`, before tearing anything down. Re-run it
+once that command finishes.
+
+The action history survives the uninstall and gains one `uninstall` / `cluster` entry naming
+every state file it removed, even when the uninstall fails. A later `kube cluster install` on
+the host appends to the same history. See [Action history](../dev/action-history.md).
 
 ---
 
@@ -258,6 +333,16 @@ Remove it, stopping the systemd service and cleaning up binaries and config:
 sudo solo-provisioner teleport node uninstall
 ```
 
+`uninstall` stops before removing a node agent that changed since solo-provisioner last
+recorded it, or that it can't read: see [Drift guard](#drift-guard). For the node agent, a
+change is its binaries installed or its `/usr/local/bin` links created. A hand edit of
+`/etc/teleport/teleport.yaml` or of the service unit is not detected, and `uninstall` removes
+it.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
+
 ### Cluster agent (kubectl)
 
 ```bash
@@ -286,6 +371,47 @@ Remove the Helm release:
 ```bash
 sudo solo-provisioner teleport cluster uninstall
 ```
+
+`uninstall` stops before removing a cluster agent that changed since solo-provisioner last
+recorded it (its chart version pinned with a hand-run `helm upgrade`, say), or that it can't
+read: see [Drift guard](#drift-guard). `teleport cluster install` keeps an existing release
+and records it as it finds it.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--override-drift` | no | Proceed even if this destroys changes made outside solo-provisioner; they are recorded in the action history |
+
+### Drift guard
+
+`teleport node uninstall` and `teleport cluster uninstall` stop before removing an agent
+that changed since solo-provisioner last recorded it, by hand or by an earlier run that
+stopped before recording. The run lists each changed field and exits non-zero, having
+changed nothing.
+
+- Re-run with `--override-drift` to remove it anyway. `--force`, `--non-interactive` and
+  `--output=json` also go ahead.
+- A run that goes ahead records the overwritten values in
+  `/opt/solo/weaver/state/action_history.yaml`. Each change in the entry's `ownedDrift` says
+  whether the run was allowed to destroy it (`destroyAllowed`), and whether the run's own read
+  after the uninstall no longer finds it (`destroyed`). A run can fail and still have removed
+  it; one that left it in place records `destroyed: false`.
+- Each uninstall checks its own agent only. A change to the other agent never stops it, and
+  stays on record for that agent's commands. An agent already removed by hand never stops it
+  either.
+- `install` records the agent as it finds it, so after it `uninstall` no longer stops for
+  that change.
+
+If solo-provisioner can't read the agent before the run, `uninstall` stops and says it
+cannot verify it, even with `--override-drift`, `--force` or `--output=json`: nothing goes
+past an agent nobody could see.
+
+- For the cluster agent, that's a kubeconfig whose API server doesn't answer within 3
+  seconds, or a Helm release list that fails. A flaky or unreachable API server now stops
+  the uninstall: re-run once it answers.
+- A host with no kubeconfig has no cluster to act on, so that never stops it. For a cluster
+  that's gone for good, remove its kubeconfig first.
+- `install` over an agent it can't read records `could not be read` and adopts what it
+  finds.
 
 ---
 
@@ -356,6 +482,59 @@ sudo solo-provisioner daemon service start
 sudo solo-provisioner daemon service stop
 sudo solo-provisioner daemon service uninstall
 ```
+
+---
+
+## Consensus node
+
+> **Experimental.** The `consensus` group is hidden and runs only with `--experimental` or
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1`. Under `sudo`, use the flag, because `sudo` drops the
+> environment.
+
+`consensus node install` creates the solo-operator CRs of one node: the Orbit, 11 config CRs and the
+ConsensusCapsule. For the full install procedure, see
+[acceptance-tests §F](../dev/acceptance-tests.md#f-consensus-node-deployment).
+
+Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus node` subcommand. The
+other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
+`consensus node install --profile local`, not `consensus node --profile local install`.
+
+### Uninstall
+
+`consensus node uninstall` removes one node:
+
+1. It removes the ConsensusCapsule ownerReference from the node's PVCs. The solo-operator makes the
+   capsule the owner of the PVCs, so without this step Kubernetes deletes the PVCs with the capsule.
+2. It deletes the node's ConsensusCapsule and waits until the capsule is gone. Directly before the
+   delete, and on each poll while it waits, it releases any PVC that the capsule owns again.
+3. It deletes the node's 11 config CRs.
+4. It deletes the Orbit only when no other ConsensusCapsule is left in the namespace.
+5. It removes the node from `state.yaml`. When the Orbit is gone, it also removes the Orbit.
+
+The command keeps the gossip and gRPC TLS Secrets, the PVCs and the hostPath data. When the last
+node is removed, the solo-operator also deletes the orbit's `NetworkGenesis` CR together with the
+Orbit. The genesis ConfigMaps that it generated (for example `genesis-config`) stay. To install the
+network again, run `consensus network genesis` again after the nodes are installed.
+When the node is already gone, the command succeeds and changes nothing.
+
+```bash
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0
+
+# Skip the confirmation prompt
+sudo solo-provisioner consensus node uninstall --experimental --namespace hiero-network-1 --node-id 0 --force
+```
+
+`--node-id` is required, because `0` is a valid ID. The global `--force` and `--non-interactive`
+flags skip the confirmation prompt.
+
+| Flag | Required | What it does |
+|---|---|---|
+| `--node-id` | yes | Consensus node ID (0-based). |
+| `--namespace` (alias `--orbit`) | no | Kubernetes namespace (also used as the Orbit CR name). Default `hiero-network-1`. |
+
+> **The node stops.** Deleting the ConsensusCapsule removes the node's pod. The Secrets, PVC data
+> and hostPath data stay. To remove them, delete them manually. emptyDir data (the default volume
+> type) is deleted with the pod.
 
 ---
 

@@ -8,116 +8,197 @@ import (
 	"testing"
 
 	"github.com/automa-saga/version"
+	"github.com/hashgraph/solo-weaver/pkg/fsx"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
-// readProvisionerVersionFrom parses the provisioner version from a state file at an arbitrary path (unlike the reader's fixed models.Paths() path).
-func readProvisionerVersionFrom(t *testing.T, path string) string {
+// readProvisionerRecordFrom reads provisioner.yaml inside dir and fails the
+// test when it does not exist.
+func readProvisionerRecordFrom(t *testing.T, dir string) ProvisionerRecord {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	rec, ok, err := readProvisionerRecord(dir)
 	require.NoError(t, err)
-	var doc ProvisionerVersionDoc
-	require.NoError(t, unmarshalStateDoc(data, &doc))
-	return doc.State.Provisioner.Version
+	require.True(t, ok, "provisioner.yaml should exist")
+	return rec
 }
 
-// TestPersistProvisionerVersion_CreatesFileWhenAbsent: with no state.yaml, the write creates one holding the running binary's version.
-func TestPersistProvisionerVersion_CreatesFileWhenAbsent(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
-
-	_, err := os.Stat(tmp)
-	require.True(t, os.IsNotExist(err), "precondition: state file must not exist")
-
-	err = PersistProvisionerVersion(
-		WithState(newTestState(tmp)),
-		WithFileManager(newTestFileManager(t)),
-	)
+// writeLegacyStateWithVersion writes a pre-split state.yaml into dir that
+// records cliVersion the way such a file did: inside its state record.
+func writeLegacyStateWithVersion(t *testing.T, dir, cliVersion string) {
+	t.Helper()
+	path := filepath.Join(dir, StateFileName)
+	b, err := yaml.Marshal(NewState(path))
 	require.NoError(t, err)
-
-	_, err = os.Stat(tmp)
-	require.NoError(t, err, "state file should now exist")
-
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+	b, err = withLegacyProvisionerFields(b, ProvisionerRecord{CLI: ProvisionerInfo{Version: cliVersion, StateVersion: ModelVersion}})
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(path, b, 0o644))
 }
 
-// TestPersistProvisionerVersion_PreservesExistingState: the write merges — an existing software entry survives; only provisioner.version advances.
-func TestPersistProvisionerVersion_PreservesExistingState(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
-	fm := newTestFileManager(t)
+// TestPersistProvisionerVersion_RecordsTheRunningCLI: the write creates
+// provisioner.yaml describing the running binary and the state model it writes.
+func TestPersistProvisionerVersion_RecordsTheRunningCLI(t *testing.T) {
+	dir := t.TempDir()
 
-	const oldVersion = "0.0.0-pre-existing"
-	const swKey = "crio"
-
-	// Seed a rich state file the way a provisioned cluster would have one.
-	seed := newTestState(tmp)
-	seed.ProvisionerState.Version = oldVersion
-	seed.MachineState.Software[swKey] = SoftwareState{Name: "cri-o", Version: "1.30.0", Installed: true}
-
-	seedMgr, err := NewStateManager(WithState(seed), WithFileManager(fm))
+	changed, err := persistProvisionerVersionIn(dir)
 	require.NoError(t, err)
-	require.NoError(t, seedMgr.Refresh())
-	require.NoError(t, seedMgr.FlushState())
-	require.NotEqual(t, oldVersion, version.Get().Version, "sentinel must differ from current version")
+	require.True(t, changed)
 
-	// Record the provisioner version against the existing file.
-	err = PersistProvisionerVersion(
-		WithState(newTestState(tmp)),
-		WithFileManager(fm),
-	)
-	require.NoError(t, err)
-
-	// Version advanced; the pre-existing software entry is untouched.
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
-
-	reloaded, err := NewStateManager(WithState(newTestState(tmp)), WithFileManager(fm))
-	require.NoError(t, err)
-	require.NoError(t, reloaded.Refresh())
-	sw, ok := reloaded.State().MachineState.Software[swKey]
-	require.True(t, ok, "pre-existing software entry must be preserved")
-	assert.Equal(t, "1.30.0", sw.Version)
+	rec := readProvisionerRecordFrom(t, dir)
+	assert.Equal(t, version.Get().Version, rec.CLI.Version)
+	assert.Equal(t, ModelVersion, rec.CLI.StateVersion)
 }
 
-// TestPersistProvisionerVersion_Idempotent: repeated calls succeed (the concurrency baseline resets each call).
+// TestPersistProvisionerVersion_OnlyWritesProvisionerFile: it is called from
+// the startup pass and from Kubernetes setup, neither of which owns any
+// component, so it must not create a component file.
+func TestPersistProvisionerVersion_OnlyWritesProvisionerFile(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := persistProvisionerVersionIn(dir)
+	require.NoError(t, err)
+
+	for _, id := range AllComponentIDs {
+		_, err := os.Stat(componentFilePath(dir, id))
+		require.Truef(t, os.IsNotExist(err), "%s state file must not be created by a version-only persist", id)
+	}
+}
+
+// TestPersistProvisionerVersion_Idempotent: repeated calls succeed and keep the
+// same record; only the first changes the file, the rest leave it as it is.
 func TestPersistProvisionerVersion_Idempotent(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "state.yaml")
-	fm := newTestFileManager(t)
+	dir := t.TempDir()
 
 	for i := range 3 {
-		err := PersistProvisionerVersion(WithState(newTestState(tmp)), WithFileManager(fm))
+		changed, err := persistProvisionerVersionIn(dir)
 		require.NoErrorf(t, err, "call %d should succeed", i)
+		require.Equalf(t, i == 0, changed, "call %d changed the file", i)
 	}
-	assert.Equal(t, version.Get().Version, readProvisionerVersionFrom(t, tmp))
+	assert.Equal(t, version.Get().Version, readProvisionerRecordFrom(t, dir).CLI.Version)
 }
 
-// TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on the state-file path and shape — the round-trip #789 depends on.
+// TestPersistProvisionerVersion_FailsWhenLockedPastTheWait: a writer holding the
+// provisioner lock for longer than the stamp waits, as kube cluster uninstall
+// does, makes the write fail, leaving the file untouched.
+func TestPersistProvisionerVersion_FailsWhenLockedPastTheWait(t *testing.T) {
+	dir := t.TempDir()
+	release, err := AcquireProvisionerLock(dir, 0)
+	require.NoError(t, err)
+	defer release()
+
+	changed, err := persistProvisionerVersionIn(dir)
+	require.Error(t, err)
+	require.False(t, changed)
+	require.Contains(t, err.Error(), "provisioner.yaml is being modified")
+
+	_, ok, err := readProvisionerRecord(dir)
+	require.NoError(t, err)
+	require.False(t, ok, "a refused write must not create provisioner.yaml")
+}
+
+// TestPersistThenReadProvisionerVersion_RoundTrip: writer and reader agree on
+// the file's path and shape — the round-trip #789 depends on.
 func TestPersistThenReadProvisionerVersion_RoundTrip(t *testing.T) {
-	home := t.TempDir()
-	restore := models.SetPaths(home)
-	t.Cleanup(restore)
-
-	stateFile := filepath.Join(models.Paths().StateDir, StateFileName)
-
-	// Precondition: state dir exists but no state.yaml — the reader returns "".
+	t.Cleanup(models.SetPaths(t.TempDir()))
 	require.NoError(t, os.MkdirAll(models.Paths().StateDir, 0o755))
-	_, statErr := os.Stat(stateFile)
-	require.True(t, os.IsNotExist(statErr), "precondition: state file must not exist yet")
 
 	absent, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.Empty(t, absent, "absent state.yaml must read back as an empty version")
+	assert.Empty(t, absent, "no recorded version must read back as an empty version")
 
-	// Write the running version at the default path (no opts → the reader's path).
-	require.NoError(t, PersistProvisionerVersion())
+	_, err = PersistProvisionerVersion()
+	require.NoError(t, err)
 
-	_, statErr = os.Stat(stateFile)
-	require.NoError(t, statErr, "state file should now exist at the reader's path")
-
-	// The reader observes exactly the version just written (non-empty).
 	readBack, err := ReadProvisionerVersionFromDisk()
 	require.NoError(t, err)
-	assert.NotEmpty(t, readBack, "recorded version must read back non-empty, unlike the absent case")
 	assert.Equal(t, version.Get().Version, readBack,
 		"the reader must observe the version the writer persisted")
+}
+
+// TestReadProvisionerVersion_FallsBackToLegacyStateFile: on a host the
+// per-component split has not reached yet, provisioner.yaml does not exist but
+// state.yaml has a real recorded version. RunStartupMigrations reads it to
+// decide which migrations apply — including the split itself — before any has
+// run, so the reader must fall back to state.yaml rather than report "" and
+// re-run every version-gated migration.
+func TestReadProvisionerVersion_FallsBackToLegacyStateFile(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, StateFileName), []byte(v034StateYAML), 0o644))
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Equal(t, "0.34.0", got, "must read the version from the legacy file, not treat it as absent")
+}
+
+// TestReadProvisionerVersion_PrefersProvisionerFileOverLegacy: once the split
+// has happened, provisioner.yaml is authoritative even if a stale state.yaml
+// is still sitting around.
+func TestReadProvisionerVersion_PrefersProvisionerFileOverLegacy(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	writeLegacyStateWithVersion(t, dir, "0.0.0-stale-legacy")
+	require.NoError(t, writeProvisionerRecord(dir, ProvisionerRecord{CLI: ProvisionerInfo{Version: "9.9.9-current"}}))
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Equal(t, "9.9.9-current", got, "provisioner.yaml must win once it exists")
+}
+
+// TestReadProvisionerVersion_IgnoresMachineFile: a machine.yaml written before
+// the version moved to provisioner.yaml still carries it, but such files exist
+// only on development hosts, which are reprovisioned rather than migrated.
+func TestReadProvisionerVersion_IgnoresMachineFile(t *testing.T) {
+	t.Cleanup(models.SetPaths(t.TempDir()))
+	dir := models.Paths().StateDir
+	writeLegacyStateWithVersion(t, dir, "1.2.3-in-machine-file")
+	require.NoError(t, os.Rename(filepath.Join(dir, StateFileName), filepath.Join(dir, "machine.yaml")))
+
+	got, err := ReadProvisionerVersionFromDisk()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestFlushingHostStateDoesNotRecordTheVersion: a command's refresh and flush
+// no longer stamp the running version anywhere; only the version-record path
+// writes it.
+func TestFlushingHostStateDoesNotRecordTheVersion(t *testing.T) {
+	dir := t.TempDir()
+	sm, err := NewStateManager(WithState(newTestState(filepath.Join(dir, StateFileName))), WithFileManager(newTestFileManager(t)))
+	require.NoError(t, err)
+	require.NoError(t, sm.Refresh())
+	require.NoError(t, sm.Commit(ActionHistory{}, ComponentProfile, ComponentFirewall, ComponentSystem))
+
+	_, ok, err := readProvisionerRecord(dir)
+	require.NoError(t, err)
+	assert.False(t, ok, "a component flush must not create provisioner.yaml")
+
+	for _, id := range []ComponentID{ComponentProfile, ComponentFirewall, ComponentSystem} {
+		b, err := os.ReadFile(componentFilePath(dir, id))
+		require.NoError(t, err)
+		var doc ProvisionerVersionDoc
+		require.NoError(t, yaml.Unmarshal(b, &doc))
+		assert.Emptyf(t, doc.State.Provisioner.Version, "%s.yaml must not carry the provisioner version", id)
+		assert.Emptyf(t, doc.State.Version, "%s.yaml must not carry the state model version", id)
+	}
+}
+
+// TestPersistProvisionerVersion_SyncFailureStillChangesTheFile: a record whose
+// directory sync fails is on disk, so the call reports the file changed, with
+// the FileSyncError.
+func TestPersistProvisionerVersion_SyncFailureStillChangesTheFile(t *testing.T) {
+	emptyWarnings(t)
+	dir := t.TempDir()
+	recordDirSyncs(t, fsx.FileSyncError.New("disk gone"))
+
+	changed, err := persistProvisionerVersionIn(dir)
+
+	require.True(t, errorx.IsOfType(err, fsx.FileSyncError), "got %v", err)
+	require.True(t, changed)
+	assert.Equal(t, version.Get().Version, readProvisionerRecordFrom(t, dir).CLI.Version)
 }

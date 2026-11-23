@@ -53,6 +53,11 @@ func NewMgmtPortsV1Migration() *MgmtPortsV1Migration {
 }
 
 func (m *MgmtPortsV1Migration) ID() string { return "mgmt-ports-v1" }
+
+// stateFiles is every state file Execute or Rollback can write in dir.
+func (m *MgmtPortsV1Migration) stateFiles(dir string) []string {
+	return []string{filepath.Join(dir, StateFileName)}
+}
 func (m *MgmtPortsV1Migration) Description() string {
 	return "Carry forward machineState.firewall.sshPort (scalar) as mgmtPorts (list) on already-provisioned hosts"
 }

@@ -57,6 +57,12 @@ type Manager interface {
 	//
 	// An error will be returned if the operating system or the destination file system does not support symbolic links.
 	CreateSymbolicLink(src string, dst string, overwrite bool) error
+	// RemoveSymbolicLinkIfTarget removes the symbolic link at path only if it points exactly at target.
+	//
+	// It returns true if the link was removed. A missing path, a path that is not a symbolic link (for example a
+	// regular file placed by the operator) and a link pointing elsewhere are all left untouched and return false
+	// with a nil error.
+	RemoveSymbolicLinkIfTarget(path string, target string) (bool, error)
 	// CreateHardLink creates a hard link at the path specified by the dst argument which points to the file
 	// or directory referenced by the src argument.
 	//

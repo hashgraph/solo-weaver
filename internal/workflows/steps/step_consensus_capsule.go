@@ -5,6 +5,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"os"
 	"sort"
 	"strconv"
@@ -46,8 +47,9 @@ type CapsuleKubeClient interface {
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
 	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
 	ApplyTyped(ctx context.Context, obj runtime.Object) error
-	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
+	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
+	RemoveOwnerReference(ctx context.Context, kind kube.ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error)
 }
 
 // CapsuleKubeProvider resolves a CapsuleKubeClient at step-execution time,
@@ -75,7 +77,7 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
 			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName)
@@ -91,7 +93,7 @@ func PrecheckConsensusNotInstalled(inputs models.ConsensusNodeInputs, force bool
 					errorx.IllegalState.New("consensus node %d is already installed (ConsensusCapsule %q exists); cannot install again — pass --force to re-apply", inputs.NodeId, capsuleName),
 					reasons.PreconditionNotMet,
 					"Pass --force to re-apply the install over the existing node",
-					"Or use 'solo-provisioner consensus node uninstall' first (planned)",
+					fmt.Sprintf("Or run 'solo-provisioner consensus node uninstall --namespace %s --node-id %d' first", inputs.Namespace, inputs.NodeId),
 					"Or use 'solo-provisioner consensus node upgrade' for day-2 changes (planned)")))
 			}
 
@@ -139,7 +141,7 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 			}
 
 			exists, err := kc.ResourceExists(ctx,
-				kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion,
+				kube.SoloOperatorAPIVersion,
 				string(kube.KindOrbit), "", inputs.OrbitName)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
@@ -153,7 +155,7 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 				// re-applied here, so a node asking for a different Orbit would
 				// silently run against the wrong network or mode.
 				spec, _, err := kc.GetResourceNestedMap(ctx,
-					kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindOrbit), "", inputs.OrbitName, "spec")
+					kube.SoloOperatorAPIVersion, string(kube.KindOrbit), "", inputs.OrbitName, "spec")
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
 						errorx.IllegalState.Wrap(err, "failed to read Orbit %s", inputs.OrbitName),
@@ -180,7 +182,7 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 						reasons.PreconditionNotMet,
 						"Re-run with the same --ledger-id, --chain-id and --provisioner-daemon as the existing Orbit",
 						"Inspect the Orbit: kubectl get orbit "+inputs.OrbitName+" -o yaml",
-						"To change the Orbit, uninstall every consensus node on it and delete the Orbit first")))
+						"To change the Orbit, uninstall every consensus node on it (the last uninstall deletes the Orbit)")))
 				}
 
 				if len(desired.Diff(live)) == 0 {
@@ -197,7 +199,7 @@ func EnsureOrbit(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider
 
 			orbit := &operatorv1alpha1.Orbit{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+					APIVersion: kube.SoloOperatorAPIVersion,
 					Kind:       string(kube.KindOrbit),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -285,7 +287,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyLog4j2, inputs.ConfigLog4j2, fmt.Sprintf("%s-log4j2", scope), "Log4j2Config",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.Log4j2Config{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "Log4j2Config"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "Log4j2Config"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.Log4j2ConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -293,7 +295,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeySettings, inputs.ConfigSettings, fmt.Sprintf("%s-settings", scope), "NodeSettings",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodeSettings{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodeSettings"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "NodeSettings"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.NodeSettingsSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -301,7 +303,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyAppProperties, inputs.ConfigAppProperties, fmt.Sprintf("%s-appprops", scope), "ApplicationProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationProperties{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationProperties"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "ApplicationProperties"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.ApplicationPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -309,7 +311,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyAppOverride, inputs.ConfigAppOverrideProperties, fmt.Sprintf("%s-appoverride", scope), "ApplicationOverrideProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApplicationOverrideProperties{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApplicationOverrideProperties"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "ApplicationOverrideProperties"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.ApplicationOverridePropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -317,7 +319,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyApiPermission, inputs.ConfigApiPermission, fmt.Sprintf("%s-apiperm", scope), "ApiPermissionProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ApiPermissionProperties{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ApiPermissionProperties"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "ApiPermissionProperties"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.ApiPermissionPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -325,7 +327,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyBootstrap, inputs.ConfigBootstrap, fmt.Sprintf("%s-bootstrap", scope), "BootstrapProperties",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.BootstrapProperties{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BootstrapProperties"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "BootstrapProperties"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.BootstrapPropertiesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -333,7 +335,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyNodeProperties, inputs.ConfigNodeProperties, fmt.Sprintf("%s-nodeprops", scope), "NodePropertiesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.NodePropertiesConfig{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "NodePropertiesConfig"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "NodePropertiesConfig"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.NodePropertiesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -341,7 +343,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyFeeSchedules, inputs.ConfigFeeSchedules, fmt.Sprintf("%s-feeschedules", scope), "FeeSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.FeeSchedules{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "FeeSchedules"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "FeeSchedules"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.FeeSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -349,7 +351,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeySimpleFeesSchedules, inputs.ConfigSimpleFeesSchedules, fmt.Sprintf("%s-simplefeesschedules", scope), "SimpleFeesSchedules",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.SimpleFeesSchedules{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "SimpleFeesSchedules"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "SimpleFeesSchedules"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.SimpleFeesSchedulesSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -357,7 +359,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyThrottles, inputs.ConfigThrottles, fmt.Sprintf("%s-throttles", scope), "ThrottlesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.ThrottlesConfig{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "ThrottlesConfig"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "ThrottlesConfig"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.ThrottlesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -365,7 +367,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 				{models.ConfigKeyBlockNodes, inputs.ConfigBlockNodes, fmt.Sprintf("%s-blocknodes", scope), "BlockNodesConfig",
 					func(scope, content, orbit, ns, name string) runtime.Object {
 						return &operatorv1alpha1.BlockNodesConfig{
-							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion, Kind: "BlockNodesConfig"},
+							TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: "BlockNodesConfig"},
 							ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 							Spec:       operatorv1alpha1.BlockNodesConfigSpec{Scope: scope, Content: content, Orbit: orbit},
 						}
@@ -379,7 +381,7 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 			}
 
 			l := logx.As()
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 
 			apply := func(e configEntry) error {
 				obj := e.builder(scope, e.content, inputs.OrbitName, inputs.Namespace, e.crName)
@@ -509,7 +511,7 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 
 			capsule := &operatorv1alpha1.ConsensusCapsule{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+					APIVersion: kube.SoloOperatorAPIVersion,
 					Kind:       string(kube.KindConsensusCapsule),
 				},
 				ObjectMeta: metav1.ObjectMeta{
@@ -615,23 +617,28 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 				if inputs.GrpcTlsSecret != "" {
 					sr.GrpcTlsPrivateKey = operatorv1alpha1.KeyReference{
 						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    fmt.Sprintf("hedera-%s.key", scope),
+						KeyName:    cnkeys.FileGrpcKey,
 					}
 					sr.GrpcTlsPublicCertificate = operatorv1alpha1.KeyReference{
 						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    fmt.Sprintf("hedera-%s.crt", scope),
+						KeyName:    cnkeys.FileGrpcCert,
 					}
 				}
 				if inputs.SigningSecret != "" {
 					sr.SigningPrivateKey = operatorv1alpha1.KeyReference{
 						SecretName: inputs.SigningSecret,
-						KeyName:    "private.pem",
+						KeyName:    cnkeys.FileGossipPrivate,
 					}
 					sr.SigningPublicCertificate = operatorv1alpha1.KeyReference{
 						SecretName: inputs.SigningSecret,
-						KeyName:    "public.pem",
+						KeyName:    cnkeys.FileGossipCert,
 					}
 				}
+				adminRef, aerr := adminKeyReference(ctx, kc, inputs)
+				if aerr != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(aerr))
+				}
+				sr.AdminPublicKey = adminRef
 				capsule.Spec.Secrets = &operatorv1alpha1.ConsensusSecrets{
 					SecretResources: sr,
 				}
@@ -683,7 +690,7 @@ func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider Ca
 				return automa.StepSuccessReport(stp.Id())
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
 
 			phase, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "status", "phase")
@@ -794,7 +801,7 @@ func buildSoftwareVersionSource(src *models.ImageSource, pullSecrets models.Pull
 // existingConsensusSource reads the SoftwareVersionSource already set on the live
 // ConsensusCapsule's consensus-node container, or nil when the CR or field is absent.
 func existingConsensusSource(ctx context.Context, kc CapsuleKubeClient, namespace, name string) (*operatorv1alpha1.SoftwareVersionSource, error) {
-	apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+	apiVersion := kube.SoloOperatorAPIVersion
 	m, found, err := kc.GetResourceNestedMap(ctx, apiVersion, string(kube.KindConsensusCapsule), namespace, name,
 		"spec", "podProperties", "containers", "consensusNode", "softwareVersionSource")
 	if err != nil || !found {
@@ -1066,4 +1073,30 @@ func intOrDefault(v, def int) int {
 		return def
 	}
 	return v
+}
+
+// adminKeyReference returns the AdminPublicKey reference for the capsule, or nil
+// when none was resolved. The install handler fills AdminKeySecret from the node's
+// labelled secrets or from --admin-key-secret; a named secret must exist, because
+// the operator fails genesis on a reference to a missing secret.
+func adminKeyReference(ctx context.Context, kc CapsuleKubeClient, inputs models.ConsensusNodeInputs) (*operatorv1alpha1.KeyReference, error) {
+	name := inputs.AdminKeySecret
+	if name == "" {
+		logx.As().Info().Msg("No admin public key secret; the capsule will not reference one")
+		return nil, nil
+	}
+	exists, err := kc.ResourceExists(ctx, "v1", "Secret", inputs.Namespace, name)
+	if err != nil {
+		return nil, errx.Decorate(
+			errorx.IllegalState.Wrap(err, "failed to check admin key Secret %s", name),
+			reasons.PreconditionNotMet,
+			"Verify cluster connectivity and that your kubeconfig has RBAC to read Secrets")
+	}
+	if !exists {
+		return nil, errx.Decorate(
+			errorx.IllegalState.New("admin key Secret %q not found in namespace %s", name, inputs.Namespace),
+			reasons.PreconditionNotMet,
+			"Create it with `consensus keys import --admin`, or drop --admin-key-secret")
+	}
+	return &operatorv1alpha1.KeyReference{SecretName: name, KeyName: cnkeys.FileAdminPublic}, nil
 }

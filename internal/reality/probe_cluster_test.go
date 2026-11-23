@@ -71,7 +71,8 @@ type noHelmReleases struct{}
 func (noHelmReleases) ListAll() ([]*release.Release, error) { return nil, nil }
 
 // Unobservable and NotConfigured both mean the cluster was not observed, so the
-// cluster, block node and consensus checkers refresh the same way for each.
+// cluster, block node and consensus checkers refresh the same way for each. The
+// cluster is marked Unobserved only when a kubeconfig exists.
 func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	fm, err := fsx.NewManager(fsx.WithPrincipalManager(principal.NewMockManager(gomock.NewController(t))))
 	require.NoError(t, err)
@@ -88,7 +89,7 @@ func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	newConsensusKube := func() (ConsensusKubeClient, error) { return nil, errors.New("not called") }
 
 	refresh := func(probe ClusterProbe) (state.ClusterState, state.BlockNodeState, map[string]state.ConsensusNodeState) {
-		cluster, err := NewClusterChecker(sm, probe)
+		cluster, err := NewClusterChecker(sm, newHelm, func() (ClusterReader, error) { return nil, errors.New("not called") }, probe)
 		require.NoError(t, err)
 		blockNode, err := NewBlockNodeChecker(sm, newHelm, newKube, probe)
 		require.NoError(t, err)
@@ -107,9 +108,22 @@ func TestCheckers_UnobservableIsHandledLikeNotConfigured(t *testing.T) {
 	wantCS, wantBN, wantCN := refresh(notConfigured)
 	gotCS, gotBN, gotCN := refresh(unobservable)
 
+	require.False(t, wantCS.Unobserved, "no kubeconfig: nothing to observe")
+	require.True(t, gotCS.Unobserved, "a kubeconfig but no answer: the cluster may still be there")
+	gotCS.Unobserved = false
 	require.Equal(t, wantCS, gotCS)
 	require.Equal(t, wantBN, gotBN)
 	require.Equal(t, wantCN, gotCN)
 	require.Equal(t, "block-node", gotBN.ReleaseInfo.Name)
 	require.Contains(t, gotCN, "node1")
+}
+
+func TestNewCheckers_ExposesTheProbeTheCheckersUse(t *testing.T) {
+	sm, err := state.NewStateManager(state.WithStateFile(filepath.Join(t.TempDir(), state.StateFileName)))
+	require.NoError(t, err)
+
+	checkers, err := NewCheckers(sm, WithClusterProbe(func() ClusterReachability { return Unobservable }))
+	require.NoError(t, err)
+	require.NotNil(t, checkers.Probe)
+	require.Equal(t, Unobservable, checkers.Probe())
 }

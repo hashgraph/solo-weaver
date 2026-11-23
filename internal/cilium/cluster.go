@@ -33,7 +33,7 @@ const (
 	configMapName      = "cilium-config"
 	daemonSetName      = "cilium"
 	operatorName       = "cilium-operator"
-	releaseName        = "cilium"
+	ReleaseName        = "cilium" // the Helm release `cilium install` creates in Namespace
 	agentContainerName = "cilium-agent"
 )
 
@@ -84,7 +84,7 @@ func DetectInstallation(ctx context.Context, dyn dynamic.Interface) (Installatio
 	releases, err := releaseSecrets(ctx, dyn, "")
 	switch {
 	case err == nil && len(releases) > 0:
-		found.Resources = append(found.Resources, "helm-release/"+releaseName)
+		found.Resources = append(found.Resources, "helm-release/"+ReleaseName)
 	case err != nil && lookupErr == nil:
 		lookupErr = err
 	}
@@ -126,14 +126,33 @@ func InstalledVersion(ctx context.Context, dyn dynamic.Interface) (string, error
 	return chart, nil
 }
 
-func agentVersion(ctx context.Context, dyn dynamic.Interface) (string, error) {
+// FindAgentVersion returns the release version of the running cilium-agent image,
+// without a leading "v", and false when the agent DaemonSet does not exist.
+// Unlike InstalledVersion it does not compare the version with the chart.
+func FindAgentVersion(ctx context.Context, dyn dynamic.Interface) (string, bool, error) {
 	ds, err := dyn.Resource(daemonSetsGVR).Namespace(Namespace).Get(ctx, daemonSetName, metav1.GetOptions{})
 	if err != nil {
 		if kerrors.IsNotFound(err) {
-			return "", versionError(errorx.IllegalState.New("Cilium agent DaemonSet %s/%s not found", Namespace, daemonSetName))
+			return "", false, nil
 		}
-		return "", apiError(err, "failed to read DaemonSet %s/%s", Namespace, daemonSetName)
+		return "", false, apiError(err, "failed to read DaemonSet %s/%s", Namespace, daemonSetName)
 	}
+	version, err := agentImageVersion(ds)
+	return version, true, err
+}
+
+func agentVersion(ctx context.Context, dyn dynamic.Interface) (string, error) {
+	version, found, err := FindAgentVersion(ctx, dyn)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", versionError(errorx.IllegalState.New("Cilium agent DaemonSet %s/%s not found", Namespace, daemonSetName))
+	}
+	return version, nil
+}
+
+func agentImageVersion(ds *unstructured.Unstructured) (string, error) {
 
 	containers, _, _ := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
 	var images []string
@@ -185,7 +204,7 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 	}
 	if len(releases) != 1 {
 		return "", versionError(errorx.IllegalState.New(
-			"expected one deployed Helm release %q in %s, found %d", releaseName, Namespace, len(releases)))
+			"expected one deployed Helm release %q in %s, found %d", ReleaseName, Namespace, len(releases)))
 	}
 
 	encoded, _, _ := unstructured.NestedString(releases[0].Object, "data", "release")
@@ -196,7 +215,7 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 
 	version, ok := normalizeVersion(chart)
 	if !ok {
-		return "", versionError(errorx.IllegalState.New("deployed Helm release %q has invalid chart version %q", releaseName, chart))
+		return "", versionError(errorx.IllegalState.New("deployed Helm release %q has invalid chart version %q", ReleaseName, chart))
 	}
 	return version, nil
 }
@@ -204,13 +223,13 @@ func deployedChartVersion(ctx context.Context, dyn dynamic.Interface) (string, e
 // releaseSecrets lists the Helm storage secrets of the cilium release, filtered
 // by Helm status when status is not empty.
 func releaseSecrets(ctx context.Context, dyn dynamic.Interface, status string) ([]unstructured.Unstructured, error) {
-	selector := "owner=helm,name=" + releaseName
+	selector := "owner=helm,name=" + ReleaseName
 	if status != "" {
 		selector += ",status=" + status
 	}
 	list, err := dyn.Resource(secretsGVR).Namespace(Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return nil, apiError(err, "failed to list Helm release secrets for %q in %s", releaseName, Namespace)
+		return nil, apiError(err, "failed to list Helm release secrets for %q in %s", ReleaseName, Namespace)
 	}
 	return list.Items, nil
 }

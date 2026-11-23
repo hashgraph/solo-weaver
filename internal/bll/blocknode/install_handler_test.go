@@ -5,20 +5,25 @@
 package blocknode
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 // newMinimalInstallHandler returns a handler with only the fields used by
-// BuildWorkflow (runtime and mr are not accessed during workflow construction).
-func newMinimalInstallHandler() *InstallHandler {
-	return &InstallHandler{BaseHandler: bll.BaseHandler[models.BlockNodeInputs]{}}
+// BuildWorkflow (runtime and mr are not accessed during workflow construction),
+// owning managed.
+func newMinimalInstallHandler(managed ...bll.Component) *InstallHandler {
+	return &InstallHandler{BaseHandler: bll.BaseHandler[models.BlockNodeInputs]{Managed: managed}}
 }
 
 // installInputs returns minimal valid UserInputs for an install. Traffic
@@ -76,7 +81,7 @@ func TestInstallHandler_BuildWorkflow_ExistingCluster_MediaCheckRunsEarly(t *tes
 // stand up the substrate, so the operator sees a non-local storage warning
 // before the (potentially long) cluster bootstrap even starts.
 func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testing.T) {
-	h := newMinimalInstallHandler()
+	h := newMinimalInstallHandler(bll.BlockNode, bll.Profile, bll.Firewall, bll.System)
 	currentState := state.State{StateRecord: state.StateRecord{
 		ClusterState: state.ClusterState{Created: false},
 	}}
@@ -103,4 +108,80 @@ func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testin
 		steps.PrecheckBlockNodeLegacyStepId,
 		steps.SetupBlockNodeStepId,
 	}, ids, "traffic shaping disabled: no daemon-config step")
+}
+
+// TestInstallHandler_RefusesExistingNonDeployedRelease verifies install stops
+// before any cluster step when Helm still holds a release it cannot install over.
+func TestInstallHandler_RefusesExistingNonDeployedRelease(t *testing.T) {
+	tests := []struct {
+		status release.Status
+		want   string
+		hint   string
+	}{
+		{status: release.StatusFailed, want: "last operation failed", hint: "block node upgrade"},
+		{status: release.StatusPendingInstall, want: `"pending-install"`, hint: "uninstall --force"},
+		{status: release.StatusPendingUpgrade, want: `"pending-upgrade"`, hint: "helm rollback"},
+	}
+	for _, tc := range tests {
+		for _, force := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/force=%t", tc.status, force), func(t *testing.T) {
+				h := newMinimalInstallHandler()
+				currentState := state.State{StateRecord: state.StateRecord{
+					ClusterState:   state.ClusterState{Created: true},
+					BlockNodeState: state.BlockNodeState{ReleaseInfo: releaseInfo(tc.status)},
+				}}
+				inputs := installInputs("/mnt/storage", false)
+				inputs.Common.Force = force
+
+				_, err := h.BuildWorkflow(currentState, inputs)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+				assertResolutionMentions(t, err, tc.hint)
+			})
+		}
+	}
+}
+
+// TestInstallHandler_NoReleaseInstalls verifies install proceeds when Helm
+// holds no release, including the default state a fresh machine starts with.
+func TestInstallHandler_NoReleaseInstalls(t *testing.T) {
+	tests := map[string]state.BlockNodeState{
+		"default state": state.NewBlockNodeState(),
+		"empty status":  {},
+		"uninstalled":   {ReleaseInfo: releaseInfo(release.StatusUninstalled)},
+	}
+	for name, bn := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newMinimalInstallHandler()
+			currentState := state.State{StateRecord: state.StateRecord{
+				ClusterState:   state.ClusterState{Created: true},
+				BlockNodeState: bn,
+			}}
+
+			_, err := h.BuildWorkflow(currentState, installInputs("/mnt/storage", false))
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestInstallHandler_BuildWorkflow_NoClusterWithoutSystemIsRefused: standing up
+// Kubernetes writes the system record, so the install handler that does not
+// own it, picked because Kubernetes was installed when the command started,
+// refuses instead of guessing.
+func TestInstallHandler_BuildWorkflow_NoClusterWithoutSystemIsRefused(t *testing.T) {
+	h := newMinimalInstallHandler(bll.BlockNode, bll.Profile, bll.Firewall)
+	noCluster := state.State{StateRecord: state.StateRecord{ClusterState: state.ClusterState{Created: false}}}
+
+	wb, err := h.BuildWorkflow(noCluster, installInputs("/mnt/storage", false))
+	require.Nil(t, wb)
+	require.ErrorContains(t, err,
+		"found no running Kubernetes cluster, although Kubernetes was installed when this command started")
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok, "no reason attached")
+	require.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok, "no hints attached")
+	require.Len(t, hints, 2)
+	require.Contains(t, hints[0], "systemctl status kubelet")
+	require.Contains(t, hints[1], "Re-run this command")
 }

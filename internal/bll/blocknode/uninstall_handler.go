@@ -12,8 +12,6 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/models"
-	"github.com/joomcode/errorx"
-	"helm.sh/helm/v3/pkg/release"
 )
 
 // UninstallHandler handles the ActionUninstall intent for a block node.
@@ -32,17 +30,14 @@ func (h *UninstallHandler) PrepareEffectiveInputs(
 	return resolveBlocknodeEffectiveInputs(h.runtime, intent, inputs, nil)
 }
 
-// BuildWorkflow validates that the block node is deployed (unless --force) and
+// BuildWorkflow validates that the block node is installed (unless --force) and
 // returns the uninstall workflow.
 func (h *UninstallHandler) BuildWorkflow(
 	currentState state.State,
 	inputs models.UserInputs[models.BlockNodeInputs],
 ) (*automa.WorkflowBuilder, error) {
-	if currentState.BlockNodeState.ReleaseInfo.Status != release.StatusDeployed && !inputs.Common.Force {
-		return nil, errorx.IllegalState.New(
-			"block node is not installed; cannot uninstall").
-			WithProperty(models.ErrPropertyResolution,
-				"use 'solo-provisioner block node install' to install the block node, or pass --force to continue")
+	if err := requireInstalled(currentState.BlockNodeState.ReleaseInfo, "uninstall", inputs.Common.Force); err != nil {
+		return nil, err
 	}
 
 	ins := inputs.Custom
