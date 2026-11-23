@@ -13,6 +13,10 @@
 // BN workload plane). The two tables have opposite lifecycles: `inet weaver-host-firewall` is
 // set once and rarely changes, while `inet weaver-workload-policy` churns continuously as the
 // daemon rewrites set elements.
+//
+// It imports no state, reality, drift or bll package: ObserveDrift reports what
+// it read in its own types, and internal/reality maps them for the drift
+// producer.
 package firewall
 
 const (
