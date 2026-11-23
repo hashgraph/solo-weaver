@@ -66,6 +66,15 @@ func TestRunList_JSON(t *testing.T) {
 	require.NotEmpty(t, got.Features)
 }
 
+// --activation-version 0 means "all" (per the flag help), not "features at version 0".
+func TestReadFilters_ActivationVersionZeroMeansAll(t *testing.T) {
+	cmd := GetCmd()
+	require.NoError(t, cmd.PersistentFlags().Set("activation-version", "0"))
+	f, err := readFilters(cmd)
+	require.NoError(t, err)
+	require.False(t, f.byActivation, "0 must disable the activation-version filter")
+}
+
 // Machine output must go to stdout, not stderr, so `... -o json | jq` works.
 func TestRunList_JSON_GoesToStdout(t *testing.T) {
 	cmd := GetCmd()

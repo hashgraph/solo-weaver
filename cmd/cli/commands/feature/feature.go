@@ -58,8 +58,9 @@ var knownMaturities = map[string]bool{
 
 func readFilters(cmd *cobra.Command) (filters, error) {
 	var f filters
-	if cmd.Flags().Changed("activation-version") {
-		f.activationVersion, _ = cmd.Flags().GetUint("activation-version")
+	// 0 means "all" (per the flag help), so only filter on a non-zero value.
+	if v, _ := cmd.Flags().GetUint("activation-version"); v != 0 {
+		f.activationVersion = v
 		f.byActivation = true
 	}
 	if m, _ := cmd.Flags().GetString("maturity"); m != "" {
