@@ -357,6 +357,13 @@ internal `Options.Overrides` seam (tests/programmatic forcing), never to operato
 same gate with `featuregate.Gate(ctx)` — never its own `NewDefault()` — so command
 availability and in-code behaviour are a single decision.
 
+> **Gap — code-path gates in GA commands under `sudo`.** A code-path gate read inside a
+> *GA* command has no `--experimental` flag (that is installed only on gated alpha
+> commands), and `sudo` drops the env var — so there is no convenient sudo-safe opt-in
+> yet. A named `--enable-feature NAME` flag is tracked in
+> [#1487](https://github.com/hashgraph/solo-weaver/issues/1487); until then, use
+> `sudo -E` with the env var.
+
 ## Inspecting the catalog
 
 ```bash
