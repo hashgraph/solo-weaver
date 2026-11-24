@@ -433,6 +433,12 @@ truth for the window `W`; the gate and every lint use it.
   `Alpha` gate has drifted below the support floor, i.e. outlived its cycle without
   being graduated or deleted. It is a warning on purpose: a feature can legitimately
   slip when more urgent work ships first.
+- **Orphan features** (`TestNoOrphanFeatures`) — **fails** when a catalogued feature
+  has no reader in production code (no `gate.Enabled` / `GateFeature` /
+  `GateFeatureFlag` reference). This is what keeps the catalog honest when the
+  activation version is frozen (so the time-based lints above never fire): an inert
+  gate — e.g. a GA feature whose old `else` path was deleted — must be removed, not
+  left as a permanent always-on row.
 
 **Migration safety (Layer 2).** When gated migrations land, a feature migration
 runs only through gatekit's `RunNow`/`Finalize`, keyed to the activation version it
