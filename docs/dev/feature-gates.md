@@ -67,10 +67,9 @@ The activation version — a coordination counter that normally never moves:
 
   v1  ●──────────────────────────────────────────────────▶   stays at 1
       │
-      ├── NetworkPolicy            GA      ┐  development gates all live at
-      ├── KubeClusterUpgrade       Alpha   │  the current version; adding
-      ├── ConsensusNodeOperator…   Alpha   │  one never moves the axis
-      └── …                                ┘
+      ├── KubeClusterUpgrade        Alpha   ┐  every gate lives at the current
+      ├── ConsensusNodeOperator…    Alpha   │  version; adding one never moves
+      └── …                                 ┘  the axis
 
 Only a compatibility gate (a coordinated rolling-upgrade flip) ever bumps it:
 
