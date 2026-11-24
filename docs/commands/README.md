@@ -238,7 +238,7 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 ### Upgrade plan (experimental)
 
 > **Experimental.** `kube cluster upgrade` is hidden and runs only with `--experimental` or
-> `SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE=1`. Under `sudo`, use the flag, because `sudo` drops the
+> `SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE=1`. Under `sudo`, use the flag, because `sudo` drops the
 > environment.
 
 `kube cluster upgrade --plan` reads the live cluster and lists every step left to reach the
@@ -489,7 +489,7 @@ sudo solo-provisioner daemon service uninstall
 ## Consensus node
 
 > **Experimental.** The `consensus` group is hidden and runs only with `--experimental` or
-> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1`. Under `sudo`, use the flag, because `sudo` drops the
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED=1`. Under `sudo`, use the flag, because `sudo` drops the
 > environment.
 
 `consensus node install` creates the solo-operator CRs of one node: the Orbit, 11 config CRs and the

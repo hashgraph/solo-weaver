@@ -3,8 +3,10 @@
 package featuregate_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	gatekit "github.com/automa-saga/gatekit"
 	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/stretchr/testify/require"
@@ -56,4 +58,14 @@ func TestEnvOverride_UnknownVarErrors(t *testing.T) {
 	_, err := featuregate.NewDefault()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "SOLO_PROVISIONER_ENABLE_NOPE")
+}
+
+// A renamed opt-in var from older docs gives a hint naming the current variable.
+func TestEnvOverride_RenamedVarHint(t *testing.T) {
+	t.Setenv("SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE", "1")
+	_, err := featuregate.NewDefault()
+	require.Error(t, err)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, strings.Join(hints, " "), "SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE")
 }

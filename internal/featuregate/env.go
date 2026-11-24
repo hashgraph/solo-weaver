@@ -3,11 +3,14 @@
 package featuregate
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/automa-saga/errx"
 	gatekit "github.com/automa-saga/gatekit"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 )
 
@@ -16,6 +19,13 @@ import (
 // gate was converged into the registry (#1392), so there is no separate
 // command-gate variable under this prefix.
 const envPrefix = "SOLO_PROVISIONER_ENABLE_"
+
+// deprecatedEnvRenames maps opt-in variables from older docs to their current names,
+// so a stale one gives an actionable error instead of a bare "unknown variable".
+var deprecatedEnvRenames = map[string]string{
+	"SOLO_PROVISIONER_ENABLE_CONSENSUS":       "SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED",
+	"SOLO_PROVISIONER_ENABLE_CLUSTER_UPGRADE": "SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE",
+}
 
 // envFeatureRequests scans the environment for SOLO_PROVISIONER_ENABLE_* opt-ins and
 // returns the on/off state each one requests, keyed by feature. It fails loudly on a
@@ -42,7 +52,15 @@ func envFeatureRequests() (map[gatekit.Feature]bool, error) {
 		}
 		f, ok := byVar[name]
 		if !ok {
-			return nil, errorx.IllegalArgument.New("featuregate: unknown opt-in env var %q matches no feature", name)
+			hint := fmt.Sprintf("Unset %s, or use the correct name (run `solo-provisioner feature-gate list`).", name)
+			if current, renamed := deprecatedEnvRenames[name]; renamed {
+				hint = fmt.Sprintf("%s was renamed to %s.", name, current)
+			}
+			return nil, errx.Decorate(
+				errorx.IllegalArgument.New("unknown opt-in env var %q matches no feature", name),
+				reasons.InvalidArgument,
+				"A SOLO_PROVISIONER_ENABLE_* variable does not match any feature.",
+				hint)
 		}
 		b, err := strconv.ParseBool(val)
 		if err != nil {
