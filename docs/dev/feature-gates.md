@@ -8,7 +8,7 @@ backward-compatible.
 Feature gates are built on [`github.com/automa-saga/gatekit`](https://github.com/automa-saga/gatekit)
 (a zero-dependency library). Solo Provisioner's thin adapter lives in
 `internal/featuregate`, and operators inspect the catalog with the
-`solo-provisioner feature` command.
+`solo-provisioner feature-gate` command.
 
 ## What feature gates give you
 
@@ -244,7 +244,7 @@ Pick the three fields from [Deciding how to define a feature](#deciding-how-to-d
 - **`Maturity`** — start at `Alpha` for anything unvalidated (forces opt-in);
   `Beta`/`GA` are default-on once their version is active.
 - **`Description`** — a short, human-readable line; it is shown in
-  `feature list` and must not repeat the maturity or version.
+  `feature-gate list` and must not repeat the maturity or version.
 
 ### 3. Branch the code with `gate.Enabled`
 
@@ -287,7 +287,7 @@ Visibility and availability follow the feature's maturity:
 
 An opted-in operator runs the command with the hidden, command-scoped
 `--experimental` flag, or the feature's `SOLO_PROVISIONER_ENABLE_<FEATURE>` opt-in. A
-hidden alpha command stays **discoverable** via `solo-provisioner feature list`, which
+hidden alpha command stays **discoverable** via `solo-provisioner feature-gate list`, which
 prints the feature and its exact opt-in env var.
 
 Command availability is *maturity-based*: a `GA`/`BETA` command always runs; an
@@ -341,7 +341,7 @@ Two opt-in surfaces, both readiness-respecting:
   feature.
 - **`SOLO_PROVISIONER_ENABLE_<FEATURE>` env var** — the feature name in
   `UPPER_SNAKE_CASE` (e.g. `SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE=1`). The
-  per-feature surface for scripting; the exact variable is printed by `feature list`.
+  per-feature surface for scripting; the exact variable is printed by `feature-gate list`.
   Note `sudo` drops it unless you use `sudo -E`.
 
 Under the hood each is resolved by gatekit (`resolve`): the opt-in asks whether the
@@ -358,7 +358,7 @@ availability and in-code behaviour are a single decision.
 ## Inspecting the catalog
 
 ```bash
-solo-provisioner feature list
+solo-provisioner feature-gate list
 ```
 
 Shows each feature's maturity, the activation version it is `ACTIVE FROM`,

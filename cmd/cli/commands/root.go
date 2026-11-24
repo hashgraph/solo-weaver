@@ -131,9 +131,9 @@ func init() {
 	versionCmd := newVersionCmd()
 	common.SkipGlobalChecks(versionCmd)
 
-	// `feature` is a read-only listing of the feature catalog; it changes nothing
-	// and must run on an uninstalled host. GetCmd skips the global checks on the
-	// group and every subcommand itself.
+	// `feature-gate` is a read-only listing of the feature-gate catalog; it changes
+	// nothing and must run on an uninstalled host. GetCmd skips the global checks on
+	// the group and every subcommand itself.
 	featureCmd := feature.GetCmd()
 
 	// add subcommands
@@ -370,9 +370,9 @@ func initConfig(ctx context.Context) {
 // unprivileged; `reconcile-shaper --check` is handled separately below because
 // it is exempt only with the --check flag.
 var privilegeExemptCommands = map[string]bool{
-	"version": true,
-	"help":    true,
-	"feature": true,
+	"version":      true,
+	"help":         true,
+	"feature-gate": true,
 }
 
 // isPrivilegeExemptInvocation reports whether args represents an invocation

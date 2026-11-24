@@ -10,7 +10,7 @@ diagnose
 eso
   operator
   secret
-feature
+feature-gate
   list
 install
 kube

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package feature implements the operator-facing `feature` command: a read-only
-// listing of solo-provisioner's gatekit feature catalog and each feature's
-// maturity, activation point, and current state. It is a pure reader of
-// internal/featuregate — it hides and gates nothing (that is #1392).
+// Package feature implements the operator-facing `feature-gate` command: a read-only
+// listing of solo-provisioner's gatekit feature-gate catalog and each gate's maturity,
+// activation point, and current state. It is a pure reader of internal/featuregate — it
+// hides and gates nothing (that is #1392).
 package feature
 
 import (
@@ -95,25 +95,26 @@ func (f filters) apply(rows []featureRow) []featureRow {
 	return out
 }
 
-// GetCmd returns the `feature` command. Running it (or `feature list`) prints the
-// catalog; an experimental feature is not excluded — operators see everything
-// and its maturity.
+// GetCmd returns the `feature-gate` command. Running it (or `feature-gate list`) prints
+// the catalog of gated behaviours and their maturity. Stable (GA) commands are not
+// gated and so are not listed — they are discoverable via `--help`.
 func GetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "feature",
-		Short: "List available features and their maturity",
-		Long: "List solo-provisioner's feature catalog: each feature's maturity " +
+		Use:   "feature-gate",
+		Short: "List feature gates and their maturity",
+		Long: "List solo-provisioner's feature gates: each gate's maturity " +
 			"(ALPHA/BETA/GA), the activation version it turns on at, whether it is " +
-			"currently enabled, and a short description.",
+			"currently enabled, and a short description. Stable commands are not gated " +
+			"and are not listed here — see --help for the full command surface.",
 		RunE: runList,
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "list",
-		Short: "List available features and their maturity",
+		Short: "List feature gates and their maturity",
 		RunE:  runList,
 	})
 
-	// Filters, persistent so `feature list` inherits them.
+	// Filters, persistent so `feature-gate list` inherits them.
 	cmd.PersistentFlags().Uint("activation-version", 0,
 		"Show only features that activate at this activation version (0 = all).")
 	cmd.PersistentFlags().String("maturity", "",
