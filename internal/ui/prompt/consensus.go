@@ -15,6 +15,8 @@ import (
 // ConsensusNodeSelectPrompts returns the select-type prompts for the consensus
 // node install command. Currently only the deployment profile, which sizes the
 // host hardware floor when the install has to bootstrap the cluster.
+// --start-policy is not prompted: a pre-selected value would replace the live
+// policy of an installed node.
 //
 //   - flagProfile: pointer to the flag variable for --profile
 func ConsensusNodeSelectPrompts(flagProfile *string) []SelectPrompt {

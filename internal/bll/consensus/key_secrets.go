@@ -16,11 +16,12 @@ import (
 	"github.com/joomcode/errorx"
 )
 
-// keyCluster is the cluster access resolveKeySecrets needs: labelled Secrets,
-// plus the node's live ConsensusCapsule.
+// keyCluster is the cluster access resolveKeySecrets and resolveStartPolicy need:
+// labelled Secrets, the node's live ConsensusCapsule and the CRD check.
 type keyCluster interface {
 	cnkeys.SecretClient
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
+	CRDExists(ctx context.Context, crdName string) (bool, error)
 }
 
 // newKeyCluster is a var so tests can stub cluster access.

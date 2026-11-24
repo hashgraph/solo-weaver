@@ -507,6 +507,7 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 					NodeId:                           inputs.NodeId,
 					AccountId:                        inputs.AccountId,
 					Weight:                           inputs.Weight,
+					StartPolicy:                      operatorv1alpha1.StartPolicy(inputs.StartPolicy), // desiredRunState stays unset: start/stop own it
 					Log4j2ConfigRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyLog4j2),
 					SettingsConfigRef:                models.ConsensusConfigCRName(scope, models.ConfigKeySettings),
 					ApplicationPropertiesRef:         models.ConsensusConfigCRName(scope, models.ConfigKeyAppProperties),
@@ -708,6 +709,7 @@ func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider Ca
 			return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{
 				"phase":       phase,
 				"startPolicy": policy,
+				"heldStopped": strconv.FormatBool(held),
 			}))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {

@@ -73,11 +73,22 @@ func TestReadHostPathOwners(t *testing.T) {
 	assert.NotContains(t, live.HostPathOwners, "events")
 }
 
-// containersKubeClient serves only the capsule's spec.podProperties.containers map.
+// containersKubeClient serves only the capsule's spec.podProperties.containers map
+// and spec.startPolicy.
 type containersKubeClient struct {
 	ConsensusKubeClient
-	containers map[string]interface{}
-	err        error
+	containers  map[string]interface{}
+	startPolicy string
+	err         error
+}
+
+func (c containersKubeClient) GetResourceNestedString(
+	_ context.Context, _, _, _, _ string, fields ...string,
+) (string, error) {
+	if len(fields) == 2 && fields[1] == "startPolicy" {
+		return c.startPolicy, nil
+	}
+	return "", nil
 }
 
 func (c containersKubeClient) GetResourceNestedMap(
@@ -104,10 +115,11 @@ func TestReadLiveConsensusShape(t *testing.T) {
 	c := &consensusChecker{}
 
 	t.Run("missing field reads as absent, not skipped", func(t *testing.T) {
-		kc := containersKubeClient{containers: map[string]interface{}{"consensusNode": cn}}
+		kc := containersKubeClient{containers: map[string]interface{}{"consensusNode": cn}, startPolicy: "Manual"}
 		live, ok := c.readLiveConsensusShape(context.Background(), kc, "v1", "ns", "capsule")
 		require.True(t, ok)
 		assert.Equal(t, "root", live.ContainerName)
+		assert.Equal(t, "Manual", live.StartPolicy)
 		assert.Equal(t, "-XX:+UseZGC", live.JavaOpts)
 		assert.Equal(t, "4", live.CPULimit)
 		assert.Equal(t, "", live.JavaHeapMin)

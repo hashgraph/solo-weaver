@@ -44,6 +44,10 @@ func (f *fakeKeyClient) GetResourceNestedString(_ context.Context, _, _, _, name
 	return f.capsule[fields[3]], nil
 }
 
+func (f *fakeKeyClient) CRDExists(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
 func newFakeKeyClient() *fakeKeyClient {
 	return &fakeKeyClient{
 		data:        map[string]map[string][]byte{},

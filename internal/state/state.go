@@ -361,6 +361,7 @@ type ConsensusNodeObservedShape struct {
 	JavaOpts      string
 	UCImageRepo   string
 	UCImageTag    string
+	StartPolicy   string
 
 	// Orbit is the node's Orbit as read from the cluster (an Orbit-level fact
 	// reached via the node's OrbitName); nil when it could not be read. The drift
@@ -406,6 +407,7 @@ type ConsensusNodeManagedSpec struct {
 	Volumes          models.ConsensusVolumeConfig `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	HostPathUID      int                          `yaml:"hostPathUid,omitempty" json:"hostPathUid,omitempty"`
 	HostPathGID      int                          `yaml:"hostPathGid,omitempty" json:"hostPathGid,omitempty"`
+	StartPolicy      string                       `yaml:"startPolicy,omitempty" json:"startPolicy,omitempty"`
 }
 
 // Hash returns a stable SHA-256 fingerprint of the managed shape. Returns "" for

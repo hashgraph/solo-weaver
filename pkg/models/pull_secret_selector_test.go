@@ -74,6 +74,23 @@ func TestNormalizeRegistrySelectionStrategy(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestNormalizeStartPolicy(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"Auto", "Auto"},
+		{" auto ", "Auto"},
+		{"Manual", "Manual"},
+		{"MANUAL", "Manual"},
+	} {
+		got, err := NormalizeStartPolicy(tc.in)
+		require.NoError(t, err, tc.in)
+		assert.Equal(t, tc.want, got, tc.in)
+	}
+
+	_, err := NormalizeStartPolicy("bogus")
+	require.Error(t, err)
+}
+
 func TestRegistryHost(t *testing.T) {
 	assert.Equal(t, "ghcr.io", RegistryHost("ghcr.io/hashgraph/solo-consensus-node"))
 	assert.Equal(t, "us-docker.pkg.dev", RegistryHost("us-docker.pkg.dev/hedera-registry/consensus"))

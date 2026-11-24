@@ -208,6 +208,10 @@ func (c *consensusChecker) readLiveConsensusShape(
 	live.UCImageRepo = joinImageRef(ucRepo, ucName)
 	live.UCImageTag = get(append(uc, fieldImageTag)...)
 
+	// spec.startPolicy is outside the containers map, so it needs its own read.
+	live.StartPolicy, _ = kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule),
+		namespace, capsuleName, fieldSpec, "startPolicy")
+
 	readLiveVolumes(ctx, kc, apiVersion, namespace, capsuleName, &live)
 	readLiveImagePullSecrets(ctx, kc, apiVersion, namespace, capsuleName, &live)
 	readHostPathOwners(&live)

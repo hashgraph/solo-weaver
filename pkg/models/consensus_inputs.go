@@ -152,6 +152,28 @@ func NormalizeRegistrySelectionStrategy(s string) (string, error) {
 	}
 }
 
+// Start policies for a ConsensusCapsule. They match the operator's StartPolicy enum.
+const (
+	StartPolicyAuto   = "Auto"
+	StartPolicyManual = "Manual"
+)
+
+// NormalizeStartPolicy validates the --start-policy value, accepts any case and
+// returns the exact enum the operator expects. Empty stays empty (flag not given).
+func NormalizeStartPolicy(s string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return "", nil
+	case "auto":
+		return StartPolicyAuto, nil
+	case "manual":
+		return StartPolicyManual, nil
+	default:
+		return "", errorx.IllegalArgument.New(
+			"invalid start policy %q (allowed: Auto, Manual)", s)
+	}
+}
+
 // RegistryHost returns the host part of an image reference, which is the text
 // before the first "/" after any scheme. For example, "ghcr.io/hashgraph/x"
 // returns "ghcr.io". A reference with no "/" is returned as-is.
@@ -246,6 +268,10 @@ type ConsensusNodeInputs struct {
 	// (Random or Sequential) when a multi-registry source is emitted. Empty uses the
 	// weaver default (Sequential — manifest primary first).
 	RegistrySelectionStrategy string `json:"registrySelectionStrategy,omitempty"`
+
+	// StartPolicy sets ConsensusCapsule spec.startPolicy (Auto or Manual). A Manual
+	// node stays stopped until `consensus node start`. Empty keeps the live value (Auto if none).
+	StartPolicy string `json:"startPolicy,omitempty"`
 
 	DeploymentPackageDir string `json:"deploymentPackageDir,omitempty"`
 

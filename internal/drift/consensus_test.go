@@ -173,6 +173,8 @@ func TestConsensusNode_ManagedSpecDrift(t *testing.T) {
 		{"java opts drift", func(o *state.ConsensusNodeObservedShape) { o.JavaOpts = "-XX:+UseG1GC" }, 1, "javaOpts"},
 		{"uc image tag drift", func(o *state.ConsensusNodeObservedShape) { o.UCImageTag = "0.8.1" }, 1, "ucImageTag"},
 		{"container name drift", func(o *state.ConsensusNodeObservedShape) { o.ContainerName = "other" }, 1, "containerName"},
+		{"start policy drift", func(o *state.ConsensusNodeObservedShape) { o.StartPolicy = "Manual" }, 1, "startPolicy"},
+		{"unset start policy equals Auto", func(o *state.ConsensusNodeObservedShape) { o.StartPolicy = "Auto" }, 0, ""},
 		{
 			name:  "quantity canonicalisation is not drift",
 			wantN: 0,

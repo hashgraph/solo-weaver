@@ -22,6 +22,7 @@ type liveConsensusShape struct {
 	JavaOpts      string
 	UCImageRepo   string
 	UCImageTag    string
+	StartPolicy   string
 
 	Orbit               *state.ConsensusOrbitState
 	Volumes             models.ConsensusVolumeConfig
@@ -45,6 +46,7 @@ func liveShapeToObserved(l liveConsensusShape) *state.ConsensusNodeObservedShape
 		JavaOpts:            l.JavaOpts,
 		UCImageRepo:         l.UCImageRepo,
 		UCImageTag:          l.UCImageTag,
+		StartPolicy:         l.StartPolicy,
 		Orbit:               l.Orbit,
 		Volumes:             l.Volumes,
 		VolumesSet:          l.VolumesSet,

@@ -13,6 +13,7 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/bll"
+	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
@@ -110,6 +111,9 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 	if err := resolveKeySecrets(ctx, cluster, custom); err != nil {
 		return nil, err
 	}
+	if err := resolveStartPolicy(ctx, cluster, custom); err != nil {
+		return nil, err
+	}
 
 	// Resolve the config-file contents (deployment package over embedded default).
 	h.runtime.ResolveConfigContents(inputs.Custom.DeploymentPackageDir, inputs.Custom.NodeId, custom)
@@ -146,6 +150,35 @@ func (h *InstallHandler) PrepareEffectiveInputs(
 		Msg("Resolved effective consensus node inputs")
 
 	return &resolved, nil
+}
+
+// resolveStartPolicy keeps the live spec.startPolicy when --start-policy is not
+// given, so a re-install does not change a Manual node to Auto. A new node gets Auto.
+func resolveStartPolicy(ctx context.Context, c keyCluster, custom *models.ConsensusNodeInputs) error {
+	if custom.StartPolicy != "" {
+		return nil
+	}
+	capsule := models.ConsensusCapsuleName(custom.OrbitName, custom.NodeId)
+	live, err := c.GetResourceNestedString(ctx, kube.SoloOperatorAPIVersion, string(kube.KindConsensusCapsule),
+		custom.Namespace, capsule, "spec", "startPolicy")
+	if err != nil {
+		// Without the CRD no capsule exists; the operator CRD precheck reports it.
+		crd := "consensuscapsules." + kube.SoloOperatorGroup
+		if exists, cerr := c.CRDExists(ctx, crd); cerr == nil && !exists {
+			custom.StartPolicy = models.StartPolicyAuto
+			return nil
+		}
+		return errx.Decorate(
+			errorx.ExternalError.Wrap(err, "failed to read the start policy of ConsensusCapsule %s", capsule),
+			reasons.PreconditionNotMet,
+			fmt.Sprintf("Check that the capsule is readable: kubectl -n %s get consensuscapsule %s", custom.Namespace, capsule),
+			"Or pass --start-policy Auto or Manual to set the policy yourself")
+	}
+	if live == "" {
+		live = models.StartPolicyAuto
+	}
+	custom.StartPolicy = live
+	return nil
 }
 
 // validateConsensusPullSecretHosts rejects a --image-pull-secret HOST=NAME whose
@@ -388,6 +421,7 @@ func buildConsensusNodeManagedSpec(ins models.ConsensusNodeInputs) *state.Consen
 		Volumes:          volumes,
 		HostPathUID:      ins.HostPathUID,
 		HostPathGID:      ins.HostPathGID,
+		StartPolicy:      ins.StartPolicy,
 	}
 }
 

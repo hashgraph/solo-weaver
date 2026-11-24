@@ -423,6 +423,32 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 	assert.Equal(t, "Sequential", src.SelectionStrategy)
 }
 
+func TestCreateConsensusCapsule_StartPolicy(t *testing.T) {
+	for _, policy := range []string{"", models.StartPolicyAuto, models.StartPolicyManual} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			fake := &fakeCapsuleClient{existing: map[string]string{}}
+			in := models.ConsensusNodeInputs{
+				Namespace:          "hiero-network-1",
+				OrbitName:          "hiero-network-1",
+				AccountId:          "0.0.3",
+				Weight:             500,
+				ConsensusImageRepo: "gcr.io/hedera-registry/consensus-node",
+				ConsensusImageTag:  "0.74.2",
+				StartPolicy:        policy,
+			}
+
+			step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+			require.NoError(t, err)
+			report := step.Execute(context.Background())
+			require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
+
+			spec := findCapsule(t, fake.appliedObjs).Spec
+			assert.Equal(t, policy, string(spec.StartPolicy))
+			assert.Empty(t, spec.DesiredRunState, "install must not own desiredRunState")
+		})
+	}
+}
+
 func TestCreateConsensusCapsule_NoSource_SingleSoftwareVersion(t *testing.T) {
 	fake := &fakeCapsuleClient{existing: map[string]string{}}
 	in := models.ConsensusNodeInputs{

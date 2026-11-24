@@ -100,7 +100,7 @@ sudo solo-provisioner daemon service check          # alias: status
 sudo solo-provisioner daemon service start|stop
 
 # CONSENSUS NODE (experimental: needs --experimental)
-sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>]
+sudo solo-provisioner consensus node install   --experimental --namespace=<ns> --node-id=<id> --profile=<profile> [--deployment-package-dir=<dir>] [--start-policy=Auto|Manual]
 sudo solo-provisioner consensus node uninstall --experimental --namespace=<ns> --node-id=<id> [--force]
 sudo solo-provisioner consensus node start     --experimental --namespace=<ns> --node-id=<id> [--ready-timeout=<duration>]
 sudo solo-provisioner consensus node stop      --experimental --namespace=<ns> --node-id=<id> [--ready-timeout=<duration>]
@@ -453,6 +453,33 @@ ConsensusCapsule. For the full install procedure, see
 Only `--namespace` (alias `--orbit`) and `--node-id` apply to every `consensus node` subcommand. The
 other install flags, `--profile` included, belong to `install`. Put them after the subcommand:
 `consensus node install --profile local`, not `consensus node --profile local install`.
+
+### Start policy
+
+`--start-policy` sets `spec.startPolicy` on the node's ConsensusCapsule. It tells when the consensus
+process starts:
+
+| Value | Effect |
+|---|---|
+| `Auto` | The process starts when the pod boots, after the network genesis. |
+| `Manual` | The process stays stopped until you run `consensus node start`. |
+
+Install does not set `spec.desiredRunState`. That field belongs to `consensus node start` and
+`consensus node stop` (see [Start and stop](#start-and-stop)). An interactive install does not prompt
+for the start policy. If the node stays stopped after install, the next steps show the
+`consensus node start` command.
+
+If you do not give `--start-policy`, a new node gets `Auto`. `install --force` on an installed node
+keeps the current policy of that node, so a `Manual` node stays `Manual`. To change the policy, give
+the flag. Install never changes a value that `consensus node start` or `stop` set.
+
+```bash
+# Install node 0 and keep it stopped, then start it after the network genesis
+sudo solo-provisioner consensus node install --experimental --namespace hiero-network-1 --node-id 0 \
+  --profile local --deployment-package-dir ./pkg --start-policy Manual
+sudo solo-provisioner consensus network genesis --experimental --namespace hiero-network-1
+sudo solo-provisioner consensus node start --experimental --namespace hiero-network-1 --node-id 0
+```
 
 ### Uninstall
 
