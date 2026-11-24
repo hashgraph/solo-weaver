@@ -83,9 +83,9 @@ Only a compatibility gate (a coordinated rolling-upgrade flip) ever bumps it:
 ```
 
 **Label 1 — Maturity: how ready for _users_.** `ALPHA` / `BETA` / `GA` /
-`DEPRECATED`. The user-facing stability label; it sets the opt-in requirement —
-`ALPHA` is hidden and opt-in, `BETA` is visible and opt-in, `GA` is generally
-available (on via the version axis), `DEPRECATED` is on its way out.
+`DEPRECATED`. The user-facing stability label: `ALPHA` is hidden and requires an
+opt-in; `BETA` is visible, labelled `[beta]`, and runs; `GA` is generally available
+(on via the version axis); `DEPRECATED` is on its way out.
 
 **Label 2 — Gate kind: how it _rolls out_ across the fleet.** Decided by one
 question — *does turning this on require the whole fleet to flip together?*
@@ -148,7 +148,7 @@ I want to gate a behaviour.
 |---|---|---|---|---|
 | Merge unfinished code, reachable by no one | current (`1`) | `Alpha` | `false` | nobody |
 | Let testers dogfood it | current (`1`) | `Alpha` | `true` | `--experimental` / env |
-| Offer an opt-in beta for feedback | current (`1`) | `Beta` | `true` | `--experimental` / env |
+| Offer a visible beta for feedback | current (`1`) | `Beta` | `true` | everyone (labelled `[beta]`) |
 | Ship to everyone (no fleet coordination) | current (`1`) | `GA` | `true` | everyone (on) |
 | Make a breaking change safe across a rolling upgrade | current + 1 | `Alpha`→`GA` | per stage | after the activation-version bump (finalize, Layer 2) |
 | Retire a superseded path | later version | `Deprecated` | — | contract step — delete the `else` branch |
@@ -249,12 +249,14 @@ Pick the three fields from [Deciding how to define a feature](#deciding-how-to-d
 ### 3. Branch the code with `gate.Enabled`
 
 Business code calls `gate.Enabled(Feature)` — **never** compare versions inline.
-Obtain a gate with `featuregate.NewDefault()`. (To gate a whole command or a flag
-by maturity instead of a code path, see
+Obtain the invocation's gate with `featuregate.Gate(cmd.Context())`, so it honours the
+same `--experimental` / env opt-in the command resolved (see
+[Enabling a feature](#enabling-a-feature)) — not its own `NewDefault()`. (To gate a
+whole command or a flag by maturity instead of a code path, see
 [Gating commands and flags](#gating-commands-and-flags).)
 
 ```go
-gate, err := featuregate.NewDefault()
+gate, err := featuregate.Gate(cmd.Context())
 if err != nil {
     return err
 }
@@ -282,7 +284,7 @@ Visibility and availability follow the feature's maturity:
 | Maturity | `--help` | Runs? |
 |---|---|---|
 | `ALPHA` | **hidden** | only when opted in |
-| `BETA`  | visible, labelled `[beta]` | only when opted in |
+| `BETA`  | visible, labelled `[beta]` | always |
 | `GA`    | visible | always |
 
 An opted-in operator runs the command with the hidden, command-scoped

@@ -19,11 +19,11 @@ import (
 const experimentalFlagName = "experimental"
 
 // GateFeature gates a command by its feature's maturity: an ALPHA command is hidden
-// from --help, a BETA command is labelled "[beta]", and both refuse to run unless the
-// operator opts in (--experimental or SOLO_PROVISIONER_ENABLE_<FEATURE>) and the
-// feature is ready; GA commands always run. On a command group it gates the whole
-// subtree; on a leaf, just that command. Hidden alpha commands stay discoverable via
-// `solo-provisioner feature list`.
+// from --help and refuses to run unless the operator opts in (--experimental or
+// SOLO_PROVISIONER_ENABLE_<FEATURE>) and the feature is ready; a BETA command is
+// visible, labelled "[beta]", and runs; a GA command runs. On a command group it gates
+// the whole subtree; on a leaf, just that command. Hidden alpha commands stay
+// discoverable via `solo-provisioner feature-gate list`.
 func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 	// Label / hide the command by its maturity (static, registry-derived).
 	switch featuregate.MaturityOf(f) {
