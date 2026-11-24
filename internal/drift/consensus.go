@@ -125,7 +125,9 @@ func compareConsensusManagedSpec(component string, m *state.ConsensusNodeManaged
 	add("ucImageRepo", m.UCImageRepo, o.UCImageRepo)
 	add("ucImageTag", m.UCImageTag, o.UCImageTag)
 	// An unset startPolicy is the CRD default, Auto.
-	add("startPolicy", startPolicyOrAuto(m.StartPolicy), startPolicyOrAuto(o.StartPolicy))
+	if o.StartPolicySet {
+		add("startPolicy", startPolicyOrAuto(m.StartPolicy), startPolicyOrAuto(o.StartPolicy))
+	}
 
 	if o.ImagePullSecretsSet {
 		changes = append(changes, diffPullSecrets(component, m.ImagePullSecrets, o.ImagePullSecrets)...)

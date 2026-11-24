@@ -66,17 +66,18 @@ func baselineManagedSpec() *state.ConsensusNodeManagedSpec {
 
 func matchingObservedShape() *state.ConsensusNodeObservedShape {
 	return &state.ConsensusNodeObservedShape{
-		ContainerName: "root",
-		CPULimit:      "4",
-		CPURequest:    "2",
-		MemoryLimit:   "16Gi",
-		MemoryRequest: "8Gi",
-		JavaHeapMin:   "8g",
-		JavaHeapMax:   "12g",
-		JavaOpts:      "-XX:+UseZGC",
-		UCImageRepo:   "ghcr.io/hiero/solo-operator",
-		UCImageTag:    "0.8.0",
-		Orbit:         baselineOrbitState(),
+		ContainerName:  "root",
+		CPULimit:       "4",
+		CPURequest:     "2",
+		MemoryLimit:    "16Gi",
+		MemoryRequest:  "8Gi",
+		JavaHeapMin:    "8g",
+		JavaHeapMax:    "12g",
+		JavaOpts:       "-XX:+UseZGC",
+		UCImageRepo:    "ghcr.io/hiero/solo-operator",
+		UCImageTag:     "0.8.0",
+		StartPolicySet: true,
+		Orbit:          baselineOrbitState(),
 		ImagePullSecrets: models.PullSecretSelector{
 			ByHost: map[string]string{
 				"gcr.io":  "gcr-creds",
@@ -175,6 +176,7 @@ func TestConsensusNode_ManagedSpecDrift(t *testing.T) {
 		{"container name drift", func(o *state.ConsensusNodeObservedShape) { o.ContainerName = "other" }, 1, "containerName"},
 		{"start policy drift", func(o *state.ConsensusNodeObservedShape) { o.StartPolicy = "Manual" }, 1, "startPolicy"},
 		{"unset start policy equals Auto", func(o *state.ConsensusNodeObservedShape) { o.StartPolicy = "Auto" }, 0, ""},
+		{"unread start policy is not drift", func(o *state.ConsensusNodeObservedShape) { o.StartPolicy = ""; o.StartPolicySet = false }, 0, ""},
 		{
 			name:  "quantity canonicalisation is not drift",
 			wantN: 0,

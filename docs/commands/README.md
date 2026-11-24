@@ -469,6 +469,9 @@ Install does not set `spec.desiredRunState`. That field belongs to `consensus no
 for the start policy. If the node stays stopped after install, the next steps show the
 `consensus node start` command.
 
+`--start-policy Manual` does not stop a node that `consensus node start` started. Its
+`desiredRunState` stays `Running`. To hold that node stopped, run `consensus node stop`.
+
 If you do not give `--start-policy`, a new node gets `Auto`. `install --force` on an installed node
 keeps the current policy of that node, so a `Manual` node stays `Manual`. To change the policy, give
 the flag. Install never changes a value that `consensus node start` or `stop` set.

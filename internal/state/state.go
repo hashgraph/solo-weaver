@@ -362,6 +362,8 @@ type ConsensusNodeObservedShape struct {
 	UCImageRepo   string
 	UCImageTag    string
 	StartPolicy   string
+	// StartPolicySet is false when the startPolicy read failed; drift skips it then.
+	StartPolicySet bool
 
 	// Orbit is the node's Orbit as read from the cluster (an Orbit-level fact
 	// reached via the node's OrbitName); nil when it could not be read. The drift
