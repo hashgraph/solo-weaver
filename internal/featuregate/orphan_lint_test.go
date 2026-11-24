@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,12 +20,7 @@ import (
 // gate — e.g. a GA feature whose old `else` path was deleted — has no reader and must
 // be removed (the contract step), not left as a permanent always-on row.
 func TestNoOrphanFeatures(t *testing.T) {
-	// Repo root, independent of the test's working directory.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	root := moduleRoot(t)
 	selfPkg := filepath.Join(root, "internal", "featuregate")
 
 	// One word-boundaried matcher per feature; the constant name equals its string value.
@@ -41,34 +35,38 @@ func TestNoOrphanFeatures(t *testing.T) {
 	}
 
 	seen := map[string]bool{}
-	for _, dir := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, e fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if e.IsDir() {
-				if filepath.Clean(path) == selfPkg { // the package that defines the constants
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			src, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			for _, m := range matchers {
-				if !seen[m.name] && m.re.Match(src) {
-					seen[m.name] = true
-				}
+	scanned := 0
+	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if e.IsDir() {
+			// Skip non-source trees and the package that defines the constants.
+			if n := e.Name(); n == "vendor" || n == ".git" || n == "testdata" || filepath.Clean(path) == selfPkg {
+				return fs.SkipDir
 			}
 			return nil
-		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", dir, err)
 		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		scanned++
+		for _, m := range matchers {
+			if !seen[m.name] && m.re.Match(src) {
+				seen[m.name] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if scanned == 0 {
+		t.Fatalf("scanned no .go files under %q — repo root resolution is wrong", root)
 	}
 
 	for _, m := range matchers {
@@ -77,5 +75,25 @@ func TestNoOrphanFeatures(t *testing.T) {
 				"(no gate.Enabled / GateFeature / GateFeatureFlag reference) — if it is a stable "+
 				"capability, remove the gate (the contract step)", m.name)
 		}
+	}
+}
+
+// moduleRoot walks up from the working directory to the directory containing go.mod.
+// This is independent of build flags (unlike runtime.Caller under -trimpath).
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("go.mod not found above the working directory")
+		}
+		dir = parent
 	}
 }
