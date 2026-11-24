@@ -57,6 +57,15 @@ var BlockNodeCRDs = []string{
 	"helmcapsules",
 }
 
+// OperatorPrechecks checks the given CRDs exist and solo-operator runs at a supported version.
+func OperatorPrechecks(crdNames ...string) []automa.Builder {
+	return []automa.Builder{
+		PrecheckOperatorCRDs(crdNames...),
+		PrecheckOperatorRunning(),
+		PrecheckOperatorVersion(),
+	}
+}
+
 // PrecheckOperatorCRDs verifies that the Kubernetes cluster is reachable and
 // that the given solo-operator CRDs are installed. Each component workflow
 // passes in the CRD names it needs (e.g. "orbits", "consensuscapsules").

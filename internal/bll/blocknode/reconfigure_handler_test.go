@@ -5,6 +5,7 @@
 package blocknode
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/automa-saga/automa"
@@ -101,11 +102,15 @@ var enableNetworkPrefix = []string{
 	steps.RestartDaemonServiceStepId,
 }
 
-// withMediaCheck prepends the operator-model legacy guard and the warn-only
-// storage media check, which together head every reconfigure and upgrade workflow
-// ahead of the network-plane steps (#1319).
+var operatorPrecheckIds = []string{
+	steps.PrecheckOperatorCRDsStepId,
+	steps.PrecheckOperatorRunningStepId,
+	steps.PrecheckOperatorVersionStepId,
+}
+
+// withMediaCheck prepends the steps that head every reconfigure and upgrade workflow.
 func withMediaCheck(ids ...string) []string {
-	return append([]string{steps.PrecheckBlockNodeLegacyStepId, steps.CheckStorageMediaStepId}, ids...)
+	return slices.Concat(operatorPrecheckIds, []string{steps.CheckStorageMediaStepId}, ids)
 }
 
 // workflowStepIDs builds the given WorkflowBuilder and returns the IDs of the
@@ -255,10 +260,9 @@ func TestBuildWorkflow_FirewallDisabled_DeletesTable(t *testing.T) {
 	require.NoError(t, err)
 
 	ids := workflowStepIDs(t, wb)
-	require.GreaterOrEqual(t, len(ids), 3)
-	assert.Equal(t, steps.PrecheckBlockNodeLegacyStepId, ids[0])
-	assert.Equal(t, steps.CheckStorageMediaStepId, ids[1])
-	assert.Equal(t, steps.NetworkFirewallDeleteStepId, ids[2],
+	want := withMediaCheck(steps.NetworkFirewallDeleteStepId)
+	require.GreaterOrEqual(t, len(ids), len(want))
+	assert.Equal(t, want, ids[:len(want)],
 		"host firewall disabled should emit the delete step first in the network plane")
 }
 

@@ -133,14 +133,7 @@ func (h *UpgradeHandler) BuildWorkflow(
 		return nil, err
 	}
 
-	// Operator-driven day-2 guard (#1319): refuse to upgrade a legacy,
-	// weaver-helm-managed block node — the operator cannot adopt it in place; the
-	// operator cannot act on a legacy release. Runs first, before any network or
-	// storage work. The cluster exists here (upgrade requires a deployed node).
-	stepList := []automa.Builder{
-		steps.PrecheckBlockNodeLegacy(ins, steps.DefaultCapsuleKubeProvider, steps.BlockNodeHelmInstalledFn(ins)),
-	}
-	stepList = append(stepList, networkSteps...)
+	stepList := append(steps.OperatorPrechecks(steps.BlockNodeCRDs...), networkSteps...)
 
 	workflowId := "block-node-upgrade"
 	switch {

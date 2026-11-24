@@ -4,6 +4,7 @@ package steps
 
 import (
 	"context"
+	"slices"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/logx"
@@ -46,26 +47,18 @@ const (
 // in the install handler's preflight, mirroring the consensus-node install.
 func SetupBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	valuesFn := func(ctx context.Context) ([]byte, error) {
-		manager, err := blockNodeManagerProvider()
-		if err != nil {
-			return nil, err
-		}
-		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
-	}
 
-	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(
-		EnsureHederaOwnerStep(),
-		setupBlockNodeStorage(blockNodeManagerProvider),
-		createBlockNodeNamespace(blockNodeManagerProvider),
-		createBlockNodePVs(blockNodeManagerProvider),
-		EnsureBlockNodeOrbit(inputs, DefaultCapsuleKubeProvider),
-		// Install applies the fully-rendered values (no reuse — there is nothing to
-		// reuse on a fresh node; a --force re-apply is intentionally a clean render).
-		CreateBlockNodeCapsule(inputs, valuesFn, false, DefaultCapsuleKubeProvider),
-		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
-		verifyBlockNodeReachable(blockNodeManagerProvider),
-	).
+	return automa.NewWorkflowBuilder().WithId(SetupBlockNodeStepId).Steps(slices.Concat(
+		[]automa.Builder{
+			EnsureHederaOwnerStep(),
+			setupBlockNodeStorage(blockNodeManagerProvider),
+			createBlockNodeNamespace(blockNodeManagerProvider),
+			createBlockNodePVs(blockNodeManagerProvider),
+		},
+		// Install never reuses values: a --force re-apply is intentionally a clean render.
+		deployBlockNodeCapsule(inputs, blockNodeManagerProvider, false),
+		[]automa.Builder{verifyBlockNodeReachable(blockNodeManagerProvider)},
+	)...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().PhaseStart(ctx, stp, "Block Node Deployment")
 			return ctx, nil
@@ -207,23 +200,6 @@ func createBlockNodePVs(getManager func() (*blocknode.Manager, error)) automa.Bu
 		})
 }
 
-// BlockNodeHelmInstalledFn returns a checker reporting whether a legacy,
-// weaver-helm-managed block node release exists for these inputs. The install
-// precheck (PrecheckBlockNodeNotInstalled) uses it to detect a pre-#1319 release
-// that must be uninstalled before an operator-driven install. The manager and its
-// cluster clients are built lazily, so the check runs only when the closure is
-// invoked at step-execution time.
-func BlockNodeHelmInstalledFn(inputs models.BlockNodeInputs) func() (bool, error) {
-	managerProvider := newBlockNodeManagerProvider(inputs)
-	return func() (bool, error) {
-		manager, err := managerProvider()
-		if err != nil {
-			return false, err
-		}
-		return manager.IsInstalled()
-	}
-}
-
 func UninstallBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
 	return automa.NewWorkflowBuilder().WithId(UninstallBlockNodeStepId).Steps(
@@ -344,6 +320,8 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 // chart version) and `block node reconfigure` (same version, changed values) — the
 // operator upgrades the release whenever the chart spec or values hash changes.
 //
+// A legacy Helm release with no HelmCapsule is adopted in place.
+//
 // It replaces the former direct `helm upgrade`: there is no Cilium #619
 // Service-delete workaround (the operator owns the Services) and no imperative
 // post-upgrade scale-down — `--no-scale-up` is expressed declaratively as
@@ -354,34 +332,27 @@ func waitForBlockNode(getManager func() (*blocknode.Manager, error)) automa.Buil
 // breaking chart upgrade are tracked as follow-up work.
 func UpgradeBlockNode(inputs models.BlockNodeInputs) *automa.WorkflowBuilder {
 	blockNodeManagerProvider := newBlockNodeManagerProvider(inputs)
-	valuesFn := func(ctx context.Context) ([]byte, error) {
-		manager, err := blockNodeManagerProvider()
-		if err != nil {
-			return nil, err
-		}
-		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
-	}
 
 	// Service-shape guard (#619): record the deployed Service shape before the patch,
 	// and after the operator reconciles, restart Cilium if the shape changed so the
 	// dropped spec.type transition does not blackhole the LoadBalancer.
 	recordShape, healCilium := BlockNodeServiceShapeGuard(inputs, DefaultCapsuleKubeProvider)
 
-	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(
-		EnsureHederaOwnerStep(),
-		// Breaking-boundary storage prep: create the PV/PVCs for any optional storage
-		// a newer chart version requires, before the capsule patch renders the chart
-		// against them. No-op when the upgrade crosses no such boundary.
-		EnsureBlockNodeStorageMigrations(inputs),
-		recordShape,
-		// Upgrade/reconfigure honor --reuse-values (default true): preserve deployed
-		// operator-set values under the merge; --no-reuse-values applies only the
-		// fresh render.
-		CreateBlockNodeCapsule(inputs, valuesFn, inputs.ReuseValues, DefaultCapsuleKubeProvider),
-		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
-		healCilium,
-		verifyBlockNodeReachable(blockNodeManagerProvider),
-	).
+	return automa.NewWorkflowBuilder().WithId(UpgradeBlockNodeStepId).Steps(slices.Concat(
+		[]automa.Builder{
+			EnsureHederaOwnerStep(),
+			// Breaking-boundary storage prep: create the PV/PVCs for any optional storage
+			// a newer chart version requires, before the capsule patch renders the chart
+			// against them. No-op when the upgrade crosses no such boundary.
+			EnsureBlockNodeStorageMigrations(inputs),
+			recordShape,
+		},
+		deployBlockNodeCapsule(inputs, blockNodeManagerProvider, inputs.ReuseValues),
+		[]automa.Builder{
+			healCilium,
+			verifyBlockNodeReachable(blockNodeManagerProvider),
+		},
+	)...).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Upgrading Block Node")
 			return ctx, nil
@@ -439,6 +410,29 @@ func EnsureBlockNodeStorageMigrations(inputs models.BlockNodeInputs) automa.Buil
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Storage prepared for chart changes")
 		})
+}
+
+// deployBlockNodeCapsule ensures the Orbit, applies the HelmCapsule, and waits for it to be ready.
+func deployBlockNodeCapsule(inputs models.BlockNodeInputs, getManager func() (*blocknode.Manager, error), reuseValues bool) []automa.Builder {
+	valuesFn := func(ctx context.Context) ([]byte, error) {
+		manager, err := getManager()
+		if err != nil {
+			return nil, err
+		}
+		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
+	}
+	legacyValues := func() (map[string]any, error) {
+		manager, err := getManager()
+		if err != nil {
+			return nil, err
+		}
+		return manager.GetReleaseValues()
+	}
+	return []automa.Builder{
+		EnsureBlockNodeOrbit(inputs, DefaultCapsuleKubeProvider),
+		CreateBlockNodeCapsule(inputs, valuesFn, reuseValues, legacyValues, DefaultCapsuleKubeProvider),
+		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
+	}
 }
 
 // newBlockNodeManagerProvider creates a lazy-initialized block node manager provider

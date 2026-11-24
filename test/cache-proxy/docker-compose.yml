@@ -10,6 +10,7 @@ services:
     volumes:
       - cache-data:/var/cache/squid
       - ca-certs:/etc/squid/certs
+      - ./zscaler-ca:/usr/local/share/zscaler-ca:ro
     restart: unless-stopped
 
   registry-mirror:
@@ -34,6 +35,7 @@ services:
       - "127.0.0.1:8081:8081"
     volumes:
       - goproxy-cache:/go
+      - ./zscaler-ca:/zscaler-ca:ro
     restart: unless-stopped
     network_mode: bridge
     dns:
@@ -41,6 +43,7 @@ services:
       - 8.8.4.4
     environment:
       - GOPROXY=https://proxy.golang.org,direct
+      - SSL_CERT_DIR=/etc/ssl/certs:/zscaler-ca
 
 volumes:
   cache-data:

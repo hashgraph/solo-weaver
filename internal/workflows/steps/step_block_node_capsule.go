@@ -33,7 +33,6 @@ import (
 // this package's CapsuleKubeClient / CapsuleKubeProvider with the consensus steps.
 const (
 	PrecheckBlockNodeStepId            = "precheck-block-node"
-	PrecheckBlockNodeLegacyStepId      = "precheck-block-node-legacy"
 	EnsureBlockNodeOrbitStepId         = "ensure-block-node-orbit"
 	CreateBlockNodeCapsuleStepId       = "create-block-node-capsule"
 	WaitForBlockNodeCapsuleReadyStepId = "wait-block-node-capsule-ready"
@@ -51,7 +50,7 @@ const (
 
 // blockNodeCapsuleReadyPollInterval is how often WaitForBlockNodeCapsuleReady
 // re-reads the HelmCapsule status while waiting for it to become Ready.
-const blockNodeCapsuleReadyPollInterval = 5 * time.Second
+var blockNodeCapsuleReadyPollInterval = 5 * time.Second
 
 // blockNodeCapsuleName is the HelmCapsule (and Helm release) name for a block
 // node. It is the operator-supplied release name, falling back to "block-node"
@@ -132,7 +131,7 @@ func buildBlockNodeHelmCapsule(inputs models.BlockNodeInputs, valuesYAML []byte)
 
 	return &operatorv1alpha1.HelmCapsule{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion,
+			APIVersion: kube.SoloOperatorAPIVersion,
 			Kind:       string(kube.KindHelmCapsule),
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -143,11 +142,9 @@ func buildBlockNodeHelmCapsule(inputs models.BlockNodeInputs, valuesYAML []byte)
 	}, nil
 }
 
-// PrecheckBlockNode is the new, CR-model install guard (#1319): it fails when the
+// PrecheckBlockNode is the CR-model install guard (#1319): it fails when the
 // block node's HelmCapsule already exists, unless --force is set (re-apply path).
-// It only inspects the operator CR — the legacy Helm release is a separate concern,
-// guarded by PrecheckBlockNodeLegacy, so install composes the two. Mirrors
-// PrecheckConsensusNotInstalled.
+// Mirrors PrecheckConsensusNotInstalled.
 func PrecheckBlockNode(inputs models.BlockNodeInputs, force bool, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(PrecheckBlockNodeStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -159,7 +156,7 @@ func PrecheckBlockNode(inputs models.BlockNodeInputs, force bool, provider Capsu
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			name := blockNodeCapsuleName(inputs)
 
 			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name)
@@ -196,74 +193,6 @@ func PrecheckBlockNode(inputs models.BlockNodeInputs, force bool, provider Capsu
 		})
 }
 
-// PrecheckBlockNodeLegacy is the legacy-model guard (#1319): it fails when a
-// legacy, weaver-helm-managed block node release exists with no HelmCapsule CR.
-// Every operator-driven command composes it so a legacy release can never be acted
-// on by the operator path:
-//
-//   - HelmCapsule CR present (operator-managed) → pass; not a legacy release.
-//   - No CR but a legacy Helm release present → refuse and direct the operator to
-//     uninstall then reinstall to migrate. --force does not bypass this.
-//   - Nothing installed → pass; the caller's own not-installed gate reports that.
-//
-// legacyInstalled reports whether a legacy Helm release exists; it is called only
-// when no CR is found, and may be nil in unit tests that exercise only the CR path.
-func PrecheckBlockNodeLegacy(inputs models.BlockNodeInputs, provider CapsuleKubeProvider, legacyInstalled func() (bool, error)) automa.Builder {
-	return automa.NewStepBuilder().WithId(PrecheckBlockNodeLegacyStepId).
-		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
-			kc, err := provider(ctx)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
-					reasons.PreconditionNotMet,
-					"Verify your kubeconfig and that 'kubectl get nodes' works")))
-			}
-
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
-			name := blockNodeCapsuleName(inputs)
-
-			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name)
-			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.IllegalState.Wrap(err, "failed to check HelmCapsule %s", name),
-					reasons.PreconditionNotMet,
-					"Verify cluster connectivity and RBAC for reading HelmCapsule resources")))
-			}
-			if exists {
-				return automa.StepSuccessReport(stp.Id())
-			}
-
-			if legacyInstalled != nil {
-				installed, err := legacyInstalled()
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(err, "failed to check for an existing Helm-managed block node release"),
-						reasons.PreconditionNotMet,
-						"Verify cluster connectivity and that 'helm list -n "+inputs.Namespace+"' works")))
-				}
-				if installed {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.New("a legacy Helm-managed block node is installed in namespace %q; this command operates through solo-operator and cannot act on a legacy release", inputs.Namespace),
-						reasons.PreconditionNotMet,
-						"Run 'solo-provisioner block node uninstall' to remove the legacy release (your storage is preserved), then run install again to move it under solo-operator",
-						"Uninstall is disk-safe: it removes only the Helm release, not the PVs/PVCs or on-disk data")))
-				}
-			}
-
-			return automa.StepSuccessReport(stp.Id())
-		}).
-		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
-			notify.As().StepStart(ctx, stp, "Checking block node is operator-managed")
-			return ctx, nil
-		}).
-		WithOnFailure(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepFailure(ctx, stp, rpt, "Block node is not operator-managed")
-		}).
-		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
-			notify.As().StepCompletion(ctx, stp, rpt, "Block node operator-managed check passed")
-		})
-}
-
 // EnsureBlockNodeOrbit creates the cluster-scoped Orbit the block node's
 // HelmCapsule references, if it does not already exist. HelmCapsule.orbitRef is
 // required by the CRD; the block-node component injects nothing from the Orbit,
@@ -281,7 +210,7 @@ func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubePro
 			}
 
 			orbitName := blockNodeOrbitName(inputs)
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 
 			exists, err := kc.ResourceExists(ctx, apiVersion, string(kube.KindOrbit), "", orbitName)
 			if err != nil {
@@ -341,7 +270,8 @@ func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubePro
 // freshly-rendered values are deep-merged on top of the deployed spec.values
 // (weaver-managed keys win, operator extras persist); when false, only the fresh
 // render is applied. Install passes false; upgrade/reconfigure pass the flag.
-func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context.Context) ([]byte, error), reuseValues bool, provider CapsuleKubeProvider) automa.Builder {
+// legacyValues seeds --reuse-values from a legacy Helm release the capsule adopts.
+func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context.Context) ([]byte, error), reuseValues bool, legacyValues func() (map[string]any, error), provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodeCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
@@ -366,13 +296,12 @@ func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context
 			// helm --reuse-values). --no-reuse-values skips this and applies only the
 			// fresh render.
 			if reuseValues {
-				deployedMap, found, derr := kc.GetResourceNestedMap(ctx,
-					kube.SoloOperatorGroup+"/"+kube.SoloOperatorVersion, string(kube.KindHelmCapsule),
-					inputs.Namespace, blockNodeCapsuleName(inputs), "spec", "values")
+				deployedMap, found, derr := deployedBlockNodeValues(ctx, kc, inputs, legacyValues)
 				if derr != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(derr, "failed to read deployed HelmCapsule values for --reuse-values"),
+						errorx.IllegalState.Wrap(derr, "failed to read deployed block node values for --reuse-values"),
 						reasons.PreconditionNotMet,
+						fmt.Sprintf("Check the release: helm get values %s -n %s", blockNodeCapsuleName(inputs), inputs.Namespace),
 						"Re-run with --no-reuse-values to apply only the freshly-rendered values")))
 				}
 				if found {
@@ -398,7 +327,7 @@ func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context
 			// removes the annotation to match a never-hashed pod). Install and upgrade never
 			// set NoRestart, so this is inert for them.
 			if inputs.NoRestart {
-				apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+				apiVersion := kube.SoloOperatorAPIVersion
 				name := blockNodeCapsuleName(inputs)
 				deployedHash, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, "spec", "values", "podAnnotations", blocknode.ConfigHashAnnotation)
 				valuesYAML, err = blocknode.SetConfigHash(valuesYAML, deployedHash)
@@ -442,16 +371,39 @@ func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context
 		})
 }
 
+// getBlockNodeCapsule reads the whole HelmCapsule in one GET; nil when it does not exist.
+func getBlockNodeCapsule(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs) (map[string]any, error) {
+	obj, _, err := kc.GetResourceNestedMap(ctx, kube.SoloOperatorAPIVersion, string(kube.KindHelmCapsule), inputs.Namespace, blockNodeCapsuleName(inputs))
+	return obj, err
+}
+
+// deployedBlockNodeValues prefers the HelmCapsule's spec.values over the legacy release's.
+func deployedBlockNodeValues(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs, legacyValues func() (map[string]any, error)) (map[string]any, bool, error) {
+	capsule, err := getBlockNodeCapsule(ctx, kc, inputs)
+	if err != nil {
+		return nil, false, err
+	}
+	if capsule != nil {
+		return unstructured.NestedMap(capsule, "spec", "values")
+	}
+
+	vals, err := legacyValues()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(vals) == 0 {
+		return nil, false, nil
+	}
+	logx.As().Info().Str("release", blockNodeCapsuleName(inputs)).Str("namespace", inputs.Namespace).
+		Msg("No HelmCapsule yet; adopting the existing Helm release and reusing its values")
+	return vals, true, nil
+}
+
 // WaitForBlockNodeCapsuleReady blocks until the block node's HelmCapsule reports
 // a terminal phase, or the --timeout budget elapses. The Helm-SDK path blocked
 // synchronously inside helm (Wait=true); the operator reconciles asynchronously,
 // so weaver must poll the CR status before any downstream host/kube step runs
-// against the workload. Running/Succeeded succeed; Failed fails with the operator
-// message; a timeout fails with a raise-the-timeout hint.
-//
-// Readiness is currently gauged by status.phase. A condition-based check
-// (Ready=True) would be stricter — tracked as a Phase-2 refinement once the exact
-// condition the operator sets for block-node is confirmed.
+// against the workload. Running is not ready: the operator sets it before its helm call.
 func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(WaitForBlockNodeCapsuleReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -463,23 +415,28 @@ func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, provider Capsul
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
 			name := blockNodeCapsuleName(inputs)
 			deadline := time.Now().Add(resolveCapsuleTimeout(inputs))
 
 			for {
-				phase, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, "status", "phase")
-				switch operatorv1alpha1.Phase(phase) {
-				case operatorv1alpha1.PhaseRunning, operatorv1alpha1.PhaseSucceeded:
-					notify.As().StepDetail(ctx, stp, fmt.Sprintf("block node ready (phase=%s)", phase))
-					return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"phase": phase}))
-				case operatorv1alpha1.PhaseFailed:
-					releaseStatus, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, "status", "releaseStatus")
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.New("block node HelmCapsule %q reported phase=Failed (releaseStatus=%q)", name, releaseStatus),
-						reasons.PreconditionNotMet,
-						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name),
-						"Check the block node pod and events for the underlying failure")))
+				capsule, _ := getBlockNodeCapsule(ctx, kc, inputs)
+				phase, _, _ := unstructured.NestedString(capsule, "status", "phase")
+				generation, _, _ := unstructured.NestedInt64(capsule, "metadata", "generation")
+				observed, _, _ := unstructured.NestedInt64(capsule, "status", "observedGeneration")
+
+				if generation > 0 && observed >= generation {
+					switch operatorv1alpha1.Phase(phase) {
+					case operatorv1alpha1.PhaseSucceeded:
+						notify.As().StepDetail(ctx, stp, fmt.Sprintf("block node ready (phase=%s)", phase))
+						return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"phase": phase}))
+					case operatorv1alpha1.PhaseFailed:
+						releaseStatus, _, _ := unstructured.NestedString(capsule, "status", "releaseStatus")
+						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+							errorx.IllegalState.New("block node HelmCapsule %q reported phase=Failed (releaseStatus=%q)", name, releaseStatus),
+							reasons.PreconditionNotMet,
+							fmt.Sprintf("Inspect the capsule: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name),
+							"Check the block node pod and events for the underlying failure")))
+					}
 				}
 
 				if time.Now().After(deadline) {
@@ -530,7 +487,7 @@ func DeleteBlockNodeCapsule(inputs models.BlockNodeInputs, provider CapsuleKubeP
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
-			apiVersion := kube.SoloOperatorGroup + "/" + kube.SoloOperatorVersion
+			apiVersion := kube.SoloOperatorAPIVersion
 			name := blockNodeCapsuleName(inputs)
 
 			existed, err := kc.DeleteResource(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name)

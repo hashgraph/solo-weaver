@@ -26,6 +26,7 @@ import (
 type fakeCapsuleClient struct {
 	existing    map[string]string
 	nested      map[string]map[string]interface{}
+	objects     map[string]map[string]interface{}
 	applied     []string
 	appliedObjs []runtime.Object
 	deleted     []string
@@ -43,7 +44,11 @@ func (f *fakeCapsuleClient) GetResourceNestedString(_ context.Context, _, _, _, 
 	return f.existing[name], nil
 }
 
-func (f *fakeCapsuleClient) GetResourceNestedMap(_ context.Context, _, _, _, name string, _ ...string) (map[string]interface{}, bool, error) {
+func (f *fakeCapsuleClient) GetResourceNestedMap(_ context.Context, _, _, _, name string, fields ...string) (map[string]interface{}, bool, error) {
+	if len(fields) == 0 {
+		o, ok := f.objects[name]
+		return o, ok, nil
+	}
 	m, ok := f.nested[name]
 	return m, ok, nil
 }

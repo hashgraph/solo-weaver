@@ -41,6 +41,16 @@ else
     openssl x509 -in "$CA_CERT_FILE" -noout -subject -dates
 fi
 
+# Trust a corporate TLS-interception CA bundle (e.g. Zscaler) for upstream fetches when one is mounted.
+EXTRA_CA_DIR="/usr/local/share/zscaler-ca"
+rm -f /usr/local/share/ca-certificates/extra-*.crt
+for f in "$EXTRA_CA_DIR"/*.pem; do
+    [ -f "$f" ] || continue
+    cp "$f" "/usr/local/share/ca-certificates/extra-$(basename "${f%.pem}").crt"
+    echo "✓ Trusting extra CA bundle: $f"
+done
+update-ca-certificates --fresh >/dev/null
+
 # Initialize SSL certificate database
 echo "Initializing SSL certificate database..."
 if [ ! -f "$SSL_DB_DIR/index.txt" ]; then

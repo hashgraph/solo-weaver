@@ -107,13 +107,7 @@ func (h *ReconfigureHandler) BuildWorkflow(
 		return nil, err
 	}
 
-	// Operator-driven day-2 guard (#1319): refuse to reconfigure a legacy,
-	// weaver-helm-managed block node — the operator cannot act on a legacy release.
-	// Runs first, before any network or storage work.
-	stepList := []automa.Builder{
-		steps.PrecheckBlockNodeLegacy(ins, steps.DefaultCapsuleKubeProvider, steps.BlockNodeHelmInstalledFn(ins)),
-	}
-	stepList = append(stepList, networkSteps...)
+	stepList := append(steps.OperatorPrechecks(steps.BlockNodeCRDs...), networkSteps...)
 
 	// UpgradeBlockNode patches the HelmCapsule with the freshly-rendered values at
 	// the deployed chart version; the operator reconciles the release whenever the

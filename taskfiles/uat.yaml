@@ -136,8 +136,28 @@ tasks:
         rm -f /tmp/write_ghcr_helm_auth.py
         echo "✓ ghcr.io Helm credentials in place. Now: sudo solo-provisioner kube cluster install --profile local --node-type consensus"
 
+  uat:operator:
+    desc: "Inside VM: install the cluster (when missing) and solo-operator, which block nodes are deployed through. Idempotent. Requires GITHUB_USER/GITHUB_ACCESS_TOKEN in a root .env file (see .env.example)."
+    interactive: true
+    cmds:
+      - task: uat:registry:login:ghcr
+      - |
+        set -e
+        if ! kubectl get nodes >/dev/null 2>&1; then
+          echo -e "\n▶ Kube cluster install"
+          sudo solo-provisioner --skip-hardware-checks kube cluster install -p local --node-type=block \
+            -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+        fi
+      - task: uat:secrets
+        vars:
+          NS: block-node
+      - |
+        set -e
+        echo -e "\n▶ solo-operator install"
+        sudo solo-provisioner kube operator install -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
+
   uat:setup:
-    desc: "Set up cluster for acceptance tests (inside VM: self-install + block node install)"
+    desc: "Set up cluster for acceptance tests (inside VM: self-install + cluster + solo-operator + block node install)"
     interactive: true
     vars:
       BN_VERSION: '{{.BN_VERSION | default "0.26.2"}}'
@@ -145,6 +165,7 @@ tasks:
       NON_INTERACTIVE: '{{.NON_INTERACTIVE | default "false"}}'
     cmds:
       - task: uat:bootstrap
+      - task: uat:operator
       - |
         set -e
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -600,7 +621,9 @@ tasks:
         echo "   New version: $NEW_VER"
 
 
-        echo -e '\n▶ Step 9: Upgrade block node (triggers startup migrations if needed)'
+        echo -e '\n▶ Step 9: Install solo-operator, then upgrade block node (adopts the legacy Helm release; triggers startup migrations if needed)'
+        (cd /mnt/solo-weaver && task uat:operator)
+        REV_BEFORE=$(helm history block-node -n block-node -o json | tr '{' '\n' | sed -n 's/.*"revision":\([0-9]*\).*/\1/p' | tail -1)
         sudo solo-provisioner --skip-hardware-checks block node upgrade -p local \
           -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 
@@ -633,8 +656,13 @@ tasks:
         fi
 
 
-        echo -e '\n▶ Step 11: Verify block node is running'
+        echo -e '\n▶ Step 11: Verify block node is running under solo-operator'
         kubectl get pods -n block-node
+        PHASE=$(kubectl get helmcapsule block-node -n block-node -o jsonpath='{.status.phase}' 2>/dev/null || echo "MISSING")
+        [ "$PHASE" = "Succeeded" ] || { echo "FAIL: expected the legacy release to be adopted into HelmCapsule block-node (phase Succeeded), got: $PHASE"; exit 1; }
+        REV_AFTER=$(helm history block-node -n block-node -o json | tr '{' '\n' | sed -n 's/.*"revision":\([0-9]*\).*/\1/p' | tail -1)
+        [ "$REV_AFTER" -gt "$REV_BEFORE" ] || { echo "FAIL: expected a new Helm revision after adoption (before $REV_BEFORE, after $REV_AFTER)"; exit 1; }
+        echo "   HelmCapsule block-node: $PHASE; Helm revision $REV_BEFORE -> $REV_AFTER"
         CHART_VER=$(helm list -n block-node -o json | sed -n 's/.*"chart":"[^"]*-\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p')
         echo "   Chart version: $CHART_VER"
 

@@ -69,7 +69,6 @@ func TestInstallHandler_BuildWorkflow_ExistingCluster_MediaCheckRunsEarly(t *tes
 		steps.PrecheckOperatorRunningStepId,
 		steps.PrecheckOperatorVersionStepId,
 		steps.PrecheckBlockNodeStepId,
-		steps.PrecheckBlockNodeLegacyStepId,
 		steps.SetupBlockNodeStepId,
 		"block-node-daemon-config",
 	}, ids)
@@ -105,7 +104,6 @@ func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testin
 		steps.PrecheckOperatorRunningStepId,
 		steps.PrecheckOperatorVersionStepId,
 		steps.PrecheckBlockNodeStepId,
-		steps.PrecheckBlockNodeLegacyStepId,
 		steps.SetupBlockNodeStepId,
 	}, ids, "traffic shaping disabled: no daemon-config step")
 }

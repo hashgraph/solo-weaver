@@ -9,6 +9,15 @@ tasks:
     cmds:
       - |
         echo "Starting cache proxy infrastructure..."
+
+        # Corporate TLS interception (Zscaler): trust its CA bundle in the proxy containers when present.
+        mkdir -p zscaler-ca
+        if [ -f "$HOME/zscaler-combined-ca.pem" ]; then
+          cp "$HOME/zscaler-combined-ca.pem" zscaler-ca/zscaler-combined-ca.pem
+          echo "Using Zscaler CA bundle: $HOME/zscaler-combined-ca.pem"
+        else
+          rm -f zscaler-ca/zscaler-combined-ca.pem
+        fi
         
         # Check if required ports are already bound
         bound_count=0
@@ -38,7 +47,7 @@ tasks:
         if docker compose ps | grep -q "solo-weaver-cache-proxy.*Up"; then
           echo "Cache proxy is already running"
         else
-          docker compose up -d
+          docker compose up -d --build
           echo "Waiting for services to be ready..."
           sleep 5
           echo ""

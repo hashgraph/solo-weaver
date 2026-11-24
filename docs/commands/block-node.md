@@ -29,7 +29,8 @@ flowchart TB
     O --- B
 ```
 
-One command — `block node install` — builds all of it.
+`block node install` builds all of it except solo-operator, which `kube operator install`
+adds first (see the prerequisite below).
 
 > **How the block node is deployed.** solo-provisioner no longer runs the Helm
 > chart itself. Instead it applies a **`HelmCapsule`** custom resource (component
@@ -42,15 +43,21 @@ One command — `block node install` — builds all of it.
 >
 > This changes the meaning of a few flags — see the per-command notes. A block node
 > installed by an **older** solo-provisioner (a direct Helm release, with no
-> HelmCapsule) is a *legacy* release: `uninstall` still removes it, but `upgrade`
-> and `reconfigure` refuse it and ask you to `uninstall` then `install` again to
-> bring it under the operator (your storage is preserved across that migration).
+> HelmCapsule) is a *legacy* release. The next `upgrade` or `reconfigure` adopts it
+> in place: solo-provisioner creates the `HelmCapsule` for the existing release, and
+> solo-operator takes it over with a `helm upgrade` — no reinstall, and the pod keeps
+> its data. With `--reuse-values` (default) the values the release was running with
+> are carried into the capsule. `install --force` also adopts it, but with a clean
+> render (no value reuse). `reset` and `uninstall` work on a legacy release as is.
+> A cluster set up by an older solo-provisioner has no solo-operator: run
+> `kube operator install` before the first `upgrade` or `reconfigure`.
 
-> **solo-operator is a prerequisite.** `block node install` requires the solo-operator
+> **solo-operator is a prerequisite.** `block node install`, `upgrade` and `reconfigure`
+> require the solo-operator
 > (with the `HelmCapsule` CRD, operator v0.9.0+) already installed in the cluster — it
 > is **not** installed by `kube cluster install`. Install it first with
-> `sudo solo-provisioner kube operator install`. Install fails fast with that guidance
-> if the operator (or its CRDs) is missing.
+> `sudo solo-provisioner kube operator install`. Each command fails fast with that
+> guidance, before any network or storage change, if the operator (or its CRDs) is missing.
 >
 > **Co-locating with a consensus node.** A block node and a consensus node can share a
 > namespace and Orbit. Use the same `--namespace` for both and set the consensus
@@ -476,8 +483,10 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 > `--no-reuse-values` applies only the freshly-rendered values. `--timeout` is the
 > operator's Helm budget. `--no-scale-up` is expressed declaratively (`replicaCount: 0`
 > in the applied values), not an out-of-band `kubectl scale`. A **legacy**
-> (pre-operator, direct-Helm) release is **refused** — run `uninstall` then `install`
-> to bring it under the operator; your storage is preserved across that migration.
+> (pre-operator, direct-Helm) release is **adopted** in place: the `HelmCapsule` is
+> created for the existing release (with `--reuse-values`, seeded from the release's
+> own values, as `helm get values` shows them) and solo-operator upgrades it. Upgrade
+> and reconfigure check that solo-operator is installed and running first.
 
 ---
 
@@ -530,7 +539,7 @@ sudo solo-provisioner block node reconfigure --profile=mainnet \
 > nothing is a no-op (idempotent). `--no-restart` preserves the deployed config-hash so
 > the pod is **not** rolled (the new config still lands in the ConfigMap and takes
 > effect on the next restart). `--reuse-values` behaves as on `upgrade`. A **legacy**
-> (pre-operator) release is **refused** — `uninstall` then `install` to migrate it.
+> (pre-operator) release is **adopted** in place, as on `upgrade`.
 
 > **Changing the Service shape.** Normal install/upgrade/reconfigure keep the Service
 > type stable, so they are not affected by the Cilium reconciler bug (#619). If you
@@ -693,8 +702,8 @@ Which one to pick:
 > deletes the `HelmCapsule` and solo-operator removes the Helm release; for a legacy
 > (pre-operator, direct-Helm) node it runs a Helm uninstall directly. In both cases the
 > release/workload is removed but the PVs/PVCs and on-disk data are **kept** unless you
-> pass `--with-reset` or `--purge-storage` — so uninstalling a legacy node to migrate it
-> under the operator (then `install`) is disk-safe.
+> pass `--with-reset` or `--purge-storage`. A legacy node does not need an uninstall to
+> move under the operator — `upgrade` or `reconfigure` adopts it in place.
 
 ---
 
