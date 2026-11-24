@@ -25,6 +25,7 @@ var (
 	flagAdminKeySecret    string
 	flagImagePullSecret   []string
 	flagRegistryStrategy  string
+	flagStartPolicy       string
 	flagProfile           string
 	flagContainerName     string
 	flagJavaHeapMin       string

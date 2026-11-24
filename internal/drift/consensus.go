@@ -124,6 +124,10 @@ func compareConsensusManagedSpec(component string, m *state.ConsensusNodeManaged
 	add("javaOpts", m.JavaOpts, o.JavaOpts)
 	add("ucImageRepo", m.UCImageRepo, o.UCImageRepo)
 	add("ucImageTag", m.UCImageTag, o.UCImageTag)
+	// An unset startPolicy is the CRD default, Auto.
+	if o.StartPolicySet {
+		add("startPolicy", startPolicyOrAuto(m.StartPolicy), startPolicyOrAuto(o.StartPolicy))
+	}
 
 	if o.ImagePullSecretsSet {
 		changes = append(changes, diffPullSecrets(component, m.ImagePullSecrets, o.ImagePullSecrets)...)
@@ -263,4 +267,12 @@ func quantityDiffers(stateVal, liveVal string) bool {
 		return stateVal != liveVal
 	}
 	return qs.Cmp(ql) != 0
+}
+
+// startPolicyOrAuto maps an unset start policy to the CRD default.
+func startPolicyOrAuto(p string) string {
+	if p == "" {
+		return models.StartPolicyAuto
+	}
+	return p
 }

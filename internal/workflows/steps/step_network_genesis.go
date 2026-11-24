@@ -220,13 +220,12 @@ func EnsureNetworkGenesis(namespace, orbit, genesisNetworkJSON string, provider 
 }
 
 // WaitConsensusNetworkReady polls every ConsensusCapsule in the namespace until
-// they all reach Running/Active — the confirmation that, after genesis unblocked
-// the network, the consensus nodes actually came up. It fails fast if any capsule
-// reports Failed and times out otherwise. Live per-node phases are surfaced via
-// StepDetail so the operator can watch the network converge (and see a stuck node,
-// e.g. an ImagePullBackOff, as a timeout rather than a silent hang). It is a
-// namespace-wide companion to WaitConsensusCapsuleReady (which is per-node during
-// install) and needs no node IDs — it discovers the capsules from the cluster.
+// each node meant to run reaches Active; nodes held stopped are reported, not awaited.
+// It fails fast if any capsule reports Failed and times out otherwise. Live per-node
+// phases are surfaced via StepDetail so the operator can watch the network converge
+// (and see a stuck node, e.g. an ImagePullBackOff, as a timeout rather than a silent
+// hang). Install does not wait for readiness, so this is the only readiness wait; it
+// needs no node IDs — it discovers the capsules from the cluster.
 func WaitConsensusNetworkReady(namespace string, provider CapsuleKubeProvider, timeout time.Duration) automa.Builder {
 	return automa.NewStepBuilder().WithId(WaitConsensusNetworkReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {

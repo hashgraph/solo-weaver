@@ -12,16 +12,18 @@ import (
 // form: the checker converts it to state.ConsensusNodeObservedShape before
 // storing it, so the drift producer can compare without importing this package.
 type liveConsensusShape struct {
-	ContainerName string
-	CPULimit      string
-	CPURequest    string
-	MemoryLimit   string
-	MemoryRequest string
-	JavaHeapMin   string
-	JavaHeapMax   string
-	JavaOpts      string
-	UCImageRepo   string
-	UCImageTag    string
+	ContainerName  string
+	CPULimit       string
+	CPURequest     string
+	MemoryLimit    string
+	MemoryRequest  string
+	JavaHeapMin    string
+	JavaHeapMax    string
+	JavaOpts       string
+	UCImageRepo    string
+	UCImageTag     string
+	StartPolicy    string
+	StartPolicySet bool
 
 	Orbit               *state.ConsensusOrbitState
 	Volumes             models.ConsensusVolumeConfig
@@ -45,6 +47,8 @@ func liveShapeToObserved(l liveConsensusShape) *state.ConsensusNodeObservedShape
 		JavaOpts:            l.JavaOpts,
 		UCImageRepo:         l.UCImageRepo,
 		UCImageTag:          l.UCImageTag,
+		StartPolicy:         l.StartPolicy,
+		StartPolicySet:      l.StartPolicySet,
 		Orbit:               l.Orbit,
 		Volumes:             l.Volumes,
 		VolumesSet:          l.VolumesSet,

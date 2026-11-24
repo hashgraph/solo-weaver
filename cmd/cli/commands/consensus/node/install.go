@@ -17,6 +17,7 @@ import (
 	cnkeys "github.com/hashgraph/solo-weaver/internal/consensus/keys"
 	"github.com/hashgraph/solo-weaver/internal/ui/prompt"
 	"github.com/hashgraph/solo-weaver/internal/workflows"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -119,6 +120,12 @@ var installCmd = &cobra.Command{
 				"Pass --registry-selection-strategy Random or Sequential (or omit it to use the weaver default, Sequential)")
 		}
 
+		startPolicy, sperr := models.NormalizeStartPolicy(flagStartPolicy)
+		if sperr != nil {
+			return errx.Decorate(sperr, reasons.InvalidArgument,
+				"Pass --start-policy Auto (start on pod boot) or Manual (stay stopped until 'consensus node start')")
+		}
+
 		volCfg, verr := resolveVolumeConfig()
 		if verr != nil {
 			return verr
@@ -158,6 +165,7 @@ var installCmd = &cobra.Command{
 				AdminKeySecret:            flagAdminKeySecret,
 				ImagePullSecrets:          pullSecrets,
 				RegistrySelectionStrategy: registryStrategy,
+				StartPolicy:               startPolicy,
 				Profile:                   flagProfile,
 				SkipHardwareChecks:        skipHardwareChecks,
 				ContainerName:             flagContainerName,
@@ -184,8 +192,11 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
+		var report *automa.Report
 		if err := common.RunWorkflow(cmd.Context(), func() (*automa.Report, error) {
-			return ac.HandleIntent(cmd.Context(), intent, inputs)
+			r, herr := ac.HandleIntent(cmd.Context(), intent, inputs)
+			report = r
+			return r, herr
 		}); err != nil {
 			return err
 		}
@@ -194,11 +205,8 @@ var installCmd = &cobra.Command{
 			Int64("nodeId", inputs.Custom.NodeId).
 			Msg("Successfully installed consensus node")
 
-		// The node's ConsensusCapsule is created but does not start on its own: a
-		// fresh network stays in genesis-init until the network genesis is generated
-		// (and Manual-start nodes wait for `node start`). The status step's live hint
-		// is transient in the TUI, so print the durable next steps here.
-		printConsensusInstallNextSteps(cmd, flagNamespace, flagDeploymentPkgDir)
+		// The status step's hint is transient in the TUI, so print the next steps here.
+		printConsensusInstallNextSteps(cmd, flagNamespace, flagNodeId, nodeHeldStopped(startPolicy, report), flagDeploymentPkgDir)
 
 		return nil
 	},
@@ -219,6 +227,7 @@ func init() {
 	installCmd.Flags().StringVar(&flagSigningSecret, "signing-secret", "", "Name of K8s Secret containing gossip signing key/cert (keys: s-private.pem, s-public.pem)")
 	installCmd.Flags().StringArrayVar(&flagImagePullSecret, "image-pull-secret", []string{models.ConsensusDefaultImagePullSecret}, "Map a docker-registry Secret to a registry for pulling private consensus/UC images. Repeatable. Bare NAME applies to all registries (default private-registry-creds); keyed HOST=NAME overrides one registry host (e.g. ghcr.io=ghcr-creds). Empty (\"\") disables (public images). Registries come from the deployment manifest; each Secret must already exist in the namespace")
 	installCmd.Flags().StringVar(&flagRegistryStrategy, "registry-selection-strategy", "", "Order the operator probes candidate registries for a multi-registry image: Random or Sequential. Empty uses the weaver default (Sequential — manifest primary first, deterministic failover). Pass Random to spread probe traffic. Applies only when the manifest yields multiple registries")
+	installCmd.Flags().StringVar(&flagStartPolicy, "start-policy", "", "When the consensus process starts: Auto (on pod boot) or Manual (stays stopped until 'consensus node start'). Empty keeps the current policy of an installed node, or uses Auto for a new node")
 
 	// Consensus-node container sizing + JVM tuning. Defaults are a working baseline;
 	// the explicit Java heap is required or the node stalls on startup.
@@ -358,10 +367,35 @@ func confirmGenesisAdminKey() (bool, error) {
 		false)
 }
 
+// nodeHeldStopped tells if the node stays stopped until 'consensus node start'.
+// It uses the live capsule that the status step read; if that read failed, it uses --start-policy.
+func nodeHeldStopped(startPolicy string, report *automa.Report) bool {
+	if held, ok := statusStepHeldStopped(report); ok {
+		return held
+	}
+	return startPolicy == models.StartPolicyManual
+}
+
+func statusStepHeldStopped(r *automa.Report) (bool, bool) {
+	if r == nil {
+		return false, false
+	}
+	if r.Id == steps.ReportCapsuleStatusStepId {
+		v, ok := r.Metadata["heldStopped"]
+		return v == "true", ok
+	}
+	for _, sr := range r.StepReports {
+		if held, ok := statusStepHeldStopped(sr); ok {
+			return held, true
+		}
+	}
+	return false, false
+}
+
 // printConsensusInstallNextSteps writes the post-install guidance to stdout after
 // the workflow TUI has closed and restored the terminal, so it persists in the
 // scrollback (unlike a transient step-detail line).
-func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string) {
+func printConsensusInstallNextSteps(cmd *cobra.Command, namespace string, nodeId int64, heldStopped bool, pkgDir string) {
 	// --experimental is required: the consensus group is gated, and under sudo the
 	// SOLO_PROVISIONER_ENABLE_CONSENSUS env var is dropped, so the flag is the
 	// reliable opt-in for a copy-pasted command.
@@ -384,9 +418,14 @@ func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string
 	cmd.Printf("          %s --deployment-package-dir %s\n", base, pkg)
 	cmd.Println("     c) From a custom genesis file:")
 	cmd.Printf("          %s --genesis-file <path/to/genesis-network.json>\n", base)
-	cmd.Println("  2. Watch the node come up:")
+	step := 2
+	if heldStopped {
+		cmd.Println("  2. Start the node (it stays stopped until you do):")
+		cmd.Printf("       sudo solo-provisioner consensus node start --experimental --namespace %s --node-id %d\n", namespace, nodeId)
+		step = 3
+	}
+	cmd.Printf("  %d. Watch the node come up:\n", step)
 	cmd.Printf("       kubectl -n %s get consensuscapsules\n", namespace)
-	cmd.Println("     (A Manual start-policy node stays Stopped until 'consensus node start'.)")
 }
 
 // promptForMissingFlags presents an interactive wizard for the core consensus

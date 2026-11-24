@@ -3,11 +3,15 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/automa-saga/automa"
+	"github.com/hashgraph/solo-weaver/internal/workflows/steps"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -80,4 +84,39 @@ func TestCheckNodeAdminKeys_MissingInteractive(t *testing.T) {
 	boom := errors.New("prompt failed")
 	failing, _ := confirmSpy(false, boom)
 	require.ErrorIs(t, checkNodeAdminKeys(dir, false, true, failing), boom)
+}
+
+func nextStepsOutput(heldStopped bool) string {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	printConsensusInstallNextSteps(cmd, "hiero-network-1", 2, heldStopped, "")
+	return buf.String()
+}
+
+func TestPrintConsensusInstallNextSteps_HeldStoppedPrintsStartCommand(t *testing.T) {
+	out := nextStepsOutput(true)
+	assert.Contains(t, out, "consensus node start --experimental --namespace hiero-network-1 --node-id 2")
+	assert.Contains(t, out, "3. Watch the node come up")
+}
+
+func TestPrintConsensusInstallNextSteps_NotHeldHasNoStartStep(t *testing.T) {
+	out := nextStepsOutput(false)
+	assert.NotContains(t, out, "consensus node start")
+	assert.Contains(t, out, "2. Watch the node come up")
+}
+
+func TestNodeHeldStopped(t *testing.T) {
+	statusReport := func(held string) *automa.Report {
+		return &automa.Report{Id: "install", StepReports: []*automa.Report{
+			{Id: "setup", StepReports: []*automa.Report{
+				{Id: steps.ReportCapsuleStatusStepId, Metadata: map[string]string{"heldStopped": held}},
+			}},
+		}}
+	}
+
+	assert.False(t, nodeHeldStopped("Manual", statusReport("false")), "a started Manual node is not held")
+	assert.True(t, nodeHeldStopped("Auto", statusReport("true")), "a stopped Auto node is held")
+	assert.True(t, nodeHeldStopped("Manual", nil), "no status read: Manual is held")
+	assert.False(t, nodeHeldStopped("", &automa.Report{Id: "install"}), "no status read: empty flag is not held")
 }
