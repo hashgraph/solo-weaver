@@ -47,6 +47,52 @@ func TestGateFeatureFlag_UnregisteredFlagFailsClosed(t *testing.T) {
 	require.Error(t, cmd.PersistentPreRunE(cmd, nil))
 }
 
+// GateBehavior installs the sudo-safe --experimental on a GA command that reads a
+// code-path gate: the command always runs, and --experimental turns the declared
+// feature on for business code via the shared context gate.
+func TestGateBehavior_ExperimentalEnablesDeclaredFeature(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateBehavior(cmd, featuregate.ConsensusNodeOperatorManaged)
+
+	// Not opted in: the command runs, the feature is off for business code.
+	require.NoError(t, cmd.ParseFlags(nil))
+	require.NoError(t, cmd.PersistentPreRunE(cmd, nil))
+	off, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.False(t, off.Enabled(featuregate.ConsensusNodeOperatorManaged))
+
+	// --experimental turns it on (a flag, so it survives sudo).
+	require.NoError(t, cmd.ParseFlags([]string{"--" + experimentalFlagName}))
+	require.NoError(t, cmd.PersistentPreRunE(cmd, nil))
+	on, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.True(t, on.Enabled(featuregate.ConsensusNodeOperatorManaged))
+}
+
+// --experimental on a GateBehavior command is scoped to the declared features only.
+func TestGateBehavior_ScopedToDeclaredFeatures(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateBehavior(cmd, featuregate.ConsensusNodeOperatorManaged) // declare only this one
+
+	require.NoError(t, cmd.ParseFlags([]string{"--" + experimentalFlagName}))
+	require.NoError(t, cmd.PersistentPreRunE(cmd, nil))
+	g, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
+	require.False(t, g.Enabled(featuregate.KubeClusterUpgrade)) // not declared → stays off
+}
+
+// A declared feature that is not in the catalog (a wiring bug) fails closed on every run.
+func TestGateBehavior_UncataloguedFailsClosed(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateBehavior(cmd, gatekit.Feature("NotInCatalog"))
+
+	require.Error(t, cmd.PersistentPreRunE(cmd, nil))
+}
+
 // An alpha command is refused until opted in; --experimental enables it even
 // though the feature's activation version is not the current one.
 func TestRequireFeatureEnabled_OptIn(t *testing.T) {

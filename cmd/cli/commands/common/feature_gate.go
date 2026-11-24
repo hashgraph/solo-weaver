@@ -144,6 +144,76 @@ func installExperimentalFlag(cmd *cobra.Command) {
 	}
 }
 
+// chainPersistentPreRunE appends next after cmd's existing PersistentPreRunE, or the
+// root pre-run cobra would otherwise skip once this hook is the closest.
+func chainPersistentPreRunE(cmd *cobra.Command, next func(*cobra.Command, []string) error) {
+	prev := cmd.PersistentPreRunE
+	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(c, args); err != nil {
+				return err
+			}
+		} else if err := RunPersistentPreRun(c, args); err != nil {
+			return err
+		}
+		return next(c, args)
+	}
+}
+
+// GateBehavior wires the --experimental opt-in onto a GA command that reads one or more
+// code-path gates (gate.Enabled) but is itself always available — it is never hidden and
+// never refused. Passing --experimental turns the declared ready features on for the
+// invocation (scoped to these features, readiness-respecting) via the shared context
+// gate, so business code reading featuregate.Gate(ctx) sees them enabled. Being a flag,
+// it survives sudo — unlike the SOLO_PROVISIONER_ENABLE_<FEATURE> env var (#1487).
+func GateBehavior(cmd *cobra.Command, features ...gatekit.Feature) {
+	installExperimentalFlag(cmd)
+	chainPersistentPreRunE(cmd, func(c *cobra.Command, _ []string) error {
+		return applyBehaviorGate(c, features)
+	})
+}
+
+// applyBehaviorGate builds the invocation gate — enabling the declared ready features
+// when --experimental is set — and stores it on the command context.
+func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
+	if len(features) == 0 {
+		return errx.Decorate(
+			errorx.IllegalState.New("GateBehavior on %q declared no features", cmd.Name()),
+			reasons.Internal,
+			"This is a feature-gate wiring bug.",
+			"Pass the code-path features the command reads.")
+	}
+	// Validate the wiring on every run (fail closed), independent of --experimental.
+	for _, f := range features {
+		if featuregate.MaturityOf(f) == "" {
+			return errx.Decorate(
+				errorx.IllegalState.New("feature %q is gated but not registered in the catalog", f),
+				reasons.Internal,
+				"This is a feature-gate wiring bug.",
+				"Add the feature to internal/featuregate/registry.go (and features.go).")
+		}
+	}
+	var overrides map[gatekit.Feature]bool
+	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental {
+		overrides = make(map[gatekit.Feature]bool, len(features))
+		for _, f := range features {
+			ready, err := featuregate.ExperimentalReady(f)
+			if err != nil {
+				return err
+			}
+			if ready {
+				overrides[f] = true // a dormant feature stays off
+			}
+		}
+	}
+	gate, err := featuregate.New(featuregate.Options{Overrides: overrides})
+	if err != nil {
+		return err
+	}
+	cmd.SetContext(featuregate.NewContext(cmd.Context(), gate))
+	return nil
+}
+
 // requireFeatureEnabled returns nil when the operator may run a command gated by
 // feature f, else a decorated refusal. GA/BETA commands always pass; an ALPHA command
 // passes only when opted in (--experimental or the env var) AND ready. It stores the

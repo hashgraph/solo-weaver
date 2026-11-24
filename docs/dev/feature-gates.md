@@ -312,6 +312,24 @@ An `ALPHA` flag is hidden from the command's `--help` and errors if the operator
 sets it without opting in; a `BETA` flag is labelled `[beta]`. The flag must
 already be registered on the command.
 
+### Enable a code-path gate on a GA command — `common.GateBehavior(cmd, features...)`
+
+`GateFeature`/`GateFeatureFlag` gate a command or flag by *maturity*. But a **GA**
+command (always available) may still read a *code-path* gate for an unproven feature —
+`if gate.Enabled(f)`. To give operators a **sudo-safe** way to turn that on, declare the
+features the command reads:
+
+```go
+// cmd/cli/commands/block/node/install.go — a GA command that reads an alpha code path
+common.GateBehavior(installCmd, featuregate.BlockNodeOperatorManaged)
+```
+
+The command stays visible and always runs; passing `--experimental` turns the declared
+*ready* features on for that invocation (scoped to them), shared with business code via
+`featuregate.Gate(ctx)`. Because `--experimental` is a **flag**, it survives `sudo` —
+unlike the `SOLO_PROVISIONER_ENABLE_<FEATURE>` env var, which `sudo` strips. Declaring a
+feature here also makes it a reader, so the orphan-feature lint is satisfied.
+
 ### The `--help` surface golden test
 
 `TestRootHelpSurface_Golden` (`cmd/cli/commands/help_surface_golden_test.go`) pins
@@ -357,12 +375,14 @@ internal `Options.Overrides` seam (tests/programmatic forcing), never to operato
 same gate with `featuregate.Gate(ctx)` — never its own `NewDefault()` — so command
 availability and in-code behaviour are a single decision.
 
-> **Gap — code-path gates in GA commands under `sudo`.** A code-path gate read inside a
-> *GA* command has no `--experimental` flag (that is installed only on gated alpha
-> commands), and `sudo` drops the env var — so there is no convenient sudo-safe opt-in
-> yet. A named `--enable-feature NAME` flag is tracked in
-> [#1487](https://github.com/hashgraph/solo-weaver/issues/1487); until then, use
-> `sudo -E` with the env var.
+> **Code-path gates in GA commands under `sudo`.** A GA command doesn't get
+> `--experimental` from `GateFeature` (it isn't maturity-gated), so to turn on a code-path
+> gate it reads, declare the feature with
+> [`common.GateBehavior`](#enable-a-code-path-gate-on-a-ga-command--commongatebehaviorcmd-features)
+> — that installs the sudo-safe `--experimental` flag scoped to it. Without that, the only
+> opt-in is the env var, which `sudo` strips (use `sudo env VAR=1` or `sudo -E`). A
+> per-feature `--enable-feature NAME` flag for finer control is tracked in
+> [#1487](https://github.com/hashgraph/solo-weaver/issues/1487).
 
 ## Inspecting the catalog
 
