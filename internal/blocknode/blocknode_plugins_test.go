@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,20 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
 )
+
+// managerWithHelmMock builds a Manager wired to a mocked helm.Manager.
+func managerWithHelmMock(t *testing.T, inputs models.BlockNodeInputs) (*Manager, *helm.MockManager) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	t.Cleanup(ctrl.Finish)
+	hm := helm.NewMockManager(ctrl)
+	m := &Manager{
+		helmManager:     hm,
+		logger:          testLogger(),
+		blockNodeInputs: inputs,
+	}
+	return m, hm
+}
 
 const (
 	lfhProfileBody = "plugins:\n  names: \"health,facility-app-state,stream-publisher\"\n"

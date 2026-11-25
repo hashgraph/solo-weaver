@@ -6,6 +6,7 @@
 test/
 
 # Certificates (generated at runtime)
+zscaler-ca/
 *.pem
 *.key
 

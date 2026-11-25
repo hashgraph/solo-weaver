@@ -133,7 +133,8 @@ func (h *UpgradeHandler) BuildWorkflow(
 		return nil, err
 	}
 
-	stepList := networkSteps
+	stepList := append(steps.OperatorPrechecks(steps.BlockNodeCRDs...), networkSteps...)
+
 	workflowId := "block-node-upgrade"
 	switch {
 	case plan.recreate:
@@ -146,13 +147,13 @@ func (h *UpgradeHandler) BuildWorkflow(
 		workflowId = "block-node-upgrade-with-reset"
 		stepList = append(stepList, steps.PurgeBlockNodeStorage(plan.purgeIns))
 	}
-	stepList = append(stepList, steps.UpgradeBlockNode(ins))
 
-	// --no-scale-up must be the last word: the helm upgrade above re-asserts
-	// the chart's replica default.
-	if ins.LeaveScaledDown {
-		stepList = append(stepList, steps.ScaleDownBlockNodeAfterUpgrade(ins))
-	}
+	// UpgradeBlockNode patches the HelmCapsule (new version + rendered values) and
+	// waits for the operator to reconcile. --no-scale-up is handled declaratively:
+	// ComputeValues pins replicaCount: 0 in the applied values, so no separate
+	// post-upgrade scale-down step is needed (an imperative one would be reverted
+	// by the operator's reconcile).
+	stepList = append(stepList, steps.UpgradeBlockNode(ins))
 
 	return automa.NewWorkflowBuilder().WithId(workflowId).Steps(stepList...), nil
 }

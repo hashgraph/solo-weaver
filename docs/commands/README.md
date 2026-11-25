@@ -212,7 +212,7 @@ Each run whose workflow started adds one `install` / `cluster` entry to
 ### Operator
 
 Installs/uninstalls the **solo-operator** (and its bundled CRDs) — required by
-consensus nodes (and, in future, other operator-based components). It is a single
+block nodes and consensus nodes. It is a single
 cluster-scoped operator, so one install serves all namespaces/components.
 
 ```bash
@@ -231,7 +231,7 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 | `--stop-on-error` / `--rollback-on-error` / `--continue-on-error` | Error-handling mode (mutually exclusive). |
 
 > Run order: `kube cluster install` → create the `private-registry-creds` secret in `solo-operator` →
-> `kube operator install` → `consensus node install`. See
+> `kube operator install` → `block node install` or `consensus node install`. See
 > [acceptance-tests §F](../dev/acceptance-tests.md).
 
 ### Upgrade plan (experimental)

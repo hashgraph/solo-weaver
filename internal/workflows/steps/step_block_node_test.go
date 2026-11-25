@@ -71,7 +71,7 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
+	require.Len(t, report.StepReports, 8, "Expected 8 substeps: ensure-hedera-owner, storage, namespace, PVs, ensure-orbit, create-capsule, wait-ready, verify-reachable")
 
 	// Verify hedera owner step
 	hederaReport := report.StepReports[0]
@@ -96,20 +96,25 @@ func TestSetupBlockNode_FreshInstall(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, pvsReport.Status)
 	require.Equal(t, "true", pvsReport.Metadata[ConfiguredByThisStep])
 
-	// Verify helm chart installation step
-	installReport := report.StepReports[4]
-	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
-	require.Equal(t, automa.StatusSuccess, installReport.Status)
-	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
+	// Verify Orbit-ensure step (operator-driven install prerequisite, #1319)
+	orbitReport := report.StepReports[4]
+	require.Equal(t, EnsureBlockNodeOrbitStepId, orbitReport.Id)
+	require.Equal(t, automa.StatusSuccess, orbitReport.Status)
 
-	// Verify wait step
-	waitReport := report.StepReports[5]
-	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
+	// Verify HelmCapsule apply step
+	capsuleReport := report.StepReports[5]
+	require.Equal(t, CreateBlockNodeCapsuleStepId, capsuleReport.Id)
+	require.Equal(t, automa.StatusSuccess, capsuleReport.Status)
+	require.Equal(t, "true", capsuleReport.Metadata[InstalledByThisStep])
+
+	// Verify wait-for-ready step
+	waitReport := report.StepReports[6]
+	require.Equal(t, WaitForBlockNodeCapsuleReadyStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 
 	// Verify reachability probe step (no-ops when LoadBalancerEnabled is false,
 	// still reports success — see blocknode.Manager.VerifyExternalReachable).
-	verifyReport := report.StepReports[6]
+	verifyReport := report.StepReports[7]
 	require.Equal(t, VerifyBlockNodeReachableStepId, verifyReport.Id)
 	require.Equal(t, automa.StatusSuccess, verifyReport.Status)
 }
@@ -150,7 +155,7 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps were executed successfully
-	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
+	require.Len(t, report.StepReports, 8, "Expected 8 substeps: ensure-hedera-owner, storage, namespace, PVs, ensure-orbit, create-capsule, wait-ready, verify-reachable")
 
 	// Verify hedera owner step
 	hederaReport := report.StepReports[0]
@@ -175,20 +180,25 @@ func TestSetupBlockNodeLocal_FreshInstall(t *testing.T) {
 	require.Equal(t, automa.StatusSuccess, pvsReport.Status)
 	require.Equal(t, "true", pvsReport.Metadata[ConfiguredByThisStep])
 
-	// Verify helm chart installation step
-	installReport := report.StepReports[4]
-	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
-	require.Equal(t, automa.StatusSuccess, installReport.Status)
-	require.Equal(t, "true", installReport.Metadata[InstalledByThisStep])
+	// Verify Orbit-ensure step (operator-driven install prerequisite, #1319)
+	orbitReport := report.StepReports[4]
+	require.Equal(t, EnsureBlockNodeOrbitStepId, orbitReport.Id)
+	require.Equal(t, automa.StatusSuccess, orbitReport.Status)
 
-	// Verify wait step
-	waitReport := report.StepReports[5]
-	require.Equal(t, WaitForBlockNodeStepId, waitReport.Id)
+	// Verify HelmCapsule apply step
+	capsuleReport := report.StepReports[5]
+	require.Equal(t, CreateBlockNodeCapsuleStepId, capsuleReport.Id)
+	require.Equal(t, automa.StatusSuccess, capsuleReport.Status)
+	require.Equal(t, "true", capsuleReport.Metadata[InstalledByThisStep])
+
+	// Verify wait-for-ready step
+	waitReport := report.StepReports[6]
+	require.Equal(t, WaitForBlockNodeCapsuleReadyStepId, waitReport.Id)
 	require.Equal(t, automa.StatusSuccess, waitReport.Status)
 
 	// Verify reachability probe step (no-ops when LoadBalancerEnabled is false,
 	// still reports success — see blocknode.Manager.VerifyExternalReachable).
-	verifyReport := report.StepReports[6]
+	verifyReport := report.StepReports[7]
 	require.Equal(t, VerifyBlockNodeReachableStepId, verifyReport.Id)
 	require.Equal(t, automa.StatusSuccess, verifyReport.Status)
 }
@@ -222,17 +232,19 @@ func TestSetupBlockNodeLocal_Idempotency(t *testing.T) {
 	assert.Equal(t, SetupBlockNodeStepId, workflow.Id())
 
 	// Verify all substeps still complete successfully
-	require.Len(t, report.StepReports, 7, "Expected 7 substeps: ensure-hedera-owner, storage, namespace, PVs, install, wait, verify-reachable")
+	require.Len(t, report.StepReports, 8, "Expected 8 substeps: ensure-hedera-owner, storage, namespace, PVs, ensure-orbit, create-capsule, wait-ready, verify-reachable")
 
 	// All steps should succeed (idempotent)
 	for _, stepReport := range report.StepReports {
 		require.Equal(t, automa.StatusSuccess, stepReport.Status, "Step %s should succeed", stepReport.Id)
 	}
 
-	// Verify helm chart installation step reports already installed
-	installReport := report.StepReports[4]
-	require.Equal(t, InstallBlockNodeStepId, installReport.Id)
-	require.Equal(t, "true", installReport.Metadata[AlreadyInstalled], "Block node should already be installed")
+	// Verify Orbit-ensure step reports the Orbit already exists on re-run. The
+	// HelmCapsule apply (CreateBlockNodeCapsule) is itself idempotent via SSA, so
+	// a re-run simply re-applies it; the already-exists signal is on the Orbit.
+	orbitReport := report.StepReports[4]
+	require.Equal(t, EnsureBlockNodeOrbitStepId, orbitReport.Id)
+	require.Equal(t, "true", orbitReport.Metadata[AlreadyInstalled], "Orbit should already exist")
 }
 
 func TestResetBlockNode_Success(t *testing.T) {

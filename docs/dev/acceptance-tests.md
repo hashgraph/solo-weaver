@@ -13,7 +13,7 @@ task uat:compat     # Backward compatibility (standalone, installs released vers
 task uat:all        # Everything: lifecycle + teleport + alloy + compat (requires Docker)
 
 # Individual steps (for debugging or manual runs):
-task uat:setup         # Install cluster + block node (v0.26.0)
+task uat:setup         # Install cluster + solo-operator + block node (v0.26.0)
 task uat:core          # Block node upgrades + reset (requires setup)
 task uat:purge-storage # Verify the three uninstall variants: (no flag) / --with-reset / --purge-storage (requires setup; destructive — leaves no block node behind)
 task uat:teleport      # Teleport install/uninstall (requires setup + Docker)
@@ -82,13 +82,20 @@ task vm:ssh:proxy                          # SSH with proxy tunnels
 cd /tmp && cp /mnt/solo-weaver/bin/solo-provisioner-linux-arm64 .
 sudo ./solo-provisioner-linux-arm64 install
 
-# 2. Block node install (pins version 0.26.0 via config)
+# 2. Cluster, then solo-operator (block nodes are deployed through it).
+task uat:registry:login:ghcr
+sudo solo-provisioner kube cluster install --profile local --node-type block
+task uat:secrets NS=block-node
+sudo solo-provisioner kube operator install
+
+# 3. Block node install (pins version 0.26.0 via config)
 sudo solo-provisioner block node install -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
 
 **Verify:**
 ```bash
+kubectl get helmcapsule -n block-node   # block-node, PHASE Succeeded
 kubectl get pods -n block-node          # Pods running
 kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{end}{"\n"}{end}'  # Image version
 kubectl get pv                          # PVs created
@@ -96,7 +103,7 @@ solo-provisioner version                # CLI version matches build
 ```
 
 ```bash
-# 3. Upgrade to intermediate version (v0.29.0)
+# 4. Upgrade to intermediate version (v0.29.0)
 sudo solo-provisioner block node upgrade -p local \
   --chart-version 0.29.0 \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
@@ -109,7 +116,7 @@ kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\
 ```
 
 ```bash
-# 4. Upgrade to intermediate version (v0.30.2 — explicit flag)
+# 5. Upgrade to intermediate version (v0.30.2 — explicit flag)
 sudo solo-provisioner block node upgrade -p local \
   --chart-version 0.30.2 \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
@@ -122,7 +129,7 @@ kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\
 ```
 
 ```bash
-# 5. Upgrade to latest (v0.35.1 — version from config file, no CLI flag)
+# 6. Upgrade to latest (v0.35.1 — version from config file, no CLI flag)
 sudo solo-provisioner block node upgrade -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 ```
@@ -134,7 +141,7 @@ kubectl get pods -n block-node -o jsonpath='{range .items[*]}{.metadata.name}{"\
 ```
 
 ```bash
-# 6. Reset block node (clears storage, keeps cluster)
+# 7. Reset block node (clears storage, keeps cluster)
 sudo solo-provisioner block node reset -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
@@ -145,7 +152,7 @@ kubectl get pods -n block-node          # Pods running (recreated)
 ```
 
 ```bash
-# 7. Block node uninstall
+# 8. Block node uninstall
 sudo solo-provisioner block node uninstall -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy.yaml
 ```
@@ -157,7 +164,7 @@ helm list -n block-node                 # No release
 ```
 
 ```bash
-# 7. Kubernetes cluster uninstall
+# 9. Kubernetes cluster uninstall
 sudo solo-provisioner kube cluster uninstall --continue-on-error
 ```
 
@@ -167,7 +174,7 @@ kubectl get nodes 2>&1                  # Should fail (no cluster)
 ```
 
 ```bash
-# 8. Self-uninstall
+# 10. Self-uninstall
 sudo solo-provisioner uninstall
 ```
 
@@ -184,7 +191,7 @@ Tests teleport node agent and cluster agent install/uninstall.
 
 ### Prerequisites
 
-Block node must be installed (run scenario A steps 1-2 first, or at minimum have a Kubernetes
+Block node must be installed (run scenario A steps 1-3 first, or at minimum have a Kubernetes
 cluster running).
 
 ### Cluster Agent
@@ -367,7 +374,14 @@ solo-provisioner version                # Shows new version (0.0.0 for dev build
 ```
 
 ```bash
-# 4. Run an upgrade — should trigger startup migrations if needed
+# 4. Install solo-operator — the released CLI deployed the block node as a plain
+#    Helm release, which the upgrade below adopts into a HelmCapsule.
+task uat:registry:login:ghcr
+task uat:secrets NS=block-node
+sudo solo-provisioner kube operator install
+helm history block-node -n block-node   # note the last REVISION
+
+# 5. Run an upgrade — should trigger startup migrations if needed
 sudo solo-provisioner block node upgrade -p local \
   -c /mnt/solo-weaver/test/config/config_with_proxy_latest.yaml
 ```
@@ -375,6 +389,9 @@ sudo solo-provisioner block node upgrade -p local \
 **Verify:**
 ```bash
 kubectl get pods -n block-node          # Running with updated version
+kubectl get helmcapsule -n block-node   # Adopted: block-node, PHASE Succeeded
+helm history block-node -n block-node   # One new revision, no uninstall/reinstall
+kubectl get pvc -n block-node           # Same PVCs as before the upgrade
 sudo cat /opt/solo/weaver/state/provisioner.yaml   # cli.version is the new CLI; cli.stateVersion the current schema
 sudo ls /opt/solo/weaver/state/        # One file per component; state.yaml is now state.yaml.legacy
 # Check logs for migration messages:

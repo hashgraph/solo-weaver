@@ -4,6 +4,9 @@ cache/
 cache-proxy
 cache-proxy-mitm
 
+# Corporate CA bundle copied in by proxy:start
+zscaler-ca/
+
 # CA certificate files (MITM)
 ca-cert.pem
 ca-key.pem

@@ -20,14 +20,50 @@ flowchart TB
     H["Your Linux host"]
     subgraph K["Kubernetes (single node)"]
       direction LR
-      C["CRI-O + Cilium<br/>MetalLB + Helm"]
+      C["CRI-O + Cilium<br/>MetalLB + solo-operator"]
+      O["HelmCapsule<br/>(component: block-node)"]
       B["Block node pod"]
     end
     H --> K
-    C --- B
+    C --- O
+    O --- B
 ```
 
-One command — `block node install` — builds all of it.
+`block node install` builds all of it except solo-operator, which `kube operator install`
+adds first (see the prerequisite below).
+
+> **How the block node is deployed.** solo-provisioner no longer runs the Helm
+> chart itself. Instead it applies a **`HelmCapsule`** custom resource (component
+> `block-node`) and **solo-operator** installs and reconciles the
+> `block-node-server` chart from it. solo-provisioner still owns the host-level
+> pieces — storage directories, PVs/PVCs, namespace, and the network plane — and
+> renders the chart values, but the release itself is operator-managed. Every
+> lifecycle command below drives that CR (apply, patch, or delete); the operator
+> continuously reconciles the release to match it.
+>
+> This changes the meaning of a few flags — see the per-command notes. A block node
+> installed by an **older** solo-provisioner (a direct Helm release, with no
+> HelmCapsule) is a *legacy* release. The next `upgrade` or `reconfigure` adopts it
+> in place: solo-provisioner creates the `HelmCapsule` for the existing release, and
+> solo-operator takes it over with a `helm upgrade` — no reinstall, and the pod keeps
+> its data. With `--reuse-values` (default) the values the release was running with
+> are carried into the capsule. `install --force` also adopts it, but with a clean
+> render (no value reuse). `reset` and `uninstall` work on a legacy release as is.
+> A cluster set up by an older solo-provisioner has no solo-operator: run
+> `kube operator install` before the first `upgrade` or `reconfigure`.
+
+> **solo-operator is a prerequisite.** `block node install`, `upgrade` and `reconfigure`
+> require the solo-operator
+> (with the `HelmCapsule` CRD, operator v0.9.0+) already installed in the cluster — it
+> is **not** installed by `kube cluster install`. Install it first with
+> `sudo solo-provisioner kube operator install`. Each command fails fast with that
+> guidance, before any network or storage change, if the operator (or its CRDs) is missing.
+>
+> **Co-locating with a consensus node.** A block node and a consensus node can share a
+> namespace and Orbit. Use the same `--namespace` for both and set the consensus
+> `--orbit-name` to that namespace (block node uses the namespace as its Orbit name).
+> The Orbit is filled in cooperatively: whichever installs first creates it, and the
+> other adds its own settings — so either install order works.
 
 ## Lifecycle
 
@@ -166,6 +202,10 @@ sudo solo-provisioner block node install \
 | `--namespace` | Kubernetes namespace |
 | `--release-name` | Helm release name |
 | `--timeout` | Budget for the Helm install/upgrade as a Go duration (`10m`, `600s`, `1h`). Exceeding it rolls the operation back (`--atomic`). Default `5m0s` |
+
+> These feed the `HelmCapsule` the operator reconciles: `--chart-repo` + `--chart-version`
+> become its `chart.{repo,version}`, `--release-name` its release name, `--values` is
+> rendered into `spec.values`, and `--timeout` is the operator's Helm budget.
 
 ### Storage flags
 
@@ -435,6 +475,19 @@ sudo solo-provisioner block node upgrade --profile=mainnet \
 > shaping, upgrade removes any traffic shaping an earlier upgrade turned on, and logs a warning.
 > To keep it, run `reconfigure --traffic-shaping-enabled` afterwards.
 
+> **Operator-driven (and legacy handling).** Upgrade patches the block node's
+> `HelmCapsule` with the new chart version and rendered values and waits for
+> solo-operator to reconcile the release — there is no direct `helm upgrade`.
+> `--reuse-values` (default) deep-merges your rendered values on top of the deployed
+> release's values, so operator-set values weaver does not render are preserved;
+> `--no-reuse-values` applies only the freshly-rendered values. `--timeout` is the
+> operator's Helm budget. `--no-scale-up` is expressed declaratively (`replicaCount: 0`
+> in the applied values), not an out-of-band `kubectl scale`. A **legacy**
+> (pre-operator, direct-Helm) release is **adopted** in place: the `HelmCapsule` is
+> created for the existing release (with `--reuse-values`, seeded from the release's
+> own values, as `helm get values` shows them) and solo-operator upgrades it. Upgrade
+> and reconfigure check that solo-operator is installed and running first.
+
 ---
 
 ## `reconfigure` — change settings without changing the version
@@ -476,6 +529,27 @@ sudo solo-provisioner block node reconfigure --profile=mainnet \
 | `--traffic-shaping-enabled` | Turn the traffic-shaping bundle on or off. Same sub-flags as `install` | persisted state |
 | `--statusz-base-url` | Override the statusz endpoint. Omitting it preserves what is on disk | preserved |
 | `--statusz-poll-interval` | Change the poll cadence. Omitting it preserves what is on disk | preserved |
+
+> **Operator-driven, and how the pod picks up config.** Reconfigure patches the
+> `HelmCapsule` with the re-rendered values; solo-operator reconciles the release.
+> The `block-node-server` chart has no checksum/config annotation, so a ConfigMap-only
+> change would not restart the pod on its own — solo-provisioner injects an
+> `operator.solo.hiero.org/config-hash` pod annotation (a hash of the effective
+> values) so the pod **rolls when the config changes**, and a reconfigure that changes
+> nothing is a no-op (idempotent). `--no-restart` preserves the deployed config-hash so
+> the pod is **not** rolled (the new config still lands in the ConfigMap and takes
+> effect on the next restart). `--reuse-values` behaves as on `upgrade`. A **legacy**
+> (pre-operator) release is **adopted** in place, as on `upgrade`.
+
+> **Changing the Service shape.** Normal install/upgrade/reconfigure keep the Service
+> type stable, so they are not affected by the Cilium reconciler bug (#619). If you
+> deliberately change the Service **shape** through `reconfigure --values` (for example
+> toggling `loadBalancer.enabled`, which flips the main Service between `ClusterIP` and
+> `LoadBalancer`), Cilium can drop the `spec.type` transition and blackhole the external
+> IP. solo-provisioner detects the shape change and **restarts the Cilium DaemonSet
+> automatically** so the LoadBalancer entry is rebuilt (the agent restart is safe —
+> established connections survive); the reachability probe is the backstop. If that
+> restart ever fails, the remedy is `kubectl rollout restart ds/cilium -n kube-system`.
 
 ### How the two switches are seeded
 
@@ -522,7 +596,7 @@ sudo solo-provisioner block node reset --profile=mainnet
 # Wipe storage and leave the node stopped
 sudo solo-provisioner block node reset --profile=mainnet --no-scale-up
 
-# Re-lay the PV/PVC topology at new paths, same version, no Helm operation
+# Re-lay the PV/PVC topology at new paths, same version, no chart upgrade
 sudo solo-provisioner block node reset --profile=mainnet \
   --base-path=/new/path --purge-storage
 ```
@@ -534,13 +608,20 @@ sudo solo-provisioner block node reset --profile=mainnet \
 
 What happens, in order:
 
-1. Scale the StatefulSet down to 0 replicas.
+1. Scale the block node down to 0 replicas.
 2. Wait for the pods to terminate.
 3. Clear every storage directory — archive, live, log, plus whichever optional storages your
    chart version has (verification below 0.37.0, application-state from 0.37.0, plugins from
    0.28.1).
 4. Scale back up to 1 replica.
 5. Wait for the pod to become ready.
+
+> **How scaling works.** For an operator-managed node, steps 1 and 4 toggle
+> `replicaCount` on the `HelmCapsule` (a read-modify-write of the deployed values, so
+> every other value is preserved) rather than an out-of-band `kubectl scale`, which the
+> operator would revert. A legacy (direct-Helm) release is scaled through the
+> StatefulSet directly. Either way reset changes neither the chart version nor the
+> rendered config — only the replica count.
 
 > **This deletes all block data.** There is no undo. Think twice on `mainnet`.
 
@@ -550,7 +631,8 @@ To reset and change version at the same time, use `upgrade --with-reset` instead
 
 `--purge-storage` deletes the PVs and PVCs once the deployed directories are cleared and
 recreates them at the paths you pass, between steps 3 and 4. It is the only way to move a
-block node's storage without a Helm operation — the release stays exactly as deployed.
+block node's storage without a chart upgrade — the release's chart and values stay exactly
+as deployed.
 
 ```bash
 sudo solo-provisioner block node reset --profile=mainnet \
@@ -615,6 +697,13 @@ Which one to pick:
 - **Want a clean disk but the same PV layout?** `--with-reset`.
 - **Done with this node?** `--purge-storage`. This is the only targeted way to remove the
   block-node PVs without tearing down the whole cluster with `kube cluster uninstall`.
+
+> **Works for both deployment models.** For an operator-managed node, `uninstall`
+> deletes the `HelmCapsule` and solo-operator removes the Helm release; for a legacy
+> (pre-operator, direct-Helm) node it runs a Helm uninstall directly. In both cases the
+> release/workload is removed but the PVs/PVCs and on-disk data are **kept** unless you
+> pass `--with-reset` or `--purge-storage`. A legacy node does not need an uninstall to
+> move under the operator — `upgrade` or `reconfigure` adopts it in place.
 
 ---
 

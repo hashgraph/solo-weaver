@@ -51,10 +51,16 @@ sudo solo-provisioner block node check --profile=mainnet
 
 ## 4. Install the block node
 
-This one command installs the Kubernetes cluster **and** the block node on top of it.
+The block node is deployed through **solo-operator**, which is installed separately.
+Install the cluster, then the operator, then the block node. The operator's images are
+private, so create its pull secret first (see [Operator](commands/README.md#operator)).
 
 ```bash
 # Local development
+sudo solo-provisioner kube cluster install --profile=local --node-type=block
+kubectl -n solo-operator create secret docker-registry private-registry-creds \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+sudo solo-provisioner kube operator install
 sudo solo-provisioner block node install --profile=local
 ```
 

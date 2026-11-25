@@ -64,6 +64,10 @@ func TestInstallHandler_BuildWorkflow_ExistingCluster_MediaCheckRunsEarly(t *tes
 	assert.Equal(t, []string{
 		"ensure-weaver-owner",
 		steps.CheckStorageMediaStepId,
+		steps.PrecheckOperatorCRDsStepId,
+		steps.PrecheckOperatorRunningStepId,
+		steps.PrecheckOperatorVersionStepId,
+		steps.PrecheckBlockNodeStepId,
 		"block-node-network-setup",
 		steps.SetupBlockNodeStepId,
 		"block-node-daemon-config",
@@ -95,6 +99,10 @@ func TestInstallHandler_BuildWorkflow_FreshInstall_MediaCheckRunsEarly(t *testin
 		steps.CheckStorageMediaStepId,
 		"block-node-setup",
 		"kubernetes-setup",
+		steps.PrecheckOperatorCRDsStepId,
+		steps.PrecheckOperatorRunningStepId,
+		steps.PrecheckOperatorVersionStepId,
+		steps.PrecheckBlockNodeStepId,
 		"block-node-network-setup",
 		steps.SetupBlockNodeStepId,
 	}, ids, "traffic shaping disabled: no daemon-config step")
