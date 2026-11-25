@@ -19,10 +19,12 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 )
 
@@ -193,11 +195,23 @@ func PrecheckBlockNode(inputs models.BlockNodeInputs, force bool, provider Capsu
 		})
 }
 
+// blockNodeLedgerId is the ledger id a block-node-created Orbit carries; the Orbit CRD requires one.
+func blockNodeLedgerId(profile string) string {
+	switch profile {
+	case models.ProfileMainnet:
+		return "0x00"
+	case models.ProfilePreviewnet:
+		return "0x02"
+	default:
+		return "0x01"
+	}
+}
+
 // EnsureBlockNodeOrbit creates the cluster-scoped Orbit the block node's
 // HelmCapsule references, if it does not already exist. HelmCapsule.orbitRef is
 // required by the CRD; the block-node component injects nothing from the Orbit,
-// so a minimal Orbit (name only) is sufficient. An existing Orbit (e.g. one a
-// consensus node created) is reused unchanged.
+// so the Orbit carries only the ledger id the CRD requires. An existing Orbit (e.g.
+// one a consensus node created) is reused unchanged.
 func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(EnsureBlockNodeOrbitStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -233,6 +247,13 @@ func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubePro
 					Kind:       string(kube.KindOrbit),
 				},
 				ObjectMeta: metav1.ObjectMeta{Name: orbitName},
+				Spec: operatorv1alpha1.OrbitSpec{
+					Consensus: operatorv1alpha1.OrbitConsensus{
+						Genesis: operatorv1alpha1.OrbitGenesis{
+							AddressBook: operatorv1alpha1.OrbitAddressBook{LedgerId: blockNodeLedgerId(inputs.Profile)},
+						},
+					},
+				},
 			}
 
 			if err := kc.ApplyTyped(ctx, orbit); err != nil {
@@ -270,8 +291,8 @@ func EnsureBlockNodeOrbit(inputs models.BlockNodeInputs, provider CapsuleKubePro
 // freshly-rendered values are deep-merged on top of the deployed spec.values
 // (weaver-managed keys win, operator extras persist); when false, only the fresh
 // render is applied. Install passes false; upgrade/reconfigure pass the flag.
-// legacyValues seeds --reuse-values from a legacy Helm release the capsule adopts.
-func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context.Context) ([]byte, error), reuseValues bool, legacyValues func() (map[string]any, error), provider CapsuleKubeProvider) automa.Builder {
+// legacy returns the Helm release a capsule adopts (nil when none); restore records the pre-apply spec.
+func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context.Context) ([]byte, error), reuseValues bool, legacy func() (*release.Release, error), restore *blockNodeCapsuleRestore, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateBlockNodeCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
@@ -290,33 +311,35 @@ func CreateBlockNodeCapsule(inputs models.BlockNodeInputs, valuesFn func(context
 					"Check the --values file and the resolved storage/retention/plugin settings")))
 			}
 
+			previous, err := previousBlockNodeCapsuleSpec(ctx, kc, inputs, legacy)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to read the deployed block node"),
+					reasons.PreconditionNotMet,
+					fmt.Sprintf("Check the capsule: kubectl -n %s get helmcapsule %s -o yaml", inputs.Namespace, blockNodeCapsuleName(inputs)),
+					fmt.Sprintf("Check the release: helm get values %s -n %s", blockNodeCapsuleName(inputs), inputs.Namespace))))
+			}
+			if restore != nil {
+				restore.spec, restore.captured = previous, true
+			}
+
 			// --reuse-values: deep-merge the fresh render on top of the deployed
 			// spec.values so operator-set values that weaver does not render are
 			// preserved across upgrade/reconfigure (the operator-model equivalent of
 			// helm --reuse-values). --no-reuse-values skips this and applies only the
 			// fresh render.
-			if reuseValues {
-				deployedMap, found, derr := deployedBlockNodeValues(ctx, kc, inputs, legacyValues)
-				if derr != nil {
+			if reuseValues && previous != nil && previous.Values != nil {
+				deployedYAML, merr := yaml.JSONToYAML(previous.Values.Raw)
+				if merr != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(derr, "failed to read deployed block node values for --reuse-values"),
-						reasons.PreconditionNotMet,
-						fmt.Sprintf("Check the release: helm get values %s -n %s", blockNodeCapsuleName(inputs), inputs.Namespace),
-						"Re-run with --no-reuse-values to apply only the freshly-rendered values")))
+						errorx.InternalError.Wrap(merr, "failed to read deployed values for --reuse-values"),
+						reasons.Internal, "Re-run with --no-reuse-values")))
 				}
-				if found {
-					deployedYAML, merr := yaml.Marshal(deployedMap)
-					if merr != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-							errorx.InternalError.Wrap(merr, "failed to marshal deployed values for --reuse-values"),
-							reasons.Internal, "Re-run with --no-reuse-values")))
-					}
-					valuesYAML, err = blocknode.MergeDeployedValues(deployedYAML, valuesYAML)
-					if err != nil {
-						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-							errorx.IllegalState.Wrap(err, "failed to merge deployed values for --reuse-values"),
-							reasons.InvalidArgument, "Re-run with --no-reuse-values")))
-					}
+				valuesYAML, err = blocknode.MergeDeployedValues(deployedYAML, valuesYAML)
+				if err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
+						errorx.IllegalState.Wrap(err, "failed to merge deployed values for --reuse-values"),
+						reasons.InvalidArgument, "Re-run with --no-reuse-values")))
 				}
 			}
 
@@ -377,34 +400,80 @@ func getBlockNodeCapsule(ctx context.Context, kc CapsuleKubeClient, inputs model
 	return obj, err
 }
 
-// deployedBlockNodeValues prefers the HelmCapsule's spec.values over the legacy release's.
-func deployedBlockNodeValues(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs, legacyValues func() (map[string]any, error)) (map[string]any, bool, error) {
+// previousBlockNodeCapsuleSpec is the spec the block node runs before this apply: the live
+// HelmCapsule's, or one rebuilt from the legacy Helm release it adopts. nil when nothing is deployed.
+func previousBlockNodeCapsuleSpec(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs, legacy func() (*release.Release, error)) (*operatorv1alpha1.HelmCapsuleSpec, error) {
 	capsule, err := getBlockNodeCapsule(ctx, kc, inputs)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if capsule != nil {
-		return unstructured.NestedMap(capsule, "spec", "values")
+		specMap, _, _ := unstructured.NestedMap(capsule, "spec")
+		var spec operatorv1alpha1.HelmCapsuleSpec
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(specMap, &spec); err != nil {
+			return nil, errorx.IllegalFormat.Wrap(err, "failed to decode HelmCapsule %s spec", blockNodeCapsuleName(inputs))
+		}
+		return &spec, nil
 	}
 
-	vals, err := legacyValues()
+	rel, err := legacy()
+	if err != nil || rel == nil {
+		return nil, err
+	}
+	prev := inputs
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		prev.ChartVersion = rel.Chart.Metadata.Version
+	}
+	var valuesYAML []byte
+	if len(rel.Config) > 0 {
+		if valuesYAML, err = yaml.Marshal(rel.Config); err != nil {
+			return nil, errorx.IllegalFormat.Wrap(err, "failed to encode the Helm release values")
+		}
+	}
+	adopted, err := buildBlockNodeHelmCapsule(prev, valuesYAML)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if len(vals) == 0 {
-		return nil, false, nil
-	}
-	logx.As().Info().Str("release", blockNodeCapsuleName(inputs)).Str("namespace", inputs.Namespace).
-		Msg("No HelmCapsule yet; adopting the existing Helm release and reusing its values")
-	return vals, true, nil
+	logx.As().Info().Str("release", rel.Name).Str("namespace", inputs.Namespace).
+		Msg("No HelmCapsule yet; adopting the existing Helm release")
+	return &adopted.Spec, nil
 }
 
-// WaitForBlockNodeCapsuleReady blocks until the block node's HelmCapsule reports
-// a terminal phase, or the --timeout budget elapses. The Helm-SDK path blocked
-// synchronously inside helm (Wait=true); the operator reconciles asynchronously,
-// so weaver must poll the CR status before any downstream host/kube step runs
-// against the workload. Running is not ready: the operator sets it before its helm call.
-func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, provider CapsuleKubeProvider) automa.Builder {
+// blockNodeCapsuleRestore carries the pre-apply spec from CreateBlockNodeCapsule to WaitForBlockNodeCapsuleReady.
+type blockNodeCapsuleRestore struct {
+	captured bool
+	spec     *operatorv1alpha1.HelmCapsuleSpec
+}
+
+// apply puts back the pre-apply spec, or deletes the capsule when nothing was deployed before, so the
+// operator stops retrying the failed change.
+func (r *blockNodeCapsuleRestore) apply(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs) error {
+	name := blockNodeCapsuleName(inputs)
+	if r.spec == nil {
+		if _, err := kc.DeleteResource(ctx, kube.SoloOperatorAPIVersion, string(kube.KindHelmCapsule), inputs.Namespace, name); err != nil {
+			return err
+		}
+		return waitForResourceGone(ctx, kc, kube.SoloOperatorAPIVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, nil)
+	}
+
+	capsule := &operatorv1alpha1.HelmCapsule{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kube.SoloOperatorAPIVersion, Kind: string(kube.KindHelmCapsule)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: inputs.Namespace},
+		Spec:       *r.spec,
+	}
+	if err := kc.ApplyTyped(ctx, capsule); err != nil {
+		return err
+	}
+	_, err := waitForBlockNodeCapsule(ctx, kc, inputs)
+	return err
+}
+
+// WaitForBlockNodeCapsuleReady blocks until the block node's HelmCapsule is Ready for its
+// current generation, or the --timeout budget elapses. The operator reconciles
+// asynchronously, so weaver polls before any downstream step runs against the workload.
+// On failure it re-applies the spec restore recorded, because the operator would
+// otherwise retry the failed helm upgrade indefinitely.
+func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, restore *blockNodeCapsuleRestore, provider CapsuleKubeProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(WaitForBlockNodeCapsuleReadyStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, err := provider(ctx)
@@ -415,47 +484,28 @@ func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, provider Capsul
 					"Verify your kubeconfig and that 'kubectl get nodes' works")))
 			}
 
+			phase, err := waitForBlockNodeCapsule(ctx, kc, inputs)
+			if err == nil {
+				notify.As().StepDetail(ctx, stp, fmt.Sprintf("block node ready (phase=%s)", phase))
+				return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"phase": phase}))
+			}
+
 			name := blockNodeCapsuleName(inputs)
-			deadline := time.Now().Add(resolveCapsuleTimeout(inputs))
-
-			for {
-				capsule, _ := getBlockNodeCapsule(ctx, kc, inputs)
-				phase, _, _ := unstructured.NestedString(capsule, "status", "phase")
-				generation, _, _ := unstructured.NestedInt64(capsule, "metadata", "generation")
-				observed, _, _ := unstructured.NestedInt64(capsule, "status", "observedGeneration")
-
-				if generation > 0 && observed >= generation {
-					switch operatorv1alpha1.Phase(phase) {
-					case operatorv1alpha1.PhaseSucceeded:
-						notify.As().StepDetail(ctx, stp, fmt.Sprintf("block node ready (phase=%s)", phase))
-						return automa.StepSuccessReport(stp.Id(), automa.WithMetadata(map[string]string{"phase": phase}))
-					case operatorv1alpha1.PhaseFailed:
-						releaseStatus, _, _ := unstructured.NestedString(capsule, "status", "releaseStatus")
-						return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-							errorx.IllegalState.New("block node HelmCapsule %q reported phase=Failed (releaseStatus=%q)", name, releaseStatus),
-							reasons.PreconditionNotMet,
-							fmt.Sprintf("Inspect the capsule: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name),
-							"Check the block node pod and events for the underlying failure")))
-					}
-				}
-
-				if time.Now().After(deadline) {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.TimeoutElapsed.New("timed out waiting for block node HelmCapsule %q to become ready (last phase=%q)", name, phase),
-						reasons.PreconditionNotMet,
-						"Raise --timeout if the block node legitimately needs longer to start",
-						fmt.Sprintf("Inspect the capsule: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name))))
-				}
-
-				select {
-				case <-ctx.Done():
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(ctx.Err(), "waiting for block node HelmCapsule %q was cancelled", name),
-						reasons.PreconditionNotMet,
-						"Re-run the command")))
-				case <-time.After(blockNodeCapsuleReadyPollInterval):
+			hints := []string{fmt.Sprintf("Inspect the capsule: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name)}
+			if errorx.IsOfType(err, errorx.TimeoutElapsed) {
+				hints = append(hints, "Raise --timeout if the block node legitimately needs longer to start")
+			} else {
+				hints = append(hints, "Check the block node pod and events for the underlying failure")
+			}
+			if restore != nil && restore.captured {
+				if rerr := restore.apply(ctx, kc, inputs); rerr != nil {
+					logx.As().Warn().Err(rerr).Str("name", name).Msg("Failed to restore the previous block node spec")
+					hints = append(hints, "Restoring the previous block node spec also failed, so the operator keeps retrying: fix or delete the HelmCapsule")
+				} else {
+					hints = append(hints, "The previous block node spec was restored, so the operator no longer retries the failed change")
 				}
 			}
+			return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.PreconditionNotMet, hints...)))
 		}).
 		WithPrepare(func(ctx context.Context, stp automa.Step) (context.Context, error) {
 			notify.As().StepStart(ctx, stp, "Waiting for block node to become ready")
@@ -467,6 +517,50 @@ func WaitForBlockNodeCapsuleReady(inputs models.BlockNodeInputs, provider Capsul
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "Block node is ready")
 		})
+}
+
+// waitForBlockNodeCapsule polls until the HelmCapsule is Ready for its current generation and
+// returns its phase. Running is not ready: the operator sets it before its helm call.
+func waitForBlockNodeCapsule(ctx context.Context, kc CapsuleKubeClient, inputs models.BlockNodeInputs) (string, error) {
+	name := blockNodeCapsuleName(inputs)
+	deadline := time.Now().Add(resolveCapsuleTimeout(inputs))
+
+	for {
+		capsule, _ := getBlockNodeCapsule(ctx, kc, inputs)
+		phase, _, _ := unstructured.NestedString(capsule, "status", "phase")
+		generation, _, _ := unstructured.NestedInt64(capsule, "metadata", "generation")
+		observed, _, _ := unstructured.NestedInt64(capsule, "status", "observedGeneration")
+
+		if generation > 0 && observed >= generation {
+			switch {
+			case capsuleReady(capsule):
+				return phase, nil
+			case operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseFailed:
+				releaseStatus, _, _ := unstructured.NestedString(capsule, "status", "releaseStatus")
+				return phase, errorx.IllegalState.New("block node HelmCapsule %q reported phase=Failed (releaseStatus=%q)", name, releaseStatus)
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return phase, errorx.TimeoutElapsed.New("timed out waiting for block node HelmCapsule %q to become ready (last phase=%q)", name, phase)
+		}
+
+		select {
+		case <-ctx.Done():
+			return phase, errorx.IllegalState.Wrap(ctx.Err(), "waiting for block node HelmCapsule %q was cancelled", name)
+		case <-time.After(blockNodeCapsuleReadyPollInterval):
+		}
+	}
+}
+
+func capsuleReady(capsule map[string]any) bool {
+	conditions, _, _ := unstructured.NestedSlice(capsule, "status", "conditions")
+	for _, c := range conditions {
+		if cond, ok := c.(map[string]any); ok && cond["type"] == "Ready" {
+			return cond["status"] == string(metav1.ConditionTrue)
+		}
+	}
+	return false
 }
 
 // DeleteBlockNodeCapsule removes the block node's HelmCapsule CR. The operator's

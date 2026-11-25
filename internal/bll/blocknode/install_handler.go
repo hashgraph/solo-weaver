@@ -92,13 +92,12 @@ func (h *InstallHandler) BuildWorkflow(
 		daemonConfigStep = []automa.Builder{workflows.BlockNodeDaemonConfigWorkflow(ins.Namespace, daemon.StatuszConfig{BaseURL: ins.StatuszBaseURL, PollInterval: ins.StatuszPollInterval})}
 	}
 
-	// solo-operator is installed separately (kube operator install), so check it before any capsule step.
-	deploySteps := append(steps.OperatorPrechecks(steps.BlockNodeCRDs...),
+	// solo-operator is installed separately (kube operator install); check it before any host change.
+	prechecks := append(steps.OperatorPrechecks(steps.BlockNodeCRDs...),
 		// A legacy release reaches here only with --force; the capsule apply adopts it.
 		steps.PrecheckBlockNode(ins, inputs.Common.Force, steps.DefaultCapsuleKubeProvider),
-		steps.SetupBlockNode(ins),
 	)
-	deploySteps = append(deploySteps, daemonConfigStep...)
+	deploySteps := append([]automa.Builder{steps.SetupBlockNode(ins)}, daemonConfigStep...)
 
 	var wb *automa.WorkflowBuilder
 	if currentState.ClusterState.Created {
@@ -111,13 +110,16 @@ func (h *InstallHandler) BuildWorkflow(
 			steps.EnsureWeaverOwnerStep(),
 			// Warn (never block) on non-local storage, before the long install runs.
 			steps.BlockNodeStorageMediaStep(ins.Storage, ins.ChartVersion, managesPlugins),
+		}
+		stepList = append(stepList, prechecks...)
+		stepList = append(stepList,
 			// Static network plane (host firewall + weaver policy persistence +
 			// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
 			// The host firewall is owned by the block-node workflow (not the generic
 			// kube cluster install); nftables is already installed/enabled by prior
 			// cluster provisioning, so it's safe to apply here.
 			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, ports),
-		}
+		)
 		stepList = append(stepList, deploySteps...)
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(stepList...)
 	} else {
@@ -146,13 +148,16 @@ func (h *InstallHandler) BuildWorkflow(
 			// only the substrate floor, which is weaker than the block-node floor.
 			workflows.NodeSetupWorkflow(models.NodeTypeBlock, ins.Profile, ins.PluginPreset, ins.SkipHardwareChecks),
 			workflows.KubernetesSetupWorkflow(h.mr),
+		}
+		stepList = append(stepList, prechecks...)
+		stepList = append(stepList,
 			// Static network plane (host firewall + weaver policy persistence +
 			// $EGRESS/$VETH tc shape config), grouped as the "Network Setup" phase.
 			// nftables was just installed/enabled by NodeSetupWorkflow's
 			// systemSetupWorkflow, so applying the host firewall here (rather than
 			// in that generic, node-type-agnostic workflow) is safe.
 			workflows.NetworkSetupWorkflow(ins.EgressInterface, ins.LinkRate, toClassOverrides(ins.ShapeOverrides), inputs.Common.Force, ins.TrafficShapingEnabled, ports),
-		}
+		)
 		stepList = append(stepList, deploySteps...)
 		wb = automa.NewWorkflowBuilder().WithId("block-node-install").Steps(stepList...)
 	}

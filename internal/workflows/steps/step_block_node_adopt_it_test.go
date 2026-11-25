@@ -14,9 +14,8 @@ import (
 	"github.com/automa-saga/automa"
 	operatorv1alpha1 "github.com/hashgraph/solo-operator/api/v1alpha1"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
-	"github.com/hashgraph/solo-weaver/internal/kube"
+does 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/internal/testutil"
-	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
@@ -95,8 +94,8 @@ func pvcUIDs(t *testing.T, kc *kube.Client, namespace string) map[string]string 
 }
 
 func TestUpgradeBlockNode_AdoptsLegacyHelmRelease(t *testing.T) {
-	if hardware.GetHostProfile().GetTotalMemoryGB() < 16 {
-		t.Skip("Skipping test: block node requires at least 16GB memory")
+	if testing.Short() {
+		t.Skip("skipping heavy cluster-creation test in short mode")
 	}
 
 	//
@@ -120,6 +119,7 @@ func TestUpgradeBlockNode_AdoptsLegacyHelmRelease(t *testing.T) {
 
 	getManager := newBlockNodeManagerProvider(inputs)
 	runSteps(t, "legacy-block-node-prereqs",
+		EnsureHederaOwnerStep(),
 		setupBlockNodeStorage(getManager),
 		createBlockNodeNamespace(getManager),
 		createBlockNodePVs(getManager),

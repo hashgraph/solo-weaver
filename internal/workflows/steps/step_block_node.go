@@ -4,15 +4,19 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/hashgraph/solo-weaver/internal/blocknode"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 
 	"github.com/hashgraph/solo-weaver/internal/workflows/notify"
+	"helm.sh/helm/v3/pkg/release"
 	"sigs.k8s.io/yaml"
 )
 
@@ -246,7 +250,13 @@ func uninstallBlockNode(
 				if _, err := kc.DeleteResource(ctx, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name); err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
-				logx.As().Info().Str("name", name).Msg("Deleted HelmCapsule; operator will uninstall the Helm release")
+				// The operator's finalizer drops the CR only after its helm uninstall succeeds.
+				if err := waitForResourceGone(ctx, kc, apiVersion, string(kube.KindHelmCapsule), inputs.Namespace, name, nil); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(err, reasons.PreconditionNotMet,
+						fmt.Sprintf("Inspect the capsule and its finalizer: kubectl -n %s describe helmcapsule %s", inputs.Namespace, name),
+						"Check the solo-operator logs: kubectl -n solo-operator logs deploy/solo-operator-controller-manager")))
+				}
+				logx.As().Info().Str("name", name).Msg("HelmCapsule deleted and its Helm release uninstalled by the operator")
 				return automa.StepSuccessReport(stp.Id())
 			}
 
@@ -421,17 +431,18 @@ func deployBlockNodeCapsule(inputs models.BlockNodeInputs, getManager func() (*b
 		}
 		return manager.ComputeValues(ctx, inputs.Profile, inputs.ValuesFile)
 	}
-	legacyValues := func() (map[string]any, error) {
+	legacy := func() (*release.Release, error) {
 		manager, err := getManager()
 		if err != nil {
 			return nil, err
 		}
-		return manager.GetReleaseValues()
+		return manager.GetRelease()
 	}
+	restore := &blockNodeCapsuleRestore{}
 	return []automa.Builder{
 		EnsureBlockNodeOrbit(inputs, DefaultCapsuleKubeProvider),
-		CreateBlockNodeCapsule(inputs, valuesFn, reuseValues, legacyValues, DefaultCapsuleKubeProvider),
-		WaitForBlockNodeCapsuleReady(inputs, DefaultCapsuleKubeProvider),
+		CreateBlockNodeCapsule(inputs, valuesFn, reuseValues, legacy, restore, DefaultCapsuleKubeProvider),
+		WaitForBlockNodeCapsuleReady(inputs, restore, DefaultCapsuleKubeProvider),
 	}
 }
 

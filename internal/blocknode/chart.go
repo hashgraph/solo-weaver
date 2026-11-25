@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/joomcode/errorx"
+	"helm.sh/helm/v3/pkg/release"
 )
 
 // Namespace returns the block-node Kubernetes namespace these operations target.
@@ -82,6 +83,18 @@ func (m *Manager) GetInstalledVersion() (string, error) {
 		return rel.Chart.Metadata.Version, nil
 	}
 	return "", nil
+}
+
+// GetRelease returns the installed Helm release, or nil when there is none.
+func (m *Manager) GetRelease() (*release.Release, error) {
+	rel, err := m.helmManager.GetRelease(m.blockNodeInputs.Release, m.blockNodeInputs.Namespace)
+	if err != nil {
+		if errorx.IsOfType(err, helm.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, errorx.IllegalState.Wrap(err, "failed to get current release")
+	}
+	return rel, nil
 }
 
 // GetReleaseValues returns the user-supplied values from the currently installed release.
