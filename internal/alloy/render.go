@@ -118,8 +118,8 @@ func RenderModularConfigs(cb *ConfigBuilder) ([]ModuleConfig, error) {
 		})
 	}
 
-	// 7. Block node config (only if monitoring is enabled AND both remote types are configured)
-	// Block node monitoring requires both Prometheus (for metrics) and Loki (for logs)
+	// 7. Block node config. NewConfigBuilder rejects MonitorBlockNode without both
+	// remote types; the remote checks only guard a builder made some other way.
 	if cb.MonitorBlockNode() && hasPrometheusRemotes && hasLokiRemotes {
 		blockNodeConfig, err := templates.Render(BlockNodeTemplatePath, moduleData)
 		if err != nil {

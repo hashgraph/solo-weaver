@@ -80,7 +80,7 @@ sudo solo-provisioner alloy cluster install --cluster-name=mainnet-block-01
 | `--cluster-name` | Cluster name used as a label on every metric and log stream |
 | `--profile`, `-p` | Deployment profile. Sets the `environment` label for the `ops` label profile. Optional — falls back to `--config` |
 | `--environment` | Environment label for the `ops` label profile; defaults to `--profile`. Free-form, e.g. `staging`, `qa`. Can also be set as `alloy.environment` in `--config` |
-| `--monitor-block-node` | Turn on block-node-specific monitoring |
+| `--monitor-block-node` | Enable Block Node monitoring in Alloy. Requires a Prometheus remote and a Loki remote |
 | `--add-prometheus-remote` | Add a Prometheus remote. Repeatable. See [remote format](#remote-format) |
 | `--add-loki-remote` | Add a Loki remote. Repeatable |
 | `--stop-on-error` | Stop at the first failing step (default) |

@@ -9,14 +9,17 @@ import (
 	"testing"
 
 	"github.com/automa-saga/automa"
+	"github.com/automa-saga/errx"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/alloy"
+	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/helm"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 func stepIds(t *testing.T, wb *automa.WorkflowBuilder) []string {
@@ -319,5 +322,46 @@ func TestApplyManifestOwned(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, !exists, created)
 		assert.Equal(t, []string{"/tmp/sm.yaml"}, k.applied)
+	}
+}
+
+// The config check runs before the cluster probe, so these cases fail without
+// a cluster and nothing is touched.
+func TestPreCheckAlloy_MonitorBlockNodeWithoutBothRemotesFails(t *testing.T) {
+	prom := []models.AlloyRemoteConfig{{Name: "p", URL: "http://prom:9090/api/v1/write", Username: "u"}}
+	loki := []models.AlloyRemoteConfig{{Name: "l", URL: "http://loki:3100/loki/api/v1/push", Username: "u"}}
+	cases := []struct {
+		name string
+		cfg  models.AlloyConfig
+	}{
+		{name: "no remotes"},
+		{name: "prometheus remote only", cfg: models.AlloyConfig{PrometheusRemotes: prom}},
+		{name: "loki remote only", cfg: models.AlloyConfig{LokiRemotes: loki}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			saved := config.Get()
+			t.Cleanup(func() { _ = config.Set(&saved) })
+			cfg := saved
+			cfg.Alloy = tc.cfg
+			cfg.Alloy.ClusterName = "test-cluster"
+			cfg.Alloy.MonitorBlockNode = true
+			require.NoError(t, config.Set(&cfg))
+
+			step, err := preCheckAlloy().Build()
+			require.NoError(t, err)
+			report := step.Execute(context.Background())
+			require.Error(t, report.Error)
+
+			reason, ok := errx.ReasonOf(report.Error)
+			require.True(t, ok)
+			assert.Equal(t, reasons.InvalidArgument, reason)
+			hints, ok := errx.Hints(report.Error)
+			require.True(t, ok)
+			assert.Equal(t, []string{
+				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node",
+				"Or drop --monitor-block-node to install Alloy without block node monitoring",
+			}, hints)
+		})
 	}
 }

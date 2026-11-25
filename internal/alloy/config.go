@@ -8,12 +8,14 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/automa-saga/errx"
 	"github.com/joomcode/errorx"
 
 	"github.com/hashgraph/solo-weaver/internal/alloy/labels"
 	"github.com/hashgraph/solo-weaver/internal/network"
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 const (
@@ -55,7 +57,8 @@ type ConfigBuilder struct {
 
 // NewConfigBuilder creates a new ConfigBuilder from the application config.
 // cfg.Environment, when set, overrides deployProfile as the "environment" label.
-// Returns an error if cluster name cannot be determined (neither provided nor hostname available).
+// Returns an error if cluster name cannot be determined (neither provided nor hostname available),
+// or if MonitorBlockNode is set without both a Prometheus and a Loki remote.
 func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuilder, error) {
 	cb := &ConfigBuilder{
 		monitorBlockNode: cfg.MonitorBlockNode,
@@ -76,6 +79,26 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 
 	// Build Loki remotes
 	cb.lokiRemotes = buildLokiRemotes(cfg)
+
+	// Checked on the built lists so the legacy single-URL flags count.
+	// The block-node module needs both: metrics go to Prometheus, pod logs to Loki.
+	if cb.monitorBlockNode {
+		var missing []string
+		if len(cb.prometheusRemotes) == 0 {
+			missing = append(missing, "Prometheus")
+		}
+		if len(cb.lokiRemotes) == 0 {
+			missing = append(missing, "Loki")
+		}
+		if len(missing) > 0 {
+			return nil, errx.Decorate(errorx.IllegalArgument.New(
+				"block node monitoring needs a Prometheus remote and a Loki remote; missing: %s",
+				strings.Join(missing, ", ")),
+				reasons.InvalidArgument,
+				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node",
+				"Or drop --monitor-block-node to install Alloy without block node monitoring")
+		}
+	}
 
 	// Explicit environment wins; otherwise fall back to the deployment profile
 	cb.environment = cfg.Environment

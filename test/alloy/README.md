@@ -213,6 +213,8 @@ kubelet_running_containers{cluster="vm-cluster"}
 
 #### Block Node Module (block-node.alloy) - if `--monitor-block-node` is used
 
+`--monitor-block-node` needs both a Prometheus remote and a Loki remote. With only one, or none, the install fails in preflight and changes nothing.
+
 **Prometheus queries:**
 ```promql
 # Block Node application metrics (via ServiceMonitor)

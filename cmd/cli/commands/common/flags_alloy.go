@@ -31,7 +31,7 @@ func FlagMonitorBlockNode() FlagDefinition[bool] {
 	return FlagDefinition[bool]{
 		Name:        "monitor-block-node",
 		ShortName:   "",
-		Description: "Enable Block Node monitoring in Alloy",
+		Description: "Enable Block Node monitoring in Alloy. Requires a Prometheus remote and a Loki remote",
 		Default:     false,
 	}
 }
