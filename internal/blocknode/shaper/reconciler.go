@@ -105,6 +105,12 @@ type CheckResult struct {
 	Digest       string              `json:"desired-digest"`
 	Desired      map[string][]string `json:"desired"`
 	DesiredPorts map[string][]string `json:"desired-ports"`
+	// Withheld lists, sorted, the owned membership policies absent from Desired
+	// because their statusz call reported nothing; Apply leaves those sets as they
+	// are. Listener-port sets are not listed (see DesiredPorts). It is
+	// always present in the JSON, even when empty: the daemon reads a missing
+	// field as a CLI too old to report it.
+	Withheld []string `json:"withheld"`
 	// Unresolved, Stale, and AAAAOnly carry the same meaning as their Result
 	// counterparts. They are fields on the one JSON document rather than a log
 	// line because --output json puts log lines on stdout, where they would
@@ -135,6 +141,7 @@ func (r *Reconciler) Check(ctx context.Context) (CheckResult, error) {
 		Digest:       membershipDigest(combinedCanonical(canon, portsDesired)),
 		Desired:      canon,
 		DesiredPorts: portsDesired,
+		Withheld:     withheldPolicies(canon),
 		Unresolved:   report.Unresolved,
 		Stale:        report.Stale,
 		AAAAOnly:     report.AAAAOnly,
@@ -531,6 +538,18 @@ func ownedPolicyNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// withheldPolicies returns, sorted and never nil, the owned policies with no
+// entry in canon.
+func withheldPolicies(canon map[string][]string) []string {
+	out := []string{}
+	for _, name := range ownedPolicyNames() {
+		if _, ok := canon[name]; !ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // ownedSetNames returns every nft set the traffic-shaper reconciles, sorted: the

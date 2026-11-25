@@ -83,7 +83,13 @@ type NamedIssue struct {
 // shaper.TestPackageEmitsNoLogs), and the CLI only prints them on the
 // human-readable path, which nobody reads for a daemon-scheduled tick.
 type ReconcileShaperCheckResult struct {
-	Digest     string
+	Digest string
+	// DesiredCounts is the desired element count per policy the CLI reported. A
+	// policy absent here is in Withheld, not empty.
+	DesiredCounts map[string]int
+	// Withheld is nil when the CLI predates the field, and non-nil (possibly
+	// empty) otherwise.
+	Withheld   []string
 	Unresolved []NamedIssue
 	Stale      []NamedIssue
 	AAAAOnly   []NamedIssue
@@ -407,10 +413,12 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 	}
 
 	var res struct {
-		Digest     string       `json:"desired-digest"`
-		Unresolved []NamedIssue `json:"unresolved"`
-		Stale      []NamedIssue `json:"stale"`
-		AAAAOnly   []NamedIssue `json:"aaaa-only"`
+		Digest     string              `json:"desired-digest"`
+		Desired    map[string][]string `json:"desired"`
+		Withheld   []string            `json:"withheld"`
+		Unresolved []NamedIssue        `json:"unresolved"`
+		Stale      []NamedIssue        `json:"stale"`
+		AAAAOnly   []NamedIssue        `json:"aaaa-only"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil {
 		return ReconcileShaperCheckResult{}, &daemonkit.ProbeError{
@@ -431,7 +439,21 @@ func (d *execDelegator) ReconcileShaperCheck(ctx context.Context, statuszURL str
 			Resolution: "this is a daemon/CLI contract bug; report it with the daemon logs",
 		}
 	}
-	return ReconcileShaperCheckResult{Digest: res.Digest, Unresolved: res.Unresolved, Stale: res.Stale, AAAAOnly: res.AAAAOnly}, nil
+	var counts map[string]int
+	if res.Desired != nil {
+		counts = make(map[string]int, len(res.Desired))
+		for name, elems := range res.Desired {
+			counts[name] = len(elems)
+		}
+	}
+	return ReconcileShaperCheckResult{
+		Digest:        res.Digest,
+		DesiredCounts: counts,
+		Withheld:      res.Withheld,
+		Unresolved:    res.Unresolved,
+		Stale:         res.Stale,
+		AAAAOnly:      res.AAAAOnly,
+	}, nil
 }
 
 // NetworkReassert execs `network reassert --output json` under sudo and parses

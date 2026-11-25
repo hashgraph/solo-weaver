@@ -233,6 +233,48 @@ func TestReconcileShaperCheck_BuildsUnprivilegedArgvAndParsesDigest(t *testing.T
 	require.NotContains(t, call.args, "-n", "no sudo non-interactive flag on the unprivileged path")
 }
 
+func TestReconcileShaperCheck_ParsesDesiredCountsAndWithheld(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"desired-digest":"abc123",`+
+			`"desired":{"bn-publisher":[],"bn-backfill":null,"bn-restricted":["10.0.0.1/32","10.0.0.2/32"]},`+
+			`"withheld":["bn-partner-out"]}`), nil,
+	)
+
+	result, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"bn-publisher": 0, "bn-backfill": 0, "bn-restricted": 2}, result.DesiredCounts,
+		"an empty or null list is a present policy with count 0")
+	require.Equal(t, []string{"bn-partner-out"}, result.Withheld)
+}
+
+func TestReconcileShaperCheck_EmptyWithheldIsNonNil(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"desired-digest":"abc123","desired":{},"withheld":[]}`), nil,
+	)
+
+	result, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err)
+	require.NotNil(t, result.Withheld)
+	require.Empty(t, result.Withheld)
+}
+
+func TestReconcileShaperCheck_OlderCLIWithoutWithheldStillParses(t *testing.T) {
+	d, _ := fakeDelegator(
+		[]string{"/opt/solo/weaver/bin/solo-provisioner"},
+		"/opt/solo/weaver/bin/solo-provisioner-daemon",
+		[]byte(`{"desired-digest":"abc123","desired":{"bn-publisher":["10.0.0.1/32"]}}`), nil,
+	)
+
+	result, err := d.ReconcileShaperCheck(context.Background(), "http://127.0.0.1:8080")
+	require.NoError(t, err, "a missing withheld must not fail the check")
+	require.Nil(t, result.Withheld)
+	require.Equal(t, map[string]int{"bn-publisher": 1}, result.DesiredCounts)
+}
+
 func TestReconcileShaperCheck_EmptyURLIsGuarded(t *testing.T) {
 	d, call := fakeDelegator([]string{"/usr/local/bin/solo-provisioner"}, "", nil, nil)
 

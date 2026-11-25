@@ -4,6 +4,9 @@ package blocknode
 
 import (
 	"context"
+	"maps"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,6 +107,11 @@ type TrafficShaperMonitor struct {
 	// exists to close. Extra wake-ups are harmless — the digest gate skips the
 	// privileged apply when the desired state has not changed.
 	urlChanged chan struct{}
+
+	// warnedWithheldUnreported makes the older-CLI Warn fire once per process.
+	// Only the statusz poll goroutine touches it, and superviseResponsibility
+	// runs that loop serially.
+	warnedWithheldUnreported bool
 }
 
 // NewTrafficShaperMonitor constructs a TrafficShaperMonitor. resolver and client
@@ -253,10 +261,14 @@ func (m *TrafficShaperMonitor) effectiveStatuszURL() string {
 //
 // The statusz endpoint is resolved per tick via effectiveStatuszURL: the
 // configured base_url override when set, otherwise the endpoint discovered from
-// the watched BN pod. When neither is available the tick is skipped quietly
-// (no exec, no error) so a daemon that has not yet observed a BN pod keeps a
-// quiet loop and picks the endpoint up once discovery yields one — and follows it
-// across pod restarts as the discovered URL changes.
+// the watched BN pod. When neither is available the tick execs nothing and
+// returns no error, so a daemon that has not yet observed a BN pod picks the
+// endpoint up once discovery yields one — and follows it across pod restarts as
+// the discovered URL changes.
+//
+// Every reconcile logs one TrafficShaperStatuszTick line (see logStatuszTick),
+// except one cut short by shutdown. Ops alert on its absence, so any other path
+// that returns without it hides a stuck loop.
 //
 // Each tick first runs the unprivileged `--check` digest probe; the privileged
 // apply (a root sudo exec) fires only when the desired membership changed, the
@@ -287,8 +299,9 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	var lastApply time.Time
 	var lastURL string
 
-	reconcile := func() error {
+	reconcile := func() (statuszTick, error) {
 		statuszURL := m.effectiveStatuszURL()
+		tick := statuszTick{url: statuszURL}
 		if statuszURL != lastURL {
 			// Endpoint transition (discovered/lost/changed): log once and reset the
 			// digest gate so the next non-empty URL forces a fresh apply rather than
@@ -310,9 +323,12 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			lastApply = time.Time{}
 		}
 		if statuszURL == "" {
-			return nil
+			tick.outcome = tickIdleNoEndpoint
+			return tick, nil
 		}
 
+		// The only line before the check exec: if the check hangs, this shows
+		// which URL it is stuck on.
 		logx.As().Debug().
 			Str("reason", "TrafficShaperStatuszPolling").
 			Str("monitor", m.Name()).
@@ -321,20 +337,17 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 
 		checkRes, err := m.delegator.ReconcileShaperCheck(ctx, statuszURL)
 		if err != nil {
-			return err
+			return tick, err
 		}
+		tick.check = &checkRes
 		digest := checkRes.Digest
 		m.logStatuszAttentionNames("check", statuszURL, checkRes.Unresolved, checkRes.Stale, checkRes.AAAAOnly)
 		// Skip the root apply only when the desired membership is unchanged AND
 		// the force-resync window has not elapsed. lastApply.IsZero() forces the
 		// first reconcile against a (new) URL to apply.
 		if digest == lastDigest && !lastApply.IsZero() && time.Since(lastApply) < statuszForceResyncInterval {
-			logx.As().Debug().
-				Str("reason", "TrafficShaperStatuszUnchanged").
-				Str("monitor", m.Name()).
-				Str("statusz_url", statuszURL).
-				Msg("desired membership digest unchanged — skipping apply")
-			return nil
+			tick.outcome = tickUnchanged
+			return tick, nil
 		}
 		logx.As().Info().
 			Str("reason", "TrafficShaperStatuszApplying").
@@ -343,13 +356,14 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			Msg("applying nft policy membership from statusz")
 		applyRes, err := m.delegator.ReconcileShaper(ctx, statuszURL)
 		if err != nil {
-			return err
+			return tick, err
 		}
 		m.logStatuszAttentionNames("apply", statuszURL, applyRes.Unresolved, applyRes.Stale, applyRes.AAAAOnly)
 		m.logClearedSets(statuszURL, applyRes.Cleared)
 		lastDigest = digest
 		lastApply = time.Now()
-		return nil
+		tick.outcome = tickApplied
+		return tick, nil
 	}
 
 	// runReconcile absorbs a cancellation-caused fault: when ctx is cancelled
@@ -359,13 +373,15 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	// function's contract and so a future direct caller never mistakes a
 	// shutdown for a fault.
 	runReconcile := func() error {
-		if err := reconcile(); err != nil {
+		tick, err := reconcile()
+		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return err
+			tick.outcome = tickFailed
 		}
-		return nil
+		m.logStatuszTick(tick, err)
+		return err
 	}
 
 	// Reconcile once on entry so the daemon converges immediately on startup
@@ -378,7 +394,7 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 	//
 	// Pod-discovery path: when base_url is not configured, effectiveStatuszURL
 	// returns "" until the pod watcher observes a ready BN pod, so this entry
-	// reconcile is a silent no-op (not an error) on a cold start. Convergence is
+	// reconcile execs nothing (and is not an error) on a cold start. Convergence is
 	// not deferred to the next tick in that case — the watcher signals urlChanged
 	// as soon as it records an endpoint and the select below wakes on it, so both
 	// the discovery and base_url paths converge as fast as statusz responds.
@@ -396,13 +412,68 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 			}
 		case <-m.urlChanged:
 			// The pod watcher discovered, changed, or lost the endpoint. Reconcile
-			// now rather than waiting out the interval. reconcile() no-ops when the
-			// URL is empty (endpoint lost), so a teardown signal costs nothing.
+			// now rather than waiting out the interval. reconcile() execs nothing
+			// when the URL is empty (endpoint lost), so a teardown signal is cheap.
 			if err := runReconcile(); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// statuszTickOutcome is the `outcome` field of the TrafficShaperStatuszTick
+// line. The values are part of the alert contract in docs/monitoring.md; don't
+// rename them.
+type statuszTickOutcome string
+
+const (
+	tickApplied        statuszTickOutcome = "applied"
+	tickUnchanged      statuszTickOutcome = "unchanged"
+	tickIdleNoEndpoint statuszTickOutcome = "idle_no_endpoint"
+	tickFailed         statuszTickOutcome = "failed"
+)
+
+// statuszTick is what one reconcile reports to logStatuszTick. check is nil when
+// no --check result exists (idle, or the check itself failed).
+type statuszTick struct {
+	outcome statuszTickOutcome
+	url     string
+	check   *privexec.ReconcileShaperCheckResult
+}
+
+// logStatuszTick writes the per-reconcile summary line. Field names use only
+// underscores so they read the same in JSON and console output and under
+// LogQL's json and logfmt parsers.
+func (m *TrafficShaperMonitor) logStatuszTick(t statuszTick, err error) {
+	ev := logx.As().Info().
+		Str("reason", "TrafficShaperStatuszTick").
+		Str("monitor", m.Name()).
+		Str("outcome", string(t.outcome)).
+		Str("statusz_url", t.url)
+	if err != nil {
+		ev = ev.Err(err)
+	}
+	if t.check != nil {
+		for _, name := range slices.Sorted(maps.Keys(t.check.DesiredCounts)) {
+			ev = ev.Int(desiredCountField(name), t.check.DesiredCounts[name])
+		}
+		if t.check.Withheld != nil {
+			ev = ev.Str("withheld", strings.Join(t.check.Withheld, ","))
+		} else if !m.warnedWithheldUnreported {
+			m.warnedWithheldUnreported = true
+			logx.As().Warn().
+				Str("reason", "TrafficShaperStatuszWithheldUnreported").
+				Str("monitor", m.Name()).
+				Msg("reconcile-shaper --check reported no withheld list; the CLI is older than the daemon, so tick lines omit it")
+		}
+	}
+	ev.Msg("statusz tick")
+}
+
+// desiredCountField maps a policy name to its tick-line field:
+// bn-partner-out -> desired_bn_partner_out.
+func desiredCountField(policy string) string {
+	return "desired_" + strings.ReplaceAll(policy, "-", "_")
 }
 
 // logStatuszAttentionNames logs each category of statusz names that need an

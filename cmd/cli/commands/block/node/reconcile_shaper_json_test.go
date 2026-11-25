@@ -81,6 +81,8 @@ func TestReconcileShaperCheck_JSONOutputIsExactlyOneDocument(t *testing.T) {
 
 	require.Contains(t, doc, "desired-digest")
 	require.NotEmpty(t, doc["desired-digest"], "an empty digest fails the daemon's contract check")
+	require.Contains(t, doc, "withheld", "the daemon reads a missing withheld as an older CLI")
+	require.NotNil(t, doc["withheld"], "withheld must be a list, never null")
 }
 
 // TestReconcileShaperApply_JSONOutputIsExactlyOneDocument covers the apply half
