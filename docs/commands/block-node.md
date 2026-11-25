@@ -694,6 +694,12 @@ On a daemon tick a clear is logged at `WARN`:
 journalctl -u solo-provisioner-daemon -g TrafficShaperMembershipCleared
 ```
 
+`--check --output json` reports the desired state and writes nothing: `desired-digest`,
+`desired` (elements per policy), `desired-ports`, and `withheld`, the owned policies whose
+statusz call reported nothing. Apply leaves a withheld set as it is, and empties a policy whose
+`desired` list is empty. The daemon logs these counts on every tick; see
+[Monitoring](../monitoring.md#the-tick-line).
+
 > **Privilege:** `--check` needs none. The apply path reads and writes live
 > `inet weaver-workload-policy` sets and must run as root. The daemon invokes it via sudo.
 

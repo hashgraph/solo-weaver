@@ -472,5 +472,6 @@ Idempotent: if the ExternalSecret does not exist, the deletion is skipped and th
 ## See also
 
 - [Block node commands](block-node.md) — what `--monitor-block-node` monitors
+- [Monitoring](../monitoring.md) — signals and example alerts for the traffic shaper and host firewall
 - [Configuration](../reference/configuration.md) — the `alloy:` config-file section
 - [Troubleshooting](../troubleshooting.md)

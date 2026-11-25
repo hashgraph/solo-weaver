@@ -21,6 +21,7 @@ Also useful:
 - [Configuration](../reference/configuration.md) — config file, env vars, proxy
 - [Deployment profiles](../reference/deployment-profiles.md) — what `--profile` selects
 - [Workflows](../workflows.md) — end-to-end recipes
+- [Monitoring](../monitoring.md) — alerts for the traffic shaper and host firewall
 - [Troubleshooting](../troubleshooting.md)
 
 ---
