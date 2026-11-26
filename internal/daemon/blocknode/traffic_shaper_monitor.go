@@ -422,8 +422,8 @@ func (m *TrafficShaperMonitor) runStatuszPoll(ctx context.Context) error {
 }
 
 // statuszTickOutcome is the `outcome` field of the TrafficShaperStatuszTick
-// line. The values are part of the alert contract in docs/monitoring.md; don't
-// rename them.
+// line. The values are part of the alert contract in
+// docs/traffic-shaper-monitoring.md; don't rename them.
 type statuszTickOutcome string
 
 const (

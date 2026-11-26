@@ -164,7 +164,7 @@ func init() {
 //
 // Console output is raw JSON, not logx's console writer: stdout goes to journald
 // and from there to Loki, and the console writer's ANSI colour codes break LogQL
-// matching. Ops alert rules in docs/monitoring.md depend on this.
+// matching. Ops alert rules in docs/traffic-shaper-monitoring.md depend on this.
 func daemonLogConfig(base logx.LoggingConfig, level string) logx.LoggingConfig {
 	cfg := base
 	if level != "" {

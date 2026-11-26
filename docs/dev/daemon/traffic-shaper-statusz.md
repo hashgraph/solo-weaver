@@ -153,7 +153,7 @@ When `base_url` is set it takes precedence over discovery — an explicit overri
 pointing at a directly reachable BN or a port-forward. When it is empty (or the
 `statusz` block is absent), the monitor discovers the endpoint from the BN pod;
 until a ready BN pod is observed the poll loop idles, logging
-`outcome=idle_no_endpoint` on each tick (see [Monitoring](../../monitoring.md#the-tick-line)),
+`outcome=idle_no_endpoint` on each tick (see [Monitoring the traffic shaper](../../traffic-shaper-monitoring.md#the-tick-line)),
 and starts polling as soon as one appears.
 
 **Using pod discovery without `base_url`:** after a daemon restart or host
