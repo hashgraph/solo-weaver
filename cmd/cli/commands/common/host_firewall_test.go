@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -310,7 +311,11 @@ func TestWarnIfLegacyInClusterPorts(t *testing.T) {
 		{"invalid port", []int{6443, 0}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			state.TakeWarnings()
 			assert.Equal(t, tc.want, warnIfLegacyInClusterPorts(tc.ports))
+			// The log reaches only the log file in the interactive mode, so the
+			// operator sees the warning through the command's summary.
+			assert.Equal(t, tc.want, len(state.TakeWarnings()) == 1)
 		})
 	}
 }

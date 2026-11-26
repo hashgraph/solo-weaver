@@ -134,11 +134,21 @@ func TestRecordedNodeExporterPortMigration_InvalidRecordedPortWarns(t *testing.T
 	dir := newRecordedPortHost(t)
 	writeRecordedFirewall(t, dir, &HostFirewallState{InClusterPorts: []int{6443, 0}})
 	m := NewRecordedNodeExporterPortMigration()
+	TakeWarnings()
 
 	require.NoError(t, m.Execute(context.Background(), nil))
 
 	assert.Equal(t, []int{6443, 0}, readRecordedFirewall(t, dir).InClusterPorts)
 	assert.False(t, m.added)
+	requireRecordedPortWarning(t)
+}
+
+// requireRecordedPortWarning checks the warning the command's summary shows.
+func requireRecordedPortWarning(t *testing.T) {
+	t.Helper()
+	got := TakeWarnings()
+	require.Len(t, got, 1)
+	require.Contains(t, got[0], "network firewall add --in-cluster-port 9100")
 }
 
 // A command that holds the firewall record past the wait makes the migration
@@ -153,9 +163,11 @@ func TestRecordedNodeExporterPortMigration_HeldLockWarns(t *testing.T) {
 	release, err := AcquireComponentLocks(dir, []ComponentID{ComponentFirewall}, 0)
 	require.NoError(t, err)
 	m := NewRecordedNodeExporterPortMigration()
+	TakeWarnings()
 	require.NoError(t, m.Execute(context.Background(), nil))
 	release()
 
 	assert.Equal(t, []int{6443, 4244, 7472, 10250}, readRecordedFirewall(t, dir).InClusterPorts)
 	assert.False(t, m.added, "nothing was written, so Rollback must not remove anything")
+	requireRecordedPortWarning(t)
 }

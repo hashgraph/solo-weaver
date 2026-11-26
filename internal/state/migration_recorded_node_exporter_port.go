@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -77,9 +78,10 @@ func (m *RecordedNodeExporterPortMigration) Execute(_ context.Context, _ *migrat
 		return false, nil
 	})
 	if err != nil {
-		logx.As().Warn().Err(err).Int("port", models.NodeExporterPort).
-			Msg("could not add node-exporter's port to the recorded host-firewall config; if the firewall is re-created " +
-				"from that record, open the port with `solo-provisioner network firewall add --in-cluster-port 9100`")
+		msg := "Could not add node-exporter's port 9100 to the recorded host-firewall config: " + doctor.OperatorMessage(err) +
+			". If the firewall is re-created from that record, run `solo-provisioner network firewall add --in-cluster-port 9100`"
+		logx.As().Warn().Err(err).Msg(msg)
+		addWarning(msg)
 		return nil
 	}
 	m.added = appended

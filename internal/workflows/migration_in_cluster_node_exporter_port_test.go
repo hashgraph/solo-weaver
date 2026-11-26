@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,9 +124,11 @@ func TestInClusterNodeExporterPortMigration_AddsPort(t *testing.T) {
 	h := newInClusterHost(t)
 	h.createFirewall(t, legacyPortSpecs...)
 
+	state.TakeWarnings()
 	runInClusterMigration(t)
 
 	assert.Equal(t, []string{"4244", "6443", "7472", "9100", "10250"}, h.firewallPorts(t))
+	requireOperatorWarning(t, false)
 	nft, err := os.ReadFile(h.nft)
 	require.NoError(t, err)
 	assert.Contains(t, string(nft), "elements = { 4244, 6443, 7472, 9100, 10250 }")
@@ -150,21 +153,38 @@ func TestInClusterNodeExporterPortMigration_LeavesListAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		ports []string
+		// warns: only a narrowed list leaves the operator something to do.
+		warns bool
 	}{
-		{"narrowed", []string{"6443", "10250"}},
-		{"port inside a range", []string{"4244", "6443", "7472", "9000-9200", "10250"}},
-		{"no ports", []string{}},
+		{"narrowed", []string{"6443", "10250"}, true},
+		{"port inside a range", []string{"4244", "6443", "7472", "9000-9200", "10250"}, false},
+		{"no ports", []string{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newInClusterHost(t)
 			h.createFirewall(t, tc.ports...)
+			state.TakeWarnings()
 
 			runInClusterMigration(t)
 
 			assert.Equal(t, tc.ports, h.firewallPorts(t))
 			assert.Equal(t, 0, h.applies, "an untouched firewall must not be re-applied")
+			requireOperatorWarning(t, tc.warns)
 		})
 	}
+}
+
+// requireOperatorWarning checks the warning the command's summary shows: the
+// log reaches only the log file in the interactive mode.
+func requireOperatorWarning(t *testing.T, want bool) {
+	t.Helper()
+	got := state.TakeWarnings()
+	if !want {
+		require.Empty(t, got)
+		return
+	}
+	require.Len(t, got, 1)
+	require.Contains(t, got[0], "network firewall add --in-cluster-port 9100")
 }
 
 func TestInClusterNodeExporterPortMigration_NoFirewall(t *testing.T) {
@@ -182,9 +202,11 @@ func TestInClusterNodeExporterPortMigration_RefusedApplyChangesNothing(t *testin
 	h := newInClusterHost(t)
 	h.createFirewall(t, legacyPortSpecs...)
 	h.runner.checkErr = errors.New("nft refused the ruleset")
+	state.TakeWarnings()
 
 	runInClusterMigration(t)
 
 	assert.Equal(t, legacyPortSpecs, h.firewallPorts(t))
 	assert.Equal(t, 0, h.applies)
+	requireOperatorWarning(t, true)
 }

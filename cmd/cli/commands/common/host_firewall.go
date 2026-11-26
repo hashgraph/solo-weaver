@@ -4,6 +4,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -249,10 +250,11 @@ func warnIfLegacyInClusterPorts(ports []int) bool {
 	if err != nil || v != firewall.NodeExporterPortAdd {
 		return false
 	}
-	logx.As().Warn().Ints("inClusterPorts", ports).Msgf(
-		"the in-cluster ports lack node-exporter's port %d, so with the host firewall on Alloy cannot scrape "+
-			"host metrics; add it to --%s or host.inClusterPorts in the config file",
-		models.NodeExporterPort, FlagNameInClusterPorts)
+	msg := fmt.Sprintf("The in-cluster ports %v lack node-exporter's port %d, so with the host firewall on Alloy cannot "+
+		"scrape host metrics. Add it to --%s, or to host.inClusterPorts in the config file",
+		ports, models.NodeExporterPort, FlagNameInClusterPorts)
+	logx.As().Warn().Msg(msg)
+	state.AddWarning(msg)
 	return true
 }
 

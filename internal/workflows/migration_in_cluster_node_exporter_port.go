@@ -17,8 +17,10 @@ import (
 	"strconv"
 
 	"github.com/automa-saga/logx"
+	"github.com/hashgraph/solo-weaver/internal/doctor"
 	"github.com/hashgraph/solo-weaver/internal/migration"
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 )
 
@@ -66,48 +68,57 @@ func (m *InClusterNodeExporterPortMigration) Applies(mctx *migration.Context) (b
 // still runs every other command.
 func (m *InClusterNodeExporterPortMigration) Execute(ctx context.Context, _ *migration.Context) error {
 	port := strconv.Itoa(models.NodeExporterPort)
-	manual := "to open it, run `solo-provisioner network firewall add --in-cluster-port " + port + "`"
-	l := logx.As()
+	// warn also records an operator warning: in the interactive mode, the log
+	// reaches only the log file.
+	warn := func(err error, problem string) {
+		ev := logx.As().Warn()
+		msg := problem
+		if err != nil {
+			ev = ev.Err(err)
+			msg += ": " + doctor.OperatorMessage(err)
+		}
+		msg += ". Alloy cannot scrape host metrics while the host firewall is on. To open the port, run " +
+			"`solo-provisioner network firewall add --in-cluster-port " + port + "`"
+		ev.Msg(msg)
+		state.AddWarning(msg)
+	}
 
 	mgr := inClusterPortFirewallManager()
 	configured, err := mgr.Configured()
 	if err != nil {
-		l.Warn().Err(err).Msg("in-cluster node-exporter port migration: could not check for a host firewall; skipping — " + manual)
+		warn(err, "Could not check this host for a host firewall, so node-exporter's port "+port+" was not opened")
 		return nil
 	}
 	if !configured {
-		l.Debug().Msg("in-cluster node-exporter port migration: no host firewall on this host")
+		logx.As().Debug().Msg("in-cluster node-exporter port migration: no host firewall on this host")
 		return nil
 	}
 	t, err := mgr.Table(ctx)
 	if err != nil {
-		l.Warn().Err(err).Msg("in-cluster node-exporter port migration: could not load the host firewall; skipping — " + manual)
+		warn(err, "Could not load the host firewall, so node-exporter's port "+port+" was not opened")
 		return nil
 	}
 	verdict, err := firewall.VerdictForNodeExporterPort(t.InCluster.Ports)
 	if err != nil {
-		l.Warn().Err(err).Msg("in-cluster node-exporter port migration: the host firewall's in-cluster ports do not parse; skipping — " + manual)
+		warn(err, "The host firewall's in-cluster ports do not parse, so node-exporter's port "+port+" was not opened")
 		return nil
 	}
 
 	switch verdict {
 	case firewall.NodeExporterPortAdd:
 	case firewall.NodeExporterPortNarrowed:
-		l.Warn().Strs("inClusterPorts", t.InCluster.Ports).
-			Msg("in-cluster node-exporter port migration: the host firewall's in-cluster ports were narrowed from the " +
-				"defaults, so node-exporter's port was not added and Alloy cannot scrape host metrics — " + manual)
+		warn(nil, "The host firewall's in-cluster ports were narrowed from the defaults, so node-exporter's port "+port+" was not opened")
 		return nil
 	default:
-		l.Debug().Strs("inClusterPorts", t.InCluster.Ports).Msg("in-cluster node-exporter port migration: nothing to add")
+		logx.As().Debug().Strs("inClusterPorts", t.InCluster.Ports).Msg("in-cluster node-exporter port migration: nothing to add")
 		return nil
 	}
 
 	if err := mgr.Add(ctx, firewall.RuleInCluster, nil, []string{port}); err != nil {
-		l.Warn().Err(err).Msg("in-cluster node-exporter port migration: could not open node-exporter's port to the pod CIDR; " +
-			"Alloy cannot scrape host metrics while the host firewall is on — " + manual)
+		warn(err, "Could not open node-exporter's port "+port+" in the host firewall")
 		return nil
 	}
-	l.Info().Str("port", port).Msg("Opened node-exporter's port to the pod CIDR in the host firewall")
+	logx.As().Info().Str("port", port).Msg("Opened node-exporter's port to the pod CIDR in the host firewall")
 	return nil
 }
 
