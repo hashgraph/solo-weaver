@@ -13,6 +13,7 @@ Every `solo-provisioner` command, by stack.
 | `consensus node` | [below](#consensus-node) | Install and uninstall a consensus node (experimental) |
 | `consensus migration soak` | [below](#consensus-migration-soak) | Consensus-node migration soak watcher |
 | `diagnose logs` | [below](#diagnose-logs) | Read, follow and filter the CLI and daemon logs |
+| `feature-gate` | [below](#utilities) | List feature gates and their maturity |
 | `version` | [below](#utilities) | Version information |
 
 Also useful:
@@ -119,6 +120,8 @@ solo-provisioner diagnose logs --last-error [--source=cli|daemon|all] [--since=<
 
 # UTILITIES
 solo-provisioner version [--output=text|json]
+solo-provisioner feature-gate [list] [--activation-version=<n>] [--maturity=alpha|beta|ga|deprecated]
+                                     [--enabled[=false]] [--output=text|json]
 solo-provisioner --help
 ```
 
@@ -647,6 +650,23 @@ solo-provisioner version --output=json
 # Short flag
 solo-provisioner -v
 ```
+
+### Feature gates
+
+```bash
+solo-provisioner feature-gate list
+solo-provisioner feature-gate list --maturity=alpha --output=json
+```
+
+Lists each feature gate with its maturity, the activation version it turns on at, whether it is
+enabled, and a description. For ALPHA features it also prints the opt-in env var. Read-only; runs
+without `sudo`. The root `--help` footer shows the current activation version.
+
+| Flag | Description |
+|---|---|
+| `--activation-version` | Show only features that activate at this activation version (0 = all). |
+| `--maturity` | Show only features with this maturity (alpha\|beta\|ga\|deprecated). |
+| `--enabled` | Show only enabled features; `--enabled=false` shows only disabled. |
 
 Help is available at every level of the command tree:
 

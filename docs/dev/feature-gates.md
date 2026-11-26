@@ -369,10 +369,11 @@ returns its `Default`), and only a ready feature is forced on via a scoped overr
 A raw gatekit override still wins unconditionally, but solo exposes that only as the
 internal `Options.Overrides` seam (tests/programmatic forcing), never to operators.
 
-**One gate per invocation.** The command gate resolves these opt-ins once, builds a
-`*gatekit.FeatureGate`, and stores it on the command context. Business code reads the
-same gate with `featuregate.Gate(ctx)` — never its own `NewDefault()` — so command
-availability and in-code behaviour are a single decision.
+**One decision per invocation.** Each command gate adds its readiness-checked opt-in to
+the overrides on the command context (stacked and nested gates accumulate rather than
+replace). Business code calls `featuregate.Gate(ctx)`, which builds the gate from those
+overrides plus the env opt-ins — never its own `NewDefault()` — so command availability
+and in-code behaviour resolve identically.
 
 > **Code-path gates in GA commands under `sudo`.** A GA command doesn't get
 > `--experimental` from `GateFeature` (it isn't maturity-gated), so to turn on a code-path

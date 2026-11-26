@@ -230,3 +230,143 @@ func TestGateFeatureFlag_PersistentFlagEnforcedOnSubcommand(t *testing.T) {
 	require.NoError(t, parent.Execute())
 	require.True(t, ran)
 }
+
+// Test features covering maturities the live catalog doesn't have yet.
+const (
+	testBeta    gatekit.Feature = "TestBeta"
+	testGA      gatekit.Feature = "TestGA"
+	testDormant gatekit.Feature = "TestDormant"
+)
+
+func useMaturityCatalog(t *testing.T) {
+	t.Helper()
+	prevM, prevR := maturityOf, experimentalReady
+	t.Cleanup(func() { maturityOf, experimentalReady = prevM, prevR })
+	maturityOf = func(f gatekit.Feature) gatekit.Maturity {
+		switch f {
+		case testBeta:
+			return gatekit.Beta
+		case testGA:
+			return gatekit.GA
+		case testDormant:
+			return gatekit.Alpha
+		}
+		return prevM(f)
+	}
+	experimentalReady = func(f gatekit.Feature) (bool, error) {
+		if f == testDormant {
+			return false, nil // unfinished: no opt-in can enable it
+		}
+		return prevR(f)
+	}
+}
+
+func noopPreRun() func(*cobra.Command, []string) error {
+	return func(*cobra.Command, []string) error { return nil }
+}
+
+// BETA is labelled and visible and runs with no opt-in; GA is untouched and runs.
+func TestGateFeature_BetaAndGARunWithoutOptIn(t *testing.T) {
+	useMaturityCatalog(t)
+
+	beta := &cobra.Command{Use: "b", Short: "Beta cmd", PersistentPreRunE: noopPreRun()}
+	GateFeature(beta, testBeta)
+	require.False(t, beta.Hidden)
+	require.Contains(t, beta.Short, "[beta]")
+	require.NoError(t, beta.PersistentPreRunE(beta, nil))
+
+	ga := &cobra.Command{Use: "g", Short: "GA cmd", PersistentPreRunE: noopPreRun()}
+	GateFeature(ga, testGA)
+	require.False(t, ga.Hidden)
+	require.Equal(t, "GA cmd", ga.Short)
+	require.NoError(t, ga.PersistentPreRunE(ga, nil))
+}
+
+// A dormant alpha cannot be enabled by --experimental.
+func TestGateFeature_DormantRefusedEvenWithOptIn(t *testing.T) {
+	useMaturityCatalog(t)
+	cmd := &cobra.Command{Use: "d", PersistentPreRunE: noopPreRun()}
+	GateFeature(cmd, testDormant)
+
+	require.NoError(t, cmd.ParseFlags([]string{"--" + experimentalFlagName}))
+	err := cmd.PersistentPreRunE(cmd, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be enabled yet")
+}
+
+// Re-gating a command must not double its label.
+func TestGateFeature_LabelIsIdempotent(t *testing.T) {
+	useMaturityCatalog(t)
+	cmd := &cobra.Command{Use: "b", Short: "Beta cmd"}
+	GateFeature(cmd, testBeta)
+	GateFeature(cmd, testBeta)
+	require.Equal(t, "Beta cmd [beta]", cmd.Short)
+
+	cmd.Flags().String("thing", "", "do a thing")
+	GateFeatureFlag(cmd, "thing", testBeta)
+	GateFeatureFlag(cmd, "thing", testBeta)
+	require.Equal(t, "do a thing [beta]", cmd.Flags().Lookup("thing").Usage)
+}
+
+// A BETA flag is labelled but stays visible and usable without opt-in.
+func TestGateFeatureFlag_BetaLabelledAndAllowed(t *testing.T) {
+	useMaturityCatalog(t)
+	cmd := &cobra.Command{Use: "demo"}
+	cmd.Flags().String("thing", "", "do a thing")
+	GateFeatureFlag(cmd, "thing", testBeta)
+
+	fl := cmd.Flags().Lookup("thing")
+	require.False(t, fl.Hidden)
+	require.Contains(t, fl.Usage, "[beta]")
+	require.NoError(t, cmd.Flags().Set("thing", "x"))
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+}
+
+// A dormant alpha flag is refused when set, even with --experimental.
+func TestGateFeatureFlag_DormantRefusedWhenSet(t *testing.T) {
+	useMaturityCatalog(t)
+	cmd := &cobra.Command{Use: "demo"}
+	cmd.Flags().String("thing", "", "do a thing")
+	GateFeatureFlag(cmd, "thing", testDormant)
+
+	require.NoError(t, cmd.Flags().Set("thing", "x"))
+	require.NoError(t, cmd.PersistentFlags().Set(experimentalFlagName, "true"))
+	require.Error(t, cmd.PreRunE(cmd, nil))
+}
+
+// Three levels via Execute: group gate -> child GateBehavior -> grandchild persistent
+// flag gate. No level may shadow another; --experimental opens all of them.
+func TestNestedGates_ThreeLevelsViaExecute(t *testing.T) {
+	root := &cobra.Command{Use: "root", PersistentPreRunE: noopPreRun()}
+	group := &cobra.Command{Use: "group"}
+	GateFeature(group, featuregate.ConsensusNodeOperatorManaged)
+	child := &cobra.Command{Use: "child"}
+	GateBehavior(child, featuregate.KubeClusterUpgrade)
+	ran := false
+	leaf := &cobra.Command{Use: "leaf", RunE: func(c *cobra.Command, _ []string) error {
+		ran = true
+		g, err := featuregate.Gate(c.Context())
+		require.NoError(t, err)
+		require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged))
+		require.True(t, g.Enabled(featuregate.KubeClusterUpgrade))
+		return nil
+	}}
+	leaf.Flags().String("thing", "", "do a thing")
+	GateFeatureFlag(leaf, "thing", featuregate.KubeClusterUpgrade)
+	root.AddCommand(group)
+	group.AddCommand(child)
+	child.AddCommand(leaf)
+	root.SilenceErrors, root.SilenceUsage = true, true
+
+	root.SetArgs([]string{"group", "child", "leaf"})
+	require.Error(t, root.Execute(), "group gate must refuse without opt-in")
+	require.False(t, ran)
+
+	root.SetArgs([]string{"group", "child", "leaf", "--thing", "x"})
+	require.Error(t, root.Execute())
+	require.False(t, ran)
+
+	root.SetArgs([]string{"group", "child", "leaf", "--thing", "x", "--experimental"})
+	require.NoError(t, root.Execute())
+	require.True(t, ran)
+}

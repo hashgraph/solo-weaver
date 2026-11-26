@@ -18,6 +18,12 @@ import (
 // command's feature only if it is ready (see featuregate.ExperimentalReady).
 const experimentalFlagName = "experimental"
 
+// Seams so tests can exercise BETA/GA/dormant paths the live catalog doesn't have.
+var (
+	maturityOf        = featuregate.MaturityOf
+	experimentalReady = featuregate.ExperimentalReady
+)
+
 // GateFeature gates a command by its feature's maturity: an ALPHA command is hidden
 // from --help and refuses to run unless the operator opts in (--experimental or
 // SOLO_PROVISIONER_ENABLE_<FEATURE>) and the feature is ready; a BETA command is
@@ -26,12 +32,12 @@ const experimentalFlagName = "experimental"
 // discoverable via `solo-provisioner feature-gate list`.
 func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 	// Label / hide the command by its maturity (static, registry-derived).
-	switch featuregate.MaturityOf(f) {
+	switch maturityOf(f) {
 	case gatekit.Alpha:
-		cmd.Short = strings.TrimSpace(cmd.Short) + " [alpha]"
+		cmd.Short = withLabel(cmd.Short, "[alpha]")
 		cmd.Hidden = true
 	case gatekit.Beta:
-		cmd.Short = strings.TrimSpace(cmd.Short) + " [beta]"
+		cmd.Short = withLabel(cmd.Short, "[beta]")
 	case "":
 		// Uncatalogued feature (a wiring bug): hide the command; requireFeatureEnabled
 		// refuses it at run time so it never ships open.
@@ -42,6 +48,15 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 	chainPersistentPreRunE(cmd, func(c *cobra.Command, _ []string) error {
 		return requireFeatureEnabled(c, f)
 	})
+}
+
+// withLabel appends label to s once, so re-gating a command doesn't double it.
+func withLabel(s, label string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, label) {
+		return s
+	}
+	return s + " " + label
 }
 
 // GateFeatureFlag gates a single flag (not the whole command) by its feature's
@@ -71,12 +86,12 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 
 	installExperimentalFlag(cmd)
 
-	switch featuregate.MaturityOf(f) {
+	switch maturityOf(f) {
 	case gatekit.Alpha:
 		flag.Hidden = true
-		flag.Usage = strings.TrimSpace(flag.Usage) + " [alpha]"
+		flag.Usage = withLabel(flag.Usage, "[alpha]")
 	case gatekit.Beta:
-		flag.Usage = strings.TrimSpace(flag.Usage) + " [beta]"
+		flag.Usage = withLabel(flag.Usage, "[beta]")
 	}
 
 	// enforce refuses the flag unless opted in — but only when the flag was set.
@@ -174,7 +189,7 @@ func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 	}
 	// Validate the wiring on every run (fail closed), independent of --experimental.
 	for _, f := range features {
-		if featuregate.MaturityOf(f) == "" {
+		if maturityOf(f) == "" {
 			return errx.Decorate(
 				errorx.IllegalState.New("feature %q is gated but not registered in the catalog", f),
 				reasons.Internal,
@@ -185,7 +200,7 @@ func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental {
 		overrides := make(map[gatekit.Feature]bool, len(features))
 		for _, f := range features {
-			ready, err := featuregate.ExperimentalReady(f)
+			ready, err := experimentalReady(f)
 			if err != nil {
 				return err
 			}
@@ -204,7 +219,7 @@ func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 // opt-in on the command context so business code (featuregate.Gate(ctx)) resolves the
 // feature the same way.
 func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
-	maturity := featuregate.MaturityOf(f)
+	maturity := maturityOf(f)
 	if maturity == "" {
 		// Wiring bug: a command is gated on a feature that is not in the catalog. Fail
 		// closed so it never runs open (the command is also hidden by GateFeature).
@@ -219,7 +234,7 @@ func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 	}
 
 	// --experimental only enables a ready alpha; for a dormant one it is dropped.
-	ready, err := featuregate.ExperimentalReady(f)
+	ready, err := experimentalReady(f)
 	if err != nil {
 		return err
 	}

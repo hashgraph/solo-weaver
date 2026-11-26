@@ -64,7 +64,11 @@ func envFeatureRequests() (map[gatekit.Feature]bool, error) {
 		}
 		b, err := strconv.ParseBool(val)
 		if err != nil {
-			return nil, errorx.IllegalFormat.Wrap(err, "featuregate: opt-in env var %q has non-boolean value %q", name, val)
+			return nil, errx.Decorate(
+				errorx.IllegalFormat.Wrap(err, "opt-in env var %q has non-boolean value %q", name, val),
+				reasons.InvalidArgument,
+				"A SOLO_PROVISIONER_ENABLE_* variable must be a boolean.",
+				fmt.Sprintf("Set %s to 1/true or 0/false, or unset it.", name))
 		}
 		out[f] = b
 	}

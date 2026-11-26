@@ -2,8 +2,8 @@
 
 // Package feature implements the operator-facing `feature-gate` command: a read-only
 // listing of solo-provisioner's gatekit feature-gate catalog and each gate's maturity,
-// activation point, and current state. It is a pure reader of internal/featuregate — it
-// hides and gates nothing (that is #1392).
+// activation point, and current state. It is a pure reader of internal/featuregate;
+// hiding and gating commands lives in cmd/cli/commands/common (GateFeature).
 package feature
 
 import (
@@ -13,9 +13,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/automa-saga/errx"
 	gatekit "github.com/automa-saga/gatekit"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/featuregate"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 )
@@ -66,8 +68,11 @@ func readFilters(cmd *cobra.Command) (filters, error) {
 	if m, _ := cmd.Flags().GetString("maturity"); m != "" {
 		up := strings.ToUpper(m)
 		if !knownMaturities[up] {
-			return f, errorx.IllegalArgument.New(
-				"unknown maturity %q (want alpha, beta, ga, or deprecated)", m)
+			return f, errx.Decorate(
+				errorx.IllegalArgument.New("unknown maturity %q", m),
+				reasons.InvalidArgument,
+				"--maturity must be one of the known maturities.",
+				"Use --maturity=alpha, beta, ga or deprecated.")
 		}
 		f.maturity = up
 	}
@@ -154,7 +159,7 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case "json":
 		out, mErr := json.MarshalIndent(data, "", "  ")
 		if mErr != nil {
-			return mErr
+			return errx.Decorate(errorx.InternalError.Wrap(mErr, "marshal feature listing"), reasons.Internal)
 		}
 		// Write to stdout, not stderr: cobra's cmd.Print* use OutOrStderr, which
 		// would break `feature-gate list -o json | jq`.
@@ -162,7 +167,11 @@ func runList(cmd *cobra.Command, _ []string) error {
 	case "", "text":
 		fmt.Fprint(cmd.OutOrStdout(), render(data))
 	default:
-		return errorx.IllegalFormat.New("unsupported format %q (want text or json)", format)
+		return errx.Decorate(
+			errorx.IllegalFormat.New("unsupported format %q", format),
+			reasons.InvalidArgument,
+			"--output must be text or json.",
+			"Use --output=text or --output=json.")
 	}
 	return nil
 }

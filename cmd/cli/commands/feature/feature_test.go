@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/stretchr/testify/require"
@@ -132,4 +133,27 @@ func TestGetCmd_SkipsGlobalChecksOnSubtree(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		require.False(t, common.RequireGlobalChecks(sub), "subcommand %q must skip global checks", sub.Name())
 	}
+}
+
+// Operator-facing errors carry a reason and a hint.
+func TestList_ErrorsAreDecorated(t *testing.T) {
+	cmd := GetCmd()
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("output", "yaml"))
+	err := cmd.RunE(cmd, nil)
+	require.Error(t, err)
+	_, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.NotEmpty(t, hints)
+
+	cmd2 := GetCmd()
+	cmd2.SetArgs([]string{"list", "--maturity", "bogus"})
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	err = cmd2.Execute()
+	require.Error(t, err)
+	_, ok = errx.ReasonOf(err)
+	require.True(t, ok)
 }

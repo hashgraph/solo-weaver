@@ -9,6 +9,7 @@ import (
 	"github.com/automa-saga/errx"
 	gatekit "github.com/automa-saga/gatekit"
 	"github.com/hashgraph/solo-weaver/internal/featuregate"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,4 +69,18 @@ func TestEnvOverride_RenamedVarHint(t *testing.T) {
 	hints, ok := errx.Hints(err)
 	require.True(t, ok)
 	require.Contains(t, strings.Join(hints, " "), "SOLO_PROVISIONER_ENABLE_KUBE_CLUSTER_UPGRADE")
+}
+
+// A non-boolean opt-in value fails with a reason and a hint naming the variable.
+func TestEnvOverride_NonBooleanErrorsWithHint(t *testing.T) {
+	name := featuregate.OverrideEnvVar(featuregate.KubeClusterUpgrade)
+	t.Setenv(name, "yes")
+	_, err := featuregate.NewDefault()
+	require.Error(t, err)
+	reason, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	require.Equal(t, reasons.InvalidArgument, reason)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.Contains(t, strings.Join(hints, " "), name)
 }
