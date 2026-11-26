@@ -3,10 +3,12 @@
 package featuregate
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -23,15 +25,10 @@ func TestNoOrphanFeatures(t *testing.T) {
 	root := moduleRoot(t)
 	selfPkg := filepath.Join(root, "internal", "featuregate")
 
-	// One word-boundaried matcher per feature; the constant name equals its string value.
-	type matcher struct {
-		name string
-		re   *regexp.Regexp
-	}
-	var matchers []matcher
+	// The constant name equals its string value.
+	names := map[string]bool{}
 	for f := range Catalog() {
-		n := string(f)
-		matchers = append(matchers, matcher{n, regexp.MustCompile(`featuregate\.` + regexp.QuoteMeta(n) + `\b`)})
+		names[string(f)] = true
 	}
 
 	seen := map[string]bool{}
@@ -55,10 +52,12 @@ func TestNoOrphanFeatures(t *testing.T) {
 			return err
 		}
 		scanned++
-		for _, m := range matchers {
-			if !seen[m.name] && m.re.Match(src) {
-				seen[m.name] = true
-			}
+		refs, err := referencedFeatures(path, src, names)
+		if err != nil {
+			return err
+		}
+		for n := range refs {
+			seen[n] = true
 		}
 		return nil
 	})
@@ -69,11 +68,11 @@ func TestNoOrphanFeatures(t *testing.T) {
 		t.Fatalf("scanned no .go files under %q — repo root resolution is wrong", root)
 	}
 
-	for _, m := range matchers {
-		if !seen[m.name] {
+	for n := range names {
+		if !seen[n] {
 			t.Errorf("feature %q is catalogued but has no reader in production code "+
 				"(no gate.Enabled / GateFeature / GateFeatureFlag reference) — if it is a stable "+
-				"capability, remove the gate (the contract step)", m.name)
+				"capability, remove the gate (the contract step)", n)
 		}
 	}
 }
@@ -95,5 +94,77 @@ func moduleRoot(t *testing.T) string {
 			t.Fatalf("go.mod not found above the working directory")
 		}
 		dir = parent
+	}
+}
+
+const featuregatePkgPath = "github.com/hashgraph/solo-weaver/internal/featuregate"
+
+// referencedFeatures returns the names in `names` that src references as
+// <featuregate>.<Name>, honouring however the file imports the package (default name or
+// an alias). Blank and dot imports are skipped: they cannot be read as selectors.
+func referencedFeatures(filename string, src []byte, names map[string]bool) (map[string]bool, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), filename, src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	local := ""
+	for _, imp := range f.Imports {
+		if imp.Path.Value != `"`+featuregatePkgPath+`"` {
+			continue
+		}
+		local = "featuregate"
+		if imp.Name != nil {
+			local = imp.Name.Name
+		}
+	}
+	found := map[string]bool{}
+	if local == "" || local == "_" || local == "." {
+		return found, nil
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == local && names[sel.Sel.Name] {
+			found[sel.Sel.Name] = true
+		}
+		return true
+	})
+	return found, nil
+}
+
+func TestReferencedFeatures_HonoursImportAlias(t *testing.T) {
+	names := map[string]bool{"Alpha": true, "Beta": true, "Gamma": true}
+	const body = `package p
+import %s "` + featuregatePkgPath + `"
+func f() { _ = %s.Alpha; _ = other.Beta }
+`
+	cases := []struct {
+		name, imp, use string
+		want           []string
+	}{
+		{"default name", "", "featuregate", []string{"Alpha"}},
+		{"alias", "fg", "fg", []string{"Alpha"}},
+		{"blank import", "_", "featuregate", nil},
+		{"unrelated selector is ignored", "fg", "featuregate", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(strings.NewReplacer("%s.Alpha", tc.use+".Alpha").Replace(
+				strings.Replace(body, "import %s", "import "+tc.imp, 1)))
+			got, err := referencedFeatures("x.go", src, names)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for _, w := range tc.want {
+				if !got[w] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }
