@@ -7,6 +7,7 @@ package blocknode
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,13 @@ type pollFakeDelegator struct {
 	// context's cancel to get exactly one entry reconcile: the loop finishes the
 	// tick and then exits on ctx.Done, all on the calling goroutine.
 	onApply func()
+	// onCheck runs inside ReconcileShaperCheck with the 1-based call number,
+	// before it returns.
+	onCheck func(n int32)
+
+	// desiredCounts and withheld are returned on every successful check.
+	desiredCounts map[string]int
+	withheld      []string
 
 	checkCalls atomic.Int32
 	applyCalls atomic.Int32
@@ -78,20 +86,24 @@ func (f *pollFakeDelegator) ReconcileShaperCheck(ctx context.Context, url string
 		<-ctx.Done()
 		return privexec.ReconcileShaperCheckResult{}, ctx.Err()
 	}
+	if f.onCheck != nil {
+		f.onCheck(n)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastURL = url
 	if f.checkErr != nil {
 		return privexec.ReconcileShaperCheckResult{}, f.checkErr
 	}
-	if len(f.digests) == 0 {
-		return privexec.ReconcileShaperCheckResult{}, nil
+	res := privexec.ReconcileShaperCheckResult{DesiredCounts: f.desiredCounts, Withheld: f.withheld}
+	if len(f.digests) > 0 {
+		idx := int(n - 1)
+		if idx >= len(f.digests) {
+			idx = len(f.digests) - 1 // hold the last scripted digest
+		}
+		res.Digest = f.digests[idx]
 	}
-	idx := int(n - 1)
-	if idx >= len(f.digests) {
-		idx = len(f.digests) - 1 // hold the last scripted digest
-	}
-	return privexec.ReconcileShaperCheckResult{Digest: f.digests[idx]}, nil
+	return res, nil
 }
 
 func (f *pollFakeDelegator) ReconcileShaper(_ context.Context, url string) (privexec.ReconcileShaperResult, error) {
@@ -435,6 +447,177 @@ func TestRunStatuszPoll_CancelMidExecReturnsNil(t *testing.T) {
 		t.Fatal("runStatuszPoll did not return after ctx cancellation")
 	}
 	require.Zero(t, d.applyCalls.Load(), "apply must not run when the check was cancelled")
+}
+
+// logLines decodes the captured NDJSON and returns the lines whose reason is
+// reason, in order.
+func logLines(t *testing.T, buf *bytes.Buffer, reason string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
+	for dec.More() {
+		var line map[string]any
+		require.NoError(t, dec.Decode(&line))
+		if line["reason"] == reason {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// runTwoTicks runs the entry reconcile plus one more, woken by a pre-buffered
+// urlChanged signal, and returns once the loop exits. The second check cancels
+// the context, so both ticks run on this goroutine and the log buffer has one
+// writer. The interval is unreachable so the ticker can't add a third.
+func runTwoTicks(t *testing.T, d *pollFakeDelegator) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.onCheck = func(n int32) {
+		if n == 2 {
+			cancel()
+		}
+	}
+	m := newPollMonitor(d, "http://127.0.0.1:8080", time.Hour)
+	m.urlChanged <- struct{}{}
+	require.NoError(t, m.runStatuszPoll(ctx))
+	require.Equal(t, int32(2), d.checkCalls.Load())
+}
+
+func TestStatuszTick_IdleLogsIdleNoEndpoint(t *testing.T) {
+	buf := captureLogs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the entry reconcile still runs; the loop then exits at its select
+
+	d := &pollFakeDelegator{}
+	require.NoError(t, newPollMonitor(d, "", time.Hour).runStatuszPoll(ctx))
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 1)
+	require.Equal(t, "info", ticks[0]["level"])
+	require.Equal(t, "idle_no_endpoint", ticks[0]["outcome"])
+	require.Equal(t, "", ticks[0]["statusz_url"])
+	require.NotContains(t, ticks[0], "withheld", "no check ran")
+	require.Zero(t, d.checkCalls.Load())
+}
+
+func TestStatuszTick_AppliedCarriesSortedCountsAndWithheld(t *testing.T) {
+	buf := captureLogs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	d := &pollFakeDelegator{
+		digests:       []string{"D1"},
+		desiredCounts: map[string]int{"bn-restricted": 2, "bn-publisher": 0, "bn-backfill": 1},
+		withheld:      []string{"bn-partner-out"},
+		onApply:       cancel,
+	}
+	require.NoError(t, newPollMonitor(d, "http://127.0.0.1:8080", time.Hour).runStatuszPoll(ctx))
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 1)
+	tick := ticks[0]
+	require.Equal(t, "applied", tick["outcome"])
+	require.Equal(t, "http://127.0.0.1:8080", tick["statusz_url"])
+	require.EqualValues(t, 0, tick["desired_bn_publisher"], "an empty policy logs 0, not a missing field")
+	require.EqualValues(t, 2, tick["desired_bn_restricted"])
+	require.EqualValues(t, 1, tick["desired_bn_backfill"])
+	require.NotContains(t, tick, "desired_bn_partner_out", "a withheld policy has no count")
+	require.Equal(t, "bn-partner-out", tick["withheld"])
+	require.NotContains(t, tick, "error")
+
+	require.Contains(t, buf.String(),
+		`"desired_bn_backfill":1,"desired_bn_publisher":0,"desired_bn_restricted":2`,
+		"counts are emitted in sorted policy order")
+}
+
+func TestStatuszTick_UnchangedDigestLogsUnchanged(t *testing.T) {
+	restore := statuszForceResyncInterval
+	statuszForceResyncInterval = time.Hour
+	t.Cleanup(func() { statuszForceResyncInterval = restore })
+	buf := captureLogs(t)
+
+	d := &pollFakeDelegator{digests: []string{"D1"}, withheld: []string{}}
+	runTwoTicks(t, d)
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 2)
+	require.Equal(t, "applied", ticks[0]["outcome"])
+	require.Equal(t, "unchanged", ticks[1]["outcome"])
+	require.Equal(t, "", ticks[1]["withheld"], "an empty withheld list is logged, not dropped")
+	require.Equal(t, int32(1), d.applyCalls.Load())
+}
+
+func TestStatuszTick_CheckFailureLogsFailedWithoutCounts(t *testing.T) {
+	buf := captureLogs(t)
+	sentinel := errors.New("statusz unreachable")
+	d := &pollFakeDelegator{checkErr: sentinel, desiredCounts: map[string]int{"bn-publisher": 3}}
+
+	err := newPollMonitor(d, "http://127.0.0.1:8080", time.Hour).runStatuszPoll(context.Background())
+	require.ErrorIs(t, err, sentinel, "the fault still reaches the supervisor")
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 1)
+	require.Equal(t, "failed", ticks[0]["outcome"])
+	require.Equal(t, "statusz unreachable", ticks[0]["error"])
+	require.NotContains(t, ticks[0], "desired_bn_publisher", "no check result, so no counts")
+}
+
+func TestStatuszTick_ApplyFailureLogsFailedWithCounts(t *testing.T) {
+	buf := captureLogs(t)
+	sentinel := errors.New("nft: operation not permitted")
+	d := &pollFakeDelegator{
+		digests:       []string{"D1"},
+		desiredCounts: map[string]int{"bn-publisher": 3},
+		withheld:      []string{},
+		applyErr:      sentinel,
+	}
+
+	err := newPollMonitor(d, "http://127.0.0.1:8080", time.Hour).runStatuszPoll(context.Background())
+	require.ErrorIs(t, err, sentinel)
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 1)
+	require.Equal(t, "failed", ticks[0]["outcome"])
+	require.Equal(t, "nft: operation not permitted", ticks[0]["error"])
+	require.EqualValues(t, 3, ticks[0]["desired_bn_publisher"], "the check succeeded, so its counts are known")
+}
+
+func TestStatuszTick_CancelMidExecLogsNoFailedTick(t *testing.T) {
+	buf := captureLogs(t)
+	d := &pollFakeDelegator{blockUntilCancel: true}
+	m := newPollMonitor(d, "http://127.0.0.1:8080", time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- m.runStatuszPoll(ctx) }()
+	waitForCount(t, d.checkCalls.Load, 1)
+	cancel()
+	require.NoError(t, <-done)
+
+	require.Empty(t, logLines(t, buf, "TrafficShaperStatuszTick"), "a shutdown is not a failed tick")
+}
+
+func TestStatuszTick_OlderCLIWarnsOnceAndStillApplies(t *testing.T) {
+	restore := statuszForceResyncInterval
+	statuszForceResyncInterval = 0 // apply on both ticks
+	t.Cleanup(func() { statuszForceResyncInterval = restore })
+	buf := captureLogs(t)
+
+	d := &pollFakeDelegator{digests: []string{"D1"}, desiredCounts: map[string]int{"bn-publisher": 1}} // withheld nil
+	runTwoTicks(t, d)
+
+	ticks := logLines(t, buf, "TrafficShaperStatuszTick")
+	require.Len(t, ticks, 2)
+	for _, tick := range ticks {
+		require.Equal(t, "applied", tick["outcome"])
+		require.NotContains(t, tick, "withheld")
+		require.EqualValues(t, 1, tick["desired_bn_publisher"])
+	}
+	warns := logLines(t, buf, "TrafficShaperStatuszWithheldUnreported")
+	require.Len(t, warns, 1, "warn once per process, not per tick")
+	require.Equal(t, "warn", warns[0]["level"])
+	require.Equal(t, int32(2), d.applyCalls.Load(), "a missing withheld never blocks the apply")
 }
 
 // TestTrafficShaperMonitor_RunReturnsOnContextCancel verifies Run starts both

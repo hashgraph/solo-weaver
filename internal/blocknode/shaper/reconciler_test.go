@@ -294,6 +294,28 @@ func TestReconciler_Check_DigestsDesired(t *testing.T) {
 	require.Equal(t, membershipDigest(combinedCanonical(wantCanon, wantPorts)), result.Digest)
 	require.Equal(t, wantCanon, result.Desired)
 	require.Equal(t, wantPorts, result.DesiredPorts)
+	require.NotNil(t, result.Withheld, "both calls reported, so withheld is empty but present")
+	require.Empty(t, result.Withheld)
+}
+
+// An empty publisher roster on a call that reported other endpoints is a
+// present-and-empty set (apply clears it), not a withheld one.
+func TestReconciler_Check_EmptyCategoryOnReportedCallIsNotWithheld(t *testing.T) {
+	f := &fakeFetcher{
+		inbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("public", "10.50.0.9", "40840"),
+		}},
+		outbound: NetworkData{ActiveEndpoints: []NetworkConnection{
+			conn("partner", "10.30.5.7", "43473"),
+		}},
+	}
+
+	res, err := (&Reconciler{fetcher: f}).Check(context.Background())
+	require.NoError(t, err)
+
+	require.Contains(t, res.Desired, "bn-publisher")
+	assert.Empty(t, res.Desired["bn-publisher"])
+	assert.Empty(t, res.Withheld)
 }
 
 func TestReconciler_Check_DigestIgnoresSpellingEquivalence(t *testing.T) {
@@ -624,6 +646,8 @@ func TestReconciler_Check_UnreportedCallLeavesItsSetsOutOfDesired(t *testing.T) 
 	assert.Equal(t, map[string][]string{"bn-backfill": {"10.30.5.7 . 43473"}}, res.Desired)
 	assert.Empty(t, res.DesiredPorts, "every managed-ports set rides on the inbound call")
 	assert.NotEmpty(t, res.Digest, "a digest is still produced, so the daemon's gate keeps working")
+	assert.Equal(t, []string{"bn-partner-out", "bn-publisher", "bn-restricted"}, res.Withheld,
+		"every inbound-bound policy is withheld, sorted")
 }
 
 // nil, not a map of empty slices, so the ports sets are left alone.

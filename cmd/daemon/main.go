@@ -160,9 +160,30 @@ func init() {
 	rootCmd.AddCommand(newVersionCmd())
 }
 
+// daemonLogConfig derives the daemon's logging config from the global defaults.
+//
+// Console output is raw JSON, not logx's console writer: stdout goes to journald
+// and from there to Loki, and the console writer's ANSI colour codes break LogQL
+// matching. Ops alert rules in docs/traffic-shaper-monitoring.md depend on this.
+func daemonLogConfig(base logx.LoggingConfig, level string) logx.LoggingConfig {
+	cfg := base
+	if level != "" {
+		cfg.Level = level
+	}
+	cfg.ConsoleLogging = false
+	cfg.FileLogging = true
+	if cfg.Directory == "" {
+		cfg.Directory = models.Paths().LogsDir
+	}
+	// Hardcoded, not config-overridable: the CLI's summary table directs operators
+	// to "solo-provisioner-daemon.log" (see cmd/cli/commands/common/run.go), and
+	// the CLI + daemon share the same config file but must not share a log file.
+	cfg.Filename = "solo-provisioner-daemon.log"
+	return cfg
+}
+
 // initConfig wires up config, logging, and proxy for the daemon. Mirrors the
-// CLI's bootstrap minus the TUI-aware branches — the daemon always uses raw
-// (non-interactive) zerolog output. Kept self-contained inside cmd/daemon so
+// CLI's bootstrap minus the TUI-aware branches. Kept self-contained inside cmd/daemon so
 // the daemon binary does not import anything under cmd/cli, satisfying the
 // epic's attack-surface constraint.
 func initConfig(ctx context.Context) {
@@ -174,19 +195,7 @@ func initConfig(ctx context.Context) {
 		doctor.CheckErr(ctx, err)
 	}
 
-	logConfig := config.Get().Log
-	if flagLogLevel != "" {
-		logConfig.Level = flagLogLevel
-	}
-
-	logConfig.FileLogging = true
-	if logConfig.Directory == "" {
-		logConfig.Directory = models.Paths().LogsDir
-	}
-	// Hardcoded, not config-overridable: the CLI's summary table directs operators
-	// to "solo-provisioner-daemon.log" (see cmd/cli/commands/common/run.go), and
-	// the CLI + daemon share the same config file but must not share a log file.
-	logConfig.Filename = "solo-provisioner-daemon.log"
+	logConfig := daemonLogConfig(config.Get().Log, flagLogLevel)
 
 	// Ensure the log directory exists with setgid + weaver group so files
 	// created inside inherit the weaver group automatically.

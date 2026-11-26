@@ -84,6 +84,9 @@ func runReconcileCheck(cmd *cobra.Command, r *shaper.Reconciler) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "desired-digest: %s\n", result.Digest)
+	if len(result.Withheld) > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "withheld: %s\n", strings.Join(result.Withheld, ", "))
+	}
 	printNamedIssues(cmd, "unresolved", result.Unresolved)
 	printNamedIssues(cmd, "stale", result.Stale)
 	printNamedIssues(cmd, "aaaa-only", result.AAAAOnly)
