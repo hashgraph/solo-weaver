@@ -73,6 +73,27 @@ proxy:
   containerRegistryProxy: "localhost:5050"
 ```
 
+### Alloy settings
+
+`alloy cluster install` reads the `alloy` block. A flag wins over the file, key by key:
+
+| `alloy` key | Flag | Which value is used |
+|---|---|---|
+| `monitorBlockNode` | `--monitor-block-node` | The flag when you pass it, `--monitor-block-node=false` included; else the file |
+| `clusterName`, `environment` | `--cluster-name`, `--environment` | The flag when it is not empty; else the file |
+| `prometheusRemotes` | `--add-prometheus-remote` | Any Prometheus remote flag replaces the file's whole Prometheus list |
+| `lokiRemotes` | `--add-loki-remote` | Any Loki remote flag replaces the file's whole Loki list |
+
+- `monitorBlockNode: true` needs a Prometheus remote and a Loki remote, from either place.
+  Without both, the install stops in its preflight check.
+- The deprecated `prometheusUrl`/`prometheusUsername` and `lokiUrl`/`lokiUsername` keys are
+  that type's remote. Don't set them next to the list of the same type, and don't set a
+  username without its URL: the install refuses both.
+- Passwords never go in the file. Each remote needs a key in the `grafana-alloy-secrets`
+  Secret; see [Secret key naming](../commands/alloy.md#secret-key-naming).
+- Remotes are not remembered between runs. Re-run with the same file or flags to keep
+  them; see [Changing remotes](../commands/alloy.md#changing-remotes).
+
 ### Re-declaring an installed block node
 
 The provisioner records the running block node's chart, version and storage layout so it

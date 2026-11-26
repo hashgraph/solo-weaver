@@ -242,39 +242,11 @@ func OverrideBlockNodeConfig(overrides models.BlockNodeConfig) {
 	}
 }
 
-// OverrideAlloyConfig updates the Alloy configuration with provided overrides.
-// Empty string values are ignored (not applied).
-// Remote arrays are always replaced (declarative semantics) - pass empty arrays to clear remotes.
-// Note: Passwords are managed via Vault and External Secrets Operator.
+// OverrideAlloyConfig replaces the Alloy configuration with overrides. The only
+// caller (`alloy cluster install`) has already merged its flags over the
+// --config values, so overrides is the complete desired state.
 func OverrideAlloyConfig(overrides models.AlloyConfig) {
-	globalConfig.Alloy.MonitorBlockNode = overrides.MonitorBlockNode
-	if overrides.ClusterName != "" {
-		globalConfig.Alloy.ClusterName = overrides.ClusterName
-	}
-	if overrides.Environment != "" {
-		globalConfig.Alloy.Environment = overrides.Environment
-	}
-	if overrides.ClusterSecretStoreName != "" {
-		globalConfig.Alloy.ClusterSecretStoreName = overrides.ClusterSecretStoreName
-	}
-
-	// Handle multi-remote configuration (declarative - always replace, even with empty slices)
-	globalConfig.Alloy.PrometheusRemotes = overrides.PrometheusRemotes
-	globalConfig.Alloy.LokiRemotes = overrides.LokiRemotes
-
-	// Legacy single-remote flags (for backward compatibility)
-	if overrides.PrometheusURL != "" {
-		globalConfig.Alloy.PrometheusURL = overrides.PrometheusURL
-	}
-	if overrides.PrometheusUsername != "" {
-		globalConfig.Alloy.PrometheusUsername = overrides.PrometheusUsername
-	}
-	if overrides.LokiURL != "" {
-		globalConfig.Alloy.LokiURL = overrides.LokiURL
-	}
-	if overrides.LokiUsername != "" {
-		globalConfig.Alloy.LokiUsername = overrides.LokiUsername
-	}
+	globalConfig.Alloy = overrides
 }
 
 // OverrideTeleportConfig updates the Teleport configuration with provided overrides.

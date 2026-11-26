@@ -38,10 +38,10 @@ The approach:
 
 Watch out for:
 
-- `--monitor-block-node` needs **both** remote types. With only one, block node metrics are
-  not collected, and the command does not say so.
-- Each run replaces the whole remote list. Pass every remote every time. See
-  [Changing remotes](commands/alloy.md#changing-remotes).
+- `--monitor-block-node` (or `alloy.monitorBlockNode` in `--config`) needs **both** remote
+  types. With only one, the install fails in its preflight check and changes nothing.
+- Each run sets the whole remote list for each type, from the flags or else from `--config`.
+  List every remote every time. See [Changing remotes](commands/alloy.md#changing-remotes).
 - Passwords come from the `grafana-alloy-secrets` Secret. See
   [Secret key naming](commands/alloy.md#secret-key-naming).
 - If the host firewall is on, it drops new connections from pods to node-exporter on port
@@ -75,7 +75,7 @@ Expect `1` for each.
 | No daemon lines at all | No Loki remote, or Alloy is not running on the host |
 | Daemon lines, but no tick lines | Traffic shaping is off on the host, or the daemon predates the tick line |
 | Lines with colour codes such as `[90m` and `INF` | The daemon predates JSON logging; upgrade it |
-| No block node `up` series | `--monitor-block-node` missing, or only one remote type given |
+| No block node `up` series | Block node monitoring is off (`--monitor-block-node`, `alloy.monitorBlockNode`), or no block node existed when Alloy was installed |
 | node-exporter `up` is `0` | The host firewall blocks port 9100 (above) |
 
 ## Labels

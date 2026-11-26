@@ -5,6 +5,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/pkg/models"
@@ -197,21 +198,22 @@ func TestOverrideHostConfig_ExplicitEmptyClearsPreviousValue(t *testing.T) {
 	}
 }
 
-func TestOverrideAlloyConfig_Environment(t *testing.T) {
+// The caller merges flags over the file before this call, so an empty field in
+// overrides must clear the stored value, not keep it.
+func TestOverrideAlloyConfig_ReplacesWholesale(t *testing.T) {
 	saved := globalConfig
 	t.Cleanup(func() { globalConfig = saved })
 
-	// Config-file value survives an empty flag
-	globalConfig.Alloy = models.AlloyConfig{Environment: "staging"}
-	OverrideAlloyConfig(models.AlloyConfig{})
-	if got := Get().Alloy.Environment; got != "staging" {
-		t.Errorf("Environment: expected %q kept, got %q", "staging", got)
+	globalConfig.Alloy = models.AlloyConfig{
+		MonitorBlockNode:  true,
+		Environment:       "staging",
+		PrometheusRemotes: []models.AlloyRemoteConfig{{Name: "primary", URL: "http://prom:9090/api/v1/write"}},
+		LokiURL:           "http://loki:3100/loki/api/v1/push",
 	}
-
-	// Explicit flag wins over the config-file value
-	OverrideAlloyConfig(models.AlloyConfig{Environment: "qa"})
-	if got := Get().Alloy.Environment; got != "qa" {
-		t.Errorf("Environment: expected %q, got %q", "qa", got)
+	want := models.AlloyConfig{ClusterName: "c1"}
+	OverrideAlloyConfig(want)
+	if got := Get().Alloy; !reflect.DeepEqual(got, want) {
+		t.Errorf("Alloy: expected %+v, got %+v", want, got)
 	}
 }
 

@@ -3,6 +3,7 @@
 package cluster
 
 import (
+	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashgraph/solo-weaver/pkg/config"
 	"github.com/hashgraph/solo-weaver/pkg/hardware"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
 )
 
 var installCmd = &cobra.Command{
@@ -76,16 +78,7 @@ Examples:
 			return errorx.IllegalArgument.Wrap(err, "invalid --add-loki-remote flag")
 		}
 
-		// Validate that legacy and new flags are not mixed
-		hasLegacyFlags := flagPrometheusURL != "" || flagPrometheusUsername != "" || flagLokiURL != "" || flagLokiUsername != ""
-		hasNewFlags := len(prometheusRemotes) > 0 || len(lokiRemotes) > 0
-
-		if hasLegacyFlags && hasNewFlags {
-			return errorx.IllegalArgument.New("cannot mix legacy flags (--prometheus-url, --prometheus-username, --loki-url, --loki-username) with new flags (--add-prometheus-remote, --add-loki-remote); use one style or the other")
-		}
-
-		// Apply Alloy configuration overrides
-		alloyOverrides := models.AlloyConfig{
+		alloyFlags := models.AlloyConfig{
 			MonitorBlockNode:       flagMonitorBlockNode,
 			ClusterName:            flagClusterName,
 			Environment:            flagEnvironment,
@@ -99,34 +92,37 @@ Examples:
 			LokiUsername:       flagLokiUsername,
 		}
 
-		// Validate configuration before proceeding
-		if err := alloyOverrides.Validate(); err != nil {
+		if err := alloyFlags.Validate(); err != nil {
 			return errorx.IllegalArgument.Wrap(err, "invalid configuration")
 		}
 
-		config.OverrideAlloyConfig(alloyOverrides)
-
-		alloyCfg := config.Get().Alloy
-
-		// A --config value skipped the flag validation above; this command never validates the file
-		if flagEnvironment == "" {
-			if err := (&models.AlloyConfig{Environment: alloyCfg.Environment}).Validate(); err != nil {
-				return errorx.IllegalArgument.Wrap(err, "invalid configuration")
-			}
+		alloyCfg, err := resolveAlloyConfig(config.Get().Alloy, alloyFlags,
+			cmd.Flags().Changed(common.FlagMonitorBlockNode().Name))
+		if err != nil {
+			return err
 		}
+
+		// This command never runs common.Setup, so the file's alloy block is
+		// checked here. The flags passed above, so what fails here is the file's.
+		if err := alloyCfg.Validate(); err != nil {
+			return errx.Decorate(errorx.IllegalArgument.Wrap(err, "invalid alloy settings in --config"),
+				reasons.InvalidArgument, configFileHint())
+		}
+
+		config.OverrideAlloyConfig(alloyCfg)
 
 		l := logx.As()
 		l.Debug().
 			Strs("args", args).
-			Bool("monitorBlockNode", flagMonitorBlockNode).
-			Str("clusterName", flagClusterName).
+			Bool("monitorBlockNode", alloyCfg.MonitorBlockNode).
+			Str("clusterName", alloyCfg.ClusterName).
 			Str("environment", alloyCfg.Environment).
-			Int("prometheusRemotes", len(prometheusRemotes)).
-			Int("lokiRemotes", len(lokiRemotes)).
+			Int("prometheusRemotes", len(alloyCfg.PrometheusRemotes)).
+			Int("lokiRemotes", len(alloyCfg.LokiRemotes)).
 			Msg("Installing Alloy observability stack")
 
 		// Warn about deprecated flags
-		if hasLegacyFlags {
+		if flagPrometheusURL != "" || flagPrometheusUsername != "" || flagLokiURL != "" || flagLokiUsername != "" {
 			l.Warn().Msg("--prometheus-url, --prometheus-username, --loki-url, and --loki-username flags are deprecated; please use --add-prometheus-remote and --add-loki-remote instead")
 		}
 
@@ -156,4 +152,11 @@ Examples:
 		l.Info().Msg("Successfully installed Alloy observability stack")
 		return nil
 	},
+}
+
+func configFileHint() string {
+	if f := config.File(); f != "" {
+		return "Fix the alloy block in " + f
+	}
+	return "Fix the alloy block in the --config file"
 }
