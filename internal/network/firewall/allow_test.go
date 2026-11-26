@@ -6,9 +6,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -413,6 +415,66 @@ func TestPortSpec(t *testing.T) {
 	}
 }
 
+func TestPortSpecsCover(t *testing.T) {
+	cases := []struct {
+		name  string
+		specs []string
+		port  int
+		want  bool
+	}{
+		{"single match", []string{"6443", "9100"}, 9100, true},
+		{"inside a range", []string{"9000-9200"}, 9100, true},
+		{"range low bound", []string{"9100-9200"}, 9100, true},
+		{"range high bound", []string{"9000-9100"}, 9100, true},
+		{"absent", []string{"6443", "10250"}, 9100, false},
+		{"just outside a range", []string{"9101-9200"}, 9100, false},
+		{"empty list", nil, 9100, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, portSpecsCover(tc.specs, tc.port))
+		})
+	}
+}
+
+func TestVerdictForNodeExporterPort(t *testing.T) {
+	legacy := []string{"4244", "6443", "7472", "10250"}
+	cases := []struct {
+		name  string
+		specs []string
+		want  NodeExporterPortVerdict
+	}{
+		{"empty list", nil, NodeExporterPortNoList},
+		{"legacy defaults", legacy, NodeExporterPortAdd},
+		{"legacy defaults plus an operator port", append([]string{"8080"}, legacy...), NodeExporterPortAdd},
+		{"legacy defaults as ranges", []string{"4244", "6443-7472", "10250"}, NodeExporterPortAdd},
+		{"range covering the port", []string{"4244", "6443-10250"}, NodeExporterPortPresent},
+		{"already has the port", append([]string{"9100"}, legacy...), NodeExporterPortPresent},
+		{"current defaults", PortStrings(DefaultInClusterPorts), NodeExporterPortPresent},
+		{"narrowed", []string{"6443", "10250"}, NodeExporterPortNarrowed},
+		{"narrowed but has the port", []string{"6443", "9100"}, NodeExporterPortPresent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := VerdictForNodeExporterPort(tc.specs)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestVerdictForNodeExporterPort_RejectsInvalidSpec(t *testing.T) {
+	for _, bad := range []string{"http", "0", "65536", "2380-2379", "22-70000"} {
+		_, err := VerdictForNodeExporterPort([]string{"9100", bad})
+		require.Error(t, err, "%q should be rejected even when another spec has the port", bad)
+	}
+}
+
+func TestDefaultInClusterPortsIncludeNodeExporter(t *testing.T) {
+	require.Contains(t, DefaultInClusterPorts, models.NodeExporterPort)
+	require.Contains(t, NewTable().InCluster.Ports, strconv.Itoa(models.NodeExporterPort))
+}
+
 // TestRemovePortsIsExact pins that removal does not split a range. Removing 2379
 // from a rule holding 2379-2380 leaves the range intact: an nft range is one set
 // element, and silently rewriting it into 2380 would be a surprising way for a
@@ -565,7 +627,7 @@ func TestManager_ApplyIsDeclarativeForAllowOnly(t *testing.T) {
 
 	// in_cluster's ports were omitted inside a block that was stated, so they came
 	// back as the default port set rather than as nothing.
-	require.Contains(t, doc, "set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }")
+	require.Contains(t, doc, "set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 9100, 10250 }; }")
 }
 
 // TestFromFile_AllowRuleAcceptsAnFQDN covers the `create --from-file` path: an

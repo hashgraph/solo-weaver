@@ -49,6 +49,7 @@ Needed only when you configure remotes (`--add-prometheus-remote` / `--add-loki-
 | The `grafana-alloy-secrets` Secret | In the `grafana-alloy` namespace, with a password key per remote |
 | Reachable remote endpoints | The Prometheus/Loki URLs must be reachable from inside the cluster |
 | A block node (optional) | Only if you pass `--monitor-block-node` |
+| node-exporter's port open (host firewall only) | Alloy scrapes node-exporter at `<node IP>:9100` from the pod network. 9100 is in the host firewall's default in-cluster ports; a custom list must keep it. See [Network firewall](network/firewall.md) |
 
 > **Without any remote flags, Alloy installs with no remotes and needs no Secret.** That is a
 > valid way to start.

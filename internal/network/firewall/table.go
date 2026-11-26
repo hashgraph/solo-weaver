@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/joomcode/errorx"
 )
 
@@ -17,9 +18,13 @@ const (
 // DefaultInClusterPorts is the "stack set" of host-service ports opened to the
 // in-cluster (pod) CIDR by default: the kube-apiserver (6443), the Cilium
 // cluster-mesh / health port (4244), the kubelet read-only/metrics port
-// (10250), and the MetalLB metrics/memberlist port (7472). Operators override
-// with --in-cluster-ports.
-var DefaultInClusterPorts = []int{6443, 4244, 7472, 10250}
+// (10250), the MetalLB metrics/memberlist port (7472), and node-exporter
+// (models.NodeExporterPort), which runs on the host network and which Alloy
+// scrapes from the pod network. Operators override with --in-cluster-ports.
+//
+// Hosts provisioned earlier persisted the list without node-exporter's port;
+// startup migrations add it there (see VerdictForNodeExporterPort).
+var DefaultInClusterPorts = []int{6443, 4244, 7472, 10250, models.NodeExporterPort}
 
 // Table is the in-memory model of the `inet weaver-host-firewall` nftables table. It is the
 // single source of truth that the kernel apply (via `nft -f`), the on-disk nft

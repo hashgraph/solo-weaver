@@ -281,7 +281,7 @@ allowlist, ICMP policy, operator block list, and in-cluster host-service ports.
 | `--blocked-cidrs` | Operator block list, CIDRs and/or domain names. Dropped inbound, outbound and forwarded — including established connections | none |
 | `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated | `22` |
 | `--pod-cidr` | Pod CIDR for the in-cluster host-service ports rule | auto-detected |
-| `--in-cluster-ports` | In-cluster host-service ports | `6443,4244,7472,10250` |
+| `--in-cluster-ports` | In-cluster host-service ports | `6443,4244,7472,9100,10250` |
 
 Worth knowing:
 
@@ -296,6 +296,10 @@ Worth knowing:
   take names, but an unresolvable one is refused on every path in the block list rather than
   warned about — losing an entry there stops denying a host instead of stopping admitting one.
   See [Domain names in address lists](network/firewall.md#domain-names-in-address-lists).
+- **Keep 9100 in a custom `--in-cluster-ports` or `host.inClusterPorts`.** It is node-exporter's
+  port, which Alloy scrapes from the pod network. A list in your config file outranks the live
+  firewall, so a list without 9100 there closes it again on the next `reconfigure`. The command
+  warns when the list is the old defaults without 9100.
 
 Full command surface: [Network commands](network/) — [firewall](network/firewall.md), [policy](network/policy.md), [shape](network/shape.md).
 

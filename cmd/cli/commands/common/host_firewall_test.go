@@ -295,3 +295,22 @@ func TestResolveFirewallSeed_UnanswerableProbeFallsBackToRecordedState(t *testin
 		})
 	}
 }
+
+func TestWarnIfLegacyInClusterPorts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ports []int
+		want  bool
+	}{
+		{"old defaults", []int{6443, 4244, 7472, 10250}, true},
+		{"old defaults plus an operator port", []int{6443, 4244, 7472, 10250, 8080}, true},
+		{"current defaults", firewall.DefaultInClusterPorts, false},
+		{"narrowed on purpose", []int{6443, 10250}, false},
+		{"no ports", nil, false},
+		{"invalid port", []int{6443, 0}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, warnIfLegacyInClusterPorts(tc.ports))
+		})
+	}
+}

@@ -23,7 +23,7 @@ table inet weaver-host-firewall {
 	set blocked_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:bad::/48 }; }
 	set in_cluster_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 10.4.0.0/24 }; }
 	set in_cluster_addrs6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:c0de::/64 }; }
-	set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 10250 }; }
+	set in_cluster_ports { type inet_service; flags interval; auto-merge; elements = { 4244, 6443, 7472, 9100, 10250 }; }
 	set admin { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.5/32 }; }
 	set admin6 { type ipv6_addr; flags interval; auto-merge; elements = { 2001:db8:5e5::/64 }; }
 	set admin_ports { type inet_service; flags interval; auto-merge; elements = { 22 }; }

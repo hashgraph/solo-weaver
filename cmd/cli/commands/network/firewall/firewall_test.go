@@ -600,7 +600,7 @@ func TestCreateCmd_DefaultsInClusterPortsWhenNotPassed(t *testing.T) {
 
 	data, err := os.ReadFile(nftPath)
 	require.NoError(t, err, "create should have written the nft file")
-	require.Contains(t, string(data), "elements = { 4244, 6443, 7472, 10250 }",
+	require.Contains(t, string(data), "elements = { 4244, 6443, 7472, 9100, 10250 }",
 		"create without --in-cluster-ports must default to the stack port set")
 }
 

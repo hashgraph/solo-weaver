@@ -64,6 +64,12 @@ type SoloOperatorConfig struct {
 // constant guarantees the firewall opens exactly the range kubeadm assigns pods.
 const DefaultClusterPodCIDR = "10.4.0.0/14"
 
+// NodeExporterPort is the port node-exporter listens on. node-exporter runs on
+// the host network, so Alloy, on the pod network, reaches it through the host
+// firewall's input chain. The node-exporter chart values and the firewall's
+// default in-cluster ports both read this constant, so they cannot drift apart.
+const NodeExporterPort = 9100
+
 // HostConfig represents the `host` configuration block: node-level host-firewall
 // settings applied by the block-node workflow (`block node install` /
 // `reconfigure` / `upgrade` — not the generic `kube cluster install`, which is
