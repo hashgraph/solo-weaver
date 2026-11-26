@@ -22,12 +22,20 @@ import (
 // apply policy without a cluster. `existing` maps CR name -> deployed content;
 // `applied` records the CR names passed to ApplyTyped, in order; `deleted`
 // records the CR names DeleteResource removed, in order. `pvcs` answers a PVC
-// List; `released` records the PVCs RemoveOwnerReference changed.
+// List; `released` records the PVCs RemoveOwnerReference changed. `dryRuns`
+// records dry-run applies, which are not in `applied`; `dryRunErr` fails them.
+// `applyErrs` gives the result of each real apply in order, and its last entry
+// repeats; `applyCalls` counts the real applies.
 type fakeCapsuleClient struct {
 	existing    map[string]string
 	nested      map[string]map[string]interface{}
 	applied     []string
 	appliedObjs []runtime.Object
+	dryRuns     []string
+	dryRunObjs  []runtime.Object
+	dryRunErr   error
+	applyErrs   []error
+	applyCalls  int
 	deleted     []string
 	listResult  *unstructured.UnstructuredList
 	pvcs        []unstructured.Unstructured
@@ -48,8 +56,27 @@ func (f *fakeCapsuleClient) GetResourceNestedMap(_ context.Context, _, _, _, nam
 	return m, ok, nil
 }
 
-func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object) error {
+func (f *fakeCapsuleClient) ApplyTyped(_ context.Context, obj runtime.Object, opts ...kube.ApplyOption) error {
 	name := obj.(interface{ GetName() string }).GetName()
+	var po metav1.PatchOptions
+	for _, opt := range opts {
+		opt(&po)
+	}
+	if len(po.DryRun) > 0 {
+		f.dryRuns = append(f.dryRuns, name)
+		f.dryRunObjs = append(f.dryRunObjs, obj)
+		return f.dryRunErr
+	}
+	f.applyCalls++
+	if len(f.applyErrs) > 0 {
+		err := f.applyErrs[0]
+		if len(f.applyErrs) > 1 {
+			f.applyErrs = f.applyErrs[1:]
+		}
+		if err != nil {
+			return err
+		}
+	}
 	f.applied = append(f.applied, name)
 	f.appliedObjs = append(f.appliedObjs, obj)
 	return nil
@@ -300,7 +327,7 @@ func TestCreateConsensusCapsule_MatchesOperatorContract(t *testing.T) {
 		SigningSecret:      "node0-gossip-keys",
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
@@ -386,7 +413,7 @@ func TestCreateConsensusCapsule_MultiRegistrySource(t *testing.T) {
 		},
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
@@ -436,7 +463,7 @@ func TestCreateConsensusCapsule_NoSource_SingleSoftwareVersion(t *testing.T) {
 		// ConsensusImageSource intentionally nil.
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	require.Equal(t, automa.StatusSuccess, report.Status, report.Error)
@@ -477,7 +504,7 @@ func TestCreateConsensusCapsule_PreservesExistingSourceWhenNoManifest(t *testing
 		ImagePinned:          false,
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 
@@ -513,7 +540,7 @@ func TestCreateConsensusCapsule_PinnedDropsExistingSource(t *testing.T) {
 		ImagePinned:        true, // user pinned via --image-repo/--image-tag
 	}
 
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 
@@ -631,7 +658,7 @@ func TestCreateConsensusCapsule_SelectionStrategy(t *testing.T) {
 	run := func(t *testing.T, flag, manifest, want string) {
 		t.Helper()
 		fake := &fakeCapsuleClient{existing: map[string]string{}}
-		step, err := CreateConsensusCapsule(mkInputs(flag, manifest), fake.provider()).Build()
+		step, err := CreateConsensusCapsule(mkInputs(flag, manifest), fake.provider(), nil).Build()
 		require.NoError(t, err)
 		require.Equal(t, automa.StatusSuccess, step.Execute(context.Background()).Status)
 		src := findCapsule(t, fake.appliedObjs).Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource
@@ -722,7 +749,7 @@ func TestEnsureOrbit_ExistingOrbitMustMatchTheInstall(t *testing.T) {
 
 func capsuleSecretsFor(t *testing.T, fake *fakeCapsuleClient, in models.ConsensusNodeInputs) (*operatorv1alpha1.ConsensusSecretResources, automa.TypeStatus, error) {
 	t.Helper()
-	step, err := CreateConsensusCapsule(in, fake.provider()).Build()
+	step, err := CreateConsensusCapsule(in, fake.provider(), nil).Build()
 	require.NoError(t, err)
 	report := step.Execute(context.Background())
 	if report.Status != automa.StatusSuccess {

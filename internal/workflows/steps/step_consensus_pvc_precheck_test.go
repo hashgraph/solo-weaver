@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ type fakePVCClient struct {
 	calls         []string
 	waitErr       error
 	waitErrOn     string // when set, only the wait for this PVC fails
+	deleteErrOn   string // when set, the delete request for this PVC fails
 }
 
 func (f *fakePVCClient) ResourceExists(_ context.Context, _, kind, _, name string) (bool, error) {
@@ -57,6 +59,9 @@ func (f *fakePVCClient) ResizePVC(_ context.Context, _, name, size string) error
 
 func (f *fakePVCClient) DeletePVC(_ context.Context, _, name string) error {
 	f.calls = append(f.calls, "delete:"+name)
+	if name == f.deleteErrOn {
+		return errors.New("connection refused")
+	}
 	return nil
 }
 
@@ -128,7 +133,12 @@ func runPVCPrecheck(t *testing.T, in models.ConsensusNodeInputs, force, nonInter
 
 func runReconcile(t *testing.T, fake *fakePVCClient, in models.ConsensusNodeInputs, force bool) *automa.Report {
 	t.Helper()
-	step, err := ReconcileConsensusPVCs(in, force, fake.provider()).Build()
+	return runReconcileWithCheck(t, fake, in, force, func(context.Context) error { return nil })
+}
+
+func runReconcileWithCheck(t *testing.T, fake *fakePVCClient, in models.ConsensusNodeInputs, force bool, check func(context.Context) error) *automa.Report {
+	t.Helper()
+	step, err := reconcileConsensusPVCs(in, force, fake.provider(), check, nil).Build()
 	require.NoError(t, err)
 	return step.Execute(context.Background())
 }
@@ -530,7 +540,8 @@ func TestReconcileConsensusPVCs_PartialDeleteReportsDeletedPVCs(t *testing.T) {
 	}
 	rpt := runReconcile(t, fake, in, true)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
-	assert.Equal(t, "PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)",
+	assert.Equal(t, "PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)\n"+
+		"PVC "+savedPVC+" (500Gi) delete requested (--recreate-pvcs) but not confirmed; expect its data to be lost",
 		rpt.Metadata[models.ReportMetaWarning], "a failed run still names the PVCs it deleted")
 }
 
@@ -550,4 +561,94 @@ func TestReconcileConsensusPVCs_RecreateStopsWhenCapsuleExists(t *testing.T) {
 	rpt := runReconcile(t, fake, in, true)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Empty(t, fake.calls)
+}
+
+// --- the check before the first PVC change ---
+
+// The recreate case is in TestReconcileConsensusPVCs_RejectedDryRunDeletesNothing.
+func TestReconcileConsensusPVCs_FailedCheckBlocksExpand(t *testing.T) {
+	checkErr := errorx.RejectedOperation.New("admission denied")
+	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}, expandable: map[string]bool{"standard": true}}
+
+	rpt := runReconcileWithCheck(t, fake, expandInputs(), true, func(context.Context) error { return checkErr })
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.ErrorIs(t, rpt.Error, checkErr)
+	assert.Empty(t, fake.calls, "no PVC may change when the check fails")
+	assert.Empty(t, rpt.Metadata[models.ReportMetaWarning])
+}
+
+func TestReconcileConsensusPVCs_CheckRunsBeforeFirstChange(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}}
+	rpt := runReconcileWithCheck(t, fake, in, true, func(context.Context) error {
+		fake.calls = append(fake.calls, "check")
+		return nil
+	})
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.Equal(t, []string{"check", "delete:" + savedPVC, "wait:" + savedPVC}, fake.calls)
+}
+
+// A re-run after a failed install: the deleted PVC is gone, so the plan has no change
+// left and needs no dry-run.
+func TestReconcileConsensusPVCs_ReRunAfterDeleteConverges(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{}
+	ran := false
+	rpt := runReconcileWithCheck(t, fake, in, false, func(context.Context) error { ran = true; return nil })
+	require.Equal(t, automa.StatusSuccess, rpt.Status, rpt.Error)
+	assert.False(t, ran, "a plan with no change needs no dry-run")
+	assert.Empty(t, fake.calls)
+}
+
+// The issue's case: the second of three deletes fails.
+func TestReconcileConsensusPVCs_SecondOfThreeDeletesFails(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{
+		pvcs: []unstructured.Unstructured{
+			pvcObj(models.ConsensusVolumeLogs, "5Gi", "standard", "ReadWriteOnce"),
+			savedPVCObj("500Gi", "standard"),
+			pvcObj(models.ConsensusVolumeState, "100Gi", "standard", "ReadWriteOnce"),
+		},
+		waitErr:   errors.New("timed out"),
+		waitErrOn: savedPVC, // deleted second, after logs
+	}
+	deleted := &DeletedPVCs{}
+	step, err := reconcileConsensusPVCs(in, true, fake.provider(), func(context.Context) error { return nil }, deleted).Build()
+	require.NoError(t, err)
+	rpt := step.Execute(context.Background())
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Equal(t, []string{
+		"delete:orbit-consensus-0-logs", "wait:orbit-consensus-0-logs",
+		"delete:" + savedPVC, "wait:" + savedPVC,
+	}, fake.calls, "the state PVC is kept")
+	assert.Equal(t, []string{
+		"PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)",
+		"PVC " + savedPVC + " (500Gi) delete requested (--recreate-pvcs) but not confirmed; expect its data to be lost",
+		"PVC orbit-consensus-0-state (100Gi) and its data kept; not deleted after the earlier delete failed",
+	}, strings.Split(rpt.Metadata[models.ReportMetaWarning], "\n"), "the summary names each PVC")
+	assert.Equal(t, []string{"orbit-consensus-0-logs"}, deleted.Names(), "only a confirmed delete is recorded")
+}
+
+func TestReconcileConsensusPVCs_FailedDeleteRequestKeepsPVC(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{
+		pvcs: []unstructured.Unstructured{
+			pvcObj(models.ConsensusVolumeLogs, "5Gi", "standard", "ReadWriteOnce"),
+			savedPVCObj("500Gi", "standard"),
+		},
+		deleteErrOn: "orbit-consensus-0-logs",
+	}
+	rpt := runReconcile(t, fake, in, true)
+
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Equal(t, []string{"delete:orbit-consensus-0-logs"}, fake.calls)
+	assert.Equal(t, []string{
+		"PVC orbit-consensus-0-logs (5Gi) and its data kept; the delete request failed",
+		"PVC " + savedPVC + " (500Gi) and its data kept; not deleted after the earlier delete failed",
+	}, strings.Split(rpt.Metadata[models.ReportMetaWarning], "\n"))
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/automa-saga/automa"
 	"github.com/automa-saga/errx"
@@ -28,6 +29,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -46,7 +49,7 @@ type CapsuleKubeClient interface {
 	ResourceExists(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	GetResourceNestedString(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (string, error)
 	GetResourceNestedMap(ctx context.Context, apiVersion, kind, namespace, name string, fields ...string) (map[string]interface{}, bool, error)
-	ApplyTyped(ctx context.Context, obj runtime.Object) error
+	ApplyTyped(ctx context.Context, obj runtime.Object, opts ...kube.ApplyOption) error
 	List(ctx context.Context, kind kube.ResourceKind, namespace string, opts kube.WaitOptions) (*unstructured.UnstructuredList, error)
 	DeleteResource(ctx context.Context, apiVersion, kind, namespace, name string) (bool, error)
 	RemoveOwnerReference(ctx context.Context, kind kube.ResourceKind, namespace, name, ownerKind, ownerName string) (bool, error)
@@ -458,184 +461,36 @@ func EnsureConfigCRs(inputs models.ConsensusNodeInputs, force bool, provider Cap
 		})
 }
 
-// CreateConsensusCapsule creates the ConsensusCapsule CR.
-func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
+// capsuleApplyBackoff spaces the retries of a transient capsule apply error.
+var capsuleApplyBackoff = wait.Backoff{Steps: 4, Duration: 500 * time.Millisecond, Factor: 2, Jitter: 0.1}
+
+// CreateConsensusCapsule creates the ConsensusCapsule CR. deleted holds the PVCs that
+// the reconcile step deleted; a failure report names them. It can be nil.
+func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider, deleted *DeletedPVCs) automa.Builder {
 	return automa.NewStepBuilder().WithId(CreateConsensusCapsuleStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
+			fail := func(err error) *automa.Report {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(withLostPVCHints(err, deleted.Names())))
+			}
+
 			kc, err := provider(ctx)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
-					reasons.PreconditionNotMet,
-					"Verify your kubeconfig and that 'kubectl get nodes' works")))
+				return fail(capsuleConnectError(err))
 			}
 
-			scope := models.ConsensusNodeScope(inputs.NodeId)
-			capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
-
-			// The operator requires a non-empty imageName and assembles the image as
-			// repository/imageName:tag (see solo-operator docs/example). The resolved
-			// ConsensusImageRepo is the full "registry/path/name", so split off the
-			// last segment as the image name.
-			imageRepository, imageName := splitConsensusImage(inputs.ConsensusImageRepo)
-
-			// The UC sidecar image is the operator's own image (no operator default),
-			// so it is split the same way and defaults to the pinned operator version.
-			ucRepository, ucImageName := splitConsensusImage(valueOrDefault(inputs.UCImageRepo, models.ConsensusDefaultUCImageRepo))
-
-			// Resolve container sizing/JVM from inputs, falling back to defaults.
-			resources, err := buildConsensusResources(inputs)
+			capsule, err := buildConsensusCapsule(ctx, kc, inputs)
 			if err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					err, reasons.InvalidArgument,
-					"Provide valid Kubernetes quantities for --cpu-limit/--cpu-request/--memory-limit/--memory-request (e.g. 2, 250m, 5Gi, 1Gi)")))
+				return fail(err)
 			}
 
-			capsule := &operatorv1alpha1.ConsensusCapsule{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: kube.SoloOperatorAPIVersion,
-					Kind:       string(kube.KindConsensusCapsule),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      capsuleName,
-					Namespace: inputs.Namespace,
-				},
-				Spec: operatorv1alpha1.ConsensusCapsuleSpec{
-					Orbit:                            inputs.OrbitName,
-					NodeId:                           inputs.NodeId,
-					AccountId:                        inputs.AccountId,
-					Weight:                           inputs.Weight,
-					Log4j2ConfigRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyLog4j2),
-					SettingsConfigRef:                models.ConsensusConfigCRName(scope, models.ConfigKeySettings),
-					ApplicationPropertiesRef:         models.ConsensusConfigCRName(scope, models.ConfigKeyAppProperties),
-					ApplicationOverridePropertiesRef: models.ConsensusConfigCRName(scope, models.ConfigKeyAppOverride),
-					ApiPermissionPropertiesRef:       models.ConsensusConfigCRName(scope, models.ConfigKeyApiPermission),
-					BootstrapPropertiesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeyBootstrap),
-					NodePropertiesRef:                models.ConsensusConfigCRName(scope, models.ConfigKeyNodeProperties),
-					FeeSchedulesRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyFeeSchedules),
-					SimpleFeesSchedulesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeySimpleFeesSchedules),
-					ThrottlesConfigRef:               models.ConsensusConfigCRName(scope, models.ConfigKeyThrottles),
-					BlockNodesConfigRef:              models.ConsensusConfigCRName(scope, models.ConfigKeyBlockNodes),
-					PodProperties: operatorv1alpha1.ConsensusPodProperties{
-						Containers: operatorv1alpha1.ConsensusContainers{
-							ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
-								Name: valueOrDefault(inputs.ContainerName, models.ConsensusDefaultContainerName),
-								SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
-									Repository: imageRepository,
-									ImageName:  imageName,
-									ImageTag:   inputs.ConsensusImageTag,
-									// This secret is chosen by the image's host. The operator copies
-									// these onto the pod and its service account and drops duplicates,
-									// so sharing a name with the UC image is fine.
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(inputs.ConsensusImageRepo))),
-								},
-								JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
-								JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
-								JavaOpts:    valueOrDefault(inputs.JavaOpts, models.ConsensusDefaultJavaOpts),
-								Resources:   resources,
-							},
-							// The UC (Update Coordinator) sidecar is mandatory: it is the
-							// sole writer of status.platformStatus, so the operator rejects
-							// a capsule that does not enable it (UCSidecarRequired). The
-							// operator provides no default UC image, so its SoftwareVersion must
-							// be declared explicitly or the operator rejects the capsule with
-							// ImageRequired.
-							UC: &operatorv1alpha1.UcSidecar{
-								Enabled: true,
-								SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
-									Repository:       ucRepository,
-									ImageName:        ucImageName,
-									ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
-									ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(ucRepository))),
-								},
-							},
-						},
-					},
-				},
-			}
-
-			// Pick exactly one of SoftwareVersion / SoftwareVersionSource on the
-			// consensus-node container, per the v0.8.0 CRD rule (hashgraph/solo-operator#1372).
-			// A manifest multi-registry source wins; otherwise, when no new source and the
-			// user did not pin the image, preserve any source already on the live CR
-			// (ApplyTyped is server-side apply, so omitting the field would silently drop
-			// it). When a source is set we drop the single SoftwareVersion so the CR does
-			// not carry a misleading registries[0] duplicate.
-			src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
-			if src == nil && !inputs.ImagePinned {
-				existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-						errorx.IllegalState.Wrap(err, "failed to read existing ConsensusCapsule %s", capsuleName),
-						reasons.PreconditionNotMet,
-						"Verify cluster connectivity, or re-run with --deployment-package-dir so the image source is resolved from the manifest")))
-				}
-				src = existing
-			}
-			// SelectionStrategy precedence: --registry-selection-strategy flag beats
-			// the manifest's images.consensusNode.selectionStrategy, which beats the
-			// weaver default (Sequential — manifest primary first, deterministic
-			// failover). An empty src.SelectionStrategy here means neither the new
-			// manifest source nor the preserved live CR carried one.
-			if src != nil {
-				if inputs.RegistrySelectionStrategy != "" {
-					src.SelectionStrategy = inputs.RegistrySelectionStrategy
-				} else if src.SelectionStrategy == "" {
-					src.SelectionStrategy = models.RegistrySelectionSequential
-				}
-			}
-			if src != nil {
-				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
-				capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion = nil
-			}
-
-			// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
-			if err := applyConsensusVolumes(capsule, inputs); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
-			}
-
-			if inputs.GrpcTlsSecret != "" || inputs.SigningSecret != "" {
-				sr := &operatorv1alpha1.ConsensusSecretResources{}
-				if inputs.GrpcTlsSecret != "" {
-					sr.GrpcTlsPrivateKey = operatorv1alpha1.KeyReference{
-						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    cnkeys.FileGrpcKey,
-					}
-					sr.GrpcTlsPublicCertificate = operatorv1alpha1.KeyReference{
-						SecretName: inputs.GrpcTlsSecret,
-						KeyName:    cnkeys.FileGrpcCert,
-					}
-				}
-				if inputs.SigningSecret != "" {
-					sr.SigningPrivateKey = operatorv1alpha1.KeyReference{
-						SecretName: inputs.SigningSecret,
-						KeyName:    cnkeys.FileGossipPrivate,
-					}
-					sr.SigningPublicCertificate = operatorv1alpha1.KeyReference{
-						SecretName: inputs.SigningSecret,
-						KeyName:    cnkeys.FileGossipCert,
-					}
-				}
-				adminRef, aerr := adminKeyReference(ctx, kc, inputs)
-				if aerr != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(aerr))
-				}
-				sr.AdminPublicKey = adminRef
-				capsule.Spec.Secrets = &operatorv1alpha1.ConsensusSecrets{
-					SecretResources: sr,
-				}
-			}
-
-			if err := kc.ApplyTyped(ctx, capsule); err != nil {
-				return automa.StepFailureReport(stp.Id(), automa.WithError(errx.Decorate(
-					errorx.IllegalState.Wrap(err, "failed to apply ConsensusCapsule %s", capsuleName),
-					reasons.PreconditionNotMet,
-					"Verify cluster connectivity and that your kubeconfig has RBAC to create/update solo-operator ConsensusCapsule CRs",
-					"If the solo-operator rejected the capsule (admission), read its message — a required image or UC sidecar version is the usual cause; re-check the resolved images via --image-repo/--image-tag, --uc-image-tag, or --deployment-package-dir")))
+			if err := applyCapsuleWithRetry(ctx, kc, capsule); err != nil {
+				return fail(errx.Decorate(
+					errorx.IllegalState.Wrap(err, "failed to apply ConsensusCapsule %s", capsule.Name),
+					reasons.PreconditionNotMet, capsuleApplyHints()...))
 			}
 
 			logx.As().Info().
-				Str("name", capsuleName).
+				Str("name", capsule.Name).
 				Int64("nodeId", inputs.NodeId).
 				Msg("ConsensusCapsule created successfully")
 
@@ -653,6 +508,235 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 		WithOnCompletion(func(ctx context.Context, stp automa.Step, rpt *automa.Report) {
 			notify.As().StepCompletion(ctx, stp, rpt, "ConsensusCapsule created")
 		})
+}
+
+// ConsensusCapsuleDryRun returns a check that sends the capsule as a server-side dry-run.
+// Admission, RBAC and schema errors then show before an irreversible PVC change.
+func ConsensusCapsuleDryRun(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) func(context.Context) error {
+	return func(ctx context.Context) error {
+		kc, err := provider(ctx)
+		if err != nil {
+			return capsuleConnectError(err)
+		}
+		capsule, err := buildConsensusCapsule(ctx, kc, inputs)
+		if err != nil {
+			return err
+		}
+		if err := kc.ApplyTyped(ctx, capsule, kube.WithDryRun()); err != nil {
+			return errx.Decorate(
+				errorx.IllegalState.Wrap(err, "dry-run of ConsensusCapsule %s failed; no PVC was changed", capsule.Name),
+				reasons.PreconditionNotMet, capsuleApplyHints()...)
+		}
+		return nil
+	}
+}
+
+func capsuleConnectError(err error) error {
+	return errx.Decorate(
+		errorx.IllegalState.Wrap(err, "cannot connect to Kubernetes cluster"),
+		reasons.PreconditionNotMet,
+		"Verify your kubeconfig and that 'kubectl get nodes' works")
+}
+
+// applyCapsuleWithRetry applies the capsule and retries a transient error. The apply is
+// idempotent; an admission, RBAC or schema error is not retried.
+func applyCapsuleWithRetry(ctx context.Context, kc CapsuleKubeClient, capsule *operatorv1alpha1.ConsensusCapsule) error {
+	attempt := 0
+	retriable := func(err error) bool {
+		if ctx.Err() != nil || !kube.IsTransientAPIError(err) {
+			return false
+		}
+		if attempt < capsuleApplyBackoff.Steps {
+			logx.As().Warn().Err(err).Str("name", capsule.Name).Int("attempt", attempt).
+				Msg("ConsensusCapsule apply failed with a transient error; retrying")
+		}
+		return true
+	}
+	return retry.OnError(capsuleApplyBackoff, retriable, func() error {
+		attempt++
+		return kc.ApplyTyped(ctx, capsule)
+	})
+}
+
+// withLostPVCHints names the PVCs that --recreate-pvcs deleted before this failure.
+// It keeps the reason and hints of err.
+func withLostPVCHints(err error, deleted []string) error {
+	if len(deleted) == 0 {
+		return err
+	}
+	hints, _ := errx.Hints(err)
+	return errx.WithHints(err, append(hints,
+		fmt.Sprintf("--recreate-pvcs already deleted these PVCs and their data cannot be restored: %s", strings.Join(deleted, ", ")),
+		"Nothing was installed. Fix the cause, then re-run the same install command; it creates the node with new PVCs")...)
+}
+
+func capsuleApplyHints() []string {
+	return []string{
+		"Verify cluster connectivity and that your kubeconfig has RBAC to create/update solo-operator ConsensusCapsule CRs",
+		"If the solo-operator rejected the capsule (admission), read its message — a required image or UC sidecar version is the usual cause; re-check the resolved images via --image-repo/--image-tag, --uc-image-tag, or --deployment-package-dir",
+	}
+}
+
+// buildConsensusCapsule builds the ConsensusCapsule for inputs. It reads the live
+// capsule and the admin key Secret. Errors are decorated.
+func buildConsensusCapsule(ctx context.Context, kc CapsuleKubeClient, inputs models.ConsensusNodeInputs) (*operatorv1alpha1.ConsensusCapsule, error) {
+	scope := models.ConsensusNodeScope(inputs.NodeId)
+	capsuleName := models.ConsensusCapsuleName(inputs.OrbitName, inputs.NodeId)
+
+	// The operator requires a non-empty imageName and assembles the image as
+	// repository/imageName:tag (see solo-operator docs/example). The resolved
+	// ConsensusImageRepo is the full "registry/path/name", so split off the
+	// last segment as the image name.
+	imageRepository, imageName := splitConsensusImage(inputs.ConsensusImageRepo)
+
+	// The UC sidecar image is the operator's own image (no operator default),
+	// so it is split the same way and defaults to the pinned operator version.
+	ucRepository, ucImageName := splitConsensusImage(valueOrDefault(inputs.UCImageRepo, models.ConsensusDefaultUCImageRepo))
+
+	// Resolve container sizing/JVM from inputs, falling back to defaults.
+	resources, err := buildConsensusResources(inputs)
+	if err != nil {
+		return nil, errx.Decorate(
+			err, reasons.InvalidArgument,
+			"Provide valid Kubernetes quantities for --cpu-limit/--cpu-request/--memory-limit/--memory-request (e.g. 2, 250m, 5Gi, 1Gi)")
+	}
+
+	capsule := &operatorv1alpha1.ConsensusCapsule{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kube.SoloOperatorAPIVersion,
+			Kind:       string(kube.KindConsensusCapsule),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capsuleName,
+			Namespace: inputs.Namespace,
+		},
+		Spec: operatorv1alpha1.ConsensusCapsuleSpec{
+			Orbit:                            inputs.OrbitName,
+			NodeId:                           inputs.NodeId,
+			AccountId:                        inputs.AccountId,
+			Weight:                           inputs.Weight,
+			Log4j2ConfigRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyLog4j2),
+			SettingsConfigRef:                models.ConsensusConfigCRName(scope, models.ConfigKeySettings),
+			ApplicationPropertiesRef:         models.ConsensusConfigCRName(scope, models.ConfigKeyAppProperties),
+			ApplicationOverridePropertiesRef: models.ConsensusConfigCRName(scope, models.ConfigKeyAppOverride),
+			ApiPermissionPropertiesRef:       models.ConsensusConfigCRName(scope, models.ConfigKeyApiPermission),
+			BootstrapPropertiesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeyBootstrap),
+			NodePropertiesRef:                models.ConsensusConfigCRName(scope, models.ConfigKeyNodeProperties),
+			FeeSchedulesRef:                  models.ConsensusConfigCRName(scope, models.ConfigKeyFeeSchedules),
+			SimpleFeesSchedulesRef:           models.ConsensusConfigCRName(scope, models.ConfigKeySimpleFeesSchedules),
+			ThrottlesConfigRef:               models.ConsensusConfigCRName(scope, models.ConfigKeyThrottles),
+			BlockNodesConfigRef:              models.ConsensusConfigCRName(scope, models.ConfigKeyBlockNodes),
+			PodProperties: operatorv1alpha1.ConsensusPodProperties{
+				Containers: operatorv1alpha1.ConsensusContainers{
+					ConsensusNode: operatorv1alpha1.ConsensusNodeContainer{
+						Name: valueOrDefault(inputs.ContainerName, models.ConsensusDefaultContainerName),
+						SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
+							Repository: imageRepository,
+							ImageName:  imageName,
+							ImageTag:   inputs.ConsensusImageTag,
+							// This secret is chosen by the image's host. The operator copies
+							// these onto the pod and its service account and drops duplicates,
+							// so sharing a name with the UC image is fine.
+							ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(inputs.ConsensusImageRepo))),
+						},
+						JavaHeapMin: valueOrDefault(inputs.JavaHeapMin, models.ConsensusDefaultJavaHeapMin),
+						JavaHeapMax: valueOrDefault(inputs.JavaHeapMax, models.ConsensusDefaultJavaHeapMax),
+						JavaOpts:    valueOrDefault(inputs.JavaOpts, models.ConsensusDefaultJavaOpts),
+						Resources:   resources,
+					},
+					// The UC (Update Coordinator) sidecar is mandatory: it is the
+					// sole writer of status.platformStatus, so the operator rejects
+					// a capsule that does not enable it (UCSidecarRequired). The
+					// operator provides no default UC image, so its SoftwareVersion must
+					// be declared explicitly or the operator rejects the capsule with
+					// ImageRequired.
+					UC: &operatorv1alpha1.UcSidecar{
+						Enabled: true,
+						SoftwareVersion: &operatorv1alpha1.SoftwareVersion{
+							Repository:       ucRepository,
+							ImageName:        ucImageName,
+							ImageTag:         valueOrDefault(inputs.UCImageTag, models.ConsensusDefaultUCImageTag),
+							ImagePullSecrets: consensusImagePullSecrets(inputs.ImagePullSecrets.SecretForHost(models.RegistryHost(ucRepository))),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Pick exactly one of SoftwareVersion / SoftwareVersionSource on the
+	// consensus-node container, per the v0.8.0 CRD rule (hashgraph/solo-operator#1372).
+	// A manifest multi-registry source wins; otherwise, when no new source and the
+	// user did not pin the image, preserve any source already on the live CR
+	// (ApplyTyped is server-side apply, so omitting the field would silently drop
+	// it). When a source is set we drop the single SoftwareVersion so the CR does
+	// not carry a misleading registries[0] duplicate.
+	src := buildSoftwareVersionSource(inputs.ConsensusImageSource, inputs.ImagePullSecrets)
+	if src == nil && !inputs.ImagePinned {
+		existing, err := existingConsensusSource(ctx, kc, inputs.Namespace, capsuleName)
+		if err != nil {
+			return nil, errx.Decorate(
+				errorx.IllegalState.Wrap(err, "failed to read existing ConsensusCapsule %s", capsuleName),
+				reasons.PreconditionNotMet,
+				"Verify cluster connectivity, or re-run with --deployment-package-dir so the image source is resolved from the manifest")
+		}
+		src = existing
+	}
+	// SelectionStrategy precedence: --registry-selection-strategy flag beats
+	// the manifest's images.consensusNode.selectionStrategy, which beats the
+	// weaver default (Sequential — manifest primary first, deterministic
+	// failover). An empty src.SelectionStrategy here means neither the new
+	// manifest source nor the preserved live CR carried one.
+	if src != nil {
+		if inputs.RegistrySelectionStrategy != "" {
+			src.SelectionStrategy = inputs.RegistrySelectionStrategy
+		} else if src.SelectionStrategy == "" {
+			src.SelectionStrategy = models.RegistrySelectionSequential
+		}
+	}
+	if src != nil {
+		capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersionSource = src
+		capsule.Spec.PodProperties.Containers.ConsensusNode.SoftwareVersion = nil
+	}
+
+	// Resolve per-volume backing (emptyDir / hostPath / PVC) onto the capsule.
+	if err := applyConsensusVolumes(capsule, inputs); err != nil {
+		return nil, err
+	}
+
+	if inputs.GrpcTlsSecret != "" || inputs.SigningSecret != "" {
+		sr := &operatorv1alpha1.ConsensusSecretResources{}
+		if inputs.GrpcTlsSecret != "" {
+			sr.GrpcTlsPrivateKey = operatorv1alpha1.KeyReference{
+				SecretName: inputs.GrpcTlsSecret,
+				KeyName:    cnkeys.FileGrpcKey,
+			}
+			sr.GrpcTlsPublicCertificate = operatorv1alpha1.KeyReference{
+				SecretName: inputs.GrpcTlsSecret,
+				KeyName:    cnkeys.FileGrpcCert,
+			}
+		}
+		if inputs.SigningSecret != "" {
+			sr.SigningPrivateKey = operatorv1alpha1.KeyReference{
+				SecretName: inputs.SigningSecret,
+				KeyName:    cnkeys.FileGossipPrivate,
+			}
+			sr.SigningPublicCertificate = operatorv1alpha1.KeyReference{
+				SecretName: inputs.SigningSecret,
+				KeyName:    cnkeys.FileGossipCert,
+			}
+		}
+		adminRef, aerr := adminKeyReference(ctx, kc, inputs)
+		if aerr != nil {
+			return nil, aerr
+		}
+		sr.AdminPublicKey = adminRef
+		capsule.Spec.Secrets = &operatorv1alpha1.ConsensusSecrets{
+			SecretResources: sr,
+		}
+	}
+
+	return capsule, nil
 }
 
 // ReportConsensusCapsuleStatus reads the ConsensusCapsule's current status once

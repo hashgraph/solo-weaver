@@ -262,12 +262,15 @@ func (h *InstallHandler) BuildWorkflow(
 	if steps.ConsensusHasHostPathVolumes(ins) {
 		deploySteps = append(deploySteps, steps.EnsureConsensusHostPaths(ins))
 	}
-	// Expand or delete kept PVCs last, so a failed earlier step deletes no data.
+	// Expand or delete kept PVCs last, so a failed earlier step deletes no data. A capsule
+	// dry-run runs first, so a capsule the cluster rejects changes no PVC.
+	deletedPVCs := &steps.DeletedPVCs{}
 	if ins.ExpandPVCs || ins.RecreatePVCs {
-		deploySteps = append(deploySteps, steps.ReconcileConsensusPVCs(ins, inputs.Common.Force, steps.DefaultConsensusPVCProvider))
+		deploySteps = append(deploySteps, steps.ReconcileConsensusPVCs(ins, inputs.Common.Force,
+			steps.DefaultConsensusPVCProvider, steps.DefaultCapsuleKubeProvider, deletedPVCs))
 	}
 	deploySteps = append(deploySteps,
-		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),
+		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider, deletedPVCs),
 		// Report the node's current status (non-blocking) so the operator sees the
 		// phase and next step. Install does not wait for Running: a fresh network is
 		// unblocked out-of-band by `consensus network genesis`, and Manual nodes stay

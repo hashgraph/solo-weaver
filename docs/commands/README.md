@@ -557,10 +557,20 @@ The flags follow these rules:
   If stderr also goes to a pipe or a file (`2>&1 | tee` or `> install.log 2>&1`), there is no prompt.
 - The summary at the end of the install names each PVC that `--expand-pvcs` expanded or
   `--recreate-pvcs` deleted. If the install fails, the summary names the PVCs that were deleted
-  before the failure.
+  before the failure. If a delete fails, the summary also names that PVC and each PVC that the
+  install kept.
 - A flag wins over `--force` for the PVCs that it covers.
 - The `precheck-consensus-pvcs` step only checks the PVCs. The `reconcile-consensus-pvcs` step
   changes them, directly before the ConsensusCapsule is created.
+- Before the first change, the `reconcile-consensus-pvcs` step sends the ConsensusCapsule to the
+  cluster as a server-side dry-run. If the cluster rejects the capsule (admission, RBAC or schema),
+  the install stops with the rejection message and changes no PVC.
+- The install tries the capsule apply again, up to 4 times in total, if the API server or the
+  network fails for a short time. It does not try again after a rejection.
+- If the capsule apply still fails after `--recreate-pvcs` deleted PVCs (for example, the API server
+  is not available), the data in those PVCs is gone and no node is installed. The error and the
+  summary name the deleted PVCs. Fix the cause and run the same install command again. The deleted
+  PVCs no longer exist, so the install creates new ones.
 
 > **Data loss.** `--recreate-pvcs` deletes PVC data, and `--rollback-on-error` cannot restore it. An
 > expanded PVC cannot become smaller again. If the PersistentVolume reclaim policy is `Retain`, the

@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -52,9 +53,17 @@ func init() {
 	})
 }
 
+// ApplyOption changes how ApplyTyped sends the apply request.
+type ApplyOption func(*metav1.PatchOptions)
+
+// WithDryRun runs validation and admission on the server but saves nothing.
+func WithDryRun() ApplyOption {
+	return func(o *metav1.PatchOptions) { o.DryRun = []string{metav1.DryRunAll} }
+}
+
 // ApplyTyped converts a typed Kubernetes object to unstructured and applies it
 // via Server-Side Apply. The object must have TypeMeta set (APIVersion + Kind).
-func (c *Client) ApplyTyped(ctx context.Context, obj runtime.Object) error {
+func (c *Client) ApplyTyped(ctx context.Context, obj runtime.Object, opts ...ApplyOption) error {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		return errorx.InternalError.Wrap(err, "failed to marshal typed object")
@@ -87,10 +96,14 @@ func (c *Client) ApplyTyped(ctx context.Context, obj runtime.Object) error {
 	}
 
 	force := true
-	if _, err := dr.Patch(ctx, u.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
+	patchOpts := metav1.PatchOptions{
 		FieldManager: "solo-weaver",
 		Force:        &force,
-	}); err != nil {
+	}
+	for _, opt := range opts {
+		opt(&patchOpts)
+	}
+	if _, err := dr.Patch(ctx, u.GetName(), types.ApplyPatchType, data, patchOpts); err != nil {
 		// A 403 from an admission webhook (ValidatingAdmissionPolicy) or RBAC carries
 		// the single most operator-actionable line — the admission message (e.g.
 		// "spec.orbit ... must match namespace default"). Surface it verbatim as a
@@ -117,4 +130,17 @@ func admissionMessage(err error) string {
 		}
 	}
 	return err.Error()
+}
+
+// IsTransientAPIError reports whether err is a short-lived API server or network failure,
+// so the same request can succeed later.
+func IsTransientAPIError(err error) bool {
+	return anyInChain(err, isTransientAPIError)
+}
+
+func isTransientAPIError(err error) bool {
+	return kerrors.IsServerTimeout(err) || kerrors.IsTimeout(err) || kerrors.IsTooManyRequests(err) ||
+		kerrors.IsServiceUnavailable(err) || kerrors.IsInternalError(err) ||
+		utilnet.IsConnectionRefused(err) || utilnet.IsConnectionReset(err) ||
+		utilnet.IsProbableEOF(err) || utilnet.IsHTTP2ConnectionLost(err) || utilnet.IsTimeout(err)
 }
