@@ -5,6 +5,7 @@
 package prompt
 
 import (
+	"os"
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/state"
@@ -451,5 +452,48 @@ func TestArchivePathInputPrompt_RequiredValidation(t *testing.T) {
 	p = archivePathInputPrompt("", &target, false)
 	if err := p.Validate(""); err != nil {
 		t.Fatalf("expected no validation error for empty path in optional mode, got: %v", err)
+	}
+}
+
+// fakeTerminals makes the given files terminals for one test.
+func fakeTerminals(t *testing.T, ttys ...*os.File) {
+	t.Helper()
+	orig, origNI := isTerminal, ui.NonInteractive
+	t.Cleanup(func() { isTerminal, ui.NonInteractive = orig, origNI })
+	ui.NonInteractive = false
+	isTerminal = func(f *os.File) bool {
+		for _, tty := range ttys {
+			if f == tty {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// #1471: a piped stdout (| tee install.log) keeps the confirm prompt.
+func TestCanConfirm_PipedStdoutKeepsPrompt(t *testing.T) {
+	fakeTerminals(t, os.Stdin, os.Stderr)
+	if !CanConfirm() {
+		t.Fatal("expected CanConfirm when stdin and stderr are terminals")
+	}
+}
+
+func TestCanConfirm_NoTerminalStdinOrStderr(t *testing.T) {
+	fakeTerminals(t, os.Stderr, os.Stdout)
+	if CanConfirm() {
+		t.Fatal("expected no prompt when stdin is not a terminal (cron, CI, ssh without -t)")
+	}
+	fakeTerminals(t, os.Stdin, os.Stdout)
+	if CanConfirm() {
+		t.Fatal("expected no prompt when stderr is not a terminal (huh draws there)")
+	}
+}
+
+func TestCanConfirm_NonInteractiveSkips(t *testing.T) {
+	fakeTerminals(t, os.Stdin, os.Stderr, os.Stdout)
+	ui.NonInteractive = true
+	if CanConfirm() {
+		t.Fatal("expected --non-interactive to turn the prompt off")
 	}
 }

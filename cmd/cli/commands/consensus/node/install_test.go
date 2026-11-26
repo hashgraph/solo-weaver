@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,23 +108,42 @@ var recreateLine = []string{"orbit-consensus-0-saved (500Gi)"}
 func TestCheckRecreatePVCs_FlagNotSetDoesNotPrompt(t *testing.T) {
 	find, looked := recreateFinder(recreateLine, nil)
 	confirm, called := recreateConfirm(false)
-	require.NoError(t, checkRecreatePVCs(false, true, 0, "ns", find, confirm))
+	ok, err := checkRecreatePVCs(false, false, true, 0, "ns", find, confirm)
+	require.NoError(t, err)
+	assert.False(t, ok)
 	assert.False(t, *looked)
 	assert.False(t, *called)
 }
 
-func TestCheckRecreatePVCs_NoPromptModeSkipsPrompt(t *testing.T) {
+func TestCheckRecreatePVCs_NoPromptModeDoesNotConfirm(t *testing.T) {
 	find, looked := recreateFinder(recreateLine, nil)
 	confirm, called := recreateConfirm(false)
-	require.NoError(t, checkRecreatePVCs(true, false, 0, "ns", find, confirm), "--force / --non-interactive is the confirmation")
+	ok, err := checkRecreatePVCs(true, false, false, 0, "ns", find, confirm)
+	require.NoError(t, err, "the precheck step stops the install")
+	assert.False(t, ok, "--non-interactive or no terminal is not a confirmation")
 	assert.False(t, *looked)
 	assert.False(t, *called)
+}
+
+// #1471: --force is the consent, so the prompt does not run.
+func TestCheckRecreatePVCs_ForceSkipsPrompt(t *testing.T) {
+	for _, canConfirm := range []bool{true, false} {
+		find, looked := recreateFinder(recreateLine, nil)
+		confirm, called := recreateConfirm(false)
+		ok, err := checkRecreatePVCs(true, true, canConfirm, 0, "ns", find, confirm)
+		require.NoError(t, err)
+		assert.False(t, ok, "the precheck step reads --force, not the prompt result")
+		assert.False(t, *looked)
+		assert.False(t, *called)
+	}
 }
 
 func TestCheckRecreatePVCs_NothingToDeleteDoesNotPrompt(t *testing.T) {
 	find, _ := recreateFinder(nil, nil)
 	confirm, called := recreateConfirm(false)
-	require.NoError(t, checkRecreatePVCs(true, true, 0, "ns", find, confirm))
+	ok, err := checkRecreatePVCs(true, false, true, 0, "ns", find, confirm)
+	require.NoError(t, err)
+	assert.False(t, ok)
 	assert.False(t, *called)
 }
 
@@ -134,26 +155,42 @@ func TestCheckRecreatePVCs_ConfirmedNamesPVCs(t *testing.T) {
 		desc, def = description, defaultValue
 		return true, nil
 	}
-	require.NoError(t, checkRecreatePVCs(true, true, 0, "ns", find, confirm))
+	ok, err := checkRecreatePVCs(true, false, true, 0, "ns", find, confirm)
+	require.NoError(t, err)
+	assert.True(t, ok)
 	assert.Contains(t, desc, "orbit-consensus-0-saved (500Gi)", "the prompt names each PVC it deletes")
 	assert.False(t, def, "the safe answer is the default")
 }
 
-func TestCheckRecreatePVCs_LookupErrorStillPrompts(t *testing.T) {
+func TestCheckRecreatePVCs_LookupErrorSkipsPrompt(t *testing.T) {
 	find, _ := recreateFinder(nil, errors.New("no cluster"))
-	confirm, called := recreateConfirm(false)
-	err := checkRecreatePVCs(true, true, 0, "ns", find, confirm)
-	require.Error(t, err, "a failed lookup does not skip the confirmation")
-	assert.True(t, *called)
+	confirm, called := recreateConfirm(true)
+	ok, err := checkRecreatePVCs(true, false, true, 0, "ns", find, confirm)
+	require.NoError(t, err, "the precheck step reports the lookup error")
+	assert.False(t, ok, "a prompt that cannot name the PVCs is not a confirmation")
+	assert.False(t, *called)
 }
 
 func TestCheckRecreatePVCs_DeclinedAborts(t *testing.T) {
 	find, _ := recreateFinder(recreateLine, nil)
 	confirm, called := recreateConfirm(false)
-	err := checkRecreatePVCs(true, true, 0, "ns", find, confirm)
+	ok, err := checkRecreatePVCs(true, false, true, 0, "ns", find, confirm)
 	require.Error(t, err)
+	assert.False(t, ok)
 	assert.True(t, *called)
-	assert.Contains(t, err.Error(), "aborted")
+	assert.True(t, errorx.IsOfType(err, errorx.RejectedOperation))
+	reason, _ := errx.ReasonOf(err)
+	assert.Equal(t, reasons.PreconditionNotMet, reason)
+	hints, _ := errx.Hints(err)
+	assert.Contains(t, hints, "Run install again without --recreate-pvcs to keep the PVCs")
+}
+
+func TestCheckRecreatePVCs_PromptErrorReturns(t *testing.T) {
+	find, _ := recreateFinder(recreateLine, nil)
+	boom := errors.New("prompt failed")
+	ok, err := checkRecreatePVCs(true, false, true, 0, "ns", find, func(string, string, bool) (bool, error) { return true, boom })
+	require.ErrorIs(t, err, boom)
+	assert.False(t, ok)
 }
 
 // unmountedFinder returns the given lookup result and records whether the lookup ran.

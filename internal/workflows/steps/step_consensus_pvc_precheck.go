@@ -155,6 +155,7 @@ func RecreatedConsensusPVCs(ctx context.Context, inputs models.ConsensusNodeInpu
 // PrecheckConsensusPVCs stops an install that would silently reuse (drift: --force
 // skips) or not mount (stranded: --force/--non-interactive/a confirmed prompt skip) an existing PVC.
 // It also validates the --expand-pvcs / --recreate-pvcs actions. It changes nothing.
+// --recreate-pvcs deletes only with --force or a confirmed prompt, never on --non-interactive alone.
 func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteractive bool, provider ConsensusPVCProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(PrecheckConsensusPVCsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
@@ -169,7 +170,7 @@ func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteract
 			if len(plan.stranded) > 0 && !force && !nonInteractive && !inputs.AcceptUnmountedPVCs {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(pvcStrandedError(inputs, plan.stranded)))
 			}
-			if err := validatePVCPlan(ctx, kc, inputs, plan); err != nil {
+			if err := validatePVCPlan(ctx, kc, inputs, plan, force); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -218,14 +219,14 @@ func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteract
 
 // ReconcileConsensusPVCs runs the --expand-pvcs / --recreate-pvcs actions before the
 // capsule is created. It plans and validates again, so it acts only on checked PVCs.
-func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, provider ConsensusPVCProvider) automa.Builder {
+func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provider ConsensusPVCProvider) automa.Builder {
 	return automa.NewStepBuilder().WithId(ReconcileConsensusPVCsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, plan, err := loadPVCPlan(ctx, inputs, provider)
 			if err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
-			if err := validatePVCPlan(ctx, kc, inputs, plan); err != nil {
+			if err := validatePVCPlan(ctx, kc, inputs, plan, force); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 			}
 
@@ -313,9 +314,9 @@ func loadPVCPlan(ctx context.Context, inputs models.ConsensusNodeInputs, provide
 	return kc, planPVCs(drifts, stranded, inputs.ExpandPVCs, inputs.RecreatePVCs), nil
 }
 
-// validatePVCPlan checks that each planned action can run. A failed expand never
-// falls back to a delete.
-func validatePVCPlan(ctx context.Context, kc ConsensusPVCClient, inputs models.ConsensusNodeInputs, plan pvcPlan) error {
+// validatePVCPlan checks that each planned action can run and that a delete has
+// consent (--force or a confirmed prompt). A failed expand never falls back to a delete.
+func validatePVCPlan(ctx context.Context, kc ConsensusPVCClient, inputs models.ConsensusNodeInputs, plan pvcPlan, force bool) error {
 	var problems, keep []string
 	for _, d := range plan.expand {
 		reason, err := pvcExpandBlocker(ctx, kc, d.pvc)
@@ -354,8 +355,28 @@ func validatePVCPlan(ctx context.Context, kc ConsensusPVCClient, inputs models.C
 				fmt.Sprintf("Uninstall the node first: sudo solo-provisioner consensus node uninstall --experimental --namespace %s --node-id %d", inputs.Namespace, inputs.NodeId),
 				"Then run install again with --recreate-pvcs")
 		}
+		if !force && !inputs.ConfirmRecreatePVCs {
+			return pvcRemovalNotConfirmedError(inputs, plan.remove)
+		}
 	}
 	return nil
+}
+
+func pvcRemovalNotConfirmedError(inputs models.ConsensusNodeInputs, remove []pvcRemoval) error {
+	lines := make([]string, 0, len(remove))
+	names := make([]string, 0, len(remove))
+	for _, r := range remove {
+		lines = append(lines, fmt.Sprintf("%s (%s)", r.pvc.name, orNone(r.pvc.size)))
+		names = append(names, r.pvc.name)
+	}
+	return errx.Decorate(
+		errorx.RejectedOperation.New(
+			"consensus node %d: --recreate-pvcs was not confirmed, so these PVCs and their data are kept: %s",
+			inputs.NodeId, strings.Join(lines, ", ")),
+		reasons.PreconditionNotMet,
+		fmt.Sprintf("Check the PVCs: kubectl -n %s get pvc %s", inputs.Namespace, strings.Join(names, " ")),
+		"Run install again in a terminal, without --non-interactive, --output=json or a redirect of stdin or stderr (2>&1), to confirm the delete",
+		"Or pass --force to delete these PVCs without a prompt (this deletes their data)")
 }
 
 // pvcExpandBlocker returns why a PVC cannot be expanded, or "" when it can.

@@ -264,7 +264,7 @@ func (h *InstallHandler) BuildWorkflow(
 	}
 	// Expand or delete kept PVCs last, so a failed earlier step deletes no data.
 	if ins.ExpandPVCs || ins.RecreatePVCs {
-		deploySteps = append(deploySteps, steps.ReconcileConsensusPVCs(ins, steps.DefaultConsensusPVCProvider))
+		deploySteps = append(deploySteps, steps.ReconcileConsensusPVCs(ins, inputs.Common.Force, steps.DefaultConsensusPVCProvider))
 	}
 	deploySteps = append(deploySteps,
 		steps.CreateConsensusCapsule(ins, steps.DefaultCapsuleKubeProvider),

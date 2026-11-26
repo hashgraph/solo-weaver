@@ -29,8 +29,9 @@ Flags on this page work on every `solo-provisioner` command.
 > `consensus node install` stops when a kept PVC differs from the requested volume settings. When
 > it will not mount a kept PVC, it asks for confirmation in a terminal. `--force` skips the stop and
 > the question. `--non-interactive` and `--output=json` skip only the question, and install without
-> the data of that PVC. All three also skip the `--recreate-pvcs` confirmation prompt. With no
-> terminal, the install also skips that prompt and deletes the PVCs. See
+> the data of that PVC. The `--recreate-pvcs` delete needs a confirmed prompt or `--force`. With
+> `--non-interactive`, `--output=json` or no terminal on stdin or stderr, there is no prompt, so the
+> install stops before it deletes a PVC, unless `--force` is set. See
 > [Install over kept PVCs](../commands/README.md#install-over-kept-pvcs).
 
 > `--profile` is **not** a global flag. It lives on the command stacks that need it —

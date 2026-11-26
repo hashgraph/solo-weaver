@@ -13,6 +13,8 @@ import (
 	"github.com/automa-saga/errx"
 	"github.com/hashgraph/solo-weaver/internal/kube"
 	"github.com/hashgraph/solo-weaver/pkg/models"
+	"github.com/hashgraph/solo-weaver/pkg/reasons"
+	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -124,9 +126,9 @@ func runPVCPrecheck(t *testing.T, in models.ConsensusNodeInputs, force, nonInter
 	return runPrecheck(t, &fakePVCClient{pvcs: pvcs}, in, force, nonInteractive)
 }
 
-func runReconcile(t *testing.T, fake *fakePVCClient, in models.ConsensusNodeInputs) *automa.Report {
+func runReconcile(t *testing.T, fake *fakePVCClient, in models.ConsensusNodeInputs, force bool) *automa.Report {
 	t.Helper()
-	step, err := ReconcileConsensusPVCs(in, fake.provider()).Build()
+	step, err := ReconcileConsensusPVCs(in, force, fake.provider()).Build()
 	require.NoError(t, err)
 	return step.Execute(context.Background())
 }
@@ -389,7 +391,7 @@ func TestPrecheckConsensusPVCs_ExpandDoesNotCoverOtherDrift(t *testing.T) {
 
 func TestReconcileConsensusPVCs_ExpandResizesWithoutWait(t *testing.T) {
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}, expandable: map[string]bool{"standard": true}}
-	rpt := runReconcile(t, fake, expandInputs())
+	rpt := runReconcile(t, fake, expandInputs(), false)
 	require.Equal(t, automa.StatusSuccess, rpt.Status)
 	assert.Equal(t, []string{"resize:" + savedPVC + ":1Ti"}, fake.calls)
 	assert.Equal(t, "PVC "+savedPVC+" expansion from 500Gi to 1Ti requested (--expand-pvcs); the data is kept",
@@ -398,7 +400,7 @@ func TestReconcileConsensusPVCs_ExpandResizesWithoutWait(t *testing.T) {
 
 func TestReconcileConsensusPVCs_ExpandRevalidates(t *testing.T) {
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}, expandable: map[string]bool{"standard": false}}
-	rpt := runReconcile(t, fake, expandInputs())
+	rpt := runReconcile(t, fake, expandInputs(), false)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Empty(t, fake.calls)
 }
@@ -408,6 +410,7 @@ func TestReconcileConsensusPVCs_ExpandRevalidates(t *testing.T) {
 func TestPrecheckConsensusPVCs_RecreatePasses(t *testing.T) {
 	in := pvcInputs("500Gi", "fast-ssd", "")
 	in.RecreatePVCs = true
+	in.ConfirmRecreatePVCs = true
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}}
 	rpt := runPrecheck(t, fake, in, false, false)
 	assert.Equal(t, automa.StatusSuccess, rpt.Status)
@@ -422,6 +425,51 @@ func TestPrecheckConsensusPVCs_RecreateStopsWhenCapsuleExists(t *testing.T) {
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Contains(t, rpt.Error.Error(), "while ConsensusCapsule")
 	assert.Contains(t, hintsOf(rpt.Error), "Uninstall the node first: sudo solo-provisioner consensus node uninstall --experimental --namespace ns --node-id 0")
+}
+
+// #1471: only --force or a confirmed prompt allows the delete.
+func TestPrecheckConsensusPVCs_RecreateWithoutConsentStops(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		nonInteractive bool
+	}{
+		{name: "prompt not confirmed"},
+		{name: "--non-interactive", nonInteractive: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := emptyDirInputs()
+			in.RecreatePVCs = true
+			fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}}
+			rpt := runPrecheck(t, fake, in, false, tc.nonInteractive)
+			require.Equal(t, automa.StatusFailed, rpt.Status)
+			assert.True(t, errorx.IsOfType(rpt.Error, errorx.RejectedOperation))
+			assert.Contains(t, rpt.Error.Error(), "--recreate-pvcs was not confirmed, so these PVCs and their data are kept: "+savedPVC+" (500Gi)")
+			reason, _ := errx.ReasonOf(rpt.Error)
+			assert.Equal(t, reasons.PreconditionNotMet, reason)
+			assert.Contains(t, hintsOf(rpt.Error), "Check the PVCs: kubectl -n ns get pvc "+savedPVC)
+			assert.Contains(t, hintsOf(rpt.Error), "Or pass --force to delete these PVCs without a prompt (this deletes their data)")
+			assert.Empty(t, fake.calls)
+		})
+	}
+}
+
+func TestPrecheckConsensusPVCs_RecreateWithForcePasses(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}}
+	rpt := runPrecheck(t, fake, in, true, true)
+	assert.Equal(t, automa.StatusSuccess, rpt.Status)
+	assert.Empty(t, fake.calls, "the precheck changes nothing")
+}
+
+func TestReconcileConsensusPVCs_RecreateWithoutConsentDeletesNothing(t *testing.T) {
+	in := emptyDirInputs()
+	in.RecreatePVCs = true
+	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}}
+	rpt := runReconcile(t, fake, in, false)
+	require.Equal(t, automa.StatusFailed, rpt.Status)
+	assert.Contains(t, rpt.Error.Error(), "--recreate-pvcs was not confirmed")
+	assert.Empty(t, fake.calls)
 }
 
 func TestRecreatedConsensusPVCs(t *testing.T) {
@@ -450,14 +498,14 @@ func TestReconcileConsensusPVCs_RecreateDeletesOnlyPlannedPVCs(t *testing.T) {
 	cfg := models.ConsensusVolumeConfig{}
 	cfg.SetVolume(models.ConsensusVolumeSaved, models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC, Size: "1Ti"})
 	cfg.SetVolume(models.ConsensusVolumeState, models.ConsensusVolumeSpec{Type: models.VolumeBackingPVC, Size: "100Gi"})
-	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0, Volumes: cfg, RecreatePVCs: true}
+	in := models.ConsensusNodeInputs{Namespace: "ns", OrbitName: "orbit", NodeId: 0, Volumes: cfg, RecreatePVCs: true, ConfirmRecreatePVCs: true}
 
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{
 		savedPVCObj("500Gi", "standard"),                                          // differs: deleted
 		pvcObj(models.ConsensusVolumeState, "100Gi", "standard", "ReadWriteOnce"), // matches: kept
 		pvcObj(models.ConsensusVolumeLogs, "5Gi", "standard", "ReadWriteOnce"),    // stranded: deleted
 	}}
-	rpt := runReconcile(t, fake, in)
+	rpt := runReconcile(t, fake, in, false)
 	require.Equal(t, automa.StatusSuccess, rpt.Status)
 	assert.Equal(t, []string{
 		"delete:" + savedPVC, "wait:" + savedPVC,
@@ -480,7 +528,7 @@ func TestReconcileConsensusPVCs_PartialDeleteReportsDeletedPVCs(t *testing.T) {
 		waitErr:   errors.New("timed out"),
 		waitErrOn: savedPVC, // logs is deleted first
 	}
-	rpt := runReconcile(t, fake, in)
+	rpt := runReconcile(t, fake, in, true)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Equal(t, "PVC orbit-consensus-0-logs (5Gi) and its data deleted (--recreate-pvcs)",
 		rpt.Metadata[models.ReportMetaWarning], "a failed run still names the PVCs it deleted")
@@ -490,7 +538,7 @@ func TestReconcileConsensusPVCs_DeleteWaitTimeoutFails(t *testing.T) {
 	in := emptyDirInputs()
 	in.RecreatePVCs = true
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}, waitErr: errors.New("timed out")}
-	rpt := runReconcile(t, fake, in)
+	rpt := runReconcile(t, fake, in, true)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Contains(t, hintsOf(rpt.Error), "See what still uses the PVC (Used By): kubectl -n ns describe pvc "+savedPVC)
 }
@@ -499,7 +547,7 @@ func TestReconcileConsensusPVCs_RecreateStopsWhenCapsuleExists(t *testing.T) {
 	in := emptyDirInputs()
 	in.RecreatePVCs = true
 	fake := &fakePVCClient{pvcs: []unstructured.Unstructured{savedPVCObj("500Gi", "standard")}, capsuleExists: true}
-	rpt := runReconcile(t, fake, in)
+	rpt := runReconcile(t, fake, in, true)
 	require.Equal(t, automa.StatusFailed, rpt.Status)
 	assert.Empty(t, fake.calls)
 }

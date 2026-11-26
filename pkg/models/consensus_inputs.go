@@ -279,6 +279,8 @@ type ConsensusNodeInputs struct {
 	ExpandPVCs bool `json:"-"`
 	// RecreatePVCs deletes a kept PVC that differs or will not be mounted (--recreate-pvcs).
 	RecreatePVCs bool `json:"-"`
+	// ConfirmRecreatePVCs is set when the user confirms the --recreate-pvcs prompt.
+	ConfirmRecreatePVCs bool `json:"-"`
 	// AcceptUnmountedPVCs is set when the user confirms an install that does not mount kept PVCs.
 	AcceptUnmountedPVCs bool `json:"-"`
 
