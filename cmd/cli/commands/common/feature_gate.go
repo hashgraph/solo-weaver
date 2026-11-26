@@ -39,19 +39,9 @@ func GateFeature(cmd *cobra.Command, f gatekit.Feature) {
 	}
 
 	installExperimentalFlag(cmd)
-
-	prev := cmd.PersistentPreRunE
-	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-		// Chain the prior pre-run (or the root pre-run cobra now skips), then the gate.
-		if prev != nil {
-			if err := prev(c, args); err != nil {
-				return err
-			}
-		} else if err := RunPersistentPreRun(c, args); err != nil {
-			return err
-		}
+	chainPersistentPreRunE(cmd, func(c *cobra.Command, _ []string) error {
 		return requireFeatureEnabled(c, f)
-	}
+	})
 }
 
 // GateFeatureFlag gates a single flag (not the whole command) by its feature's
@@ -69,21 +59,13 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 	if flag == nil {
 		// Wiring bug: the flag isn't registered, so there is nothing to gate. Fail
 		// closed — refuse the command rather than silently leaving the flag ungated.
-		prev := cmd.PersistentPreRunE
-		cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-			if prev != nil {
-				if err := prev(c, args); err != nil {
-					return err
-				}
-			} else if err := RunPersistentPreRun(c, args); err != nil {
-				return err
-			}
+		chainPersistentPreRunE(cmd, func(c *cobra.Command, _ []string) error {
 			return errx.Decorate(
 				errorx.IllegalState.New("feature-gate wiring: flag %q is not registered on %q", flagName, cmd.Name()),
 				reasons.Internal,
 				"This is a feature-gate wiring bug.",
 				"Register the flag before gating it with GateFeatureFlag.")
-		}
+		})
 		return
 	}
 
@@ -107,18 +89,8 @@ func GateFeatureFlag(cmd *cobra.Command, flagName string, f gatekit.Feature) {
 
 	if persistent != nil {
 		// cobra inherits PersistentPreRunE but NOT PreRunE, so an inherited flag must
-		// be checked here to cover subcommands. Chain the prior/root pre-run first.
-		prev := cmd.PersistentPreRunE
-		cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-			if prev != nil {
-				if err := prev(c, args); err != nil {
-					return err
-				}
-			} else if err := RunPersistentPreRun(c, args); err != nil {
-				return err
-			}
-			return enforce(c, args)
-		}
+		// be checked here to cover subcommands.
+		chainPersistentPreRunE(cmd, enforce)
 		return
 	}
 
@@ -144,20 +116,36 @@ func installExperimentalFlag(cmd *cobra.Command) {
 	}
 }
 
-// chainPersistentPreRunE appends next after cmd's existing PersistentPreRunE, or the
-// root pre-run cobra would otherwise skip once this hook is the closest.
+// chainPersistentPreRunE appends next after the pre-run cobra would have run for the
+// command. cobra runs only the CLOSEST PersistentPreRunE, so when a child installs its
+// own hook it would otherwise shadow (and skip) an ancestor group's gate — so the chain
+// re-invokes the nearest ancestor's hook rather than jumping straight to the root.
 func chainPersistentPreRunE(cmd *cobra.Command, next func(*cobra.Command, []string) error) {
 	prev := cmd.PersistentPreRunE
 	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-		if prev != nil {
-			if err := prev(c, args); err != nil {
-				return err
-			}
-		} else if err := RunPersistentPreRun(c, args); err != nil {
+		if err := runInheritedPreRun(cmd, prev, c, args); err != nil {
 			return err
 		}
 		return next(c, args)
 	}
+}
+
+// runInheritedPreRun runs the PersistentPreRun(E) cobra would have run for c had our hook
+// not shadowed it: cmd's prior hook, else the nearest ancestor's, else the root pre-run.
+func runInheritedPreRun(cmd *cobra.Command, prev func(*cobra.Command, []string) error, c *cobra.Command, args []string) error {
+	if prev != nil {
+		return prev(c, args)
+	}
+	for p := cmd.Parent(); p != nil; p = p.Parent() {
+		if p.PersistentPreRunE != nil {
+			return p.PersistentPreRunE(c, args)
+		}
+		if p.PersistentPreRun != nil {
+			p.PersistentPreRun(c, args)
+			return nil
+		}
+	}
+	return RunPersistentPreRun(c, args)
 }
 
 // GateBehavior wires the --experimental opt-in onto a GA command that reads one or more
@@ -173,8 +161,9 @@ func GateBehavior(cmd *cobra.Command, features ...gatekit.Feature) {
 	})
 }
 
-// applyBehaviorGate builds the invocation gate — enabling the declared ready features
-// when --experimental is set — and stores it on the command context.
+// applyBehaviorGate accumulates the declared ready features onto the command context's
+// opt-in overrides when --experimental is set, so business code (featuregate.Gate(ctx))
+// and any stacked gate see them enabled.
 func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 	if len(features) == 0 {
 		return errx.Decorate(
@@ -193,9 +182,8 @@ func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 				"Add the feature to internal/featuregate/registry.go (and features.go).")
 		}
 	}
-	var overrides map[gatekit.Feature]bool
 	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental {
-		overrides = make(map[gatekit.Feature]bool, len(features))
+		overrides := make(map[gatekit.Feature]bool, len(features))
 		for _, f := range features {
 			ready, err := featuregate.ExperimentalReady(f)
 			if err != nil {
@@ -205,20 +193,16 @@ func applyBehaviorGate(cmd *cobra.Command, features []gatekit.Feature) error {
 				overrides[f] = true // a dormant feature stays off
 			}
 		}
+		cmd.SetContext(featuregate.WithOverrides(cmd.Context(), overrides))
 	}
-	gate, err := featuregate.New(featuregate.Options{Overrides: overrides})
-	if err != nil {
-		return err
-	}
-	cmd.SetContext(featuregate.NewContext(cmd.Context(), gate))
 	return nil
 }
 
 // requireFeatureEnabled returns nil when the operator may run a command gated by
 // feature f, else a decorated refusal. GA/BETA commands always pass; an ALPHA command
-// passes only when opted in (--experimental or the env var) AND ready. It stores the
-// resolved gate on the command context so business code (featuregate.Gate(ctx)) resolves
-// the feature the same way.
+// passes only when opted in (--experimental or the env var) AND ready. It accumulates the
+// opt-in on the command context so business code (featuregate.Gate(ctx)) resolves the
+// feature the same way.
 func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 	maturity := featuregate.MaturityOf(f)
 	if maturity == "" {
@@ -239,16 +223,15 @@ func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 	if err != nil {
 		return err
 	}
-	var overrides map[gatekit.Feature]bool
 	if experimental, _ := cmd.Flags().GetBool(experimentalFlagName); experimental && ready {
-		overrides = map[gatekit.Feature]bool{f: true}
+		// Accumulate on the context (not replace), so business code and any stacked gate
+		// see the same opt-ins.
+		cmd.SetContext(featuregate.WithOverrides(cmd.Context(), map[gatekit.Feature]bool{f: true}))
 	}
-	gate, err := featuregate.New(featuregate.Options{Overrides: overrides})
+	gate, err := featuregate.Gate(cmd.Context())
 	if err != nil {
 		return err
 	}
-	// Share this exact gate with the command's business code.
-	cmd.SetContext(featuregate.NewContext(cmd.Context(), gate))
 
 	if gate.Enabled(f) {
 		return nil
@@ -260,6 +243,15 @@ func requireFeatureEnabled(cmd *cobra.Command, f gatekit.Feature) error {
 			reasons.PreconditionNotMet,
 			"This feature is incomplete and is intentionally not switchable on.",
 			"It becomes available once it is marked ready in a future release.")
+	}
+	if featuregate.EnvDisabled(f) {
+		// An env off-request (=0) is a kill switch that wins over --experimental; name it
+		// as the blocker instead of telling the operator to set it to 1.
+		return errx.Decorate(
+			errorx.RejectedOperation.New("%s is disabled by %s=0", f, featuregate.OverrideEnvVar(f)),
+			reasons.PreconditionNotMet,
+			"This feature is explicitly disabled by an environment variable.",
+			fmt.Sprintf("Unset %s to allow it.", featuregate.OverrideEnvVar(f)))
 	}
 	return errx.Decorate(
 		errorx.RejectedOperation.New("%s is an experimental feature and not supported in production", f),

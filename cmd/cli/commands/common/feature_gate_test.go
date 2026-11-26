@@ -93,6 +93,55 @@ func TestGateBehavior_UncataloguedFailsClosed(t *testing.T) {
 	require.Error(t, cmd.PersistentPreRunE(cmd, nil))
 }
 
+// A child that installs its own hook (here GateBehavior) must not shadow an ancestor
+// group's gate: running the child is still refused until the group is opted in.
+func TestNestedGate_ChildDoesNotShadowParent(t *testing.T) {
+	parent := &cobra.Command{Use: "parent",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateFeature(parent, featuregate.ConsensusNodeOperatorManaged) // alpha group
+	child := &cobra.Command{Use: "child", RunE: func(*cobra.Command, []string) error { return nil }}
+	parent.AddCommand(child)
+	GateBehavior(child, featuregate.KubeClusterUpgrade) // child installs its own hook
+	parent.SilenceErrors, parent.SilenceUsage = true, true
+
+	// Without opting in, the parent's gate still refuses the child.
+	parent.SetArgs([]string{"child"})
+	require.Error(t, parent.Execute())
+
+	// With --experimental, the child runs.
+	parent.SetArgs([]string{"child", "--experimental"})
+	require.NoError(t, parent.Execute())
+}
+
+// Stacking GateFeature + GateBehavior on one command must accumulate, not replace: both
+// features resolve on for business code.
+func TestStackedGates_ShareContext(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo",
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil }}
+	GateFeature(cmd, featuregate.ConsensusNodeOperatorManaged)
+	GateBehavior(cmd, featuregate.KubeClusterUpgrade)
+
+	require.NoError(t, cmd.ParseFlags([]string{"--" + experimentalFlagName}))
+	require.NoError(t, cmd.PersistentPreRunE(cmd, nil))
+
+	g, err := featuregate.Gate(cmd.Context())
+	require.NoError(t, err)
+	require.True(t, g.Enabled(featuregate.ConsensusNodeOperatorManaged)) // from GateFeature
+	require.True(t, g.Enabled(featuregate.KubeClusterUpgrade))           // from GateBehavior — not lost
+}
+
+// When an env =0 kill switch blocks a run, the refusal names the variable, not "set X=1".
+func TestRequireFeatureEnabled_EnvKillSwitchHint(t *testing.T) {
+	cmd := &cobra.Command{Use: "demo"}
+	cmd.Flags().Bool(experimentalFlagName, false, "")
+	require.NoError(t, cmd.Flags().Set(experimentalFlagName, "true"))
+	t.Setenv(featuregate.OverrideEnvVar(featuregate.ConsensusNodeOperatorManaged), "0")
+
+	err := requireFeatureEnabled(cmd, featuregate.ConsensusNodeOperatorManaged)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), featuregate.OverrideEnvVar(featuregate.ConsensusNodeOperatorManaged)+"=0")
+}
+
 // An alpha command is refused until opted in; --experimental enables it even
 // though the feature's activation version is not the current one.
 func TestRequireFeatureEnabled_OptIn(t *testing.T) {

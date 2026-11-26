@@ -52,7 +52,7 @@ func envFeatureRequests() (map[gatekit.Feature]bool, error) {
 		}
 		f, ok := byVar[name]
 		if !ok {
-			hint := fmt.Sprintf("Unset %s, or use the correct name (run `solo-provisioner feature-gate list`).", name)
+			hint := fmt.Sprintf("Unset %s, then run `solo-provisioner feature-gate list` to see the valid names.", name)
 			if current, renamed := deprecatedEnvRenames[name]; renamed {
 				hint = fmt.Sprintf("%s was renamed to %s.", name, current)
 			}
@@ -78,4 +78,15 @@ func envFeatureRequests() (map[gatekit.Feature]bool, error) {
 // feature on (honoured only when it is ready); a falsy value forces it off.
 func OverrideEnvVar(f gatekit.Feature) string {
 	return gatekit.EnvVarName(f, envPrefix)
+}
+
+// EnvDisabled reports whether the operator set f's opt-in env var to a falsy value — a
+// kill switch that wins over --experimental. Used to explain why a feature is refused.
+func EnvDisabled(f gatekit.Feature) bool {
+	v, ok := os.LookupEnv(OverrideEnvVar(f))
+	if !ok {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	return err == nil && !b
 }

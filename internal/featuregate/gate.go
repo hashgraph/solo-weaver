@@ -130,36 +130,39 @@ func NewDefault() (*gatekit.FeatureGate, error) {
 	return New(Options{})
 }
 
-type gateCtxKey struct{}
+type overridesCtxKey struct{}
 
-// NewContext returns ctx carrying g, the one gate resolved for this invocation
-// (env overrides plus any --experimental opt-in). Command gating installs it so that
-// business code later resolves features against the SAME effective config — opting a
-// command in via --experimental therefore turns the feature on for its business logic
-// too. A nil parent defaults to context.Background.
-func NewContext(ctx context.Context, g *gatekit.FeatureGate) context.Context {
+// WithOverrides returns ctx with the given per-feature opt-in overrides merged into any
+// already present, so stacked or nested command gates accumulate rather than replace
+// each other. A nil parent defaults to context.Background.
+func WithOverrides(ctx context.Context, overrides map[gatekit.Feature]bool) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, gateCtxKey{}, g)
+	if len(overrides) == 0 {
+		return ctx
+	}
+	merged := map[gatekit.Feature]bool{}
+	for f, v := range overridesFromContext(ctx) {
+		merged[f] = v
+	}
+	for f, v := range overrides {
+		merged[f] = v
+	}
+	return context.WithValue(ctx, overridesCtxKey{}, merged)
 }
 
-// FromContext returns the gate installed by NewContext, or nil when none is set
-// (including a nil ctx).
-func FromContext(ctx context.Context) *gatekit.FeatureGate {
+func overridesFromContext(ctx context.Context) map[gatekit.Feature]bool {
 	if ctx == nil {
 		return nil
 	}
-	g, _ := ctx.Value(gateCtxKey{}).(*gatekit.FeatureGate)
-	return g
+	m, _ := ctx.Value(overridesCtxKey{}).(map[gatekit.Feature]bool)
+	return m
 }
 
-// Gate returns the invocation's gate from ctx, or a default gate (env overrides, no
-// --experimental) when none was installed. Business code calls this to honour the same
-// opt-ins the command gate resolved; it never builds a bespoke gate of its own.
+// Gate returns the invocation gate, built from the opt-in overrides accumulated on ctx
+// (plus the env opt-ins New always applies). Business code calls this to honour the same
+// opt-ins the command gates resolved; it never builds a bespoke gate of its own.
 func Gate(ctx context.Context) (*gatekit.FeatureGate, error) {
-	if g := FromContext(ctx); g != nil {
-		return g, nil
-	}
-	return NewDefault()
+	return New(Options{Overrides: overridesFromContext(ctx)})
 }
