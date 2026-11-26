@@ -37,7 +37,9 @@ func (f *fakeSecretClient) GetResourceNestedString(_ context.Context, _, _, _, n
 	return f.secrets[name][fields[1]], nil
 }
 
-func (f *fakeSecretClient) ApplyTyped(context.Context, runtime.Object) error { return nil }
+func (f *fakeSecretClient) ApplyTyped(context.Context, runtime.Object, ...kube.ApplyOption) error {
+	return nil
+}
 
 func (f *fakeSecretClient) List(context.Context, kube.ResourceKind, string, kube.WaitOptions) (*unstructured.UnstructuredList, error) {
 	return &unstructured.UnstructuredList{}, nil

@@ -217,9 +217,35 @@ func PrecheckConsensusPVCs(inputs models.ConsensusNodeInputs, force, nonInteract
 		})
 }
 
+// DeletedPVCs records the PVCs that the reconcile step deleted, so a later failed step
+// can name them. A nil *DeletedPVCs records nothing.
+type DeletedPVCs struct{ names []string }
+
+func (d *DeletedPVCs) add(name string) {
+	if d != nil {
+		d.names = append(d.names, name)
+	}
+}
+
+// Names returns the deleted PVC names, in delete order.
+func (d *DeletedPVCs) Names() []string {
+	if d == nil {
+		return nil
+	}
+	return slices.Clone(d.names)
+}
+
 // ReconcileConsensusPVCs runs the --expand-pvcs / --recreate-pvcs actions before the
 // capsule is created. It plans and validates again, so it acts only on checked PVCs.
-func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provider ConsensusPVCProvider) automa.Builder {
+// A ConsensusCapsule dry-run runs before the first change, so a rejected capsule changes no PVC.
+// Each deleted PVC goes into deleted, which can be nil.
+func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provider ConsensusPVCProvider, capsuleProvider CapsuleKubeProvider, deleted *DeletedPVCs) automa.Builder {
+	return reconcileConsensusPVCs(inputs, force, provider, ConsensusCapsuleDryRun(inputs, capsuleProvider), deleted)
+}
+
+// reconcileConsensusPVCs runs beforeChange before the first change; its decorated error
+// stops the step with no PVC changed.
+func reconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provider ConsensusPVCProvider, beforeChange func(context.Context) error, deleted *DeletedPVCs) automa.Builder {
 	return automa.NewStepBuilder().WithId(ReconcileConsensusPVCsStepId).
 		WithExecute(func(ctx context.Context, stp automa.Step) *automa.Report {
 			kc, plan, err := loadPVCPlan(ctx, inputs, provider)
@@ -228,6 +254,12 @@ func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provi
 			}
 			if err := validatePVCPlan(ctx, kc, inputs, plan, force); err != nil {
 				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+			// A resize or delete cannot be undone, so the check runs in this step, not an earlier one.
+			if plan.hasActions() {
+				if err := beforeChange(ctx); err != nil {
+					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+				}
 			}
 
 			// The TUI sends logs only to the file, so each change also goes to the end summary.
@@ -249,8 +281,9 @@ func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provi
 					d.pvc.name, d.pvc.size, d.grow))
 			}
 
-			for _, r := range plan.remove {
-				if err := deletePVCAndWait(ctx, kc, inputs.Namespace, r.pvc.name); err != nil {
+			for i, r := range plan.remove {
+				if requested, err := deletePVCAndWait(ctx, kc, inputs.Namespace, r.pvc.name); err != nil {
+					done = append(done, unfinishedDeleteLines(r, requested, plan.remove[i+1:])...)
 					return fail(errx.Decorate(err,
 						reasons.K8sAPIFailed,
 						fmt.Sprintf("See what still uses the PVC (Used By): kubectl -n %s describe pvc %s", inputs.Namespace, r.pvc.name),
@@ -258,6 +291,7 @@ func ReconcileConsensusPVCs(inputs models.ConsensusNodeInputs, force bool, provi
 				}
 				logx.As().Warn().Str("volume", r.volume).Str("pvc", r.pvc.name).Str("size", r.pvc.size).
 					Bool("recreatedByOperator", r.recreated).Msg("PVC and its data deleted (--recreate-pvcs)")
+				deleted.add(r.pvc.name)
 				line := fmt.Sprintf("PVC %s (%s) and its data deleted (--recreate-pvcs)", r.pvc.name, orNone(r.pvc.size))
 				if r.recreated {
 					line += "; the operator creates it again with the requested settings"
@@ -404,14 +438,31 @@ func pvcExpandBlocker(ctx context.Context, kc ConsensusPVCClient, pvc existingPV
 	return "", nil
 }
 
-func deletePVCAndWait(ctx context.Context, kc ConsensusPVCClient, namespace, name string) error {
+// deletePVCAndWait deletes a PVC and waits until it is gone. requested is true when
+// the API server accepted the delete, even if the wait then failed.
+func deletePVCAndWait(ctx context.Context, kc ConsensusPVCClient, namespace, name string) (requested bool, err error) {
 	if err := kc.DeletePVC(ctx, namespace, name); err != nil {
-		return errorx.ExternalError.Wrap(err, "failed to delete PVC %s/%s", namespace, name)
+		return false, errorx.ExternalError.Wrap(err, "failed to delete PVC %s/%s", namespace, name)
 	}
 	if err := kc.WaitForResource(ctx, kube.KindPVC, namespace, name, kube.IsDeleted, pvcDeleteTimeout); err != nil {
-		return errorx.ExternalError.Wrap(err, "PVC %s/%s is not gone after %s", namespace, name, pvcDeleteTimeout)
+		return true, errorx.ExternalError.Wrap(err, "PVC %s/%s is not gone after %s", namespace, name, pvcDeleteTimeout)
 	}
-	return nil
+	return true, nil
+}
+
+// unfinishedDeleteLines reports the PVC whose delete failed and the PVCs not reached.
+func unfinishedDeleteLines(failed pvcRemoval, requested bool, rest []pvcRemoval) []string {
+	var lines []string
+	if requested {
+		lines = append(lines, fmt.Sprintf("PVC %s (%s) delete requested (--recreate-pvcs) but not confirmed; expect its data to be lost",
+			failed.pvc.name, orNone(failed.pvc.size)))
+	} else {
+		lines = append(lines, fmt.Sprintf("PVC %s (%s) and its data kept; the delete request failed", failed.pvc.name, orNone(failed.pvc.size)))
+	}
+	for _, r := range rest {
+		lines = append(lines, fmt.Sprintf("PVC %s (%s) and its data kept; not deleted after the earlier delete failed", r.pvc.name, orNone(r.pvc.size)))
+	}
+	return lines
 }
 
 // comparePVCs compares each data volume's resolved backing with the PVC of

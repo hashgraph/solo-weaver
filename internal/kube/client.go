@@ -561,8 +561,14 @@ func (c *Client) DeleteResource(ctx context.Context, apiVersion, kind, namespace
 // IsKindNotServed reports whether err comes from a REST mapping of a kind the cluster does not
 // serve (its CRD is absent). It walks errorx causes, which errors.Is cannot see through.
 func IsKindNotServed(err error) bool {
+	return anyInChain(err, meta.IsNoMatchError)
+}
+
+// anyInChain reports whether match is true for err or for one of its causes.
+// It walks errorx causes, which errors.Is and errors.As cannot see through.
+func anyInChain(err error, match func(error) bool) bool {
 	for e := err; e != nil; {
-		if meta.IsNoMatchError(e) {
+		if match(e) {
 			return true
 		}
 		if ex := errorx.Cast(e); ex != nil {
