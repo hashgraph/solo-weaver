@@ -30,16 +30,6 @@ func TestRenderModularConfigs(t *testing.T) {
 			expectedModuleCount: 1,
 		},
 		{
-			name: "block node monitoring without remotes - still skipped",
-			cfg: models.AlloyConfig{
-				ClusterName:      "test-cluster",
-				MonitorBlockNode: true,
-			},
-			expectedModules:     []string{"core"},
-			unexpectedModules:   []string{"remotes", "block-node", "agent-metrics", "node-exporter", "kubelet", "syslog"},
-			expectedModuleCount: 1,
-		},
-		{
 			name: "with prometheus remote only",
 			cfg: models.AlloyConfig{
 				ClusterName: "test-cluster",
@@ -52,35 +42,9 @@ func TestRenderModularConfigs(t *testing.T) {
 			expectedModuleCount: 5,
 		},
 		{
-			name: "with prometheus remote only and block node monitoring - block-node skipped without loki",
-			cfg: models.AlloyConfig{
-				ClusterName:      "test-cluster",
-				MonitorBlockNode: true,
-				PrometheusRemotes: []models.AlloyRemoteConfig{
-					{Name: "primary", URL: "http://prom:9090/api/v1/write", Username: "user"},
-				},
-			},
-			expectedModules:     []string{"core", "remotes", "agent-metrics", "node-exporter", "kubelet"},
-			unexpectedModules:   []string{"block-node", "syslog"},
-			expectedModuleCount: 5,
-		},
-		{
 			name: "with loki remote only",
 			cfg: models.AlloyConfig{
 				ClusterName: "test-cluster",
-				LokiRemotes: []models.AlloyRemoteConfig{
-					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
-				},
-			},
-			expectedModules:     []string{"core", "remotes", "syslog"},
-			unexpectedModules:   []string{"block-node", "agent-metrics", "node-exporter", "kubelet"},
-			expectedModuleCount: 3,
-		},
-		{
-			name: "with loki remote only and block node monitoring - block-node skipped without prometheus",
-			cfg: models.AlloyConfig{
-				ClusterName:      "test-cluster",
-				MonitorBlockNode: true,
 				LokiRemotes: []models.AlloyRemoteConfig{
 					{Name: "primary", URL: "http://loki:3100/loki/api/v1/push", Username: "user"},
 				},

@@ -108,6 +108,12 @@ func preCheckAlloy() automa.Builder {
 
 			meta := map[string]string{}
 
+			// Pure config validation, so it runs ahead of any cluster access.
+			cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
+			if err != nil {
+				return automa.StepFailureReport(stp.Id(), automa.WithError(err))
+			}
+
 			// Fail fast if the Kubernetes cluster is not reachable. Alloy is a
 			// deploy-into-existing-cluster command (like teleport cluster) — it does not
 			// bootstrap the cluster. Without this gate a missing/unreachable cluster only
@@ -132,12 +138,6 @@ func preCheckAlloy() automa.Builder {
 				if err != nil {
 					return automa.StepFailureReport(stp.Id(), automa.WithError(
 						errorx.ExternalError.Wrap(err, "failed to create kubernetes client")))
-				}
-
-				// Build config to determine required secrets
-				cb, err := alloy.NewConfigBuilder(cfg, config.Get().Profile)
-				if err != nil {
-					return automa.StepFailureReport(stp.Id(), automa.WithError(err))
 				}
 
 				// Verify that required K8s secrets exist with expected keys
