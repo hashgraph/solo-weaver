@@ -189,15 +189,17 @@ var installCmd = &cobra.Command{
 		// The PVC prompts run before the TUI starts. The install handler sets OrbitName the same way.
 		lookup := inputs.Custom
 		lookup.OrbitName = lookup.Namespace
-		if err := checkRecreatePVCs(flagRecreatePVCs, prompt.ShouldPrompt(force), flagNodeId, flagNamespace, func() ([]string, error) {
+		// #1360, #1471: without a prompt, the precheck step stops instead.
+		confirmed, err := checkRecreatePVCs(flagRecreatePVCs, force, prompt.CanConfirm(), flagNodeId, flagNamespace, func() ([]string, error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), unmountedPVCLookupTimeout)
 			defer cancel()
 			return steps.RecreatedConsensusPVCs(ctx, lookup, steps.DefaultConsensusPVCProvider)
-		}, prompt.RunConfirm); err != nil {
+		}, prompt.RunConfirm)
+		if err != nil {
 			return err
 		}
+		inputs.Custom.ConfirmRecreatePVCs = confirmed
 
-		// #1360: without a prompt, the precheck step stops instead.
 		accepted, err := checkUnmountedPVCs(prompt.ShouldPrompt(force), flagNodeId, func() ([]string, string, error) {
 			ctx, cancel := context.WithTimeout(cmd.Context(), unmountedPVCLookupTimeout)
 			defer cancel()
@@ -271,7 +273,7 @@ func init() {
 	installCmd.Flags().StringArrayVar(&flagVolumes, "volume", nil, "Per-volume backing override, repeatable: name=<vol>[,type=,path=,size=,storageClass=,accessMode=] (e.g. name=saved,size=500Gi,storageClass=fast-ssd)")
 	installCmd.Flags().StringVar(&flagVolumesFile, "volumes-file", "", "YAML file of volume backings (defaults: + volumes:). CLI flags override the file")
 	installCmd.Flags().BoolVar(&flagExpandPVCs, "expand-pvcs", false, "Grow a kept PVC that is smaller than the requested size; size must be the only difference, the PVC must be Bound and its StorageClass must allow volume expansion. The data is kept")
-	installCmd.Flags().BoolVar(&flagRecreatePVCs, "recreate-pvcs", false, "Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled")
+	installCmd.Flags().BoolVar(&flagRecreatePVCs, "recreate-pvcs", false, "Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled. Asks for confirmation; without a prompt (--non-interactive, --output=json or no terminal), needs --force")
 	// hostPath dirs are chowned to the canonical hedera user/group (pkg/config, the
 	// single source of "2000"). Hedera*Id() are strings; parse to int for IntVar (the
 	// value is the trusted "2000" constant, so the error can't fire).
@@ -382,37 +384,36 @@ func checkNodeAdminKeys(pkgDir string, allow, interactive bool, confirm func() (
 }
 
 // checkRecreatePVCs asks the user to confirm the PVCs that --recreate-pvcs deletes.
-// No PVC to delete: no prompt. A failed lookup asks without the PVC names.
-func checkRecreatePVCs(recreate, shouldPrompt bool, nodeId int64, namespace string, find func() ([]string, error),
-	confirm func(title, description string, defaultValue bool) (bool, error)) error {
-	if !recreate || !shouldPrompt {
-		return nil
+// It returns true when the user confirms. --force skips the prompt. No prompt or a
+// failed lookup returns false: the precheck step then stops before a delete.
+func checkRecreatePVCs(recreate, force, canConfirm bool, nodeId int64, namespace string, find func() ([]string, error),
+	confirm func(title, description string, defaultValue bool) (bool, error)) (bool, error) {
+	if !recreate || force || !canConfirm {
+		return false, nil
 	}
-	description := "--recreate-pvcs deletes each kept PVC of this node that differs from the requested volume settings, " +
-		"or that this install will not mount. The data in those PVCs is lost. PVCs that match are kept."
 	pvcs, err := find()
-	switch {
-	case err != nil:
-		logx.As().Warn().Err(err).Msg("The PVC lookup failed; the --recreate-pvcs prompt cannot name the PVCs")
-	case len(pvcs) == 0:
-		return nil
-	default:
-		description = "--recreate-pvcs deletes these PVCs and their data: " + strings.Join(pvcs, ", ") +
-			". PVCs that match the requested volume settings are kept."
+	if err != nil {
+		logx.As().Warn().Err(err).Msg("Skipping the --recreate-pvcs prompt: the PVC lookup failed, so no PVC is deleted without --force")
+		return false, nil
+	}
+	if len(pvcs) == 0 {
+		return false, nil
 	}
 	ok, err := confirm(
 		fmt.Sprintf("Delete kept PVCs of consensus node %d in namespace %s?", nodeId, namespace),
-		description, false)
+		"--recreate-pvcs deletes these PVCs and their data: "+strings.Join(pvcs, ", ")+
+			". PVCs that match the requested volume settings are kept.",
+		false)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !ok {
-		return errx.Decorate(
+		return false, errx.Decorate(
 			errorx.RejectedOperation.New("aborted: --recreate-pvcs was not confirmed"),
-			reasons.InvalidArgument,
+			reasons.PreconditionNotMet,
 			"Run install again without --recreate-pvcs to keep the PVCs")
 	}
-	return nil
+	return true, nil
 }
 
 // unmountedPVCLookupTimeout bounds the PVC lookup before each PVC prompt.

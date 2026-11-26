@@ -535,7 +535,7 @@ sudo solo-provisioner consensus node install --experimental --namespace hiero-ne
 | Flag | What it does |
 |---|---|
 | `--expand-pvcs` | Grow a kept PVC that is smaller than the requested size; size must be the only difference, the PVC must be Bound and its StorageClass must allow volume expansion. The data is kept |
-| `--recreate-pvcs` | Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled |
+| `--recreate-pvcs` | Delete each kept PVC that differs from the requested volume settings (the operator then creates it again) or that this install will not mount (emptydir/hostpath). DELETES THE DATA in those PVCs. The node must be uninstalled. Asks for confirmation; without a prompt (--non-interactive, --output=json or no terminal), needs --force |
 
 The flags follow these rules:
 
@@ -549,9 +549,12 @@ The flags follow these rules:
 - `--recreate-pvcs` stops if the node is still installed, because its pod uses the PVCs. Run
   `consensus node uninstall` first.
 - `--recreate-pvcs` names each PVC that it will delete, with its size, and asks for confirmation. If
-  no PVC will be deleted, it does not ask. `--force`, `--non-interactive` and `--output=json` skip the
-  prompt. With no terminal (for example a pipe, cron, CI or `ssh` without `-t`), the install also
-  skips the prompt and deletes the PVCs.
+  no PVC will be deleted, it does not ask. `--force` skips the prompt and deletes the PVCs. With
+  `--non-interactive`, `--output=json` or no terminal (for example cron, CI, `ssh` without `-t`, or
+  input from a pipe), there is no prompt, and only `--force` allows the delete. Without `--force`,
+  the install stops before it changes anything, and the error names the PVCs. A pipe on the output,
+  such as `| tee install.log`, keeps the prompt, because the prompt reads stdin and writes to stderr.
+  If stderr also goes to a pipe or a file (`2>&1 | tee` or `> install.log 2>&1`), there is no prompt.
 - The summary at the end of the install names each PVC that `--expand-pvcs` expanded or
   `--recreate-pvcs` deleted. If the install fails, the summary names the PVCs that were deleted
   before the failure.

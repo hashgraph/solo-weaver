@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/hashgraph/solo-weaver/internal/ui"
 )
@@ -150,6 +151,15 @@ func ShouldPrompt(force bool) bool {
 		return false
 	}
 	return true
+}
+
+// isTerminal is a variable so tests can fake a terminal.
+var isTerminal = func(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
+
+// CanConfirm reports whether a confirm prompt can run. huh reads stdin and draws on
+// stderr, so a piped stdout (| tee) keeps the prompt. --non-interactive turns it off.
+func CanConfirm() bool {
+	return !ui.NonInteractive && isTerminal(os.Stdin) && isTerminal(os.Stderr)
 }
 
 // flagWasSet returns true if the named flag was explicitly provided on the
