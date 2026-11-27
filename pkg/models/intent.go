@@ -104,7 +104,7 @@ var allowedOperations = map[ActionType][]TargetType{
 	ActionReset:       {TargetBlockNode, TargetMachine, TargetSystem, TargetCluster, TargetApplication},
 	ActionInstall:     {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall, TargetAlloy, TargetESO},
 	ActionUninstall:   {TargetApplication, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetTeleportNode, TargetTeleportCluster, TargetCluster, TargetFirewall, TargetAlloy, TargetESO},
-	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
+	ActionUpgrade:     {TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator, TargetCluster},
 	ActionMigrate:     {TargetSystem, TargetCluster, TargetBlockNode, TargetConsensusNode, TargetMirrorNode, TargetRelayNode, TargetOperator},
 	ActionReconfigure: {TargetBlockNode},
 	ActionGenesis:     {TargetConsensusNetwork},
