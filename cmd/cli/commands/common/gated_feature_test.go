@@ -3,9 +3,13 @@
 package common
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/automa-saga/logx"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 )
 
 // testFeature is a minimal gatedFeature used to exercise resolveFeatureGate in
@@ -92,4 +96,44 @@ func TestResolveFeatureGate_ContentFlagAllowedWhenGated(t *testing.T) {
 	if !got {
 		t.Error("enabled = false, want true when gate flag is set")
 	}
+}
+
+// The debug log says what decided the feature, so a run that turned it on or
+// off can be traced without the flags it was given.
+func TestResolveFeatureGate_LogsWhatDecided(t *testing.T) {
+	for name, tc := range map[string]struct {
+		setGate string
+		want    string
+	}{
+		"flag": {"false", `"feature":"the test feature","source":"flag","enabled":false`},
+		"seed": {"", `"feature":"the test feature","source":"seed","enabled":true`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			buf := captureLogs(t)
+			cmd := newGateCmd()
+			if tc.setGate != "" {
+				require.NoError(t, cmd.Flags().Set("feature-enabled", tc.setGate))
+			}
+
+			_, err := resolveFeatureGate(cmd, []string{"--force"}, testFeature(), true)
+			require.NoError(t, err)
+
+			require.Contains(t, buf.String(), tc.want)
+		})
+	}
+}
+
+// captureLogs swaps the global logger for a buffer at trace level until the
+// test ends. Global state: callers must not run in parallel.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevLogger, prevLevel := *logx.As(), zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	logx.SetLogger(zerolog.New(&buf))
+	t.Cleanup(func() {
+		logx.SetLogger(prevLogger)
+		zerolog.SetGlobalLevel(prevLevel)
+	})
+	return &buf
 }

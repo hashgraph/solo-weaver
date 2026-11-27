@@ -12,14 +12,21 @@ import (
 // Fails when a field is added to StateRecord, or to MachineState, which is
 // split across three files, without deciding which component file holds it:
 // applyComponentSection copies fields by hand, so a field it misses would
-// silently never be saved.
+// silently never be saved. A field tagged yaml:"-" is never saved, so no file
+// holds it.
 func TestEveryStateFieldIsInExactlyOneComponentFile(t *testing.T) {
 	record := reflect.TypeFor[StateRecord]()
 	for i := range record.NumField() {
 		f := record.Field(i)
+		if neverSaved(f) {
+			continue
+		}
 		if f.Name == "MachineState" {
 			machine := f.Type
 			for j := range machine.NumField() {
+				if neverSaved(machine.Field(j)) {
+					continue
+				}
 				checkCarriedOnce(t, "MachineState."+machine.Field(j).Name, func(s *State) reflect.Value {
 					return reflect.ValueOf(&s.MachineState).Elem().Field(j)
 				})
@@ -30,6 +37,11 @@ func TestEveryStateFieldIsInExactlyOneComponentFile(t *testing.T) {
 			return reflect.ValueOf(&s.StateRecord).Elem().Field(i)
 		})
 	}
+}
+
+// neverSaved reports whether f is left out of every state file.
+func neverSaved(f reflect.StructField) bool {
+	return f.Tag.Get("yaml") == "-"
 }
 
 // checkCarriedOnce sets the field field() selects in an otherwise empty State

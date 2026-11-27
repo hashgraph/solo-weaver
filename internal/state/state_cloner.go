@@ -125,8 +125,28 @@ func (m *MachineState) Clone() (*MachineState, error) {
 	if m.Firewall != nil {
 		clone.Firewall = m.Firewall.Clone()
 	}
+	if m.FirewallObserved != nil {
+		clone.FirewallObserved = m.FirewallObserved.Clone()
+	}
 
 	return &clone, nil
+}
+
+// Clone creates a deep copy of HostFirewallObservation
+func (o *HostFirewallObservation) Clone() *HostFirewallObservation {
+	clone := *o
+	if o.Fields != nil {
+		clone.Fields = make([]HostFirewallFieldObservation, len(o.Fields))
+		for i, f := range o.Fields {
+			clone.Fields[i] = HostFirewallFieldObservation{
+				Field:  f.Field,
+				Config: slices.Clone(f.Config),
+				Live:   slices.Clone(f.Live),
+			}
+		}
+	}
+	clone.Rules = slices.Clone(o.Rules)
+	return &clone
 }
 
 // Clone creates a deep copy of HostFirewallState

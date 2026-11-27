@@ -218,6 +218,49 @@ type MachineState struct {
 	// host this tool never managed the firewall on). See HostFirewallState.
 	Firewall *HostFirewallState `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	LastSync htime.Time         `yaml:"lastSync,omitempty" json:"lastSync,omitempty"` // last time state was reconciled
+	// FirewallObserved is the host firewall as a run found it before its
+	// workflow, for the drift producer. Never saved: Firewall stays the
+	// operator's decision. Nil when nothing read it.
+	FirewallObserved *HostFirewallObservation `yaml:"-" json:"-"`
+}
+
+// HostFirewallObservation is what the host firewall reader found on the host.
+type HostFirewallObservation struct {
+	// Unobserved is set when the table could not be read; TablePresent and the
+	// content are then unknown, while ConfigPresent says whether a table is
+	// expected.
+	Unobserved bool
+	// TablePresent reports whether the host firewall table is live.
+	TablePresent bool
+	// ConfigPresent reports whether the host has a firewall config the table
+	// is expected from.
+	ConfigPresent bool
+	// ConfigUnreadable is set when the firewall config exists but could not be
+	// read, so the content was not compared.
+	ConfigUnreadable bool
+	// Fields pairs each compared part of the firewall config with the live
+	// table, equal or not; empty when either is missing.
+	Fields []HostFirewallFieldObservation
+	// Rules lists each allow rule the firewall config or the live table holds,
+	// by name. A rule's fields are in Fields only while it is in both.
+	Rules []HostFirewallRuleObservation
+}
+
+// HostFirewallRuleObservation is one allow rule and where it was found.
+type HostFirewallRuleObservation struct {
+	Name     string
+	InConfig bool
+	Live     bool
+}
+
+// HostFirewallFieldObservation is one part of the firewall config and the live
+// table's counterpart, both normalized and sorted so that equal means unchanged.
+// They hold addresses.
+type HostFirewallFieldObservation struct {
+	// Field is the config key path, such as "configFile.mgmt.cidrs".
+	Field  string
+	Config []string
+	Live   []string
 }
 
 // HostFirewallState is the persisted record of the operator's last-chosen host

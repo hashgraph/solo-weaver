@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/automa-saga/errx"
 	"github.com/automa-saga/logx"
@@ -37,6 +38,12 @@ type Manager struct {
 	resolver         Resolver
 	applyViaService  func(ctx context.Context) error
 	syncRefreshTimer func(ctx context.Context, wanted bool) error
+	// listTable lists the live table for ObserveDrift.
+	listTable func(ctx context.Context) (string, bool, error)
+	// observeTimeout bounds ObserveDrift as a whole; lockWait bounds its wait
+	// for the apply lock.
+	observeTimeout time.Duration
+	lockWait       time.Duration
 }
 
 // Config customises a Manager. The zero value is not useful; prefer NewManager.
@@ -69,6 +76,9 @@ func NewManagerWithConfig(cfg Config) *Manager {
 		lockPath:         cfg.LockPath,
 		applyViaService:  cfg.ApplyViaService,
 		syncRefreshTimer: cfg.SyncRefreshTimer,
+		listTable:        listLiveTable,
+		observeTimeout:   observeTimeout,
+		lockWait:         observeLockWait,
 	}
 	if m.runner == nil {
 		m.runner = NewExecRunner()

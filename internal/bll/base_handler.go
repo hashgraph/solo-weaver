@@ -206,6 +206,12 @@ func (h *BaseHandler[T]) HandleIntent(
 	}
 	// Only this refresh can see out-of-band changes: by the flush, reality also
 	// holds the workflow's own changes.
+	// With no baseline there is nothing to compare a reading with.
+	for _, c := range h.Managed {
+		if c.observe != nil && baseline != nil {
+			c.observe(ctx, h.Runtime, &currentState)
+		}
+	}
 	outOfBand := detectOutOfBandChanges(baseline, currentState, producersOf(h.Managed)...)
 
 	// ── 3. Prepare effective inputs ───────────────────────────────────────────────
@@ -249,6 +255,7 @@ func (h *BaseHandler[T]) HandleIntent(
 
 	report := wf.Execute(ctx)
 	addOutOfBandWarnings(report, outOfBand)
+	addDriftAdvice(report, h.Managed, outOfBand)
 
 	// ── 5. Flush state ─────────────────────────────────────────────────────
 	return h.flushState(

@@ -45,6 +45,25 @@ func TableExists(ctx context.Context, bin, table string) (bool, error) {
 	return TableListed(stdout.String(), table), nil
 }
 
+// ListTable returns the `nft list table` output for table ("<family> <name>")
+// and whether the table is live. An absent table is present=false with no
+// error; an error means nft could not answer and must not be read as absence.
+func ListTable(ctx context.Context, bin, table string) (string, bool, error) {
+	cmd := exec.CommandContext(ctx, bin, append([]string{"list", "table"}, strings.Fields(table)...)...)
+	// LC_ALL=C pins the error text so the match below holds under any locale.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "No such file or directory") {
+			return "", false, nil
+		}
+		return "", false, errorx.ExternalError.Wrap(err, "nft list table %s failed: %s", table, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), true, nil
+}
+
 // DeleteTable removes table from the kernel. An already-absent table is not an
 // error.
 func DeleteTable(ctx context.Context, bin, table string) error {

@@ -6,6 +6,11 @@
 //
 // Each component supplies a Producer that owns its comparison rules. This
 // package only collects and formats what the producers return.
+//
+// A field that says what exists takes the live value on refresh, so drift on it
+// is reported once. A field that records the operator's decision keeps the
+// record, so drift on it is only warned about, on every run until repaired:
+// the host firewall's record is all decision.
 package drift
 
 import (
