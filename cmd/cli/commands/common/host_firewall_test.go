@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashgraph/solo-weaver/internal/network/firewall"
+	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -292,6 +293,29 @@ func TestResolveFirewallSeed_UnanswerableProbeFallsBackToRecordedState(t *testin
 			// A broken probe must never panic or propagate: the seed has no error
 			// return, so its only safe answer is the recorded decision.
 			assert.Equal(t, tt.want, ResolveFirewallSeed(context.Background(), tt.persisted))
+		})
+	}
+}
+
+func TestWarnIfLegacyInClusterPorts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ports []int
+		want  bool
+	}{
+		{"old defaults", []int{6443, 4244, 7472, 10250}, true},
+		{"old defaults plus an operator port", []int{6443, 4244, 7472, 10250, 8080}, true},
+		{"current defaults", firewall.DefaultInClusterPorts, false},
+		{"narrowed on purpose", []int{6443, 10250}, false},
+		{"no ports", nil, false},
+		{"invalid port", []int{6443, 0}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state.TakeWarnings()
+			assert.Equal(t, tc.want, warnIfLegacyInClusterPorts(tc.ports))
+			// The log reaches only the log file in the interactive mode, so the
+			// operator sees the warning through the command's summary.
+			assert.Equal(t, tc.want, len(state.TakeWarnings()) == 1)
 		})
 	}
 }

@@ -308,6 +308,22 @@ func (m *Manager) Table(_ context.Context) (*Table, error) {
 	return t, err
 }
 
+// Configured reports whether this host has a host firewall on record: its
+// config file, or the nft artifact of a host from before the config file
+// existed. Read-only; no lock is taken.
+func (m *Manager) Configured() (bool, error) {
+	for _, p := range []string{m.configPath, m.nftPath} {
+		_, err := os.Stat(p)
+		if err == nil {
+			return true, nil
+		}
+		if !os.IsNotExist(err) {
+			return false, errorx.ExternalError.Wrap(err, "failed to check %s", p)
+		}
+	}
+	return false, nil
+}
+
 // IsActive reports whether the inet weaver-host-firewall table is currently present in the
 // kernel. It is a read-only probe (no lock, no mutation) used by callers that
 // need the firewall's current on-host state, rather than a recorded decision

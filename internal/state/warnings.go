@@ -14,6 +14,12 @@ var (
 	warnings   []string
 )
 
+// AddWarning records a warning for the operator from outside this package. It is
+// for startup migrations: their log lines reach only the log file in the
+// interactive mode, while these warnings reach the command's summary, or stderr
+// when it has none.
+func AddWarning(w string) { addWarning(w) }
+
 // addWarning records a warning for the operator, once: each state write that
 // hits the same problem would otherwise add another copy.
 func addWarning(w string) {

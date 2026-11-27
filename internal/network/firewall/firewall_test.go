@@ -146,6 +146,38 @@ func newTestManager(t *testing.T, r *fakeRunner, applyCount *int) (*Manager, str
 	return m, nftPath
 }
 
+func TestManager_Configured(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "fw.yaml")
+	nftPath := filepath.Join(dir, "fw.nft")
+	m := NewManagerWithConfig(Config{Runner: &fakeRunner{}, ConfigPath: cfgPath, NftPath: nftPath})
+
+	got, err := m.Configured()
+	require.NoError(t, err)
+	require.False(t, got, "no config and no artifact")
+
+	require.NoError(t, os.WriteFile(nftPath, []byte("table"), 0o644))
+	got, err = m.Configured()
+	require.NoError(t, err)
+	require.True(t, got, "an nft artifact alone is a host from before the config file existed")
+
+	require.NoError(t, os.Remove(nftPath))
+	require.NoError(t, os.WriteFile(cfgPath, []byte("version: 1\n"), 0o600))
+	got, err = m.Configured()
+	require.NoError(t, err)
+	require.True(t, got)
+}
+
+func TestManager_Configured_UncheckablePathIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "file")
+	require.NoError(t, os.WriteFile(notADir, nil, 0o600))
+	m := NewManagerWithConfig(Config{Runner: &fakeRunner{}, ConfigPath: filepath.Join(notADir, "fw.yaml"), NftPath: filepath.Join(dir, "fw.nft")})
+
+	_, err := m.Configured()
+	require.Error(t, err, "a stat failure other than not-exist must not read as \"no firewall\"")
+}
+
 // readNft returns the rendered artifact the manager last persisted.
 func readNft(t *testing.T, path string) string {
 	t.Helper()
@@ -163,7 +195,7 @@ func TestRender_SecurityInvariants(t *testing.T) {
 	require.Contains(t, doc, "policy drop;")
 	require.Contains(t, doc, "ip saddr @mgmt_addrs tcp dport @mgmt_ports accept")
 	require.Contains(t, doc, "elements = { 10.0.0.0/8, 192.168.0.0/16 }")
-	require.Contains(t, doc, "elements = { 4244, 6443, 7472, 10250 }")
+	require.Contains(t, doc, "elements = { 4244, 6443, 7472, 9100, 10250 }")
 	// The operator block list is a distinct set from the mgmt allowlist and
 	// must be dropped before anything else, including established/related.
 	require.Contains(t, doc, "set blocked_addrs { type ipv4_addr; flags interval; auto-merge; elements = { 203.0.113.0/24 }; }")

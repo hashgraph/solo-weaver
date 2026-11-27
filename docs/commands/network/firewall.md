@@ -57,7 +57,7 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 |---|---|---|
 | `--mgmt-cidrs` | Management/SSH allowlist CIDRs and/or domain names. Comma-separated or repeated | none |
 | `--blocked-cidrs` | Block list CIDRs and/or domain names, dropped before any other rule | none |
-| `--in-cluster-ports` | Host-service ports reachable from the pod CIDR | `6443,4244,7472,10250` |
+| `--in-cluster-ports` | Host-service ports reachable from the pod CIDR | `6443,4244,7472,9100,10250` |
 | `--mgmt-ports` | Management TCP port(s). Comma-separated or repeated (`mgmt.ports`) | `22` |
 | `--pod-cidr` | Pod CIDR allowed to reach the in-cluster ports | auto-detected |
 | `--from-file` | Render the whole table from a YAML config. Mutually exclusive with the flags above | none |
@@ -72,6 +72,16 @@ sudo solo-provisioner network firewall create --mgmt-cidrs 10.0.0.0/8,192.168.0.
 single-node host). `network firewall create` is node-agnostic and may run before a cluster
 exists, so detection is best-effort: with no cluster reachable it logs a warning and **omits
 the in-cluster-ports rule**. Pass `--pod-cidr` explicitly to render it anyway.
+
+**Default in-cluster ports.** 6443 (kube-apiserver), 4244 (Cilium), 7472 (MetalLB),
+9100 (node-exporter) and 10250 (kubelet). node-exporter runs on the host network and Alloy
+scrapes it from the pod network, so without 9100 host metrics stop once Alloy opens a new
+connection. A list you pass replaces the defaults: keep 9100 in it if you run Alloy.
+
+**Hosts set up before 9100 was a default** stored their list without it. The first root
+command after the upgrade adds 9100, to the firewall and to the block node's recorded
+config, when the stored list still has the other four defaults. A list you narrowed is left
+alone, with a warning. To open it yourself: `network firewall add --in-cluster-port 9100`.
 
 **ICMP is fixed, and there are no ICMP flags.** The ruleset is:
 
@@ -140,7 +150,7 @@ blocked:                                       # required
 
 in_cluster:                                    # required
   cidrs: ["10.4.0.0/14"]                       # omitted -> auto-detected; [] -> no rule
-  ports: ["6443", "4244", "7472", "10250"]     # omitted -> the defaults
+  ports: ["6443", "4244", "7472", "9100", "10250"]  # omitted -> the defaults
 
 allow:
   - name: k8s-node
@@ -195,7 +205,7 @@ Useful in CI, or on a host whose current firewall you don't want to touch yet.
 | `mgmt.ports` | no | `22` |
 | `blocked.cidrs` | **yes** | rejected — write `[]` to block nobody |
 | `in_cluster.cidrs` | no | auto-detect this node's pod CIDR (`[]` renders no rule) |
-| `in_cluster.ports` | no | `6443,4244,7472,10250` |
+| `in_cluster.ports` | no | `6443,4244,7472,9100,10250` |
 | `allow` | no | no named allow rules — **and any that exist are deleted** |
 
 ### The file is the whole table
@@ -259,7 +269,7 @@ The older per-block flags still work — they just name their reserved block imp
 ```bash
 sudo solo-provisioner network firewall add    --mgmt-cidr 10.1.0.0/16      # = --name mgmt --cidr
 sudo solo-provisioner network firewall remove --blocked-cidr 203.0.113.9/32
-sudo solo-provisioner network firewall add    --in-cluster-port 9100
+sudo solo-provisioner network firewall add    --in-cluster-port 9400
 sudo solo-provisioner network firewall set    --mgmt-cidrs 10.0.0.0/8 --in-cluster-ports 6443,4244
 ```
 

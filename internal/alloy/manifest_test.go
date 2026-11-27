@@ -13,6 +13,7 @@ import (
 	"helm.sh/helm/v3/pkg/getter"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -35,6 +36,17 @@ func TestNodeExporterHelmValues_ServiceMonitor(t *testing.T) {
 			"attachMetadata": map[string]any{"node": true},
 		},
 	}, vals["prometheus"])
+}
+
+// The host firewall opens models.NodeExporterPort to the pod CIDR, so the chart
+// must listen on exactly that port, and the Service must point at it.
+func TestNodeExporterHelmValues_PortPinnedToFirewallPort(t *testing.T) {
+	vals := mergedNodeExporterValues(t)
+
+	svc, ok := vals["service"].(map[string]any)
+	require.True(t, ok, "service must be a map, got %T", vals["service"])
+	assert.EqualValues(t, models.NodeExporterPort, svc["port"])
+	assert.EqualValues(t, models.NodeExporterPort, svc["targetPort"])
 }
 
 func TestNodeExporterHelmValues_ResourcesMatchLegacySmallPreset(t *testing.T) {

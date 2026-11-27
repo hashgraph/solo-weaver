@@ -142,6 +142,7 @@ var stateWriters = map[string]writerRow{
 	"internal/state/migration_mgmt_ports_v1.go:Rollback":                                 {lock: exemptStartupMigration, history: inStartupPass},
 	"internal/state/migration_traffic_shaping_enabled_v1.go:Execute":                     {lock: exemptStartupMigration, history: inStartupPass},
 	"internal/state/migration_traffic_shaping_enabled_v1.go:Rollback":                    {lock: exemptStartupMigration, history: inStartupPass},
+	"internal/state/migration_recorded_node_exporter_port.go:updateRecordedFirewall":     {lock: exemptStartupMigration, history: "called by Execute and Rollback: " + inStartupPass},
 
 	// Helpers: their callers have rows.
 	"internal/state/atomic_write.go:atomicWriteFile":       {lock: "helper", history: "helper"},

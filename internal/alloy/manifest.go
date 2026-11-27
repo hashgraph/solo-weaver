@@ -5,12 +5,14 @@ package alloy
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 
 	"github.com/joomcode/errorx"
 
 	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
+	"github.com/hashgraph/solo-weaver/pkg/models"
 	"github.com/hashgraph/solo-weaver/pkg/software"
 )
 
@@ -150,12 +152,18 @@ var nodeExporterExtraArgs = []string{
 
 // NodeExporterHelmValues returns the values for the prometheus-community
 // prometheus-node-exporter chart. Resources match the legacy chart's "small" preset.
+//
+// service.port sets the listen address and the container port; the Service's
+// targetPort is a separate value and must match it.
 func NodeExporterHelmValues() *values.Options {
 	extraArgs, _ := json.Marshal(nodeExporterExtraArgs)
+	port := strconv.Itoa(models.NodeExporterPort)
 
 	return &values.Options{
 		Values: []string{
 			"nameOverride=" + NodeExporterAppName,
+			"service.port=" + port,
+			"service.targetPort=" + port,
 			"prometheus.monitor.enabled=true",
 			"prometheus.monitor.interval=15s",
 			"prometheus.monitor.scrapeTimeout=5s",

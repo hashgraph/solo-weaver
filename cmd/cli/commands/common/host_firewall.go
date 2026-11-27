@@ -4,6 +4,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -222,6 +223,7 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	if err != nil {
 		return errorx.IllegalArgument.Wrap(err, "invalid --%s", FlagNameInClusterPorts)
 	}
+	warnIfLegacyInClusterPorts(ports)
 
 	hostCfg := models.HostConfig{
 		ManagementCIDRs: normalizeCIDRs(strings.Split(mgmtStr, ",")),
@@ -236,6 +238,24 @@ func ResolveHostFirewallConfig(cmd *cobra.Command, args []string, cv *prompt.Cho
 	}
 	config.OverrideHostConfig(hostCfg)
 	return nil
+}
+
+// warnIfLegacyInClusterPorts warns when ports are the old defaults without
+// node-exporter's port. Such a list most likely comes from a config file or a
+// script written before the port joined the defaults; it outranks the live
+// firewall, so the re-render closes a port the startup migration opened.
+// Reports whether it warned.
+func warnIfLegacyInClusterPorts(ports []int) bool {
+	v, err := firewall.VerdictForNodeExporterPort(firewall.PortStrings(ports))
+	if err != nil || v != firewall.NodeExporterPortAdd {
+		return false
+	}
+	msg := fmt.Sprintf("The in-cluster ports %v lack node-exporter's port %d, so with the host firewall on Alloy cannot "+
+		"scrape host metrics. Add it to --%s, or to host.inClusterPorts in the config file",
+		ports, models.NodeExporterPort, FlagNameInClusterPorts)
+	logx.As().Warn().Msg(msg)
+	state.AddWarning(msg)
+	return true
 }
 
 // effectiveCSV returns the effective comma-joined value for a StringSlice flag:
