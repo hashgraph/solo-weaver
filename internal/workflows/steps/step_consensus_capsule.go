@@ -659,7 +659,7 @@ func CreateConsensusCapsule(inputs models.ConsensusNodeInputs, provider CapsuleK
 // and reports it — it does NOT wait or block. Install provisions the CR; whether
 // the node then reaches Running depends on the network genesis (fresh networks are
 // unblocked out-of-band by `consensus network genesis`) and the start policy
-// (Manual nodes stay Stopped until `consensus node start`), so blocking here would
+// (held-stopped nodes stay Stopped until `consensus node start`), so blocking here would
 // wrongly time out. The step surfaces the phase plus the right next-step hint and
 // always succeeds — a live readiness check is the job of `consensus node status`.
 func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider CapsuleKubeProvider) automa.Builder {
@@ -680,6 +680,8 @@ func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider Ca
 				phase = string(operatorv1alpha1.PhasePending)
 			}
 			policy, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "spec", "startPolicy")
+			desired, _ := kc.GetResourceNestedString(ctx, apiVersion, string(kube.KindConsensusCapsule), inputs.Namespace, capsuleName, "spec", "desiredRunState")
+			held := consensusStopIntended(policy, desired)
 			if policy == "" {
 				policy = string(operatorv1alpha1.StartPolicyAuto) // CRD default is Auto
 			}
@@ -690,8 +692,8 @@ func ReportConsensusCapsuleStatus(inputs models.ConsensusNodeInputs, provider Ca
 			switch {
 			case !genesisExists:
 				hint = fmt.Sprintf("awaiting network genesis — run 'solo-provisioner consensus network genesis --namespace %s'", inputs.Namespace)
-			case operatorv1alpha1.StartPolicy(policy) == operatorv1alpha1.StartPolicyManual:
-				hint = "Manual start policy — run 'solo-provisioner consensus node start' to start it"
+			case held:
+				hint = fmt.Sprintf("held stopped — run 'solo-provisioner consensus node start --experimental --namespace %s --node-id %d' to start it", inputs.Namespace, inputs.NodeId)
 			case operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseRunning || operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseActive:
 				hint = "running"
 			case operatorv1alpha1.Phase(phase) == operatorv1alpha1.PhaseFailed:
