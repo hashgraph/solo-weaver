@@ -112,11 +112,13 @@ var stateWriters = map[string]writerRow{
 	},
 
 	"internal/bll/clusterupgrade/apply.go:hopRecord": {
-		lock: "a hop's RecordState write, under the system and cluster locks its caller holds; the executor refuses " +
-			"locks that do not cover it: TestApplyCiliumHop_RefusesLocksThatDoNotCoverIt",
+		lock: "a hop's RecordState write, under the system and cluster locks its caller holds; the executors refuse " +
+			"locks that do not cover them: TestApplyCiliumHop_RefusesLocksThatDoNotCoverIt, " +
+			"TestApplyKubernetesHop_RefusesLocksThatDoNotCoverIt",
 		history: "appends no entry; runHop appends it with the files written, after a failed hop too: " +
 			"TestApplyCiliumHop_UpgradesTheCLIThenCiliumAndRecords, TestApplyCiliumHop_RecordFailureIsAWarning, " +
-			"TestApplyCiliumHop_FailedHopRecordsTheCLIItReplaced",
+			"TestApplyCiliumHop_FailedHopRecordsTheCLIItReplaced, TestApplyKubernetesHop_RunsTheHopAndRecords, " +
+			"TestApplyKubernetesHop_FailedHopRecordsTheBinariesItReplaced",
 	},
 
 	"internal/state/lock.go:AcquireHeldLocks": {

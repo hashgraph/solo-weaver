@@ -3,11 +3,15 @@
 package software
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/automa-saga/logx"
 
 	"github.com/hashgraph/solo-weaver/internal/templates"
 	"github.com/hashgraph/solo-weaver/internal/tomlx"
@@ -248,7 +252,26 @@ func (ci *crioInstaller) Install() error {
 	//install $SELINUX -D -m 644 -t "$DESTDIR$ZSHINSTALLDIR" completions/zsh/_crio
 	//install $SELINUX -D -m 644 -t "$DESTDIR$SYSTEMDDIR" contrib/crio.service
 	//install $SELINUX -D -m 644 -t "$DESTDIR$CONTAINERS_REGISTRIES_CONFD_DIR" contrib/registries.conf
-	configs := map[string]string{
+	configs := crioReleaseConfigs(destDir)
+	for src, dst := range configs {
+		// if dst doesn't exist then copy the file
+		_, exists, _ := ci.fileManager.PathExists(dst)
+		if !exists {
+			if err = ci.installFile(filepath.Join(srcDir, src), dst, models.DefaultFilePerm); err != nil {
+				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
+			}
+		}
+	}
+
+	// Record installed state
+	return ci.recordInstalled()
+}
+
+// crioReleaseConfigs maps each config file of the release archive to where
+// Install puts it under destDir. Install copies one only when it is missing,
+// so an operator's or Configure's later changes survive a re-run.
+func crioReleaseConfigs(destDir string) map[string]string {
+	return map[string]string{
 		ContribDir + CrioConfDisabledFile:  filepath.Join(destDir, cniDir, CrioConfDisabledFile),
 		"etc/" + CrictlYamlFile:            filepath.Join(destDir, etcDir, CrictlYamlFile),
 		"etc/" + CrioUmountConfFile:        filepath.Join(destDir, ociDir, CrioUmountConfFile),
@@ -264,18 +287,138 @@ func (ci *crioInstaller) Install() error {
 		ContribDir + CrioServiceFile:       filepath.Join(destDir, userSystemdDir, CrioServiceFile),
 		ContribDir + RegistriesConfFile:    filepath.Join(destDir, containersRegistriesConfdDir, RegistriesConfFile),
 	}
-	for src, dst := range configs {
-		// if dst doesn't exist then copy the file
-		_, exists, _ := ci.fileManager.PathExists(dst)
-		if !exists {
-			if err = ci.installFile(filepath.Join(srcDir, src), dst, models.DefaultFilePerm); err != nil {
-				return NewInstallationError(err, ci.software.Name, ci.versionToBeInstalled)
-			}
+}
+
+// CrioReleaseBackupDir is where an upgrade to version keeps the cri-o release
+// it replaced.
+func CrioReleaseBackupDir(version string) string {
+	return filepath.Join(models.Paths().SandboxDir, "backup", "cri-o-before-"+version)
+}
+
+// MoveCrioReleaseAside moves the cri-o binaries and release config files from
+// the sandbox into backupDir, so the next Install lays down another release's
+// copies. Files are moved, not overwritten, because a running conmon holds its
+// binary open. A file already in backupDir is kept, so a re-run after a failed
+// install keeps the release that was there first.
+//
+// restore moves the release back, for an install that fails. settle, for an
+// install that worked, drops the backed-up binaries and keeps the configs:
+// Configure re-applies only our own settings, so an operator's changes are
+// in backupDir.
+func MoveCrioReleaseAside(backupDir string) (restore, settle func() error, err error) {
+	sandbox := models.Paths().SandboxDir
+	binaries := sortedPaths(crioInstalledBinaryPaths(sandbox))
+	configs := sortedPaths(crioReleaseConfigs(sandbox))
+	all := append(append([]string{}, binaries...), configs...)
+	backupOf := func(p string) (string, error) {
+		rel, err := filepath.Rel(sandbox, p)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return "", errorx.IllegalState.New("%s is not under the sandbox %s", p, sandbox)
+		}
+		return filepath.Join(backupDir, rel), nil
+	}
+
+	for _, p := range all {
+		b, err := backupOf(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := moveAside(p, b); err != nil {
+			return nil, nil, err
 		}
 	}
 
-	// Record installed state
-	return ci.recordInstalled()
+	restore = func() error {
+		var errs []error
+		for _, p := range all {
+			b, err := backupOf(p)
+			if err == nil {
+				err = moveBack(b, p)
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+	settle = func() error {
+		for _, p := range binaries {
+			b, err := backupOf(p)
+			if err != nil {
+				return err
+			}
+			if err := os.Remove(b); err != nil && !os.IsNotExist(err) {
+				return errorx.IllegalState.Wrap(err, "failed to remove the backed-up %s", b)
+			}
+		}
+		for _, p := range configs {
+			b, err := backupOf(p)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Lstat(b); err == nil {
+				logx.As().Warn().Str("backupDir", backupDir).
+					Msg("cri-o's config files now come from the new release, with solo-provisioner's settings applied again; " +
+						"the previous files are in the backup directory, so re-apply any change of your own from there")
+				break
+			}
+		}
+		return nil
+	}
+	return restore, settle, nil
+}
+
+// moveAside moves p to b. When b already holds an earlier copy, p is removed
+// instead, so the earlier copy is kept.
+func moveAside(p, b string) error {
+	if _, err := os.Lstat(p); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to read %s", p)
+	}
+	if _, err := os.Lstat(b); err == nil {
+		if err := os.Remove(p); err != nil {
+			return errorx.IllegalState.Wrap(err, "failed to remove %s", p)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return errorx.IllegalState.Wrap(err, "failed to read %s", b)
+	}
+	if err := os.MkdirAll(filepath.Dir(b), models.DefaultDirOrExecPerm); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s", filepath.Dir(b))
+	}
+	if err := os.Rename(p, b); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to move %s to %s", p, b)
+	}
+	return nil
+}
+
+// moveBack moves b to p, replacing what p holds.
+func moveBack(b, p string) error {
+	if _, err := os.Lstat(b); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to read %s", b)
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return errorx.IllegalState.Wrap(err, "failed to remove %s", p)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), models.DefaultDirOrExecPerm); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to create %s", filepath.Dir(p))
+	}
+	if err := os.Rename(b, p); err != nil {
+		return errorx.IllegalState.Wrap(err, "failed to move %s back to %s", b, p)
+	}
+	return nil
+}
+
+func sortedPaths(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, p := range m {
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // copyCNIPlugins copies all CNI plugin binaries from the cni-plugins directory
