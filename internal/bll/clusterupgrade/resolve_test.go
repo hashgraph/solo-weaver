@@ -8,6 +8,7 @@ import (
 	"github.com/joomcode/errorx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/hashgraph/solo-weaver/internal/rsl"
 )
@@ -55,13 +56,14 @@ func clusterShape(kube, cilium string, opts ...shapeOpt) rsl.ClusterShape {
 
 func withChart(name, live string) shapeOpt {
 	return func(s *rsl.ClusterShape) {
-		s.Charts[name] = rsl.ChartShape{Live: live, ChartName: name, Identity: rsl.IdentityCurrent}
+		s.Charts[name] = rsl.ChartShape{Live: live, ChartName: name, Identity: rsl.IdentityCurrent, Status: release.StatusDeployed}
 	}
 }
 
 func withLegacy(name, live string) shapeOpt {
 	return func(s *rsl.ClusterShape) {
-		s.Charts[name] = rsl.ChartShape{Live: live, ChartName: name, Identity: rsl.IdentityLegacy, Reason: "legacy " + name}
+		s.Charts[name] = rsl.ChartShape{Live: live, ChartName: name, Identity: rsl.IdentityLegacy, Reason: "legacy " + name,
+			Status: release.StatusDeployed}
 	}
 }
 
