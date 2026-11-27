@@ -359,8 +359,9 @@ func TestPreCheckAlloy_MonitorBlockNodeWithoutBothRemotesFails(t *testing.T) {
 			hints, ok := errx.Hints(report.Error)
 			require.True(t, ok)
 			assert.Equal(t, []string{
-				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node",
-				"Or drop --monitor-block-node to install Alloy without block node monitoring",
+				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node, " +
+					"or set both alloy.prometheusRemotes and alloy.lokiRemotes in --config",
+				"Or turn block node monitoring off: --monitor-block-node=false, or alloy.monitorBlockNode: false in --config",
 			}, hints)
 		})
 	}

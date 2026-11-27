@@ -95,8 +95,9 @@ func NewConfigBuilder(cfg models.AlloyConfig, deployProfile string) (*ConfigBuil
 				"block node monitoring needs a Prometheus remote and a Loki remote; missing: %s",
 				strings.Join(missing, ", ")),
 				reasons.InvalidArgument,
-				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node",
-				"Or drop --monitor-block-node to install Alloy without block node monitoring")
+				"Pass both --add-prometheus-remote and --add-loki-remote with --monitor-block-node, "+
+					"or set both alloy.prometheusRemotes and alloy.lokiRemotes in --config",
+				"Or turn block node monitoring off: --monitor-block-node=false, or alloy.monitorBlockNode: false in --config")
 		}
 	}
 

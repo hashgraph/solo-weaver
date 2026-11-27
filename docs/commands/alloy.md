@@ -80,9 +80,9 @@ sudo solo-provisioner alloy cluster install --cluster-name=mainnet-block-01
 | `--cluster-name` | Cluster name used as a label on every metric and log stream |
 | `--profile`, `-p` | Deployment profile. Sets the `environment` label for the `ops` label profile. Optional — falls back to `--config` |
 | `--environment` | Environment label for the `ops` label profile; defaults to `--profile`. Free-form, e.g. `staging`, `qa`. Can also be set as `alloy.environment` in `--config` |
-| `--monitor-block-node` | Enable Block Node monitoring in Alloy. Requires a Prometheus remote and a Loki remote |
-| `--add-prometheus-remote` | Add a Prometheus remote. Repeatable. See [remote format](#remote-format) |
-| `--add-loki-remote` | Add a Loki remote. Repeatable |
+| `--monitor-block-node` | Enable Block Node monitoring in Alloy. Requires a Prometheus remote and a Loki remote, from flags or `--config`. Can also be set as `alloy.monitorBlockNode` in `--config`; `--monitor-block-node=false` turns it off |
+| `--add-prometheus-remote` | Add a Prometheus remote. Repeatable. Replaces the Prometheus remotes in `--config`. See [remote format](#remote-format) |
+| `--add-loki-remote` | Add a Loki remote. Repeatable. Replaces the Loki remotes in `--config` |
 | `--stop-on-error` | Stop at the first failing step (default) |
 | `--rollback-on-error` | Undo completed steps on failure |
 | `--continue-on-error` | Keep going past failures |
@@ -131,17 +131,26 @@ kubectl create secret generic grafana-alloy-secrets \
 
 ## Changing remotes
 
-`alloy cluster install` is **declarative**. Every run replaces the entire remote
-configuration with what you pass. There is no add/remove verb.
+`alloy cluster install` is **declarative**. Every run sets the full list of remotes for
+each type, Prometheus and Loki, from one place:
 
-**Always list every remote you want to keep.**
+- **Flags.** If you pass any flag for that type (`--add-prometheus-remote`, or the
+  deprecated `--prometheus-url` / `--prometheus-username`), the flags are the whole list.
+  That type's keys in `--config` are ignored.
+- **`--config`.** If you pass none, the list is `alloy.prometheusRemotes` (or the deprecated
+  `alloy.prometheusUrl`) from the file. Without `--config`, there are none.
+
+Loki works the same way, with `--add-loki-remote` and `alloy.lokiRemotes`. There is no
+add/remove verb, and nothing is remembered from the last run.
+
+**Always list every remote you want to keep**, in the flags or in the file.
 
 | To do this | Do this |
 |---|---|
 | Add a remote | Re-run with all existing remotes **plus** the new one |
 | Remove a remote | Re-run and simply omit it |
 | Change a URL | Re-run with the same `name` and the new `url` |
-| Remove all remotes | Re-run with no remote flags |
+| Remove all remotes | Re-run with no remote flags and no remotes in `--config` |
 
 ```bash
 # You had 'primary'; you want 'primary' and 'backup'
