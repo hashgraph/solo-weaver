@@ -244,7 +244,8 @@ sudo solo-provisioner kube operator uninstall             # idempotent; also cle
 
 `kube cluster upgrade` moves the cluster toward the Kubernetes and Cilium versions this binary
 installs, one step at a time. Each run reads the live cluster, plans the steps left, and applies
-the next one. `--all` applies every remaining step, reading the cluster again after each.
+the next one. `--all` applies every remaining step, reading the cluster again after each. How the
+plan is built and what each step does is in [docs/dev/cluster-upgrade.md](../dev/cluster-upgrade.md).
 
 ```bash
 sudo solo-provisioner kube cluster upgrade --plan --experimental
@@ -279,7 +280,8 @@ command that changes the cluster fails at once with `<record> is being modified 
 Each step is one workflow and one `upgrade` / `cluster` entry in the action history. A step ends
 by checking the node, waiting until the whole cluster can be read, and recording it. A record that
 cannot be written is a warning, not a failure. When the cluster reaches or is at the target, the run
-records the cluster and the host binaries, and adds an entry only when a record changed.
+records the cluster and the host binaries, and adds an entry only when a record changed or the
+record could not be written.
 
 The run ends with what it applied and what is next. With `--output json` the last object has
 `"type": "upgrade"`, the `outcome` (`applied`, `walked`, `at-target`, `blocked`, `declined`,
