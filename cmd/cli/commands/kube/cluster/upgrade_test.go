@@ -194,3 +194,12 @@ func TestUpgrade_IsBehindTheExperimentalGate(t *testing.T) {
 	assert.NotNil(t, upgradeCmd.PersistentFlags().Lookup("experimental"))
 	assert.Contains(t, clusterCmd.Commands(), upgradeCmd)
 }
+
+// `kube cluster upgrade` is an alpha command: hidden and carrying the --experimental opt-in.
+func TestUpgradeCmdIsGated(t *testing.T) {
+	require.True(t, upgradeCmd.Hidden, "upgrade must be hidden — it is experimental")
+	f := upgradeCmd.PersistentFlags().Lookup("experimental")
+	require.NotNil(t, f)
+	require.True(t, f.Hidden)
+	require.Contains(t, upgradeCmd.Short, "[alpha]")
+}

@@ -348,7 +348,7 @@ tasks:
       - |
         set -e
         # The consensus stack is experimental-gated: --experimental (or
-        # SOLO_PROVISIONER_ENABLE_CONSENSUS) is required, and under sudo the env var is
+        # SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED) is required, and under sudo the env var is
         # dropped, so the flag is the reliable opt-in.
         echo "▶ consensus node install (node{{.NODE_ID}}, from deployment package {{.PKG}})"
         # PKG is the unzipped v{{.BASE_VERSION}} package (run `task package` first).

@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
 	"github.com/hashgraph/solo-weaver/internal/bll/clusterupgrade"
+	"github.com/hashgraph/solo-weaver/internal/featuregate"
 	"github.com/hashgraph/solo-weaver/internal/reality"
 	"github.com/hashgraph/solo-weaver/internal/state"
 	"github.com/hashgraph/solo-weaver/pkg/reasons"
@@ -51,7 +52,7 @@ func init() {
 	upgradeCmd.Flags().BoolVar(&flagUpgradePlan, "list", false, "Same as --plan")
 	upgradeCmd.Flags().StringVar(&flagUpgradeTo, "to", "",
 		"Stop at this Kubernetes minor (1.35) or its latest patch (1.35.10); defaults to the version this binary installs")
-	common.GateExperimental(upgradeCmd, "cluster-upgrade")
+	common.GateFeature(upgradeCmd, featuregate.KubeClusterUpgrade)
 }
 
 // planLive is a seam so tests can plan without a host or a cluster.

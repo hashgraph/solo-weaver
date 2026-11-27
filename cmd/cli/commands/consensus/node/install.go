@@ -363,7 +363,7 @@ func confirmGenesisAdminKey() (bool, error) {
 // scrollback (unlike a transient step-detail line).
 func printConsensusInstallNextSteps(cmd *cobra.Command, namespace, pkgDir string) {
 	// --experimental is required: the consensus group is gated, and under sudo the
-	// SOLO_PROVISIONER_ENABLE_CONSENSUS env var is dropped, so the flag is the
+	// SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED env var is dropped, so the flag is the
 	// reliable opt-in for a copy-pasted command.
 	base := fmt.Sprintf("sudo solo-provisioner consensus network genesis --experimental --namespace %s", namespace)
 	pkg := strings.TrimSpace(pkgDir)

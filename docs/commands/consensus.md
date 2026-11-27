@@ -2,7 +2,7 @@
 
 > **Experimental.** The `consensus` command group is hidden and refuses to run
 > unless you opt in with the hidden `--experimental` flag or
-> `SOLO_PROVISIONER_ENABLE_CONSENSUS=1`. It is not production-ready.
+> `SOLO_PROVISIONER_ENABLE_CONSENSUS_NODE_OPERATOR_MANAGED=1`. It is not production-ready.
 
 Commands for provisioning and operating Hedera/Hiero consensus nodes via the
 solo-operator. This page currently documents the `consensus keys` family;

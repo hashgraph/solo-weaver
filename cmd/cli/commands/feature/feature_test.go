@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package feature
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/automa-saga/errx"
+	"github.com/hashgraph/solo-weaver/cmd/cli/commands/common"
+	"github.com/hashgraph/solo-weaver/internal/featuregate"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBuild_ResolvesStateAndMaturity(t *testing.T) {
+	gate, err := featuregate.NewDefault()
+	require.NoError(t, err)
+
+	data := build(gate)
+	require.Equal(t, uint(featuregate.CurrentActivationVersion), data.ActivationVersion)
+	require.NotEmpty(t, data.Features)
+
+	by := map[string]featureRow{}
+	for _, r := range data.Features {
+		by[r.Feature] = r
+	}
+
+	// Alpha feature is listed, tagged ALPHA, and off by default.
+	bn := by[string(featuregate.ConsensusNodeOperatorManaged)]
+	require.Equal(t, "ALPHA", bn.Maturity)
+	require.EqualValues(t, featuregate.CurrentActivationVersion, bn.ActiveFrom)
+	require.False(t, bn.Enabled)
+	require.True(t, bn.Ready) // Default:true alpha — dogfoodable via an opt-in
+	require.NotEmpty(t, bn.Description)
+}
+
+func TestRunList_Text(t *testing.T) {
+	cmd := GetCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, cmd.RunE(cmd, nil))
+
+	s := out.String()
+	require.Contains(t, s, "FEATURE")
+	require.Contains(t, s, string(featuregate.ConsensusNodeOperatorManaged))
+	require.Contains(t, s, "--experimental")
+}
+
+func TestRunList_JSON(t *testing.T) {
+	cmd := GetCmd()
+	// --output is a root persistent flag; register it locally for the isolated cmd.
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("output", "json"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, cmd.RunE(cmd, nil))
+
+	var got listing
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(out.String())), &got))
+	require.NotEmpty(t, got.Features)
+}
+
+// --activation-version 0 means "all" (per the flag help), not "features at version 0".
+func TestReadFilters_ActivationVersionZeroMeansAll(t *testing.T) {
+	cmd := GetCmd()
+	require.NoError(t, cmd.PersistentFlags().Set("activation-version", "0"))
+	f, err := readFilters(cmd)
+	require.NoError(t, err)
+	require.False(t, f.byActivation, "0 must disable the activation-version filter")
+}
+
+// Machine output must go to stdout, not stderr, so `... -o json | jq` works.
+func TestRunList_JSON_GoesToStdout(t *testing.T) {
+	cmd := GetCmd()
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("output", "json"))
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	require.NoError(t, cmd.RunE(cmd, nil))
+
+	require.Empty(t, errOut.String(), "JSON must not be written to stderr")
+	require.NotEmpty(t, out.String())
+}
+
+func TestFilters_Apply(t *testing.T) {
+	gate, err := featuregate.NewDefault()
+	require.NoError(t, err)
+	all := build(gate).Features
+
+	// by activation version (alpha dev gates now live at the current version)
+	v1 := filters{activationVersion: 1, byActivation: true}.apply(all)
+	require.NotEmpty(t, v1)
+	for _, r := range v1 {
+		require.EqualValues(t, 1, r.ActiveFrom)
+	}
+
+	// by maturity (upper-cased internally)
+	alpha := filters{maturity: "ALPHA"}.apply(all)
+	require.NotEmpty(t, alpha)
+	for _, r := range alpha {
+		require.Equal(t, "ALPHA", r.Maturity)
+	}
+
+	// by enabled: nothing is on by default (alphas need an opt-in), so disabled = all.
+	off := false
+	disabled := filters{enabled: &off}.apply(all)
+	require.NotEmpty(t, disabled)
+	for _, r := range disabled {
+		require.False(t, r.Enabled)
+	}
+
+	// Alpha + enabled is empty today (alpha is off by default).
+	on := true
+	require.Empty(t, filters{maturity: "ALPHA", enabled: &on}.apply(all))
+}
+
+func TestList_RejectsUnknownMaturity(t *testing.T) {
+	cmd := GetCmd()
+	cmd.SetArgs([]string{"list", "--maturity", "bogus"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	require.Error(t, cmd.Execute())
+}
+
+// Regression for the sudo bug: the group and every subcommand must opt out of
+// global checks, so `feature list` never runs the state-reading startup path.
+func TestGetCmd_SkipsGlobalChecksOnSubtree(t *testing.T) {
+	cmd := GetCmd()
+	require.False(t, common.RequireGlobalChecks(cmd), "group must skip global checks")
+	for _, sub := range cmd.Commands() {
+		require.False(t, common.RequireGlobalChecks(sub), "subcommand %q must skip global checks", sub.Name())
+	}
+}
+
+// Operator-facing errors carry a reason and a hint.
+func TestList_ErrorsAreDecorated(t *testing.T) {
+	cmd := GetCmd()
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("output", "yaml"))
+	err := cmd.RunE(cmd, nil)
+	require.Error(t, err)
+	_, ok := errx.ReasonOf(err)
+	require.True(t, ok)
+	hints, ok := errx.Hints(err)
+	require.True(t, ok)
+	require.NotEmpty(t, hints)
+
+	cmd2 := GetCmd()
+	cmd2.SetArgs([]string{"list", "--maturity", "bogus"})
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	err = cmd2.Execute()
+	require.Error(t, err)
+	_, ok = errx.ReasonOf(err)
+	require.True(t, ok)
+}
